@@ -13,7 +13,7 @@ import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import { L3EngineSelect } from "../components/L3EngineSelect";
 import { decisionsFor, managedProjects } from "../shell/projects";
-import { useStarting } from "../shell/starting";
+import { ProjectSetup } from "./Setup";
 import Conversation from "./Conversation";
 import FirstRun from "./FirstRun";
 
@@ -331,7 +331,7 @@ function ProjectHeader({
 
   if (!showName) return <>
     <PhoneHeader overview={overview} status={`${compactStatus}${engine ? ` · ${engine}` : ""}`}>
-      {startButton}{menu}
+      {startButton}<ProjectSetup key={`setup:${name}`} name={name} />{menu}
     </PhoneHeader>
     {project.isError ? <p className="convo-error text-danger" role="alert">{project.error.message} <button type="button" className="link" onClick={() => void project.refetch()}>Retry</button></p> : null}
     {start.isError ? <p className="convo-error text-danger" role="alert">{start.error.message}</p> : null}
@@ -347,6 +347,7 @@ function ProjectHeader({
         {start.isError ? <p className="text-meta text-danger" role="alert">{start.error.message}</p> : null}
       </div>
       {startButton}
+      <ProjectSetup key={`setup:${name}`} name={name} />
       {panelToggle ? (
         <button
           type="button"
@@ -385,7 +386,6 @@ export default function ProjectPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const decisions = decisionsFor(overview.data, name);
-  const starting = useStarting();
 
   if (overview.isPending && project.isPending) {
     return (
@@ -397,9 +397,7 @@ export default function ProjectPage() {
       </>
     );
   }
-  // Nothing managed, or First run is still starting a project (the overview lists it as managed
-  // before L3's first reply, whatever route the operator is on): First run stays up.
-  if (overview.isSuccess && (managedProjects(overview.data).length === 0 || starting)) {
+  if (overview.isSuccess && managedProjects(overview.data).length === 0) {
     return (
       <>
       {phone ? <PhoneHeader overview={overview} /> : null}

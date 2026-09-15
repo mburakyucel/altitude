@@ -69,7 +69,7 @@ test.describe("last project", () => {
     await page.getByRole("group", { name: "Remove sample-project from Altitude?" }).getByRole("button", { name: "Remove", exact: true }).click();
     const firstRun = page.getByRole("region", { name: "First run", exact: true });
     const row = firstRun.getByRole("listitem").filter({ hasText: "sample-project" });
-    await walk.state("01-last-project-removed", { visible: [firstRun, row.getByRole("button", { name: "Start L3", exact: true })], hidden: [page.getByRole("button", { name: "More actions" })] });
+    await walk.state("01-last-project-removed", { visible: [firstRun, row.getByRole("button", { name: "Add project", exact: true })], hidden: [page.getByRole("button", { name: "More actions" })] });
     expect(await page.evaluate(() => localStorage.getItem("altitude.project"))).toBeNull();
     const overview = await (await request.get(`${service}/api/overview`)).json();
     expect(overview.projects[0].managed).toBe(false);
@@ -79,7 +79,7 @@ test.describe("last project", () => {
     const overviewHeld = new Promise<void>((resolve) => { releaseOverview = resolve; });
     const holdOverview = async (route: import("@playwright/test").Route) => { await overviewHeld; await route.continue(); };
     await page.route("**/api/overview", holdOverview);
-    await row.getByRole("button", { name: "Start L3", exact: true }).click();
+    await row.getByRole("button", { name: "Add project", exact: true }).click();
     await walk.state("02-attach-error", { visible: [firstRun.getByRole("alert").filter({ hasText: "Registration unavailable" }), row.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
     await page.unroute("**/api/overview", holdOverview);
     releaseOverview();
@@ -87,9 +87,10 @@ test.describe("last project", () => {
     const wait = new Promise<void>((resolve) => { release = resolve; });
     await page.route("**/api/project/add", async (route) => { await wait; await route.continue(); }, { times: 1 });
     await row.getByRole("button", { name: "Retry", exact: true }).click();
-    await walk.state("03-attach-pending", { visible: [firstRun.getByRole("status").filter({ hasText: "L3 is starting…" })], hidden: [firstRun.getByRole("alert")] });
+    await walk.state("03-attach-pending", { visible: [firstRun.getByRole("status").filter({ hasText: "Adding project…" })], hidden: [firstRun.getByRole("alert")] });
     release();
-    await expect(page).toHaveURL(`${service}/projects/sample-project`);
+    await expect(page).toHaveURL(`${service}/projects/sample-project?setup=1`);
+    await page.getByRole("dialog", { name: "Project setup" }).getByRole("button", { name: "Open conversation" }).click();
     await expect.poll(async () => (await (await request.get(`${service}/api/chat/sample-project`)).json()).history.some((entry: { text: string }) => entry.text === "Queued request answered.")).toBe(true);
     await page.reload();
     await walk.state("04-attached-again", { visible: [page.getByText("Saved project history."), page.getByText("Queued request answered."), page.getByRole("textbox", { name: "Message L3 about sample-project" })], hidden: [firstRun, page.getByRole("list", { name: "Queued messages" })] });

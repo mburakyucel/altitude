@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, route, state as S, tasks as T
+from . import config, engines, git_policy, images, project_setup, route, state as S, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -50,8 +50,11 @@ def record_resume_failure(project: str, slug: str, claim_id: str, error: object,
         return ResumeFailure(reason)
     S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
-    incidents.system_fault(kind, f"{project}/{slug}: {reason}", project=project, task=slug,
-                           expected_block_id=claim.get("block_id", claim_id))
+    if isinstance(error, project_setup.SetupError):
+        project_setup.block_task(project, slug, error, expected_block_id=claim.get("block_id", claim_id))
+    else:
+        incidents.system_fault(kind, f"{project}/{slug}: {reason}", project=project, task=slug,
+                               expected_block_id=claim.get("block_id", claim_id))
     return ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 
@@ -653,7 +656,7 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
     import subprocess
 
     expected_branch = f"worktree-{slug}"
-    worktree = repo / ".claude" / "worktrees" / slug
+    worktree = repo / config.WORKTREE_ROOT / slug
 
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
@@ -682,7 +685,7 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
     """Validate an already-created L2 checkout before either a fresh launch or a resume."""
     import subprocess
 
-    expected_path = (repo / ".claude" / "worktrees" / slug).resolve()
+    expected_path = (repo / config.WORKTREE_ROOT / slug).resolve()
     if worktree.resolve() != expected_path or not worktree.is_dir():
         raise T.TransitionError(f"task worktree for {project}/{slug} must be {expected_path}, got {worktree}")
     expected_branch = f"worktree-{slug}"
@@ -691,6 +694,9 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
         raise T.TransitionError(
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
         )
+    if config.SOURCE != config.REPO:
+        # #348: a worktree-specific custom hook selection must not evade project guard verification.
+        git_policy.require_hooks_installed(worktree)
     task = S.read_json(S.status_path(project, slug), {}) or {}
     if adopted_head := (task.get("adopted_pr") or {}).get("head"):
         ancestry = subprocess.run(
@@ -771,7 +777,7 @@ def build_brief(project: str, slug: str) -> str:
     if task.get("attempt") and progress.exists():
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
                     "kept; its `progress.md` follows.\n\n" + progress.read_text().rstrip() + "\n")
-    worktree = config.project_path(project) / ".claude" / "worktrees" / slug
+    worktree = config.project_path(project) / config.WORKTREE_ROOT / slug
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
@@ -829,8 +835,11 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         repo = config.project_path(project)
         with publication_settlement(project):
             if config.SOURCE != config.REPO:
-                git_policy.require_hooks_installed(repo)
+                project_setup.ensure_guards(project, slug=slug)
             origin_sha = git_policy.fetch_origin(repo, "main")
+    except project_setup.SetupError as exc:
+        project_setup.block_task(project, slug, exc)
+        raise T.TransitionError(f"dispatch awaits project setup: {exc}") from exc
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
         from . import incidents
@@ -1023,7 +1032,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
     try:
         repo = config.project_path(project)
         if config.SOURCE != config.REPO:
-            git_policy.require_hooks_installed(repo)
+            project_setup.ensure_guards(project, slug=slug)
         # A resume continues owned work, including edits, without needing a fresh remote base.
         _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:

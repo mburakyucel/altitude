@@ -710,13 +710,49 @@ export interface ProjectAddInput {
   wip?: number;
 }
 
-export function useProjectAdd() {
+export function useProjectAdd(onRegistered: (name: string) => void) {
   const queryClient = useQueryClient();
   return useMutation<{ restored?: boolean }, Error, ProjectAddInput>({
     mutationFn: (input) => post<{ restored?: boolean }>("/api/project/add", input),
     // A restored project opens its page only once the overview lists it as managed, so success waits
     // for the refetch; a refused registration reads at once and waits for nothing.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["overview"] }),
+    onSuccess: async (_result, input) => {
+      await queryClient.invalidateQueries({ queryKey: ["overview"] });
+      onRegistered(input.name);
+    },
+  });
+}
+
+export const SetupSchema = z.object({
+  project: z.string(), status: z.string(), checked_at: z.string().nullish(),
+  steps: z.array(z.object({
+    id: z.string(), label: z.string(), status: z.string(), detail: z.string(),
+    action: z.string().nullish(), fingerprint: z.string().nullish(),
+    custom_hooks: z.object({ path: z.string(), events: z.array(z.string()) }).optional(),
+  }).passthrough()),
+  operation: z.object({ id: z.string(), state: z.string(), action: z.string() }).passthrough().nullish(),
+  error: z.string().nullish(),
+}).passthrough();
+export type Setup = z.infer<typeof SetupSchema>;
+
+export function useSetup(project: string) {
+  return useQuery({
+    queryKey: ["setup", project],
+    queryFn: async () => SetupSchema.parse(await api(`/api/setup/${project}`)),
+    refetchInterval: (query) => query.state.data?.status === "checking" ? 1_500 : 20_000,
+    refetchOnMount: "always",
+    enabled: Boolean(project),
+  });
+}
+
+export function useSetupAction(project: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { action: "check" | "repair" | "combine"; expected?: string }) =>
+      SetupSchema.parse(await post("/api/project/setup", { project, ...input })),
+    onMutate: () => client.cancelQueries({ queryKey: ["setup", project] }),
+    onSuccess: (result) => client.setQueryData(["setup", project], result),
+    onSettled: () => { void client.invalidateQueries({ queryKey: ["setup", project] }); },
   });
 }
 

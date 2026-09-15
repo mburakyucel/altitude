@@ -1,9 +1,9 @@
 import { Navigate, redirect } from "react-router";
+import { useRef } from "react";
 import type { RouteObject } from "react-router";
 import AppShell from "./shell/AppShell";
 import { useOverview } from "./data/api";
 import { managedProjects } from "./shell/projects";
-import { useStarting } from "./shell/starting";
 import FirstRun from "./routes/FirstRun";
 import NeedsYou from "./routes/NeedsYou";
 import ProjectPage from "./routes/Project";
@@ -13,11 +13,13 @@ import TaskReport from "./routes/TaskReport";
 import TaskDesign from "./routes/TaskDesign";
 import Monitor from "./routes/Monitor";
 
-/** /projects: the first managed project, or First run when nothing is managed or a start is under way
+/** /projects: the first managed project, or First run when nothing is managed
  * (SPEC.md §2.1, §3.12). */
 function ProjectIndex() {
   const overview = useOverview();
-  const starting = useStarting();
+  // Choose the index destination once. Once First run is shown, registration owns navigation.
+  const destination = useRef<string | null>(null);
+  if (overview.isSuccess && destination.current === null) destination.current = managedProjects(overview.data)[0]?.name ?? "";
   if (overview.isPending) {
     return (
       <div className="page" aria-label="Loading">
@@ -38,7 +40,7 @@ function ProjectIndex() {
     );
   }
   const first = managedProjects(overview.data)[0];
-  if (!first || starting) {
+  if (!first || destination.current === "") {
     return (
       <div className="page first-run-page">
         <FirstRun overview={overview} />

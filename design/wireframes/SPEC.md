@@ -140,7 +140,7 @@ hard-codes one, and one configured engine means one row.
 ### 3.2 Project header
 
 Desktop anatomy: project name (18px, 600); status line; actions: work-panel toggle (tinted when the panel is
-open, hidden at ≥ 1280 where the panel is inline), overflow menu.
+open, hidden at ≥ 1280 where the panel is inline), permanent **Setup** status (§3.12), overflow menu.
 
 Status line, composed left to right and separated by "·": "L3 answered N min ago on <engine>"
 (from the last assistant chat row's `at` and `engine`); "N tasks in flight" (running + queued);
@@ -153,6 +153,8 @@ engine/model, task counts, Auto/engine selector and existing project actions; a 
 named in the compact status. There is no second status row. Details uses a labelled sheet with
 contained focus, Escape/outside dismissal where allowed, and focus returned to its opener. The
 sheet scrolls inside the currently usable viewport above any keyboard; full names remain readable.
+**Setup** remains discoverable in the project header on phone and desktop, including healthy
+projects. It opens the same configuration checklist without replacing the conversation or draft.
 
 Overflow menu: **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
@@ -684,16 +686,47 @@ A sheet from the header name: managed projects with dot and count, unmanaged fol
 folder**. Tapping a project selects it and closes the sheet; the Chat and Work tabs follow. Hidden
 chevron and no sheet when exactly one project is managed and no folder is unmanaged.
 
-### 3.12 First run
+### 3.12 First run and project setup
 
 Shown on any project route when no project is managed: a centred card, "Altitude found N folders
-under <root>", one row per folder with **Start L3**, and a path field for a folder elsewhere.
-States: scanning; none found (the path field alone); starting ("L3 is starting…", then the project
-page opens on its first reply); failed (one sentence and Retry, shown the moment registration is
-refused rather than after the next folder rescan).
+under <root>", one row per folder with **Add project**, and a path field for a folder elsewhere.
+States: scanning; none found (the path field alone); adding; failed (one sentence and Retry,
+shown when registration is refused). Successful registration opens the project's Setup checklist
+immediately. Closing the checklist never cancels accepted setup.
 For a removed project with retained history, `POST /api/project/add` reports `restored: true`.
-First run waits for the registration response, then opens the saved conversation; historical
-replies or errors do not determine the new start's outcome. Its saved queue resumes normally.
+Its conversation and saved queue remain; setup reuses healthy configuration. Historical replies
+or errors do not determine a new first conversation's outcome.
+
+**Setup** stays in the project header with **Checking**, **Ready** or **Needs attention**; unavailable
+reads say **Unavailable**, and non-Git projects say **Conversation ready**. It opens
+a focused desktop overlay or full-height phone sheet with folder, repository, instructions, Git
+guards and coordinator rows. Problems appear before healthy checks. Text and icons distinguish
+pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
+have green checks and readable labels. No percentage, simulated progress or second attention count
+is introduced. A non-Git folder says conversation is available and Git tasks are unavailable.
+
+The concise explanation reads: **Setup runs automatically. If a step fails, L3 can help.**
+**Check again** refreshes observations. **Retry** repeats supported programmatic setup;
+**Discuss with L3** opens the existing project conversation without sending or launching a new agent.
+Notification, investigation and verified repair remain distinct. A step becomes complete only when
+programmatic checks confirm it. Existing projects show newly applicable requirements without
+reattachment. See [setup behavior](../../docs/SETUP.md#project-setup-and-repair) for responsibilities.
+
+A custom-hook conflict offers **Review integration**, showing the original directory/events and
+explaining that trusted custom hooks and their dependencies run with Altitude's Git permissions,
+outside the task agent's sandbox. It explains **Use both hook sets** and
+**Keep current setup**. Integration requires an explicit operator choice for the inspected hooks;
+unsupported hook managers retain their configuration and offer discussion. Successful repair
+removes its warning/action. Retry is unavailable while accepted work runs. Setup stays open at
+completion, with **Open conversation** available.
+
+Walkthrough states at phone and desktop: fresh registration, healthy/reused project, newly missing
+requirement, stale guards, custom-hook review, active progress, interruption, failed/denied repair
+and successful retry. Also cover empty folder discovery, initial loading, failed read with Retry,
+offline observations and non-Git outcomes. Status changes use a polite live region, errors an alert,
+and controls 44px targets. The sheet contains focus and scrolling, closes with Escape/Back, and
+restores focus to Setup. Conversation/draft and reading position survive. Listening belongs to
+the existing conversation opened by **Discuss with L3**, including its recording/cancel/error states.
 
 ### 3.13 Restart banner
 
@@ -838,6 +871,7 @@ retain phone/desktop state verification and accessible review evidence.
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, engine pin), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |

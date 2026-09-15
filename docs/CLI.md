@@ -9,9 +9,9 @@ This page describes command contracts and examples. Global role responsibilities
 [AGENTS.md](../AGENTS.md). [Session lifecycle](SESSION_LIFECYCLE.md#repository-instructions)
 describes how those instructions reach each engine.
 
-Start with [setup](SETUP.md) to build the app, install project Git guards, register a project
-with Auto preferences or explicit pins, and start a conversation. `alt project add` registers state; it does
-not install Git guards. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
+Start with [setup](SETUP.md) to build the app, register a project with Auto preferences or explicit
+pins, and start a conversation. Registration requests daemon-owned setup, including routine Git
+guard installation or refresh. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
 
 ## Inspection
 
@@ -488,6 +488,47 @@ restores that history; queued messages become eligible for delivery again. The s
 the project's **More actions** menu (`POST /api/project/remove` with `{"name":"<name>"}`).
 The existing folder-add flow (`POST /api/project/add`) attaches L3 again. `alt l3-reset` remains a
 separate conversation reset; it marks a session for rotation without disabling coordination.
+
+### Project setup and guard recovery
+
+Inspect current setup or request supported repair for a registered project:
+
+```sh
+alt project setup example
+alt project setup example --repair --reason 'Repair the observed Git guard configuration'
+alt project setup example
+```
+
+These commands use the running daemon. The read reports current checks, active source, operation
+state and affected tasks. `--repair` requires a reason and requests bounded programmatic setup;
+inspect again until the operation has a verified result. Healthy configuration is reused.
+The operator and that project's L3 can request repair; L3 uses its existing command broker,
+so no worker launch or checkout-write privilege is needed. L2 cannot request this operation.
+The UI's **Setup**, **Check again** and **Retry** expose the same observations and operations.
+
+Routine repair installs missing guards when no custom hook owner exists and refreshes recognized
+Altitude guards to the active source, including stale paths from skipped upgrades. Saved
+task-worktree overrides receive their own observed rows and repair. Foreign,
+inherited and default-directory hooks stay intact. Only the operator can choose **Use both hook
+sets** in the UI after inspecting a supported integration; the choice is checked against that
+configuration before writing. Unsupported hook managers require discussion. The legacy
+`install-git-guards` command is not the coordinator recovery route.
+
+For a source-update guard failure, the originating project's coordinator:
+
+1. Inspects the active source and Setup result with `alt project setup <name>`, alongside the
+   affected task's reason and delivered fix evidence. A merged PR alone does not prove activation.
+2. Requests the scoped repair above. If refused, records the exact refusal; neither another task
+   nor a direct checkout mutation bypasses it. Custom-hook integration waits for the operator.
+3. Rechecks setup and its verified guard result. Confirms the active fix's enforcement evidence
+   and that the observed stale path or other actual cause is gone. Unknown or failed results stay
+   unresolved; notification delivery and an unrelated restart do not prove repair.
+4. Resumes only tasks blocked by that fixed cause using
+   `alt task resume <slug> --reason '<verified fix and local observation>'`.
+
+This preserves sessions, worktrees, questions and merge holds. No project detach/reattach, task
+rejection or manual service lifecycle action is part of recovery. Each coordinator verifies its
+own project; delivery in this repository does not establish another project's recovery.
 
 ### Concurrency limits
 

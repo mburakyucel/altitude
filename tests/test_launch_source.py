@@ -149,6 +149,36 @@ class LaunchSource(AltitudeCase):
         dispatch.run(self.project, task["slug"])
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
+    def test_conversation_only_folder_has_no_guard_fault_or_repository_creation(self):
+        folder = self.tmp / "conversation-only"
+        folder.mkdir()
+        self.register("conversation-only", path=folder)
+        with mock.patch("altitude.incidents.system_fault") as fault:
+            git_policy.activate_source()
+        fault.assert_not_called()
+        self.assertEqual(list(folder.iterdir()), [])
+
+    def test_activation_preserves_daemon_owned_hook_consent_while_refreshing_wrappers(self):
+        custom = self.tmp / "custom-hooks"
+        custom.mkdir()
+        hook = custom / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        hook.chmod(0o755)
+        git("config", "core.hooksPath", str(custom), cwd=self.repo)
+        observed = git_policy.inspect_hooks(self.repo)
+        initial = Path(git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"])
+        receipt = json.loads((initial / "original.json").read_text())
+        git_policy.activate_source()
+        current = git_policy.require_hooks_installed(self.repo)
+        self.assertNotEqual(initial, current)
+        refreshed = json.loads((current / "original.json").read_text())
+        for key in ("approved_fingerprint", "owner", "original_contents", "path", "selection", "scope"):
+            self.assertEqual(receipt[key], refreshed[key])
+        self.assertEqual(refreshed["guards"], str(self.installation / ".altitude-source/current/hooks"))
+        self.assertEqual(json.loads((initial / "original.json").read_text()), receipt)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\nexit 0\n")
+        self.assertEqual(git_policy.repair_hooks(self.repo)["action"], "reused")
+
     def test_failed_hook_update_keeps_retry_available_and_affected_launch_refused(self):
         real_run = git_policy._run
 
@@ -162,11 +192,14 @@ class LaunchSource(AltitudeCase):
             git_policy.activate_source()
         self.assertEqual(fault.call_args.kwargs, {"project": self.project})
         task = T.new(self.project, "Affected project waits", "Use only trusted hooks.")
-        with self.assertRaisesRegex(T.TransitionError, "Git guards are not installed"):
-            dispatch.run(self.project, task["slug"])
+        with mock.patch.object(git_policy, "_run", side_effect=fail_config):
+            with self.assertRaisesRegex(T.TransitionError, "configuration unavailable"):
+                dispatch.run(self.project, task["slug"])
         self.assertEqual(self.engine.calls, [])
-        git_policy.activate_source()
+        dispatch.resume(self.project, task["slug"])
+        dispatch.run(self.project, task["slug"])
         git_policy.require_hooks_installed(self.repo)
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
     def test_interrupted_installation_hook_update_can_retry_after_source_switch(self):
         real_run = git_policy._run
@@ -182,3 +215,59 @@ class LaunchSource(AltitudeCase):
         self.assertTrue((self.installation / ".altitude-source/current").is_dir())
         git_policy.activate_source()
         git_policy.require_hooks_installed(self.installation)
+
+    def test_skipped_source_upgrade_repairs_old_owned_guards_without_touching_project_work(self):
+        git_policy.activate_source()
+        first = config.SOURCE
+        git("config", "core.hooksPath", str(first / "hooks"), cwd=self.repo)
+        task = T.new(self.project, "Keep task context", "Continue after guard maintenance.", hold_merge="Review required")
+        dispatch.run(self.project, task["slug"])
+        running = S.load_task(self.project, task["slug"])
+        worktree = Path(running["worktree"])
+        (worktree / "unfinished.txt").write_text("Preserve unfinished work.\n")
+        self.engine.stop_l2_worker(running["l2_engine"], running["agent_id"],
+                                  job_root=dispatch.l2_job_root(self.project, task["slug"]))
+        T.block(self.project, task["slug"], "Wait for maintenance", updates={"waiting_on": "l3"})
+        before = S.load_task(self.project, task["slug"])
+        real = git_policy._run
+
+        def miss_project(repository, *args, **kwargs):
+            if repository == self.repo and args[:3] == ("config", "--local", "core.hooksPath"):
+                raise git_policy.GitPolicyError("fixture missed guard upgrade")
+            return real(repository, *args, **kwargs)
+
+        for version in ("second", "third"):
+            persona = self.installation / "personas/l2.md"
+            persona.write_text(persona.read_text() + f"\n{version} installed version.\n")
+            git("add", "personas/l2.md", cwd=self.installation)
+            tree = git("write-tree", cwd=self.installation).strip()
+            head = git("commit-tree", tree, "-p", "HEAD", "-m", version, cwd=self.installation).strip()
+            git("push", "-q", "origin", head + ":refs/heads/reviewed-" + version, cwd=self.installation)
+            git("update-ref", "refs/heads/main", head, cwd=self.installation.parent / "origin.git")
+            git("fetch", "-q", "origin", "main", cwd=self.installation)
+            git("update-ref", "refs/heads/main", head, cwd=self.installation)
+            if version == "second":
+                with mock.patch.object(git_policy, "_run", side_effect=miss_project), \
+                        mock.patch("altitude.incidents.system_fault") as fault:
+                    git_policy.activate_source()
+                self.assertEqual(fault.call_args.kwargs, {"project": self.project})
+                self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "stale")
+            else:
+                git_policy.activate_source()
+        self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "ready")
+        self.assertEqual(git("config", "--get", "core.hooksPath", cwd=self.repo).strip(),
+                         str(self.installation / ".altitude-source/current/hooks"))
+        self.assertTrue(first.is_dir())
+        after = S.load_task(self.project, task["slug"])
+        for key in ("session_id", "worktree", "attempt", "hold_merge", "questions", "state"):
+            self.assertEqual(before.get(key), after.get(key))
+        self.assertEqual((worktree / "unfinished.txt").read_text(), "Preserve unfinished work.\n")
+        git("config", "extensions.worktreeConfig", "true", cwd=self.repo)
+        git("config", "--worktree", "core.hooksPath", str(first / "hooks"), cwd=worktree)
+        self.assertEqual(git_policy.inspect_hooks(worktree)["status"], "stale")
+        T.message(self.project, task["slug"], "l3", "The current Git guards are verified; continue.")
+        dispatch.resume(self.project, task["slug"])
+        self.assertEqual(self.engine.calls[-1]["session_id"], running["session_id"])
+        git_policy.require_hooks_installed(worktree)
+        self.assertEqual(git("config", "--worktree", "--get", "core.hooksPath", cwd=worktree).strip(),
+                         str(self.installation / ".altitude-source/current/hooks"))

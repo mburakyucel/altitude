@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T  # noqa: E402
+from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done")}
 L3_COMMANDS = READ_COMMANDS | {
-    ("project", "set"),
+    ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
@@ -216,6 +216,7 @@ def main(argv=None) -> None:
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int)
     a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
+    ps.add_parser("setup", parents=[project_setup.parser()], help="inspect configuration; --repair requests supported daemon setup")
     r = ps.add_parser("remove"); r.add_argument("name")
     x = ps.add_parser("set"); x.add_argument("name"); x.add_argument("--reason", required=True)
     wip = x.add_mutually_exclusive_group(required=True)
@@ -324,6 +325,7 @@ def main(argv=None) -> None:
                      getattr(args, "icmd", None) if c == "incident" else
                      getattr(args, "pcmd", None) if c == "project" else
                      getattr(args, "l3cmd", None) if c == "l3" else None)
+    setup_command = c == "project" and args.pcmd == "setup"
     if c == "issue" or closing_pr:
         actor_command = (c, "close" if closing_pr else args.operation)
     if ACTOR == "l2":
@@ -335,26 +337,29 @@ def main(argv=None) -> None:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
-    if c == "issue" or closing_pr:
+    if c == "issue" or closing_pr or setup_command:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
-        payload = {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+        body = "" if setup_command or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        payload = {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
         if ACTOR == "l3":
             sys.exit(f"alt {c}: L3 must use its project-bound runtime alt socket")
+        if setup_command and (bool(args.repair) != bool(args.reason and args.reason.strip())):
+            ap.error("project setup --repair requires --reason; reads accept no reason")
         tls = config.TLS and all((config.TLS_DIR / name).is_file() for name in ("server.crt", "server.key"))
         context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt")) if tls else None
-        endpoint = "pr/close" if closing_pr else "issue"
+        from urllib.parse import quote
+        endpoint = ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
-                                         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+                                         data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(request, context=context, timeout=130) as response:
                 result = json.load(response)
-                out(result if closing_pr else result["url"])
+                out(result if closing_pr or setup_command else result["url"])
         except urllib.error.HTTPError as exc:
             sys.exit(f"alt {c}: " + json.load(exc).get("error", str(exc)))
         except OSError as exc:
@@ -389,6 +394,7 @@ def main(argv=None) -> None:
                                         l2_engine=args.l2_engine, l3_engine=args.l3_engine) as entry:
                     out(entry)
                 S.regen_state_md(args.name)
+                project_setup.registered(args.name)
             except ValueError as exc:
                 sys.exit(f"alt: {exc}")
         elif args.pcmd == "remove":
