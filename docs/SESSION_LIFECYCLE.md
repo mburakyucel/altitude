@@ -1,7 +1,8 @@
 # Engine and session lifecycle
 
 The persistent L3 conversation coordinates the project across task lifetimes. Each L2 owns one
-task, with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
+task's investigation, approach and relevant system implications within its authorized outcome,
+with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
 

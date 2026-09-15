@@ -37,7 +37,9 @@ checkout on either engine; source changes always belong to one L2 worktree and P
 The [L3 persona](../personas/l3.md) owns roadmap sequencing, targeted handoffs, durable feedback,
 capability-gap recommendations and authorized continuation. L3 judges who needs context and when
 based on its effect on their responsibilities, decisions or work.
-The [L2 persona](../personas/l2.md) owns task execution, source assessment, questions and delivery.
+Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
+brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
+approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
 These responsibilities use existing task operations, with no broadcast, runtime classifier or
 memory store. Project-local authority, proposal checkpoints, merge holds and verified recovery
 remain governed by the existing boundaries.

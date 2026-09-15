@@ -125,7 +125,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   Steering accepted before a clean completion is finalized keeps the owner reachable for the next turn.
   An explicit question block survives worker exit and restart; older queued messages do not
   resume it. A later message or explicit Resume brings the session back.
-- **Independent execution.** Owners choose how to investigate, implement and use native helpers.
+- **Independent execution.** Briefs describe the problem, outcome and material project constraints;
+  brainstorming stays tentative. Owners choose the approach and account for relevant system
+  implications, including how to investigate, implement and use native helpers.
   Worktrees isolate changes; planned files guide coordination. Owners review selected changes and
   all outgoing history for scope and privacy before `alt land` publishes through their assigned PR.
   Shared-file changes still need rebasing and reconciliation by their owners.
