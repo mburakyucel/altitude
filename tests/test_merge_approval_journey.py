@@ -63,6 +63,10 @@ class TestMergeApprovalJourney(AltitudeCase):
         response = self.request("/api/decide", {"project": self.project, "slug": slug,
                                 "question_id": question["id"], "revision": question["revision"]})
         self.wait_state(slug, "running")
+        self.tick()
+        T.resolve_question(self.project, slug, question["id"], question["revision"],
+                           response["response"]["message_id"], disposition="answered",
+                           reason=question["recommendation"]["text"], expected_attempt=1)
         return response
 
     def prepare_held_pr(self, request, hold, content):
@@ -114,7 +118,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.tick()
         presentation = T.message(self.project, slug, "l2", f"Ready for review: {pull['url']} at {prepared['head']}")
         if quick:
-            approval_id = self.choose(slug, question)["decision"]["message_id"]
+            approval_id = self.choose(slug, question)["response"]["message_id"]
         else:
             self.tick()
             approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
@@ -147,7 +151,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((receipt["approval"], receipt["question"], receipt["revision"], receipt["hold_id"]),
                          (approval_id, question["id"], question["revision"], before["hold_merge_id"]))
         self.assertEqual((receipt["head"], receipt["option_key"], receipt["question_context_only"]),
-                         (prepared["head"], "recommended" if quick else None, False))
+                         (prepared["head"], None, False))
         self.assertLess(question["asked"], presentation["at"])
         if renew_hold:
             self.assertLess(question["asked"], receipt["hold_at"])
@@ -174,8 +178,8 @@ class TestMergeApprovalJourney(AltitudeCase):
         question = self.escalate(slug, "May the owner merge the reviewed story?", f"Merge {pull['url']}.", "Approve merge")
         self.assertEqual(question["asked_by"], "l3")
         approved = self.choose(slug, question)
-        approval = approved["decision"]["message_id"]
-        self.assertEqual(approved["decision"]["disposition"], "answered")
+        approval = approved["response"]["message_id"]
+        self.assertIsNone(approved["question"]["resolution"])
         held = S.load_task(self.project, slug)
         self.assertTrue(held["hold_merge"], "a saved UI decision does not itself release a hold")
         with self.assertRaisesRegex(land.LandError, "merge hold"):
@@ -212,7 +216,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((receipt["approval"], receipt["pr"], receipt["head"]),
                          (approval, 101, prepared["head"]))
         self.assertEqual((receipt["question"], receipt["revision"], receipt["option_key"]),
-                         (question["id"], question["revision"], approved["decision"]["option_key"]))
+                         (question["id"], question["revision"], None))
         self.assertEqual(receipt["authorized_by"], T.OPERATOR_MESSAGE_ROLE)
         self.assertEqual(T.task_messages(self.project, slug), before_messages)
         self.assertEqual(len(self.engine.calls), engine_calls, "release neither resumes the faulted owner nor changes its session")

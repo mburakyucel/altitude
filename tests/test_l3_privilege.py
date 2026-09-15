@@ -960,7 +960,7 @@ class TestL3DaemonOperations(AltitudeCase):
 
         def scheduled(*_args):
             self.assertEqual([row["text"] for row in T.pending(self.project, blocked["slug"])],
-                             ["Use this approach and continue: Use the approved value."],
+                             ["Which value?\nUse the approved value."],
                              "Burak's note exists before the daemon resume runner can start")
             return True
 

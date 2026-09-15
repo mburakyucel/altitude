@@ -141,6 +141,7 @@ export const DecisionSchema = z
       disposition: z.string(), text: z.string(), by: z.string(), at: z.string(),
       message_id: z.string().nullish(), source: z.string().nullish(),
     }).passthrough().nullish(),
+    response: z.object({ text: z.string(), at: z.string(), message_id: z.string() }).nullish(),
   })
   .passthrough();
 
@@ -632,11 +633,13 @@ export function useChat(project: string, limit = 60, enabled = true) {
 
 // ---- mutation hooks --------------------------------------------------------------------
 
+export type QuestionAnswer = { question_id: string; revision: number } & ({ option_key: string; text?: never } | { text: string; option_key?: never });
+
 export type DecideInput = {
   project: string;
   slug: string;
-} & ({ question_id: string; revision: number; option_key?: string }
-  | { group_id: string; group_revision: number; answers: { question_id: string; revision: number; option_key: string }[] });
+} & (QuestionAnswer
+  | { group_id: string; group_revision: number; answers: QuestionAnswer[] });
 
 export type QuestionGroup = z.infer<typeof QuestionGroupSchema>;
 
@@ -647,7 +650,7 @@ export function useDecide() {
       const out = await post<{ question: unknown; question_group?: unknown }>("/api/decide", input);
       return { question: DecisionSchema.parse(out.question), question_group: out.question_group ? QuestionGroupSchema.parse(out.question_group) : null };
     },
-    // Publish the saved receipt to every view before polling again. A send never uses this path.
+    // Publish submitted responses to every view before polling again.
     onSuccess: async ({ question, question_group: group }, input) => {
       for (const queryKey of [["overview"], ["project", input.project], ["task", input.project, input.slug]]) {
         await queryClient.cancelQueries({ queryKey });
@@ -657,7 +660,7 @@ export function useDecide() {
       const belongs = (row: { id?: string | null; group_id?: string | null }) => group
         ? row.group_id === group.id || (question.group_id && row.group_id === question.group_id) || updated.some((q) => row.id === q.id)
         : row.id === question.id;
-      const open = updated.filter((q) => q.status === "open" && q.audience === "operator");
+      const open = updated.filter((q) => q.status === "open" && q.audience === "operator" && !q.response);
       queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
         ...cached, queue: [...cached.queue.filter((row) => !(row.project === input.project && row.slug === input.slug && belongs(row))), ...open],
       });

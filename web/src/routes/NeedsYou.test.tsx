@@ -104,7 +104,7 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
     if (url.includes("/api/decide")) {
       if (decideStatus !== 200) return jsonResponse({ error: "Could not save" }, decideStatus);
       queue = [];
-      return jsonResponse({ ok: true, question: { ...asks, status: "resolved", resolution: { disposition: "answered", text: "Use accent.", by: OPERATOR, at: ago(0) } } });
+      return jsonResponse({ ok: true, question: { ...asks, response: { text: "Use accent.", message_id: "answer", at: ago(0) } } });
     }
     return jsonResponse({ error: "not found" }, 404);
   });
@@ -129,6 +129,7 @@ describe("Needs you", () => {
     }));
     const { user, queryClient } = renderApp({ route: "/" });
     await user.click(await screen.findByRole("button", { name: "Accent" }));
+    await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
     await screen.findByText("What should the badge say?");
     await waitFor(() => expect(queryClient.getQueryState(["overview"])?.status).toBe("error"));
     expect(screen.queryByText(asks.question)).toBeNull();
@@ -164,7 +165,7 @@ describe("Needs you", () => {
   });
 
   // §3.8: one card per decision with the project chip, the kind row, the why, and the asker's options.
-  it("lists the cards with a project chip, the kind row, the why, and the recommended option primary", async () => {
+  it("lists the cards with a project chip, the kind row, the why, and unselected options", async () => {
     mockFetch([asks, stopped]);
     renderApp({ route: "/" });
 
@@ -176,7 +177,8 @@ describe("Needs you", () => {
     expect(within(card).getByText("Which badge colour should the count use?")).toHaveClass("decision-question");
     expect(within(card).getByText("Accent matches the boards; amber matches the old build.")).toHaveClass("decision-why");
     expect(within(card).getByText("4 min ago")).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "Accent" })).toHaveClass("btn-primary");
+    expect(within(card).getByRole("button", { name: "Accent" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(card).getByRole("button", { name: "Send answers" })).toBeDisabled();
     expect(within(card).getByRole("button", { name: "Amber" })).toHaveClass("btn-ghost");
     expect(within(card).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
     expect(screen.queryByRole("region", { name: "altitude" })).toBeNull();
@@ -198,12 +200,13 @@ describe("Needs you", () => {
     expect(screen.getAllByRole("link", { name: "Open L2 chat" })).toHaveLength(2);
   });
 
-  it("records the exact recommendation revision and removes the saved item", async () => {
+  it("sends the exact recommendation revision and removes the submitted item", async () => {
     const fetchMock = mockFetch([asks]);
     const { user, router } = renderApp({ route: "/" });
 
     const card = await screen.findByRole("article", { name: "Add the badge" });
     await user.click(within(card).getByRole("button", { name: "Accent" }));
+    await user.click(within(card).getByRole("button", { name: "Send 1 answer" }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/decide"));
@@ -241,8 +244,9 @@ describe("Needs you", () => {
 
     const card = await screen.findByRole("article", { name: "Add the badge" });
     await user.click(within(card).getByRole("button", { name: "Accent" }));
+    await user.click(within(card).getByRole("button", { name: "Send 1 answer" }));
 
-    await within(card).findByText(/Could not record the decision\./);
+    await within(card).findByText(/Could not send answers\./);
     expect(within(card).getByRole("button", { name: "Accent" })).toBeEnabled();
     const decides = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/decide")).length;
     expect(decides()).toBe(1);

@@ -187,7 +187,8 @@ class TestL2Steering(AltitudeCase):
         T.accept_question(self.project, task["slug"], question["id"], question["revision"])
         self.assertNotIn(task["slug"], dispatch.resume_due(self.project))
         self.assertEqual(T.take_inbox(self.project, task["slug"]), [])
-        self.assertEqual(T.question_views(self.project, task["slug"])[0]["status"], "resolved")
+        self.assertEqual(T.question_views(self.project, task["slug"])[0]["status"], "open")
+        self.assertIsNotNone(T.question_views(self.project, task["slug"])[0]["response"])
         self.assertEqual(self.view(task)["steering"]["state"], "stopped")
 
     def test_status_recheck_can_confirm_termination_without_retrying_stop_or_rewriting_task(self):

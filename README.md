@@ -135,9 +135,13 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   makes the task's purpose and actual choice clear with one question or a small group together,
   concise actions, and the material consequences needed to answer. Detailed reasoning and history
   stay accessible in the owning conversation. The model can ask a plain question, offer one
-  recommended quick action, or offer two to three choices with a recommendation. A single quick
-  choice takes one click; grouped selections send together, with nothing preselected. Open the item to
-  discuss the actual question in its owning L2 conversation. When guidance reaches the owner, it
+  recommended quick action, or offer two to three choices with a recommendation. **Other…** opens a
+  small field beside that question; plain questions show it directly. **Send N answers** submits any
+  mix of choices, custom answers and follow-up questions, with nothing preselected. Sent members show
+  **Sent to L2** in the conversation and leave the attention count; remaining members stay answerable.
+  The L2 interprets every response: “21 days” supplies a direction, while “Why seven?” invites discussion.
+  Sending saves the response; its meaning determines what is agreed. Ordinary chat retains voice input;
+  question fields accept text. When guidance reaches the owner, it
   checks each question before lengthy analysis: valid choices stay visible; doubtful ones are withdrawn
   with a reason in chat and re-asked when ready, even with identical wording. Independent questions stay
   answerable. A clear answer settles only its stated scope; requested revisions remain required.

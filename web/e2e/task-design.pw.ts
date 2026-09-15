@@ -64,6 +64,11 @@ test("a saved proposal opens from chat, full size and back; follow-up is not app
     hidden: [card(preview, q).getByText("Decision recorded", { exact: true })],
   });
   await card(preview, q).getByRole("button", { name: "Use this design" }).click();
+  await preview.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(card(preview, q).getByText("Sent to L2", { exact: true })).toBeVisible();
+  expect((await task(request)).question.status).toBe("open");
+  expect((await request.post("/fixture/checkpoint")).ok()).toBe(true);
+  await preview.reload();
   await expect(card(preview, q).getByText("Decision recorded", { exact: true })).toBeVisible();
   expect((await task(request)).hold_merge).toBe(initial.hold_merge);
   await previewWalk.state("05-design-accepted-hold-retained", {

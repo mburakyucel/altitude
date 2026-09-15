@@ -323,16 +323,21 @@ row opens the owning question. A wake or capacity wait alone changes no question
 Answers and withdrawals reduce the question count without removing the task; closing the last removes
 its attention label while the row shows the observed running or waiting state. Only completion
 or rejection moves it to recent **Done this week** history. The global attention badge counts
-open operator questions and operational items, named separately in summaries; project navigation
+operator questions awaiting responses and operational items, named separately in summaries; project navigation
 keeps state dots without another numeric attention badge. Unknown and stale reads stay explicit.
 
-Quick acceptance names the question ID, revision and chosen option. Grouped answers name the group
-ID/revision and each selected question/revision/option; the server validates the whole selection
-before saving one operator message and its resolutions. Only selected questions close, and delivery
-uses the existing inbox/resume path. Retries reuse the saved receipt and return current group state;
-stale revisions cannot approve a replacement. A recorded decision may wait for capacity without
-requiring a second answer. Typed replies are ordinary messages: the same L2 answers or clarifies,
-then uses the cited-message [`resolve` operation](CLI.md#conversational-decisions) for a clear decision.
+Question responses name the question ID/revision and either a chosen option or custom text. Grouped
+answers also name the group ID/revision; the server validates the whole selection before saving one
+operator message and its delivery receipt. **Other…** opens a field in the question; plain questions
+show it directly. **Send N answers** submits presets, custom answers and follow-up questions together.
+Sent members leave the attention count and retain **Sent to L2** receipts; unsubmitted members remain
+answerable. The task keeps each question semantically open until the owner interprets the response.
+Delivery uses the existing inbox/resume path. Retries reuse the saved receipt and current group state;
+stale revisions cannot approve a replacement. Both preset and custom responses are ordinary messages:
+the same L2 answers or clarifies, then uses the cited-message
+[`resolve` operation](CLI.md#conversational-decisions) for a clear decision. Receipt alone grants no
+approval. Explicitly republishing a responded member gives it a fresh revision and input; unchanged
+re-parking preserves its response. Ordinary chat retains voice input; question fields use text.
 A typed group reply retains the viewed member references; the owner can cite that one message to
 resolve several independent questions. A follow-up alone never resolves the dilemma. A partial answer leaves the relevant remainder open;
 a changed direction can make the old question unnecessary and close it with a recorded reason.

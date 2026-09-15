@@ -155,7 +155,8 @@ async function interceptWrites(page: Page, answers: { decide?: () => Promise<unk
     const input = route.request().postDataJSON();
     return (answers.decideStatus ?? 200) === 200
       ? route.fulfill({ json: { question: { project: input.project, slug: input.slug, id: input.question_id, revision: input.revision,
-        status: "resolved", audience: "operator", resolution: { disposition: "answered", text: "Use the chosen approach.", by: "burak", at: minutesAgo(0) } } } })
+        status: "open", audience: "operator", resolution: null,
+        response: { text: "Use the chosen approach.", message_id: "walk-response", at: minutesAgo(0) } } } })
       : route.fulfill({ status: answers.decideStatus, json: { error: "only blocked tasks need a user decision" } });
   });
   await page.route((url) => url.pathname === "/api/chat", async (route) => {
@@ -292,7 +293,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   expect(writes, "Work is a read-only task overview").toBe(0);
 });
 
-test("Needs you: empty, recommendation and chat entry, deciding, decided, failed, error, loading", async ({ page, request }, info) => {
+test("Needs you: empty, recommendation and chat entry, sending, sent, failed, error, loading", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const { tasks } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
@@ -356,13 +357,14 @@ test("Needs you: empty, recommendation and chat entry, deciding, decided, failed
   state.overviewFail = false;
   await saved.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(card.getByRole("button", { name: "Fast-forward it", exact: true })).toBeEnabled();
-  await walk.state("04-deciding-overlay", {
-    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
-    visible: [card.getByRole("button", { name: "Recording…", disabled: true })],
+  await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
+  await walk.state("04-sending-overlay", {
+    action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
+    visible: [card.getByRole("button", { name: "Sending…", disabled: true })],
     hidden: [],
   });
   const oneLeft = v.main.getByText(/^1 stopped task/);
-  await walk.state("05-decided-card-gone-overlay", {
+  await walk.state("05-sent-card-gone-overlay", {
     action: settles(oneLeft),
     visible: [v.card(second.title), oneLeft],
     hidden: [card],
@@ -373,8 +375,9 @@ test("Needs you: empty, recommendation and chat entry, deciding, decided, failed
   await overlay(page, project.name, state);
   await interceptWrites(page, { decideStatus: 503 });
   await walk.open("/");
-  await walk.state("06-decide-failed-overlay", {
-    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
+  await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
+  await walk.state("06-send-failed-overlay", {
+    action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
     visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
     hidden: [card.locator(".spinner")],
   });

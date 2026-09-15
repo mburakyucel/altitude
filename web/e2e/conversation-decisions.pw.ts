@@ -5,7 +5,7 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "conversation-decisions-service.py" });
 test.setTimeout(90_000);
 
-type Question = { id: string; revision: number; anchor_id: string; status: string; question: string; audience: string; options: { key: string; label: string; text: string }[]; recommended_key: string | null; recommendation: { text: string; label: string } | null; resolution: { disposition: string; message_id: string; text: string; by: string; l3_authority?: string; recorded_by?: string; recorded_attempt?: number; option_key?: string } | null };
+type Question = { id: string; revision: number; anchor_id: string; status: string; question: string; audience: string; options: { key: string; label: string; text: string }[]; recommended_key: string | null; recommendation: { text: string; label: string } | null; response: { text: string; at: string; message_id: string; option_key?: string } | null; resolution: { disposition: string; message_id: string; text: string; by: string; l3_authority?: string; recorded_by?: string; recorded_attempt?: number; option_key?: string } | null };
 type Group = { id: string; revision: number; anchor_id: string; questions: Question[] };
 type Task = { state: string; session_id: string; agent_id: string; hold_merge: string | null; question: Question | null; questions: Question[]; question_group: Group; messages: { id: string; text: string; role: string; question_refs?: { id: string; revision: number }[] }[] };
 const taskPath = (slug: string) => `/projects/atlas/tasks/${slug}`;
@@ -40,6 +40,28 @@ async function modelCheckpoint(request: APIRequestContext, slug: string) {
   const response = await request.post("/fixture/checkpoint", { data: { slug } });
   expect(response.ok()).toBe(true);
   return response.json() as Promise<{ message_id: string; answer: string }>;
+}
+async function sent(card: Locator) {
+  await expect(card).toHaveAttribute("data-status", "open");
+  await expect(card.getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+}
+async function submit(page: Page, request: APIRequestContext, slug: string, resolve = true) {
+  const saved = page.waitForResponse((row) => row.url().endsWith("/api/decide"));
+  await page.getByRole("button", { name: /^Send \d+ answers?$/ }).click();
+  expect((await saved).ok()).toBe(true);
+  if (resolve) {
+    const task = await readTask(request, slug);
+    const submitted = task.question_group.questions.filter((q) => q.response && q.status === "open");
+    for (const question of submitted) expect(question.resolution).toBeNull();
+    await modelCheckpoint(request, slug);
+    const interpreted = await readTask(request, slug);
+    for (const question of submitted) {
+      expect(interpreted.questions.find((q) => q.id === question.id && q.revision === question.revision)?.resolution)
+        .toMatchObject({ disposition: "answered", message_id: question.response!.message_id,
+          by: interpreted.messages.find((message) => message.id === question.response!.message_id)!.role });
+    }
+  }
 }
 async function recorded(card: Locator, disposition = "answered") {
   await expect(card).toHaveAttribute("data-status", "resolved");
@@ -111,6 +133,7 @@ test("early owner withdrawal preserves independent answers and work, then reasks
     hidden: [list.getByRole("button", { name: "Merge rollout", exact: true }), list.getByText(review.question, { exact: true })],
   });
   await list.getByRole("button", { name: "14 days", exact: true }).click();
+  await submit(page, request, slug);
   await expect(list).toBeHidden();
   const chosen = await readTask(request, slug);
   expect(chosen.questions.find((q) => q.id === retention.id && q.revision === retention.revision)?.resolution).toMatchObject({ disposition: "answered", text: "Keep the old index for fourteen days." });
@@ -287,7 +310,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();
   await list.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  // Answering records the choice, while explicit Stop still holds session delivery.
+  // Submission preserves the response, while explicit Stop holds its delivery and resolution.
   await expect.poll(async () => (await readTask(request, slug)).steering.state).toBe("stopped");
   await expect(list.getByText(retention.question, { exact: true })).toBeHidden();
   await walk.state("04-inbox-partial-answer", {
@@ -301,12 +324,14 @@ test("Work rows retain running questions and partial answers, then keep the task
   await row.click();
   await page.getByRole("button", { name: "Continue session", exact: true }).click();
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await modelCheckpoint(request, slug);
   await back.click();
   await walk.state("05b-explicit-continuation-keeps-question-row", {
     visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Running/), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await submit(page, request, slug);
   await expect(list.getByText(region.question, { exact: true })).toBeHidden();
   await walk.open(workPath);
   await walk.state("06-same-row-last-question", {
@@ -501,7 +526,7 @@ test("partial answers retain only the relevant remainder; a changed direction cl
   await recorded(oldCard);
   const currentCard = questionCard(page, remaining);
   await currentCard.scrollIntoViewIfNeeded();
-  await walk.state("02-only-unanswered-remainder-open", { visible: [currentCard, currentCard.getByText(remaining.question, { exact: true })], hidden: [currentCard.getByRole("button")] });
+  await walk.state("02-only-unanswered-remainder-open", { visible: [currentCard, currentCard.getByText(remaining.question, { exact: true })], hidden: [currentCard.getByRole("button", { name: "Other…", exact: true })] });
   await send(page, "Use the west region.");
   expect((await readTask(request, slug)).messages.find((row) => row.text === "Use the west region.")?.question_refs)
     .toEqual([{ id: remaining.id, revision: remaining.revision }]);
@@ -527,37 +552,40 @@ test("partial answers retain only the relevant remainder; a changed direction cl
   });
 });
 
-test("quick acceptance survives a lost response without duplicate messages, and stale navigation shows the receipt", async ({ page, request }, info) => {
+test("a submitted answer survives a lost response without duplicate messages, and stale navigation shows the receipt", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
   const question = initial.question!;
-  const payload = { project: "atlas", slug, question_id: question.id, revision: question.revision };
+  let payload: unknown;
   await walk.open("/");
   const card = page.getByRole("article", { name: "Index rollout", exact: true });
   // The real write completes; only its first HTTP response is lost at the browser boundary.
   await page.route("**/api/decide", async (route) => {
+    payload = route.request().postDataJSON();
     const response = await route.fetch();
     expect(response.ok()).toBe(true);
     await route.abort("failed");
   }, { times: 1 });
   await card.getByRole("button", { name: question.recommendation!.label, exact: true }).click();
-  await expect.poll(async () => (await readTask(request, slug)).questions.find((row) => row.id === question.id && row.revision === question.revision)?.status).toBe("resolved");
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect.poll(async () => (await readTask(request, slug)).questions.find((row) => row.id === question.id && row.revision === question.revision)?.response?.text).toBe(question.recommendation!.text);
   const retry = await request.post("/api/decide", { data: payload });
   expect(retry.ok()).toBe(true);
   const after = await readTask(request, slug);
-  const receipt = after.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution!;
+  expect(after.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution).toBeNull();
+  const receipt = after.questions.find((row) => row.id === question.id && row.revision === question.revision)!.response!;
   expect(after.messages.filter((row) => row.id === receipt.message_id)).toHaveLength(1);
   expect(after.messages.find((row) => row.id === receipt.message_id)?.text).toContain(question.recommendation!.text);
   await page.reload();
   await walk.state("01-acceptance-clears-list-on-refresh", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });
   await walk.open(atQuestion(slug, question));
   const historical = questionCard(page, question);
-  await recorded(historical);
+  await sent(historical);
   await walk.state("02-stale-link-keeps-receipt-no-old-action", { visible: [historical], hidden: [historical.getByRole("button")] });
   await walk.open(`/projects/atlas/decisions/${slug}`);
   await expect(page).toHaveURL(new RegExp(`/projects/atlas/tasks/${slug}(\\?|$)`));
-  await recorded(historical);
+  await sent(historical);
   await walk.state("03-legacy-link-opens-owning-chat", { visible: [historical, page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [page.getByRole("combobox", { name: "Recipient", exact: true })] });
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await readTask(request, slug)).session_id).toBe(initial.session_id);
@@ -585,11 +613,12 @@ test("a revised recommendation refuses the stale action and anchors the current 
   await expect(currentCard).toBeInViewport();
   await walk.state("02-current-recommendation-only", { visible: [currentCard.getByRole("button", { name: "Use 14 days & resume", exact: true })], hidden: [oldCard.getByRole("button")] });
   await currentCard.getByRole("button", { name: "Use 14 days & resume", exact: true }).click();
+  await submit(page, request, slug);
   await recorded(currentCard);
   await walk.state("03-current-acceptance-recorded", { visible: [currentCard], hidden: [currentCard.getByRole("button")] });
 });
 
-test("a requeued dilemma accepts discussion and a durable decision while its next worker waits to start", async ({ page, request }, info) => {
+test("a requeued dilemma accepts discussion and a durable response while its next worker waits to start", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
@@ -633,11 +662,12 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
     hidden: [card.getByText("Decision recorded", { exact: true })],
   });
   await accept.click();
-  await recorded(card);
+  await submit(page, request, slug, false);
+  await sent(card);
   const decided = await readTask(request, slug);
   expect(decided.state).toBe("queued");
-  const receipt = decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution!;
-  expect(receipt.disposition).toBe("answered");
+  const receipt = decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.response!;
+  expect(decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution).toBeNull();
   expect(decided.messages.filter((row) => row.id === receipt.message_id)).toHaveLength(1);
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
   await expect(field).toBeEnabled();
@@ -656,7 +686,7 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
   expect(engine.pending[slug].filter((row: { id: string }) => row.id === receipt.message_id)).toHaveLength(1);
   expect(engine.pending[slug].filter((row: { text: string }) => row.text === followOn)).toHaveLength(1);
   await page.reload();
-  await recorded(card);
+  await sent(card);
   await walk.state("04-queued-receipt-and-composer-survive-reload", { visible: [card, field], hidden: [accept] });
   await walk.open("/projects/atlas?tab=work");
   const work = page.getByRole("region", { name: "Work", exact: true });
@@ -666,32 +696,33 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
   });
 });
 
-test("one question offers immediate explicit alternatives without a separate confirmation", async ({ page, request }, info) => {
+test("one question stages an explicit alternative before sending it to its owner", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
   const question = initial.question!;
   await walk.open(atQuestion(slug, question));
   const card = questionCard(page, question);
-  await expect(card.getByRole("button")).toHaveCount(3);
-  await expect(card.getByRole("button", { name: "14 days", exact: true })).not.toHaveAttribute("aria-pressed");
+  await expect(card.getByRole("button")).toHaveCount(4);
+  await expect(card.getByRole("button", { name: "14 days", exact: true })).toHaveAttribute("aria-pressed", "false");
   await walk.state("review-02-single", {
     visible: [card.getByRole("button", { name: "7 days", exact: true }), card.getByRole("button", { name: "14 days", exact: true }), card.getByRole("button", { name: "30 days", exact: true })],
-    hidden: [page.getByRole("button", { name: /^Send \d+ answers?$/ }), page.getByRole("button", { name: "Use recommendations", exact: true })],
+    hidden: [page.getByRole("button", { name: /^Send \d+ answers?$/ })],
   });
   const submitted = page.waitForRequest((row) => row.url().endsWith("/api/decide"));
   await card.getByRole("button", { name: "14 days", exact: true }).click();
-  expect((await submitted).postDataJSON()).toMatchObject({ question_id: question.id, revision: question.revision, option_key: "fourteen" });
+  await submit(page, request, slug);
+  expect((await submitted).postDataJSON()).toMatchObject({ answers: [{ question_id: question.id, revision: question.revision, option_key: "fourteen" }] });
   await recorded(card);
   const after = await readTask(request, slug);
   const resolution = after.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution!;
-  expect(resolution).toMatchObject({ option_key: "fourteen", text: "Keep the old index for fourteen days." });
+  expect(resolution).toMatchObject({ text: "Keep the old index for fourteen days." });
   expect(after.messages.filter((row) => row.id === resolution.message_id)).toHaveLength(1);
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await readTask(request, slug)).session_id).toBe(initial.session_id);
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
-  await walk.state("alternative-recorded-immediately", { visible: [card.getByText(resolution.text, { exact: true })], hidden: [card.getByRole("button")] });
+  await walk.state("alternative-interpreted-by-owner", { visible: [card.getByText(resolution.text, { exact: true })], hidden: [card.getByRole("button")] });
 });
 
 test("grouped choices start unselected, submit only picked answers, and recommendations preserve an earlier alternative", async ({ page, request }, info) => {
@@ -727,23 +758,24 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   });
   // Deselecting the region leaves an explicit one-answer batch, never a default for the other questions.
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
-  await card.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await submit(page, request, slug);
   await recorded(questionCard(page, retention));
   expect(submissions).toEqual([{ project: "atlas", slug, group_id: group.id, group_revision: group.revision,
     answers: [{ question_id: retention.id, revision: retention.revision, option_key: "fourteen" }] }]);
   let after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
-  expect(after.question_group.questions[0]!.resolution?.option_key).toBe("fourteen");
+  expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
   await card.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await submit(page, request, slug);
   await recorded(questionCard(page, region));
   after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([owner.id]);
-  expect(after.question_group.questions[0]!.resolution?.option_key).toBe("fourteen");
-  expect(after.question_group.questions[1]!.resolution?.option_key).toBe("west");
+  expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
+  expect(after.question_group.questions[1]!.response?.text).toBe("Use the west region for backups.");
   await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toHaveCount(0);
   await questionCard(page, owner).evaluate((node) => node.scrollIntoView({ block: "center" }));
   await expect(card.getByText(owner.question, { exact: true })).toBeInViewport();
-  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [card.getByRole("button")] });
+  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })] });
   await page.goBack();
   await expect(list.getByText(owner.question, { exact: true })).toBeVisible();
   await expect(list.getByText(retention.question, { exact: true })).toHaveCount(0);
@@ -818,10 +850,10 @@ test("one typed sentence can resolve all three questions without selecting quick
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
   await page.reload();
   const card = groupCard(page, group);
-  await walk.state("typed-answer-all-recorded", { visible: [card.getByText("Answers recorded", { exact: true })], hidden: [card.getByRole("button")] });
+  await walk.state("typed-answer-all-recorded", { visible: [card.getByText("Questions closed", { exact: true })], hidden: [card.getByRole("button")] });
 });
 
-test("a stale group rejects the whole batch, refresh clears picks, and retry records one shared receipt", async ({ page, request }, info) => {
+test("a stale group rejects the whole batch, refresh retains unaffected picks, and retry stores one shared response", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const { slug, initial } = await createGroup(request);
   const group = initial.question_group;
@@ -842,22 +874,23 @@ test("a stale group rejects the whole batch, refresh clears picks, and retry rec
   await walk.state("stale-batch-accepts-no-members", { visible: [card.getByRole("alert"), card.getByRole("button", { name: "Refresh", exact: true })], hidden: [card.getByText("Decision recorded", { exact: true })] });
   await card.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(card.getByRole("alert")).toHaveCount(0);
-  await expect(card.locator('[aria-pressed="true"]')).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toBeEnabled();
+  await expect(card.locator('[aria-pressed="true"]')).toHaveCount(1);
+  await expect(questionCard(page, retention).getByRole("button", { name: "14 days", exact: true })).toHaveAttribute("aria-pressed", "true");
   const submitted = page.waitForRequest((row) => row.url().endsWith("/api/decide"));
-  await card.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await card.getByRole("button", { name: "East", exact: true }).click();
+  await submit(page, request, slug, false);
   const payload = (await submitted).postDataJSON();
-  await expect(card.getByText("Decision recorded", { exact: true })).toHaveCount(2);
+  await expect(card.getByText("Sent to L2", { exact: true })).toHaveCount(2);
   expect((await request.post("/api/decide", { data: payload })).ok()).toBe(true);
   const after = await readTask(request, slug);
-  const receipts = after.question_group.questions.filter((q) => q.status === "resolved").map((q) => q.resolution!);
-  expect(receipts.map((row) => row.option_key)).toEqual(["seven", "east"]);
+  const receipts = after.question_group.questions.filter((q) => q.response).map((q) => q.response!);
+  expect(receipts.map((row) => row.text)).toEqual(["Keep the old index for fourteen days.", "Use the east region for backups."]);
   expect(receipts[0]!.message_id).toBe(receipts[1]!.message_id);
   expect(after.messages.filter((m) => m.id === receipts[0]!.message_id)).toHaveLength(1);
-  expect(after.question_group.questions.filter((q) => q.status === "open")).toHaveLength(1);
+  expect(after.question_group.questions.filter((q) => q.status === "open" && !q.response)).toHaveLength(1);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
-  await walk.state("refreshed-recommendations-recorded-once", { visible: [card.getByText("1 question to answer", { exact: true })], hidden: [card.getByRole("button")] });
+  await walk.state("refreshed-recommendations-recorded-once", { visible: [card.getByText("1 question to answer", { exact: true })], hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })] });
 });
 
 test("question loading, read failure, write failure and denied access retain recoverable conversation state", async ({ page, request }, info) => {
@@ -886,18 +919,19 @@ test("question loading, read failure, write failure and denied access retain rec
   expect((await readTask(request, slug)).messages.some((row) => row.text === "Keep the draft after this failed send.")).toBe(false);
   await page.route("**/api/decide", (route) => route.fulfill({ status: 403, json: { error: "Write access denied." } }), { times: 1 });
   await card.getByRole("button", { name: q.recommendation!.label, exact: true }).click();
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
   await expect(card.getByRole("button", { name: q.recommendation!.label, exact: true })).toBeDisabled();
   await expect(field).toBeDisabled();
   await expect(field).toHaveValue("Keep the draft after this failed send.");
   await walk.state("03-denied-send-and-acceptance", {
-    visible: [page.getByText("You cannot send or record a decision here.", { exact: false }), card],
+    visible: [page.getByText("You cannot send messages or answers here.", { exact: false }), card],
     hidden: [card.getByText("Decision recorded", { exact: true })],
   });
   expect((await readTask(request, slug)).question?.status).toBe("open");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(field).toBeEnabled();
   await expect(card.getByRole("button", { name: q.recommendation!.label, exact: true })).toBeEnabled();
-  await walk.state("04-refresh-restores-writing", { visible: [field], hidden: [page.getByText("You cannot send or record a decision here.", { exact: false })] });
+  await walk.state("04-refresh-restores-writing", { visible: [field], hidden: [page.getByText("You cannot send messages or answers here.", { exact: false })] });
   await page.route(endpoint, (route) => route.fulfill({ status: 503, json: { error: "Question read unavailable." } }));
   await page.reload();
   const error = page.getByText(/Could not load the task/);

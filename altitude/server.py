@@ -1508,13 +1508,16 @@ class Handler(BaseHTTPRequestHandler):
                     if "answers" in o or "group_id" in o or "group_revision" in o:
                         result = T.accept_questions(project, slug, o.get("group_id"), o.get("group_revision"), o.get("answers"))
                     else:
-                        result = T.accept_question_result(project, slug, o.get("question_id"), o.get("revision"), o.get("option_key"))
+                        if "text" in o and "option_key" in o:
+                            raise T.TransitionError("send a quick option or custom text, not both")
+                        result = T.accept_question_result(project, slug, o.get("question_id"), o.get("revision"),
+                                                          o.get("option_key"), **({"text": o["text"]} if "text" in o else {}))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 if S.load_task(project, slug).get("state") == "blocked":
                     request_task_resume(project, slug)
                 return self._json({"ok": True, "queued": True, **result,
-                                   "decision": result["question"]["resolution"],
+                                   "response": result["question"]["response"],
                                    "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]

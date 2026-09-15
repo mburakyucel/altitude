@@ -75,10 +75,10 @@ class ConversationDecisions(AltitudeCase):
         with mock.patch.object(S.os, "replace", side_effect=fail_inbox), self.assertRaises(OSError):
             T.accept_question(self.project, self.slug, question["id"], 1)
         self.assertEqual(path.read_bytes(), prefix)
-        receipt = self.current()["resolution"]
+        receipt = self.current()["response"]
         for _ in range(2):
             T.accept_question(self.project, self.slug, question["id"], 1)
-        self.assertEqual(self.current()["resolution"], receipt)
+        self.assertEqual(self.current()["response"], receipt)
         self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)],
                          [guidance["id"], receipt["message_id"]])
         self.assertTrue(path.read_bytes().startswith(prefix))
@@ -159,6 +159,7 @@ class ConversationDecisions(AltitudeCase):
             with self.assertRaises(T.TransitionError):
                 T.resolve_question(*args, **{**kwargs, "disposition": disposition, "source": "project"})
         accepted = T.accept_question(self.project, self.slug, question["id"], 1)
+        accepted = self.resolve({"id": accepted["response"]["message_id"]})
         correction = T.message(self.project, self.slug, "burak", "Finish the extra checks before merging.")
         with self.assertRaises(T.TransitionError):
             T.resolve_question(*args, **kwargs)
@@ -335,7 +336,7 @@ class ConversationDecisions(AltitudeCase):
         receipt = T.accept_question(self.project, self.slug, question["id"], 1)
         [message] = T.pending(self.project, self.slug)
         self.assertEqual(T.task_messages(self.project, self.slug)[-1], message)
-        self.assertEqual(receipt["resolution"]["message_id"], message["id"])
+        self.assertEqual(receipt["response"]["message_id"], message["id"])
         claim = T.claim_resume(self.project, self.slug)
         self.assertEqual(claim["messages"], [message])
         self.assertEqual(T.pending(self.project, self.slug), [])
@@ -357,7 +358,7 @@ class ConversationDecisions(AltitudeCase):
             with self.assertRaises(OSError):
                 T.release_resume_claim(self.project, self.slug, claim["id"], consume_request=False)
         self.assertEqual(S.load_task(self.project, self.slug)["resume_claim"]["messages"], [message])
-        self.assertEqual(T.accept_question(self.project, self.slug, question["id"], 1)["resolution"], receipt["resolution"])
+        self.assertEqual(T.accept_question(self.project, self.slug, question["id"], 1)["response"], receipt["response"])
         self.assertEqual(T.pending(self.project, self.slug), [], "the durable claim owns delivery until release succeeds")
         T.release_resume_claim(self.project, self.slug, claim["id"], consume_request=False)
         T.accept_question(self.project, self.slug, question["id"], 1)
@@ -370,7 +371,7 @@ class ConversationDecisions(AltitudeCase):
         with mock.patch.object(T, "_append_jsonl", side_effect=OSError("delivery write failed")):
             with self.assertRaises(OSError):
                 T.accept_question(self.project, self.slug, question["id"], 1)
-        receipt = self.current()["resolution"]
+        receipt = self.current()["response"]
         # The owner consumes the recovered acceptance before handing its report to review.
         self.assertEqual(len(T.take_inbox(self.project, self.slug)), 1)
         T.report(self.project, self.slug, {"verdict": "ok"})
@@ -379,7 +380,7 @@ class ConversationDecisions(AltitudeCase):
                 if lifecycle == "done":
                     T.done(self.project, self.slug)
                 result = T.accept_question_result(self.project, self.slug, question["id"], 1)
-                self.assertEqual(result["question"]["resolution"], receipt)
+                self.assertEqual(result["question"]["response"], receipt)
                 self.assertEqual(result["question_group"]["questions"][0]["state"], lifecycle)
                 self.assertFalse((S.task_dir(self.project, self.slug) / "inbox.jsonl").exists())
                 self.assertEqual(T.pending(self.project, self.slug), [])
@@ -406,11 +407,11 @@ class ConversationDecisions(AltitudeCase):
         with mock.patch.object(T, "_append_jsonl", side_effect=OSError("delivery write failed")):
             with self.assertRaises(OSError):
                 T.accept_question(self.project, self.slug, question["id"], 1)
-        receipt = self.current()["resolution"]
+        receipt = self.current()["response"]
         with mock.patch.object(engines, "remove_l2_worker", return_value="stopped fixture"):
             T.reject(self.project, self.slug, "The rollout was canceled.")
         result = T.accept_question_result(self.project, self.slug, question["id"], 1)
-        self.assertEqual(result["question"]["resolution"], receipt)
+        self.assertEqual(result["question"]["response"], receipt)
         self.assertEqual(result["question_group"]["questions"][0]["state"], "rejected")
         self.assertFalse((S.task_dir(self.project, self.slug) / "inbox.jsonl").exists())
         self.assertEqual(T.pending(self.project, self.slug), [])
@@ -436,7 +437,7 @@ class ConversationDecisions(AltitudeCase):
         with mock.patch.object(dispatch, "wip_hold", return_value="capacity unavailable"):
             T.accept_question(self.project, self.slug, question["id"], question["revision"])
             self.assertEqual(dispatch.resume_due(self.project), [])
-        self.assertEqual(self.current()["status"], "resolved")
+        self.assertEqual(self.current()["status"], "open")
         self.assertEqual(T.decisions(self.project), [])
         self.assertTrue(S.load_task(self.project, self.slug)["resume_after"])
 

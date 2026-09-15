@@ -113,10 +113,11 @@ class TestDecisions(AltitudeCase):
         task = self.blocked("Landscape rule", DILEMMA)
         question = task["questions"][-1]
         record = T.accept_question(self.project, task["slug"], question["id"], 1)
-        self.assertEqual(record["resolution"]["text"], question["recommendation"]["text"])
+        self.assertEqual(record["response"]["text"], question["recommendation"]["text"])
+        self.assertIsNone(record["resolution"])
         self.assertEqual(T.decisions(self.project), [])
         [answer] = T.pending(self.project, task["slug"])
-        self.assertEqual((answer["role"], answer["id"]), ("burak", record["resolution"]["message_id"]))
+        self.assertEqual((answer["role"], answer["id"]), ("burak", record["response"]["message_id"]))
         self.assertEqual(T.accept_question(self.project, task["slug"], question["id"], 1), record)
         self.assertEqual(T.take_inbox(self.project, task["slug"]), [answer])
         T.accept_question(self.project, task["slug"], question["id"], 1)
@@ -223,10 +224,12 @@ class TestDecisionApi(AltitudeCase):
                 "project": self.project, "slug": task["slug"], "question_id": question["id"], "revision": 1})
         self.assertEqual(status, 200, payload)
         body = json.loads(payload)
-        self.assertEqual((body["queued"], body["decision"]["disposition"]), (True, "answered"))
+        self.assertTrue(body["queued"])
+        self.assertEqual(body["response"]["text"], question["recommendation"]["text"])
+        self.assertIsNone(body["question"]["resolution"])
         op.assert_called_once_with(self.project, task["slug"])
-        self.assertEqual(T.pending(self.project, task["slug"])[0]["id"], body["decision"]["message_id"])
-        self.assertEqual(S.load_task(self.project, task["slug"])["questions"][-1]["status"], "resolved")
+        self.assertEqual(T.pending(self.project, task["slug"])[0]["id"], body["response"]["message_id"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["questions"][-1]["status"], "open")
 
     def test_legacy_unfenced_options_and_absent_recommendations_are_refused(self):
         task = self.blocked("Which colour?")
@@ -241,6 +244,34 @@ class TestDecisionApi(AltitudeCase):
         self.assertEqual(status, 409)
         self.assertIn("no explicit recommendation", json.loads(payload)["error"])
         op.assert_not_called()
+
+    def test_custom_plain_answer_api_preserves_context_and_retries_without_resolution(self):
+        task = self.blocked("Which team owns the rollout?")
+        question = task["questions"][-1]
+        body = {"project": self.project, "slug": task["slug"], "question_id": question["id"],
+                "revision": 1, "text": "Search team"}
+        with mock.patch.object(server, "request_task_resume") as wake:
+            for malformed in ({**body, "text": "  "}, {**body, "text": None}, {**body, "option_key": None}):
+                status, _ = self.request("POST", "/api/decide", malformed)
+                self.assertEqual(status, 409)
+            self.assertEqual(T.pending(self.project, task["slug"]), [])
+            wake.assert_not_called()
+            status, raw = self.request("POST", "/api/decide", body)
+            self.assertEqual(status, 200, raw)
+            sent = json.loads(raw)
+            status, raw = self.request("POST", "/api/decide", body)
+            self.assertEqual(status, 200, raw)
+            self.assertEqual(json.loads(raw)["response"], sent["response"])
+        self.assertEqual(sent["response"]["text"], "Search team")
+        self.assertEqual(sent["question"]["status"], "open")
+        self.assertIsNone(sent["question"]["resolution"])
+        [message] = T.pending(self.project, task["slug"])
+        self.assertEqual(message["question_refs"], [{"id": question["id"], "revision": 1}])
+        self.assertEqual(message["text"], "Which team owns the rollout?\nSearch team")
+        self.assertEqual(T.decisions(self.project), [])
+        T.resolve_question(self.project, task["slug"], question["id"], 1, message["id"],
+                           disposition="answered", reason="The search team owns rollout", expected_attempt=1)
+        self.assertEqual(S.load_task(self.project, task["slug"])["questions"][-1]["status"], "resolved")
 
     def test_a_follow_up_carries_the_decision_slug_on_its_rows_and_the_active_turn(self):
         task = self.blocked(DILEMMA)

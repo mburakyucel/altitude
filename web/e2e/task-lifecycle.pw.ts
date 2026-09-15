@@ -20,10 +20,13 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   let uploaded!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const upload = new Promise<void>((resolve) => { uploaded = resolve; });
+  let transcriptions = 0;
+  // Keep interception active while completing transcription starts the message POST.
   await page.route("**/api/transcribe", async (route) => {
+    transcriptions++;
     uploaded(); await gate;
     await route.fulfill({ json: { text: "Include the failure reason." } });
-  }, { times: 1 });
+  });
   const posts: { url: string; project: string; slug?: string; text: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url()).pathname;
@@ -51,6 +54,7 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
   await walk.state("02-l2-message-delivered-once", { visible: [conversation.getByText(finalText, { exact: true }), field], hidden: [page.getByText("Transcribing…", { exact: true })] });
   await expect(field).toHaveValue("");
+  expect(transcriptions).toBe(1);
   expect(posts).toHaveLength(1);
   expect(posts[0]).toMatchObject({ url: "/api/l2/message", project: "atlas", slug, text: finalText });
   const workers = await (await request.get("/fixture/workers")).json();
@@ -287,7 +291,7 @@ for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost 
   expect(routes).toHaveLength(2);
 });
 
-test("quick acceptance persists the recommendation, resumes the same L2 and clears Needs you", async ({ page, request }, info) => {
+test("sending a quick answer persists its context, resumes the same L2 and clears Needs you", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "choose-validation-scope";
   const task = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json());
@@ -300,18 +304,21 @@ test("quick acceptance persists the recommendation, resumes the same L2 and clea
   const choice = inline.getByRole("button", { name: "Keep the bounded scope", exact: true });
   await walk.state("02-recorded-question", { visible: [choice, page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [page.getByPlaceholder("Add a note for the L2 (optional)")] });
   await choice.click();
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
   await expect.poll(async () => (await task()).state).toBe("running");
   const resumed = await task();
   expect(resumed.state).toBe("running");
-  const resolved = resumed.questions.find((row: { id: string; revision: number }) => row.id === question.id && row.revision === question.revision);
-  expect(resolved.resolution).toMatchObject({ disposition: "answered", text: "Keep the bounded scope." });
+  const submitted = resumed.questions.find((row: { id: string; revision: number }) => row.id === question.id && row.revision === question.revision);
+  expect(submitted.status).toBe("open");
+  expect(submitted.resolution).toBeNull();
+  expect(submitted.response).toMatchObject({ text: "Keep the bounded scope." });
   expect(resumed.session_id).toBe(`fixture-${slug}`);
-  expect(resumed.messages.filter((row: { id: string }) => row.id === resolved.resolution.message_id)).toHaveLength(1);
+  expect(resumed.messages.filter((row: { id: string }) => row.id === submitted.response.message_id)).toHaveLength(1);
   const workers = await (await request.get("/fixture/workers")).json();
   expect(workers.calls).toHaveLength(1);
-  expect(workers.calls[0].prompt).toContain("Use this approach and continue: Keep the bounded scope.");
+  expect(workers.calls[0].prompt).toContain("Keep the bounded scope.");
   await page.reload();
-  await walk.state("03-decision-durable", { visible: [inline.getByText("Decision recorded", { exact: true })], hidden: [choice] });
+  await walk.state("03-answer-durable-awaiting-interpretation", { visible: [inline.getByText("Sent to L2", { exact: true })], hidden: [choice, inline.getByText("Decision recorded", { exact: true })] });
   await walk.open("/");
   await walk.state("04-needs-you-cleared", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });
   const overview = await (await request.get("/api/overview")).json();

@@ -58,6 +58,13 @@ def main():
 
     class Handler(server.Handler):
         def do_POST(self):
+            if self.path == "/fixture/checkpoint":
+                question = S.load_task("atlas", slug)["questions"][-1]
+                response = question["response"]
+                assert response["text"] == "Use the captured conversation layout."
+                T.resolve_question("atlas", slug, question["id"], question["revision"], response["message_id"],
+                                   disposition="answered", reason=response["text"], expected_attempt=1)
+                return self._json({"ok": True})
             if self.path == "/fixture/implementation-review":
                 question = S.load_task("atlas", slug)["questions"][-1]
                 answer = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Use the proposed layout.")

@@ -1358,7 +1358,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     else:
         options = [{"key": "recommended", "text": recommended["text"], "label": recommended["label"]}] if recommended else []
         recommended_key = "recommended" if recommended else None
-    if (previous and previous["status"] == "open" and previous["detail"] == text
+    if (previous and previous["status"] == "open" and not force_revision and previous["detail"] == text
             and previous["audience"] == audience and previous["recommendation"] == recommended
             and previous["asked_by"] == actor and question_choices(previous) == options
             and _recommended_key(previous) == recommended_key and previous.get("design") == design):
@@ -1428,6 +1428,7 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         why = ((previous.get("recommendation") or {}).get("why", "")
                if keep_options and not item["why_supplied"] else item["why"])
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
+                          force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
                           design=design if design is not None else _UNSET)
     group["reason"] = reason
@@ -1530,6 +1531,10 @@ def question_context(question: dict) -> str:
             + (f"Recommended approach: {recommendation['text']}\n" if recommendation else "")
             + ("Quick choices: " + "; ".join(f"{o['key']}: {o['text']}" for o in question_choices(question)) + "\n"
                if question_choices(question) else "")
+            + (f"Response received in task message {question['response']['message_id']}: {question['response']['text']}\n"
+               "Interpret the response conversationally: it may settle the choice or ask a follow-up. "
+               "Receipt alone does not resolve the question. To ask it again, publish its id with --questions-file; "
+               "that creates a fresh revision and restores its answer field.\n" if question.get("response") else "")
             + "Discussing this question or waking the worker does not authorize the disputed implementation. "
             "On receiving guidance, assess this question before lengthy analysis. Keep it visible if still valid; "
             "if doubtful, withdraw it now: alt task resolve \"$ALTITUDE_TASK\" "
@@ -1569,6 +1574,7 @@ def question_view(project: str, task: dict, question: dict) -> dict:
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
             **({"design_url": design_url(project, task["slug"], question)} if question.get("design") else {}),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
+            "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
             "project": project, "slug": task["slug"], "title": task.get("title"),
             "state": task["state"], "resume_after": task.get("resume_after"),
@@ -1605,7 +1611,7 @@ def question_views(project: str, slug: str) -> list[dict]:
 
 def _question_target(task: dict, identity: str, revision: int) -> dict:
     if not identity or isinstance(revision, bool) or not isinstance(revision, int):
-        raise TransitionError("acceptance must name the question and its integer revision")
+        raise TransitionError("response must name the question and its integer revision")
     question = next((q for q in task.get("questions", [])
                      if q["id"] == identity and q["revision"] == revision), None)
     if not question:
@@ -1711,20 +1717,25 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
         return question_view(project, task, question)
 
 
-def accept_question(project: str, slug: str, identity: str, revision: int, option_key: str | None = None) -> dict:
-    """Accept one explicit choice; omission selects only an explicitly recommended choice."""
-    return accept_question_result(project, slug, identity, revision, option_key)["question"]
+def accept_question(project: str, slug: str, identity: str, revision: int, option_key: str | None = None,
+                    *, text: object = _UNSET) -> dict:
+    """Send one response; omission selects only an explicitly recommended choice."""
+    return accept_question_result(project, slug, identity, revision, option_key, text=text)["question"]
 
 
-def accept_question_result(project: str, slug: str, identity: str, revision: int, option_key: str | None = None) -> dict:
-    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, "option_key": option_key}])
+def accept_question_result(project: str, slug: str, identity: str, revision: int, option_key: str | None = None,
+                           *, text: object = _UNSET) -> dict:
+    if text is not _UNSET and option_key is not None:
+        raise TransitionError("send a quick option or custom text, not both")
+    answer = {"option_key": option_key} if text is _UNSET else {"text": text}
+    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, **answer}])
 
 
 def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict]) -> dict:
     """Atomically record a selected subset of a group with one normal message and wake request."""
     if (not isinstance(group_id, str) or not group_id or isinstance(group_revision, bool)
             or not isinstance(group_revision, int)):
-        raise TransitionError("batch acceptance must name the question group and its integer revision")
+        raise TransitionError("batch response must name the question group and its integer revision")
     return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision)
 
 
@@ -1739,9 +1750,10 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
                       group_id: str | None = None, group_revision: int | None = None) -> dict:
     if not isinstance(answers, list) or not 1 <= len(answers) <= 3:
         raise TransitionError("submit one to three explicit answers")
-    if any(not isinstance(answer, dict) or set(answer) != {"question_id", "revision", "option_key"}
+    if any(not isinstance(answer, dict) or set(answer) not in (
+            {"question_id", "revision", "option_key"}, {"question_id", "revision", "text"})
            for answer in answers):
-        raise TransitionError("answers require question_id, revision and option_key")
+        raise TransitionError("answers require question_id, revision and either option_key or text")
     batch = group_id is not None or group_revision is not None
     with S.project_lock(project):
         task = S.load_task(project, slug)
@@ -1752,43 +1764,39 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             if question["id"] in seen:
                 raise TransitionError("submit each question only once")
             seen.add(question["id"])
-            key = answer["option_key"]
-            if key is None and not batch:
-                key = _recommended_key(question)
-            option = next((o for o in question_choices(question) if o["key"] == key), None)
-            if not option:
-                raise TransitionError("this question has no explicit recommendation or matching quick option; answer in the conversation")
+            if "text" in answer:
+                if not isinstance(answer["text"], str) or not answer["text"].strip():
+                    raise TransitionError("custom response needs nonempty text")
+                option = {"text": answer["text"].strip()}
+            else:
+                key = answer["option_key"]
+                if key is None and not batch:
+                    key = _recommended_key(question)
+                option = next((o for o in question_choices(question) if o["key"] == key), None)
+                if not option:
+                    raise TransitionError("this question has no explicit recommendation or matching quick option")
             chosen.append((question, option))
         group = _group_for(task, chosen[0][0])
         if any(_group_for(task, q)["id"] != group["id"] for q, _ in chosen):
             raise TransitionError("all answers must belong to the same question group")
         canonical = {"group_id": group_id, "group_revision": group_revision,
-                     "answers": sorted([{"question_id": q["id"], "revision": q["revision"], "option_key": o["key"]}
+                     "answers": sorted([{"question_id": q["id"], "revision": q["revision"],
+                                          **({"option_key": o["key"]} if "key" in o else {"text": o["text"]})}
                                         for q, o in chosen], key=lambda answer: answer["question_id"])}
         saved = next((s for s in group.get("submissions", []) if s["request"] == canonical), None)
         if saved:
             _queue_acceptance(project, task, chosen[0][0])
             return _submission_response(project, task, saved)
-        # Compatibility with pre-group single recommendation receipts.
-        if (not batch and len(chosen) == 1 and chosen[0][0].get("acceptance_message")
-                and "question_refs" not in chosen[0][0]["acceptance_message"]
-                and chosen[0][1]["key"] == _recommended_key(chosen[0][0])):
-            _queue_acceptance(project, task, chosen[0][0])
-            return {"question": question_view(project, task, chosen[0][0]),
-                    "question_group": question_group_view(project, task)}
         if batch:
             checked = _group_target(task, group_id, group_revision)
             if checked["id"] != group["id"]:
                 raise TransitionError("answers do not belong to this question group")
         _require_daemon_fence(task, slug)
-        if (any(q["status"] != "open" or q["audience"] != "operator" for q, _ in chosen)
+        if (any(q["status"] != "open" or q["audience"] != "operator" or q.get("response") for q, _ in chosen)
                 or task["state"] not in ("running", "blocked", "queued")):
-            raise TransitionError("question is no longer open for acceptance; refresh the conversation")
-        for question, _ in chosen:
-            require_design(project, slug, question)
+            raise TransitionError("question is no longer open for responses; refresh the conversation")
         at, message_id = _conversation_time(), uuid.uuid4().hex
-        text = (f"Use this approach and continue: {chosen[0][1]['text']}" if len(chosen) == 1 else
-                "Use these answers and continue:\n" + "\n".join(f"{q['question']} — {o['text']}" for q, o in chosen))
+        text = "\n\n".join(f"{q['question']}\n{o['text']}" for q, o in chosen)
         row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,
                "text": text, "group_id": group["id"], "group_revision": group["revision"],
                "question_refs": [{"id": q["id"], "revision": q["revision"]} for q, _ in chosen]}
@@ -1796,8 +1804,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             row.update(question_id=chosen[0][0]["id"], question_revision=chosen[0][0]["revision"])
         for question, option in chosen:
             question["acceptance_message"] = row
-            receipt = _close_question(question, "answered", option["text"], OPERATOR_MESSAGE_ROLE, message_id, "task")
-            receipt["option_key"] = option["key"]
+            question["response"] = {"text": option["text"], "at": at, "message_id": message_id}
         group["revision"] += 1
         row["question_context"] = group_context(task, group)
         saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}
@@ -1810,8 +1817,8 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         S.save_task(project, task)
         _queue_acceptance(project, task, chosen[0][0])
         for question, _ in chosen:
-            S.append_event(project, slug, "question-resolved", question_id=question["id"], revision=question["revision"],
-                           **question["resolution"])
+            S.append_event(project, slug, "question-response", question_id=question["id"], revision=question["revision"],
+                           **question["response"])
         S.regen_state_md(project)
         return _submission_response(project, task, saved)
 
@@ -1857,7 +1864,7 @@ def decisions(project: str) -> list[dict]:
     rows = []
     for task in S.list_tasks(project):
         questions = question_views(project, task["slug"])
-        rows.extend(q for q in questions if q["status"] == "open" and q["audience"] == "operator")
+        rows.extend(q for q in questions if q["status"] == "open" and q["audience"] == "operator" and not q["response"])
         if (not questions and task["state"] == "blocked" and not task.get("resume_after")
                 and task.get("waiting_on", OPERATOR_MESSAGE_ROLE) == OPERATOR_MESSAGE_ROLE):
             rows.append(decision_row(project, task))
@@ -1960,7 +1967,7 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 _decision_source(project, slug, decision, approval, source)
                 if not resolution and not timestamp(saved["at"]) < timestamp(operator["at"]):
                     raise ValueError("context-only approval must follow the earlier question resolution")
-                if resolution and decision.get("acceptance_message") and not any(
+                if "option_key" in resolution and decision.get("acceptance_message") and not any(
                         o["key"] == resolution.get("option_key") and o["text"] == resolution.get("text")
                         for o in question_choices(decision)):
                     raise ValueError("approval choice does not match its recorded option")

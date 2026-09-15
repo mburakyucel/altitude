@@ -768,9 +768,15 @@ explicitly removes them. Changed question text with omitted options becomes a pl
 The worker handoff names the pending question ID/revision and each task message ID. The owning L2
 judges the reply in context: discuss a follow-up, clarify genuine uncertainty, or record a clear
 decision and continue. No special approval phrase or extra confirmation is required.
+The question UI sends presets and **Other…** text through the same conversational handoff, including
+plain questions with no recommendations. **Sent to L2** means a response is saved; the owner still
+judges its meaning and uses `resolve` for an actual decision. Submitted members leave the attention
+count. To explicitly ask a responded member again, include its ID in `--questions-file`; publication
+creates a new revision and restores its answer field even when wording is unchanged. Ordinary
+unchanged re-parking retains the response. Independent unanswered members remain available.
 One typed reply can answer several members. Its saved question references name what the operator
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
-Only unresolved, still-relevant questions remain in Needs you. Quick selections can also be sent
+Only questions still awaiting an operator response remain in Needs you. Quick selections can also be sent
 together as one batch; a stale member prevents the whole batch from writing.
 After a harmless follow-up, checkpoint and park with the still-valid `block --reason` text. Omitted
 recommendation fields preserve its approach; parking or revision preserves its required authority.

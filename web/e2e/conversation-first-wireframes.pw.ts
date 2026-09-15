@@ -25,7 +25,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); });
 
-test("conversation-first design: independent questions, quick choices and one conversation", async ({ page }, info) => {
+test("conversation-first design: custom answers, staged presets and conversational receipts", async ({ page }, info) => {
   const prefix = info.project.name === "phone" ? "Mobile" : "";
   const route = (scene: string) => origin + prefix + "ConversationFirst" + scene + ".html";
   const walk = walkthrough(page, info);
@@ -33,85 +33,74 @@ test("conversation-first design: independent questions, quick choices and one co
   page.on("pageerror", error => errors.push(error.message));
   await page.route("https://fonts.**/*", route => route.abort());
   const group = page.getByRole("article", { name: "Index rollout questions", exact: true });
-  const recipient = page.getByRole("heading", { name: "Who should receive the rollout report?", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   await walk.open(route("NeedsYou") + "?reset");
   await walk.state("01-needs-you", {
-    visible: [group, recipient, page.getByRole("button", { name: "Use recommendations", exact: true })],
+    visible: [group, page.getByRole("textbox", { name: "Report recipient answer" })],
     hidden: [field, page.locator('[data-pick][aria-pressed="true"]')],
   });
   await page.getByRole("link", { name: "Open L2 chat", exact: false }).click();
   await expect(page).toHaveURL(route("Group"));
-  await expect(group.getByRole("heading")).toHaveCount(3);
-  await expect(page.getByRole("button", { name: /^Send \d answers?$/ })).toBeHidden();
-  await group.getByRole("button", { name: "14 days", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Use recommendations", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Send answers", exact: true })).toBeDisabled();
+  await group.locator('[data-other="retention"]').click();
+  const custom = page.getByRole("textbox", { name: "Retention answer", exact: true });
+  await expect(custom).toBeFocused();
+  await custom.fill("21 days");
   await group.getByRole("button", { name: "East", exact: true }).click();
-  await walk.state("03-group", {
-    visible: [group, recipient, page.getByRole("button", { name: "Send 2 answers", exact: true }), field],
+  await walk.state("03-custom-and-preset", {
+    visible: [custom, page.getByRole("button", { name: "Send 2 answers", exact: true }), field],
     hidden: [page.getByText("Decision recorded", { exact: true }), page.getByRole("button", { name: "Use recommendations", exact: true })],
   });
   await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
-  await expect(recipient).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Where should the backup live?", exact: true })).toBeHidden();
-  await expect(page.getByText("Backup region: East.", { exact: true })).toBeVisible();
-  await field.fill("Release team");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
-  await page.goBack();
+  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(2);
+  await expect(custom).toBeHidden();
+  await expect(page.getByText("21 days", { exact: true })).toBeVisible();
+  await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
+  const recipient = page.getByRole("textbox", { name: "Report recipient answer", exact: true });
+  await recipient.fill("Release team");
+  await walk.state("05-one-remaining", { visible: [recipient, page.getByRole("button", { name: "Send 1 answer", exact: true })], hidden: [custom] });
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(3);
   await expect(recipient).toBeHidden();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
+  await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
+  await page.getByRole("link", { name: "Design example: later L2 decision", exact: true }).click();
+  await walk.state("06-owner-decision", { visible: [page.getByText("Decision recorded", { exact: true }), page.getByText("Work resumed", { exact: true }), field], hidden: [recipient] });
+  await page.getByText("Activity & evidence", { exact: true }).click();
+  await expect(page.getByRole("link", { name: "PR #42", exact: true })).toHaveAttribute("target", "_blank");
+  await walk.open(route("NeedsYou"));
+  await expect(page.getByText("Nothing needs you.", { exact: true })).toBeVisible();
 
   await walk.open(route("Question") + "?reset");
-  await walk.state("02-single", { visible: [page.getByRole("article", { name: "Open question", exact: true }), page.getByRole("button", { name: "7 days · recommended", exact: true }), field], hidden: [page.getByRole("button", { name: /^Send \d/ })] });
   await page.getByRole("button", { name: "14 days", exact: true }).click();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
-  await expect(page.getByText("14 days", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /confirm/i })).toHaveCount(0);
+  await expect(page.getByText("Sent to L2", { exact: true })).toBeHidden();
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await walk.state("02-single-submitted", { visible: [page.getByText("Sent to L2", { exact: true }), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
+
+  await walk.open(route("Question") + "?reset");
+  await page.getByRole("button", { name: "Other…", exact: true }).click();
+  await custom.fill("Could we roll back after day seven?");
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
+  await page.getByRole("link", { name: "Design example: later L2 reply", exact: true }).click();
+  await expect(page.getByText("Discussion leaves every question open.", { exact: true })).toBeVisible();
+
+  await walk.open(route("Group") + "?reset");
+  await page.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(2);
+  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
+  await expect(recipient).toBeVisible();
+  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(2);
 
   await walk.open(route("Group") + "?reset");
   await field.fill("Could we roll back after day seven?");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("04-followup", {
-    visible: [page.getByText("Discussion leaves every question open.", { exact: true }), page.getByText("Could we roll back after day seven?", { exact: true }), field],
-    hidden: [page.getByText("Decision recorded", { exact: true })],
-  });
+  await walk.state("04-followup", { visible: [page.getByText("Discussion leaves every question open.", { exact: true }), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
   await field.fill("Keep 14 days; use snapshots so region no longer matters.");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("05-partial", {
-    visible: [recipient, page.getByText("Retention: 14 days.", { exact: true }), page.getByText("Backup region: Closed: snapshots replace the regional backup.", { exact: true }), field],
-    hidden: [page.getByRole("heading", { name: "Where should the backup live?", exact: true }), page.getByRole("button", { name: "Use recommendations", exact: true })],
-  });
-  await field.fill("Release team");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("06-accepted", { visible: [page.getByText("All three questions resolved.", { exact: true }), page.getByText("Decision recorded", { exact: true }), page.getByText("Work resumed", { exact: true }), field], hidden: [recipient] });
-  await page.getByText("Activity & evidence", { exact: true }).click();
-  await expect(page.getByRole("link", { name: "PR #42", exact: true })).toHaveAttribute("target", "_blank");
-
-  await walk.open(route("NeedsYou") + "?reset");
-  await page.getByRole("button", { name: "Use recommendations", exact: true }).click();
-  await walk.state("recommendations-leave-plain-question", { visible: [recipient, page.getByText("Retention: 7 days.", { exact: true }), page.getByText("Backup region: West.", { exact: true })], hidden: [page.getByRole("button", { name: "Use recommendations", exact: true })] });
-  await walk.open(route("Group") + "?reset");
-  await group.getByRole("button", { name: "14 days", exact: true }).click();
-  await group.getByRole("button", { name: "14 days", exact: true }).click();
-  await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Use recommendations", exact: true })).toBeVisible();
-  await group.getByRole("button", { name: "14 days", exact: true }).click();
-  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Where should the backup live?", exact: true })).toBeVisible();
-  await expect(recipient).toBeVisible();
-  await page.getByRole("button", { name: "Use recommendations", exact: true }).click();
   await expect(page.getByText("Retention: 14 days.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Backup region: West.", { exact: true })).toBeVisible();
-  await walk.open(route("Group") + "?reset");
-  await field.fill("Keep 14 days, use West, and send the report to the release team.");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByText("All three questions resolved.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /confirm/i })).toHaveCount(0);
-  await walk.open(route("NeedsYou"));
-  await expect(page.getByText("Nothing needs you.", { exact: true })).toBeVisible();
-  await expect(group).toBeHidden();
-  await expect(page.getByRole("button", { name: "Use recommendations", exact: true })).toBeHidden();
+  await expect(recipient).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -124,14 +113,14 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
     ["list-loading", "Loading decisions…"], ["list-error", "Could not load Needs you."],
     ["list-offline", "Offline · showing saved decisions."], ["discussion", "Your follow-up is in the L2 chat. Still awaiting your decision."],
     ["loading", "Loading the question…"], ["read-error", "Could not load this conversation."],
-    ["cached-error", "Could not refresh. Showing saved discussion."], ["accepting", "Recording…"],
-    ["accept-error", "Could not record your choice. Try again."],
+    ["cached-error", "Could not refresh. Showing saved discussion."], ["accepting", "Sending answers…"],
+    ["accept-error", "Could not send answers. Your responses are kept here."],
     ["denied", "This connection cannot send messages or decisions. Reconnect to continue."],
     ["sending", "Sending…"], ["send-error", "Not sent. Your draft is still here. Retry with Send."],
     ["waiting", "Message saved · the L2 will answer when capacity is available."],
     ["reply-error", "The L2 could not answer. Your message is saved; the question is still open."],
     ["accepted-waiting", "Waiting for capacity to resume the L2. Your choice is saved."],
-    ["no-recommendation", "No recommendation yet. Discuss the tradeoff with the L2 here."],
+    ["no-recommendation", "No recommendation yet. Write your answer or a follow-up question."],
     ["simple-input", "Ask a question or say how to proceed."],
     ["new-reply", "Latest messages · L2 replied"],
     ["revised", "The question changed while this page was open."], ["missing", "This question is no longer available."],
@@ -151,7 +140,7 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
       await walk.state(state, { visible: [marker], hidden: [page.getByRole("combobox")] });
     }
     if (["accepted-waiting", "archived", "no-recommendation", "revised"].includes(state)) {
-      await expect(page.getByRole("button", { name: "Use 7 days & resume", exact: true })).toBeHidden();
+      await expect(page.getByRole("button", { name: "7 days · recommended", exact: true })).toBeHidden();
     }
     if (state === "archived") await expect(page.getByRole("textbox")).toBeHidden();
     if (state === "send-error") await expect(page.getByRole("textbox")).toHaveValue("Could we roll back after day seven?");
@@ -160,7 +149,7 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
       await expect(page.locator(".badge:visible").filter({ hasText: /^\d+$/ })).toHaveCount(0);
       await expect(page.getByLabel(state === "list-loading" ? "Attention loading" : "Attention unavailable").filter({ visible: true })).toBeVisible();
     }
-    if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: /Use 7 days|Recording/ })).toBeDisabled();
+    if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: "7 days · recommended", exact: true })).toBeDisabled();
     const overflow = await page.locator(".cf").evaluate(el => el.scrollWidth > el.clientWidth);
     expect(overflow, state + " must not scroll horizontally").toBe(false);
   }
@@ -177,19 +166,19 @@ test("conversation-first proposal: recovery and voice actions", async ({ page },
   const walk = walkthrough(page, info);
   await page.route("https://fonts.**/*", route => route.abort());
   await walk.open(route("waiting"));
-  await page.getByRole("button", { name: "Use 7 days & resume", exact: true }).click();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("button", { name: "Use 7 days & resume", exact: true })).toBeHidden();
-  await expect(page.getByText("Decision recorded", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "7 days · recommended", exact: true }).click();
+  await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await walk.open(route("read-error"));
   await page.getByRole("link", { name: "Retry", exact: true }).click();
-  await expect(page.getByRole("textbox")).toBeEnabled();
-  await page.getByRole("textbox").fill("Keep it for 14 days,");
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  await expect(field).toBeEnabled();
+  await field.fill("Keep it for 14 days,");
   await page.getByRole("button", { name: "Use microphone", exact: true }).click();
   await walk.state("voice-recording", { visible: [page.getByText("Listening · 0:08", { exact: true })], hidden: [page.getByRole("textbox")] });
-  await walk.state("voice-cancelled", { action: () => page.getByRole("link", { name: "Cancel", exact: true }).click(), visible: [page.getByRole("textbox")], hidden: [page.getByText("Listening · 0:08", { exact: true })] });
-  await expect(page.getByRole("textbox")).toHaveValue("Keep it for 14 days,");
+  await walk.state("voice-cancelled", { action: () => page.getByRole("link", { name: "Cancel", exact: true }).click(), visible: [field], hidden: [page.getByText("Listening · 0:08", { exact: true })] });
+  await expect(field).toHaveValue("Keep it for 14 days,");
   await page.getByRole("button", { name: "Use microphone", exact: true }).click();
   await page.getByRole("link", { name: "Stop", exact: true }).click();
   await expect(page.getByRole("textbox")).toHaveValue("Keep it for 14 days, then delete it. Go ahead.");

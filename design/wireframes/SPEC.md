@@ -5,6 +5,10 @@ on 2026-09-08. The conversation-first boards define the decision experience; sha
 composer boards define their existing layout and input behavior.
 The operator approved [image input](IMAGE_INPUT.md) on 2026-09-10 for project and task conversations.
 
+The operator approved answer-in-place question responses on 2026-09-14 Pacific: **Other…** opens
+a small text field, plain questions show the field directly, and preset/custom responses share
+one conversational handoff. Question fields omit microphones; ordinary chat retains voice input.
+
 The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
 
@@ -410,11 +414,15 @@ remain in the owning conversation (§3.6); sending leaves no extra transcript fi
 
 ### 3.8 Decision card
 
-Needs you answers “What needs my decision?” It shows one compact card per unresolved dilemma: task/project,
+Needs you answers “What needs my response?” It shows one compact card per unanswered group: task/project,
 source, one question or up to three independent questions, and **Open L2 chat**. The model can ask
 a plain question, give one recommended quick action, or offer two to three quick options with one
-recommendation and concise rationale. Single-question choices act immediately. Group choices start
-unselected; only actual picks have selection styling and remain staged until **Send N answers**.
+recommendation and concise rationale. All choices start unselected and remain staged until
+**Send N answers**, including a single question. **Other…** reveals a small text field beneath that
+member's choices; a plain question shows the field immediately. Presets, custom answers and follow-up
+questions can be submitted together. Each question is a flat section with a divider, without a nested
+panel. The field focuses when Other is selected; its full question stays directly above it. Empty
+custom fields do not count as answers. Selecting a preset replaces that member's custom response.
 
 The default content makes the task's user-facing purpose and actual choice clear at a glance.
 Task titles and complete questions wrap without clipping; the question uses plain language,
@@ -426,14 +434,13 @@ The task title is its own fully wrapping link below source/project/time and abov
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
-When only one question remains, its quick choices act immediately in both list and chat.
-With no manual picks, **Use recommendations**
-answers only questions with an explicit recommendation; it never overrides a picked alternative.
+With no manual picks or open custom fields, **Use recommendations** stages only questions with an
+explicit recommendation; **Send N answers** submits them. It never overrides a picked alternative.
 The task title and card background open the same chat destination. Reference links remain ordinary
-external links. Plain questions use chat; no inferred default exists. Operational stops and faults open the task's
+external links. Plain questions accept a typed answer in place; no inferred default exists. Operational stops and faults open the task's
 ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
-A dilemma remains answerable while a provider limit queues a fresh attempt: acceptance records the
-choice, and the same chat queues replies with **Delivered when Altitude starts the L2.** The saved
+A dilemma remains answerable while a provider limit queues a fresh attempt: sending saves the
+response, and the same chat queues replies with **Delivered when Altitude starts the L2.** The saved
 question or receipt travels into the fresh brief. Queuing alone never closes a relevant question.
 
 On receiving guidance, the owner checks each question before lengthy analysis. Harmless follow-ups
@@ -444,14 +451,18 @@ Freshness is owner judgment, independent of worker status.
 An answer settles only the stated choice; requested work remains required. Guidance may queue before
 the owner's checkpoint; the owner considers an earlier answer with later guidance before acting.
 
-The recommendation body and acceptance action are the same component as the one at the question's
+The recommendation body and response controls are the same component as the one at the question's
 message anchor in chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
-refresh notice and disabled acceptance. During acceptance, the control says **Recording…** and
-cannot be repeated. Saved answers disappear from the card and update counts; unresolved members
-remain together. The card disappears when none remain. A brief
-**Decision recorded** receipt links to chat. Failure keeps the question with Retry. Denied writes
-require a refreshed read; a changed question requires reviewing its current revision.
+refresh notice and disabled sending. During submission, the control says **Sending…** and cannot be
+repeated. Sent members leave the attention count; remaining members stay together. A brief **Sent to L2**
+receipt links to chat, where each submitted response replaces its member's input and remains readable.
+The card leaves Needs you when no members await a response. This records delivery, not agreement:
+the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
+Failure retains responses with Retry. Denied writes require a refreshed read. A changed question
+clears only its own stale draft; independent drafts survive refresh and another member's submission.
+The send row remains reachable at the bottom while a long group scrolls, including phone keyboard use.
+Question fields have no voice controls; ordinary chat keeps its existing voice states.
 Withdrawal likewise removes only affected controls and updates counts; stale submissions fail.
 Re-asking supplies fresh controls, retaining earlier history without carrying approval forward.
 
@@ -464,10 +475,12 @@ L3 and contains the actual dilemma and recommendation. Later technical events do
 anchor. The live session starts closed when entering a question; **Activity & evidence** reveals
 technical event summaries and the link to the existing live view.
 
-The normal composer accepts a follow-up, a simple answer such as “14 days”, or a nuanced decision.
+The question field and normal composer accept a follow-up, a simple answer such as “21 days”, or a nuanced decision.
 There is no recipient selector, note form or extra confirmation. A follow-up wakes the owner to assess
 the question (§3.8). The L2 records a clear decision against its source message;
-the UI never treats sending as approval. Ambiguity is clarified in conversation. A partial answer
+the UI never treats sending as approval. A sent member keeps its receipt while the owner responds;
+an explicit re-publication restores input with a fresh revision. Unchanged ordinary re-parking
+does not ask the person to send again. Ambiguity is clarified in conversation. A partial answer
 closes answered members and keeps only relevant unanswered members. A partially answered member
 retains its remaining scope in a new revision. A single typed reply can answer the whole group.
 If the chosen direction makes the
@@ -878,9 +891,11 @@ the working rules (the design decision of 2026-09-05).
    three open members plus closed history, its revision and stable anchor. Task `question`, history and Needs you
    project the same source independently of worker state. Blocks and escalations publish attributable
    human context; the owner handoff names question and source-message IDs.
-6. **Resolution cites actual authority.** `POST /api/decide` accepts the exact current question/revision
-   and explicit option, or a group revision and selected member/option references. The whole batch
-   is validated before writing. `alt task resolve` cites original authority for an answer or supersession;
+6. **Resolution cites actual authority.** `POST /api/decide` saves responses naming the exact current
+   question/revision and an option or custom text, or a group revision and those member responses.
+   The whole batch is validated before writing one operator message; it closes no decision.
+   `response` exposes its text, time and source-message ID; attention excludes submitted members.
+   `alt task resolve` cites original authority for an answer or supersession;
    `withdrawn` records only the owning L2's reason. Re-asking creates a new member without replacing
    independent questions. Stale/conflicting writes fail; identical retries
    reuse the receipt and repair interrupted delivery. A remainder publishes a new revision without

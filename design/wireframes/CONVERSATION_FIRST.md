@@ -1,6 +1,6 @@
 # Conversation-first decisions
 
-Burak settled this UX on 2026-09-08: support one question and a small group of independent
+The operator settled this UX on 2026-09-08: support one question and a small group of independent
 questions in the owning L2 chat. The model chooses a plain question, one recommended quick action,
 or two to three quick options with one recommendation.
 
@@ -35,12 +35,13 @@ separately in summaries. Unknown reads never imply zero; cached failures identif
 stale. On phone, the global badge is in bottom navigation, or its header link while keyboard use
 hides that navigation. Back returns to the originating Work or Needs you view.
 
-A single question's quick choices act immediately. For up to three independent questions, choices
-start unselected. Pick answers, then **Send N answers** once. With no manual picks, **Use
-recommendations** answers the members that have an explicit recommendation. It never overwrites a
-picked alternative or answers a plain question. You can send fewer answers and leave the rest open.
-Only actual picks receive selection styling. When one question remains, its choices act immediately
-in both Needs you and chat. Longer groups scroll within the phone conversation.
+The operator approved answer-in-place responses on 2026-09-14 Pacific. Choices start unselected,
+including a single question. **Other…** opens a small field under that question; plain questions show
+the field directly. Pick or type responses, then **Send N answers** once. A custom response can be
+“21 days” or “Why only seven or fourteen?”. **Use recommendations** stages explicit recommendations
+when nothing is picked, ready for Send. Only actual picks receive selection styling. You can send
+fewer answers and leave the rest available. The send row stays reachable as a long group scrolls.
+These small fields use text; ordinary chat retains voice input.
 
 The normal composer is always available on an active conversation: answer one or several questions,
 propose an alternative, or ask a follow-up. Sending text only saves and delivers a message. The same
@@ -48,8 +49,12 @@ L2 interprets it in context, records an explicit decision against that message, 
 ambiguity. There is no extra approval phrase, recipient selector, note form or blanket confirmation.
 A follow-up can wake the L2 to answer but does not approve implementation of the disputed approach.
 
-Answered members disappear from Needs you and retain their receipts in chat. Partially answered
-scope leaves only the relevant remainder open. A new direction closes questions it makes
+Submitted members leave Needs you and retain **Sent to L2** receipts in chat. Presets and custom text
+both deliver ordinary messages; the L2 interprets their meaning and records actual decisions against
+the source. A sent follow-up starts discussion, with a fresh prompt only when needed. Explicitly
+republishing a responded member restores input at a new revision; unchanged ordinary re-parking
+keeps its response. Independent drafts survive updates, while revised members clear their own stale
+drafts. Partially answered scope leaves only the relevant remainder open. A new direction closes questions it makes
 unnecessary with a short reason, without accepting their abandoned recommendations. Completion,
 rejection and report handoff remove obsolete controls; the existing merge hold remains separate.
 
@@ -58,7 +63,7 @@ rejection and report handoff remove obsolete controls; the existing merge hold r
 | Example | Desktop | Phone |
 | --- | --- | --- |
 | Questions upfront in Needs you | [Open](ConversationFirstNeedsYou.html) | [Open](MobileConversationFirstNeedsYou.html) |
-| One question with immediate quick choices | [Open](ConversationFirstQuestion.html) | [Open](MobileConversationFirstQuestion.html) |
+| One question with preset or custom responses | [Open](ConversationFirstQuestion.html) | [Open](MobileConversationFirstQuestion.html) |
 | Grouped picks and one send | [Open](ConversationFirstGroup.html) | [Open](MobileConversationFirstGroup.html) |
 | Follow-up exchange leaves questions open | [Open](ConversationFirstFollowup.html) | [Open](MobileConversationFirstFollowup.html) |
 | Partial answer and irrelevant-question closure | [Open](ConversationFirstPartial.html) | [Open](MobileConversationFirstPartial.html) |
@@ -81,9 +86,9 @@ application walkthroughs stay in ignored `web/ui-artifacts/`; see [development](
 | Initial loading or read failure | Skeleton then Retry; no inferred count, enabled decision or writable composer from an unknown read. |
 | Cached read failure | Retain saved content, show refresh notice and disable writing until a successful read. |
 | Needs you empty | No cards or zero badge; calm **Nothing needs you.** message. |
-| Recording choices | Disable actions and show **Recording…**; save receipts before removing answered members. |
-| Choice write fails | Keep questions and explicit selections, show Retry. A lost response retries the same saved decision, without duplicate delivery. |
-| Stale group/option | Reject the whole submission. Refresh current choices and clear old staged picks; never retarget an old click. |
+| Sending responses | Disable actions and show **Sending…**; save the response before removing its attention control. |
+| Response write fails | Keep questions, text and selections with Retry. A lost response retries the same saved message without duplicate delivery. |
+| Stale group/option | Reject the whole submission. Refresh current choices and clear only revised members' drafts; retain independent answers. |
 | Send fails | Keep the unsent text and Retry in the familiar composer; no false saved answer. |
 | Access denied | Disable sending and deciding together; explicit Refresh after access is restored. |
 | Voice | Existing listening, cancel/stop, transcribing, unavailable and failure controls; sent text leaves no extra transcript box. |
