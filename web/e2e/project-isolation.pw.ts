@@ -97,10 +97,11 @@ async function switchProject(page: Page, info: TestInfo, name: string) {
   await expect(views(page).field(name)).toBeVisible();
 }
 
-test("project selection drops drafts and loads only the destination history", async ({ page, service }, info) => {
+test("project drafts survive selection and route remount with independent copy, paste and clearing", async ({ page, context, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
   await walk.open(`${service}/projects/alpha`);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await v.field("alpha").fill("Alpha unsent draft");
   await walk.state("01-alpha-draft", { visible: [v.text("Alpha saved history."), v.field("alpha")], hidden: [v.loading] });
   const gate = deferred();
@@ -110,9 +111,31 @@ test("project selection drops drafts and loads only the destination history", as
   await expect(v.field("beta")).toHaveValue("");
   gate.release();
   await walk.state("03-beta-empty", { visible: [v.text("Say what you want done. L3 answers or creates one task.")], hidden: [v.loading, v.text("Alpha saved history.")] });
+  await v.field("beta").fill("Beta independent draft");
   await switchProject(page, info, "alpha");
-  await expect(v.field("alpha")).toHaveValue("");
-  await walk.state("04-alpha-saved-history-only", { visible: [v.text("Alpha saved history.")], hidden: [v.text("Alpha unsent draft")] });
+  await expect(v.field("alpha")).toHaveValue("Alpha unsent draft");
+  await v.field("alpha").press("Control+a");
+  await page.keyboard.press("Control+c");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("Alpha unsent draft");
+  await walk.state("04-alpha-draft-restored", { visible: [v.text("Alpha saved history."), v.field("alpha")], hidden: [v.text("Beta independent draft")] });
+  await switchProject(page, info, "beta");
+  await expect(v.field("beta")).toHaveValue("Beta independent draft");
+  await v.field("beta").press("End");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.press("Control+v");
+  await expect(v.field("beta")).toHaveValue("Beta independent draft\nAlpha unsent draft");
+  const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  await nav.getByRole("link", { name: "Monitor", exact: true }).click();
+  await walk.state("05-route-unmounted", { visible: [page.getByRole("heading", { name: "Monitor", exact: true })], hidden: [v.convo] });
+  await nav.getByRole("link", { name: info.project.name === "phone" ? "Chat" : "beta", exact: true }).click();
+  await expect(v.field("beta")).toHaveValue("Beta independent draft\nAlpha unsent draft");
+  await walk.state("06-pasted-draft-survives-remount", { visible: [v.field("beta")], hidden: [v.text("Alpha saved history.")] });
+  await v.field("beta").fill("");
+  await switchProject(page, info, "alpha");
+  await expect(v.field("alpha")).toHaveValue("Alpha unsent draft");
+  await switchProject(page, info, "beta");
+  await expect(v.field("beta")).toHaveValue("");
+  await walk.state("07-manually-cleared-draft-stays-cleared", { visible: [v.field("beta")], hidden: [v.text("Alpha saved history.")] });
 });
 
 for (const first of ["alpha", "beta"]) {
@@ -161,7 +184,7 @@ for (const first of ["alpha", "beta"]) {
     await walk.state("08-alpha-returned-history", { visible: [v.text("Alpha saved history."), v.text("Alpha running request answered."), v.text("Alpha queued request answered.")], hidden: [v.text("Beta running request"), v.text("Beta running request answered."), v.queued] });
     await expect(v.field("alpha")).toHaveValue("");
     await switchProject(page, info, "beta");
-    await expect(v.field("beta")).toHaveValue("");
+    await expect(v.field("beta")).toHaveValue("Beta keeps its next draft");
     await walk.state("09-beta-returned-history", { visible: [v.text("Beta running request answered.")], hidden: [v.text("Alpha saved history.")] });
     for (const name of ["alpha", "beta"]) {
       const rows = (await read(name)).history as { text: string }[];
@@ -296,7 +319,7 @@ for (const nextDraft of ["", "A new draft while the accepted turn answers"]) {
   });
 }
 
-test("listening, late transcription and denied microphone state reset on selection", async ({ page, service }, info) => {
+test("listening, late Send transcription and denied microphone reset without crossing project drafts", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
   // Browser overlay: real MediaRecorder records a synthetic tone; no device or speech service is used.
@@ -316,6 +339,7 @@ test("listening, late transcription and denied microphone state reset on selecti
     }});
   `);
   await walk.open(`${service}/projects/alpha`);
+  await v.field("alpha").fill("Alpha preexisting draft");
   const mic = v.convo.getByRole("button", { name: "Start voice input" });
   const stop = v.convo.getByRole("button", { name: "Stop voice input" });
   const wave = v.convo.locator(".composer-wave");
@@ -324,6 +348,7 @@ test("listening, late transcription and denied microphone state reset on selecti
   await switchProject(page, info, "beta");
   await walk.state("02-beta-listening-ui-reset-overlay", { visible: [mic, v.field("beta")], hidden: [stop, wave] });
   await switchProject(page, info, "alpha");
+  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft");
   const transcript = deferred();
   const uploaded = deferred();
   const delivered = deferred();
@@ -336,9 +361,10 @@ test("listening, late transcription and denied microphone state reset on selecti
   await mic.click();
   await expect(stop).toBeVisible();
   await page.waitForTimeout(500); // MediaRecorder needs a non-empty audio chunk.
-  await stop.click();
+  await v.send.click();
   await uploaded.promise;
   await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
+  await expect(v.field("alpha")).not.toBeEditable();
   await switchProject(page, info, "beta");
   await v.field("beta").fill("Beta typed during transcription");
   transcript.release();
@@ -346,6 +372,8 @@ test("listening, late transcription and denied microphone state reset on selecti
   await expect(v.field("beta")).toHaveValue("Beta typed during transcription");
   await walk.state("04-beta-late-transcript-ignored-overlay", { visible: [mic, v.field("beta")], hidden: [wave, v.text("Transcribing…"), v.text("Alpha late transcript")] });
   await switchProject(page, info, "alpha");
+  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft");
+  await expect(v.field("alpha")).toBeEditable();
   await page.evaluate("window.fixtureDenied = true");
   await mic.click();
   const denied = v.text("Microphone blocked in the browser. Typing works.");
@@ -353,9 +381,11 @@ test("listening, late transcription and denied microphone state reset on selecti
   await expect(mic).toBeDisabled();
   await switchProject(page, info, "beta");
   await expect(mic).toBeEnabled();
-  await expect(v.field("beta")).toHaveValue("");
+  await expect(v.field("beta")).toHaveValue("Beta typed during transcription");
   await walk.state("06-beta-microphone-state-reset-overlay", { visible: [mic, v.field("beta")], hidden: [denied, wave, stop] });
   await expect.poll(() => page.evaluate("window.fixtureStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))")).toBe(true);
+  expect((await (await request.get(`${service}/fixture/calls`)).json()).calls).toEqual([]);
+  expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
 });
 
 test("immediate navigation preserves ordered L3 admission, queue and active history", async ({ page, request, context, service }, info) => {

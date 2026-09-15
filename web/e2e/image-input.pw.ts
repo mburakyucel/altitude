@@ -195,11 +195,14 @@ for (const scope of ["project", "task"] as const) {
     await v.picker.setInputFiles(await screenshotFile(page)); await v.field.fill(caption);
     const start = page.getByRole("button", { name: "Start voice input", exact: true });
     const stop = page.getByRole("button", { name: "Stop voice input", exact: true });
-    const phone = info.project.name === "phone";
-    if (phone) await v.field.fill(`${caption} Keep this edit.`);
-    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.strip, ...(!phone ? [v.field] : [])], hidden: [v.add, ...(phone ? [v.field] : [])] });
-    if (!phone) await v.field.fill(`${caption} Keep this edit.`);
+    await v.field.fill(`${caption} Keep this edit.`);
+    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.strip, v.field], hidden: [v.add] });
+    await expect(v.field).not.toBeEditable();
+    await v.field.press("End");
+    await page.keyboard.type("unwanted recording edit");
+    await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
     await walk.state("02-voice-cancel-keeps-image", { action: () => page.getByRole("button", { name: "Cancel voice input", exact: true }).click(), visible: [v.strip, v.add, start], hidden: [stop] });
+    await expect(v.field).toBeEditable();
     await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -209,6 +212,8 @@ for (const scope of ["project", "task"] as const) {
     // Chromium needs an actual recorded interval before it can encode audio data.
     await page.waitForTimeout(700);
     await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByText("Transcribing…", { exact: true })], hidden: [v.add, stop] });
+    await expect(v.field).toBeVisible();
+    await expect(v.field).not.toBeEditable();
     release();
     await expect(v.field).toHaveValue(`${caption} Keep this edit. Please fix the overlap.`);
     await walk.state("04-transcript-in-draft-only", { visible: [v.strip, v.add, start], hidden: [page.getByText("Transcribing…", { exact: true }), page.getByText("Please fix the overlap.", { exact: true })] });

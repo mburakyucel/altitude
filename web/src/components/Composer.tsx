@@ -515,7 +515,7 @@ export default function Composer({
       setPhase("transcribing");
       try {
         const text = await transcribeVoice(audio, request.signal);
-        if (!mounted.current || cancelled.current) return;
+        if (!mounted.current || request.signal.aborted) return;
         // Landed: appended to the draft, cursor at the end, nothing else on screen (issue #195).
         const next = combineDraft(draft.current, text);
         editDraft(next);
@@ -523,7 +523,7 @@ export default function Composer({
         if (sendAfterTranscribing.current && text.trim()) void currentSubmit.current(next);
         else focusField(next.length);
       } catch {
-        if (!mounted.current || cancelled.current) return;
+        if (!mounted.current || cancelled.current || abort.current !== request) return;
         setPhase("idle");
         setVoiceFailure("Could not transcribe. Typing works.");
         focusField();
@@ -559,12 +559,14 @@ export default function Composer({
     sendAfterTranscribing.current = false;
     chunks.current = [];
     setPhase("starting");
+    const opening = new AbortController();
+    abort.current = opening;
     audioSession("play-and-record");
     let opened: MediaStream | null = null;
     try {
       opened = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!mounted.current || cancelled.current) {
-        releaseStream(opened);
+      if (!mounted.current || opening.signal.aborted) {
+        opened.getTracks().forEach((track) => track.stop());
         return;
       }
       const mimeType = recordingMimeType();
@@ -597,8 +599,9 @@ export default function Composer({
         }
       }, MAX_RECORDING_MS);
     } catch (cause) {
-      releaseStream(opened);
-      if (!mounted.current) return;
+      opened?.getTracks().forEach((track) => track.stop());
+      if (!mounted.current || opening.signal.aborted) return;
+      releaseStream(null);
       const name = cause instanceof DOMException ? cause.name : "";
       setPhase("idle");
       if (name === "NotAllowedError" || name === "SecurityError") setDenied(true);
@@ -682,7 +685,13 @@ export default function Composer({
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
-  if (admission === "uncertain") {
+  if (transcribing) {
+    hintRole = "status";
+    hintText = "Transcribing…";
+  } else if (listening) {
+    hintRole = "status";
+    hintText = phase === "starting" ? "Opening microphone…" : "Listening… Stop to add text, or Send.";
+  } else if (admission === "uncertain") {
     hintTone = "danger";
     hintRole = "alert";
     hintText = <>Could not confirm send. <button type="button" className="link" onClick={() => { const retry = retryImage.current; if (retry) void submit(retry.text, retry.submission); }}>Retry</button></>;
@@ -708,12 +717,6 @@ export default function Composer({
     hintTone = "danger";
     hintRole = "alert";
     hintText = images.error || `Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`;
-  } else if (transcribing) {
-    hintRole = "status";
-    hintText = "Transcribing…";
-  } else if (listening) {
-    hintRole = "status";
-    hintText = phase === "starting" ? "Opening microphone…" : "Listening… Stop to add text, or Send.";
   } else if (voiceFailure) {
     hintTone = "danger";
     hintRole = "alert";
@@ -737,6 +740,12 @@ export default function Composer({
     hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
   }
 
+  const feedback = hintText ? (
+    <p id={hintId} className={`composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole}>
+      {phase !== "idle" ? <span className="spinner" aria-hidden="true" /> : null}{hintText}
+    </p>
+  ) : null;
+
   return (
     <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}
       onPaste={(event) => {
@@ -746,6 +755,7 @@ export default function Composer({
         if (!disabled && !admission && phase === "idle") void images.add(files);
       }}>
       <div className="composer-box">
+        {phase !== "idle" ? feedback : null}
         {images.selected.length && !admission ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
           <div className="image-draft-item" key={image.key}>
             <img src={image.url} alt={image.name} />
@@ -760,6 +770,7 @@ export default function Composer({
           value={value}
           rows={1}
           disabled={disabled || Boolean(admission)}
+          readOnly={phase !== "idle"}
           autoFocus={autoFocus}
           onChange={(event) => editDraft(event.target.value)}
           onKeyDown={onFieldKeyDown}
@@ -780,11 +791,9 @@ export default function Composer({
           </> : null}
           {listening || transcribing ? (
             <div className="composer-voice" data-frozen={transcribing || undefined}>
-              {listening ? (
-                <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={cancel}>
-                  <CloseIcon />
-                </button>
-              ) : null}
+              <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={cancel}>
+                <CloseIcon />
+              </button>
               <canvas ref={canvas} className="composer-wave" width={140} height={24} aria-hidden />
               <span
                 className="composer-timer"
@@ -820,11 +829,7 @@ export default function Composer({
           </button>
         </div>
       </div>
-      {hintText ? (
-        <p id={hintId} className={`composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole}>
-          {hintText}
-        </p>
-      ) : null}
+      {phase === "idle" ? feedback : null}
     </div>
   );
 }

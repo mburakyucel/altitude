@@ -416,6 +416,10 @@ the editable draft; the send arrow transcribes, appends and sends at once. Both 
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.
+During microphone startup, listening and transcription, the shared text field is read-only and keeps
+existing text visible, with an indeterminate activity indicator and status inside the composer box.
+Cancel and timeout restore editing. Navigation cancels voice input; late results cannot fill or send
+to another conversation, including after a new recording starts.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
@@ -429,7 +433,9 @@ Submitted-text recovery belongs to the original project/task beyond a composer m
 storage retains each outstanding submission and the recovered draft; a live receipt retires only
 its own submission immediately. Navigation preserves late failure recovery, and reload without a
 receipt restores text with the unconfirmed hint rather than replaying it. Newly typed or dictated
-text survives recovery; ordinary unsent project-switch drafts still discard. If initial recovery
+text survives recovery. Ordinary unsent project text stays independently in client memory across
+project switches and route remounts until reload; manual clearing remains cleared. Task drafts and
+image selection retain their existing lifetimes. If initial recovery
 storage is unavailable, submission does not start and the editable text stays visible. Response
 streams do not pause conversation polling, and receipt updates cancel older reads of their own
 conversation before updating cached records. Later failed recovery writes retain edits for in-app
@@ -718,7 +724,8 @@ falls back. A turn started from Chat finishes and is recorded even when the page
 leaves mid-stream. Switching projects mounts a separate conversation: draft, pending prompt,
 streamed text and local errors leave the screen. Concurrent sends and late responses retain their
 original project; returning reads that project's history, queue and active turn. A stored failed
-turn offers Retry only in its owning conversation. Unsent drafts are not saved across switches.
+turn offers Retry only in its owning conversation. Each project's unsent text returns across switches
+and route remounts within the current client session.
 Leaving a voice composer stops its recorder, releases microphone tracks and cancels transcription;
 an outstanding microphone permission or transcription result cannot populate the new conversation.
 L3 runs headless, so its only checkpoint is the turn boundary: a message Burak

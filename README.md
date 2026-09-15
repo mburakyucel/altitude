@@ -330,18 +330,20 @@ keeps the draft editable; only confirmed termination enables correction or Conti
 the unsent draft, while sending a correction resumes with earlier queued messages followed by that
 correction. Switching views preserves the draft and selection. Finished tasks are read-only.
 
-Project conversations keep their own history and waiting messages. Switching projects clears the
-unsent draft and local reply state; a turn already sent finishes in its original project. Returning
+Project conversations keep their own history, waiting messages and unsent text. Drafts stay in this
+client session across project switches and route changes; a turn already sent finishes in its original project. Returning
 to that project shows its saved history and any active turn. Retry sends to the displayed project.
 Switching also stops voice recording and releases the microphone; a late transcription cannot fill
-the destination draft.
+the destination draft. While the microphone opens, records or transcribes, the text stays readable
+and read-only, with its activity indicator inside the composer. Stop adds the transcript for editing;
+Send transcribes and sends once. Cancel, denial or failure restores editing and preserves the draft.
 
 Submitted text, including image captions, stays recoverable in its original conversation while
 awaiting confirmation across navigation and reload in the same browser tab. A receipt clears that recovery copy immediately;
 without one, the existing refusal or unconfirmed-delivery hint accompanies the recovered text.
 Recovery never resends automatically or infers delivery from matching text. If the browser cannot
 save a recovery copy, the message remains in the composer and is not submitted. Ordinary unsent
-drafts still clear when switching projects. If a later recovery update fails, the latest text stays
+project text stays client-side until reload; images retain their existing navigation behavior. If a later recovery update fails, the latest text stays
 available across in-app navigation and the composer asks you to keep the tab open until it can save.
 Conversation polling continues while replies stream,
 and a queued message moves into history as part of the server's guarded turn admission.
