@@ -62,6 +62,8 @@ fictional populated project in a disposable Python service on an OS-selected loo
 The service serves this checkout's `web/dist` and real application HTTP handlers. No live project,
 service URL or active worker is needed. Tests clean up their owned service processes and temporary
 storage, with bounded termination. Never point routine acceptance at operator data.
+Cleanup releases fixture gates and finishes HTTP requests and background work before closing L3
+broker sockets; unfinished work or logged background failures fail the walkthrough.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. Install the Chromium build matching the locked Playwright version. The browser cache
