@@ -74,6 +74,11 @@ task or coordinator session, including context rotation, and retains them on nat
 with captured provider commands and prompts. It verifies which authoritative source is supplied,
 not live-provider consumption or future model compliance. One-off steering remains in the task conversation.
 
+Incident-prevention guidance follows these same activation limits. A merged persona correction is
+available after normal committed-source activation, then effective when the invocation/session
+loads it; native resumes can retain old instructions. L3 reports queued, merged and effective
+separately and supplies relevant sourced steering to an existing affected owner when needed.
+
 Codex's [native discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) follows the
 repository root through cwd; Claude's [native import](https://code.claude.com/docs/en/memory#agentsmd)
 resolves `@AGENTS.md` relative to `CLAUDE.md`. Fixture tests verify the reference and prompt paths;
@@ -629,6 +634,15 @@ cannot be repeated for that identity. The operator checks existing upstream issu
 attach a verified match with `--incident <id> --url <url>`, which performs only a GitHub read.
 Failed prepublication checks retain an actionable reason. No outcome resumes tasks or grants repair
 ownership; historical backfill and uncertain-result retry remain separate operator decisions.
+Recovery and prevention remain separate across sessions: L3 records recovery observations, the issue,
+prevention disposition and owner/next action in existing incident evidence. `watch` retains pending
+reporting, delivery or effectiveness; closure records verified prevention or an evidence-backed
+no-change disposition. Incident reads load current Markdown status/evidence/cause, and coordinator
+state shows the latest five records not closed with bounded evidence, including role-only failures.
+Reporting success cannot hide pending prevention. Unreadable evidence remains explicit; these reads
+create no tasks, notifications or publication retries. L3 gives a concise recovery/follow-through FYI
+when evidence or action changes and keeps unchanged repeats quiet. The receiving development
+coordinator triages public reports under its own authority, independently of the reporting host.
 Local notification has a separate `queued`, `received`, `unavailable`, or `failed` outcome in incident
 inspection and coordinator summaries. Publication success survives queue failure; repeating a confirmed
 incident command retries notification without another GitHub creation. The receiving queue and retained

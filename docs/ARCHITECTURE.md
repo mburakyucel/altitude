@@ -300,8 +300,13 @@ that history without interpreting its old replies or errors as a fresh startup r
 remains a separate session rotation within a managed project.
 
 `STATE.md` is regenerated from active task records and a bounded incident-reporting summary relevant
-to the next L3 turn. The summary counts missing, failed, uncertain and confirmed fault-kind reports,
-and shows up to five outcomes with gaps first. Archived tasks and full incident history remain audit
+to the next L3 turn. Incident reads project current status, evidence and cause from the existing
+Markdown record, excluding amendment history; unreadable records explicitly remain unavailable.
+The summary counts incidents not closed and shows the latest five with up to 600 characters of
+current evidence each, marking truncation and pointing to the full list. This includes role-only
+incidents and confirmed reports whose prevention remains pending. Separately it counts missing,
+failed, uncertain and confirmed fault-kind reports and shows five outcomes with gaps first.
+No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
 ## Isolation and landing
@@ -595,6 +600,15 @@ is available; L3 records the learning on the incident and fixes the cause direct
 ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
+L3 owns verified local recovery first and recurrence prevention separately. For newly investigated
+actionable system or role/procedure defects it promptly creates/reuses a sanitized issue, records
+the prevention disposition and owner/next action (or concrete reporting failure) in incident evidence,
+and gives one concise recovery/follow-through FYI. `watch` retains pending reporting, delivery or
+effectiveness; `closed` records verified prevention or an evidence-backed non-defect/no-change
+disposition. Local recovery and confirmed publication alone establish neither. Unchanged repeats
+reuse confirmed links and remain quiet. Historical visibility grants no bulk publication authority.
+The development coordinator triages reports under its own project rules and assigns authorized
+corrections to a matching owner or one concrete task; external notification grants no task authority.
 Restart inventories and incidental events do not turn saved blockers into new failures. Every L3
 turn receives this guidance, including resumed provider sessions. The originating L3 checks public
 delivery evidence and relevant local observations that the cause is gone before the existing

@@ -432,6 +432,40 @@ class TestTaskDesign(AltitudeCase):
                                disposition="answered", reason="Use the captured layout.", expected_attempt=1)
         self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "open")
 
+    def test_wording_only_republication_is_reconciled_by_owner_without_reapproval(self):
+        task = S.load_task(self.project, self.slug)
+        task["session_id"] = "original-owner-session"
+        S.save_task(self.project, task)
+        first = self.publish()
+        answer = T.message(self.project, self.slug, "burak", "Implement this scope.",
+                           question_id=first["id"], revision=1)
+        self.proposal.write_text(self.proposal.read_text() + "\nThe same feedback stays in this task.\n")
+        current = self.publish()
+        before = S.load_task(self.project, self.slug)
+        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
+            T.resolve_question(self.project, self.slug, current["id"], 2, answer["id"],
+                               disposition="answered", reason="Same scope", expected_attempt=1)
+        self.assertEqual(S.load_task(self.project, self.slug), before)
+        reason = f"Redundant wording-only checkpoint; unchanged scope approved in task message {answer['id']}."
+        T.resolve_question(self.project, self.slug, current["id"], 2, None,
+                           disposition="withdrawn", reason=reason, expected_attempt=1)
+        saved = S.load_task(self.project, self.slug)
+        receipt = saved["questions"][-1]["resolution"]
+        self.assertEqual(receipt["disposition"], "withdrawn")
+        self.assertIsNone(receipt["message_id"])
+        self.assertIn(answer["id"], receipt["text"])
+        for key in ("hold_merge", "attempt", "session_id", "state"):
+            self.assertEqual(saved.get(key), before.get(key))
+        self.assertIn(answer["id"], {row["id"] for row in T.task_messages(self.project, self.slug)})
+        # Genuine revised scope remains a new decision; withdrawal supplies no approval.
+        T.resume(self.project, self.slug)
+        self.proposal.write_text("Add a new external publication capability.\n")
+        revised = self.publish()
+        with self.assertRaises(T.TransitionError):
+            T.resolve_question(self.project, self.slug, revised["id"], revised["revision"], answer["id"],
+                               disposition="answered", reason="Use old approval", expected_attempt=1)
+        self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "open")
+
     def test_current_owner_cli_serves_untracked_and_ignored_captures_without_git_changes(self):
         captures = self.boards / "captures"
         captures.mkdir()
