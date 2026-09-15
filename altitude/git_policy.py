@@ -220,6 +220,9 @@ def activate_source() -> None:
     """Pin service launch inputs to committed source outside every worker's writable roots."""
     from . import config
 
+    if config.RELEASE is not None:
+        # Versioned installs already pin code and resources outside project worktrees.
+        return
     repo = config.REPO
     head = service_preflight(repo).head
     repair_hooks(repo)
@@ -334,6 +337,8 @@ def _resolve_hooks_path(repo: Path, raw: str) -> Path:
 
 def _active_hooks() -> Path:
     from . import config
+    if config.INSTALL_PREFIX is not None:
+        return config.INSTALL_PREFIX / "hooks"
     current = config.REPO / ".altitude-source/current/hooks"
     return current if current.is_dir() else config.HOOKS
 

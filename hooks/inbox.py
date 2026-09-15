@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, engines, images, state as S, tasks as T  # noqa: E402
 

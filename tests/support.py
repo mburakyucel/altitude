@@ -25,7 +25,7 @@ _native_sandbox_command = None
 SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
-OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "service", "ssh", "curl", "wget")
+OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
 
 
 def install_offline_guards() -> None:
@@ -40,7 +40,7 @@ def install_offline_guards() -> None:
                             "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
                 or key in {"ALTITUDE_ACTOR", "ALTITUDE_TASK", "ALTITUDE_PROJECT", "ALTITUDE_ATTEMPT",
                            "ALTITUDE_SESSION_KEY", "ALTITUDE_ROOTS", "ALTITUDE_TLS_DIR", "ALTITUDE_HOST",
-                           "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE",
+                           "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_CONFIG",
                            "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "DBUS_SESSION_BUS_ADDRESS",
                            "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH",
                            "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND",

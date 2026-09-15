@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import re
+import shlex
+import sys
 import uuid
 from pathlib import Path
 from urllib.parse import urlencode
@@ -796,12 +798,12 @@ def build_brief(project: str, slug: str) -> str:
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-attempt settings: edit telemetry and the inbox hook that hands Burak's queued messages to the
+    """Per-attempt settings: edit telemetry and the inbox hook that hands the operator's queued messages to the
     worker after a tool call or when it is about to stop."""
     hooks = config.HOOKS
-    inbox = [{"type": "command", "command": f"python3 {hooks / 'inbox.py'}", "timeout": 10}]
+    inbox = [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "inbox.py")]), "timeout": 10}]
     settings = {"hooks": {
-        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]},
+        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "edit_count.py")]), "timeout": 10}]},
                         {"hooks": inbox}],
         "Stop": [{"hooks": inbox}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
@@ -834,7 +836,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
     try:
         repo = config.project_path(project)
         with publication_settlement(project):
-            if config.SOURCE != config.REPO:
+            if config.RELEASE is not None or config.SOURCE != config.REPO:
                 project_setup.ensure_guards(project, slug=slug)
             origin_sha = git_policy.fetch_origin(repo, "main")
     except project_setup.SetupError as exc:
@@ -1031,7 +1033,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         raise record_resume_failure(project, slug, claim["id"], error) from error
     try:
         repo = config.project_path(project)
-        if config.SOURCE != config.REPO:
+        if config.RELEASE is not None or config.SOURCE != config.REPO:
             project_setup.ensure_guards(project, slug=slug)
         # A resume continues owned work, including edits, without needing a fresh remote base.
         _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
@@ -1470,7 +1472,7 @@ def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str
     files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
     changed = [f for f in files if activation_component(f)]
     notes = [f"self-deploy: main {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
-    if changed:
+    if changed and config.RELEASE is None:
         pend_p = config.MONITOR_DIR / RESTART_PENDING
         pend = S.read_json(pend_p, {}) or {}
         pending_files = sorted(set(pend.get("files", [])) | set(changed))

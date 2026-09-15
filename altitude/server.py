@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, quota_codex, route, state as S, tasks as T, transcript, verify
+from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, quota_codex, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -339,7 +339,7 @@ def _l3_verb_request(project: str, request: dict) -> dict:
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
         try:
-            result = subprocess.run([str(config.SOURCE / "bin" / "alt"), *args], input=stdin,
+            result = subprocess.run([sys.executable, "-B", str(config.SOURCE / "bin" / "alt"), *args], input=stdin,
                                     cwd=str(config.project_path(project)), env=env,
                                     capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -1133,8 +1133,15 @@ def morning_digest() -> None:
         digest.text()
 
 
-def timer_loop() -> None:
+def timer_loop(tls_context: ssl.SSLContext | None = None, tls_host: str | None = None) -> None:
+    next_tls_check = time.monotonic() + 86400
     while True:
+        if tls_context is not None and time.monotonic() >= next_tls_check:
+            try:
+                tls.check(tls_host, context=tls_context)
+            except (tls.TLSFailure, OSError) as exc:
+                log(f"HTTPS renewal failed; the active certificate is retained: {exc}")
+            next_tls_check = time.monotonic() + 86400
         try:
             tick()
         except Exception as e:  # noqa: BLE001
@@ -1447,6 +1454,10 @@ class Handler(BaseHTTPRequestHandler):
             if not parts or parts[0] != "api":
                 return self._static(u.path)
             api = parts[1] if len(parts) > 1 else ""
+            if api == "health":
+                release = config.RELEASE or {}
+                return self._json({"version": release.get("version"), "commit": release.get("commit"),
+                                   "pid": os.getpid()})
             if api == "design":
                 return self._task_design(parts[2:])
             if api == "images":
@@ -1730,6 +1741,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def restart_status() -> dict | None:
     """Pending backend/web activation plus what the page's early Restart button waits for."""
+    if config.RELEASE is not None:
+        return None  # Installed archives activate only through the explicit update transaction.
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
         return None
@@ -1792,6 +1805,8 @@ class RestartBusy(RuntimeError):
 
 
 def restart_service() -> dict:
+    if config.RELEASE is not None:
+        raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
             raise RestartBusy("restart waits for dispatch, L3 turn or report verification")
@@ -1939,6 +1954,8 @@ def issue_parser() -> argparse.ArgumentParser:
 def upstream_issue_repository() -> str:
     """The installation's product seam, independent of the calling project's registry or origin."""
     target = config.UPSTREAM_ISSUE_REPOSITORY
+    if target is None and config.RELEASE is not None:
+        target = config.RELEASE.get("repository")
     if target is None:
         try:
             origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.REPO,
@@ -2224,6 +2241,11 @@ def main(host: str | None = None, port: int | None = None) -> None:
     host = host or config.HOST
     port = port or config.PORT
     try:
+        context = tls.check(host) if config.TLS else None
+    except (tls.TLSFailure, OSError) as exc:
+        log(f"HTTPS startup refused: {exc}")
+        raise SystemExit(1) from exc
+    try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
         # No silent fallback to loopback: exit non-zero and let systemd retry when the tunnel is ready.
@@ -2231,30 +2253,23 @@ def main(host: str | None = None, port: int | None = None) -> None:
         raise SystemExit(1)
     srv.daemon_threads = True
     try:
+        if context is not None:
+            srv.socket = context.wrap_socket(srv.socket, server_side=True)
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()
-        log(f"cannot bind the L3 verb broker ({e}); refusing to start without the confinement boundary")
+        log(f"cannot initialize HTTPS or the L3 verb broker ({e}); refusing to start")
         raise SystemExit(1) from e
-    scheme = "http"
-    crt, key = config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key"
-    if config.TLS and crt.is_file() and key.is_file():
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(crt, key)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-        scheme = "https"
-    elif config.TLS:
-        log(f"no certificate in {config.TLS_DIR} — serving plain http (run `alt tls-init` for https)")
+    scheme = "https" if context is not None else "http"
     # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
-    if os.environ.get("ALTITUDE_SERVICE"):
+    if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         restart_notice()
-        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
+        threading.Thread(target=timer_loop, args=(context, host), name="timers", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")
@@ -2268,24 +2283,4 @@ def main(host: str | None = None, port: int | None = None) -> None:
 
 
 def tls_init(ip: str | None = None) -> dict:
-    """Self-signed local CA + server certificate for the WireGuard address (same recipe as the pocketbook's make-certs.sh:
-    EC P-256, CA 10 years, server cert 397 days because iOS rejects longer). Idempotent for the CA."""
-    d = config.ROOT / "tls" if config.TLS_DIR == config._POCKETBOOK_TLS and not (config._POCKETBOOK_TLS / "ca.key").exists() else config.TLS_DIR
-    d.mkdir(parents=True, exist_ok=True)
-    ip = ip or config.HOST
-    run = lambda *a: subprocess.run(list(a), cwd=str(d), check=True, capture_output=True, text=True)  # noqa: E731
-    if not (d / "ca.crt").exists():
-        run("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "ca.key")
-        run("openssl", "req", "-x509", "-new", "-key", "ca.key", "-sha256", "-days", "3650", "-out", "ca.crt",
-            "-subj", "/CN=Altitude local CA", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
-    run("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "server.key")
-    run("openssl", "req", "-new", "-key", "server.key", "-subj", "/CN=altitude", "-out", "server.csr")
-    ext = d / "server.ext"
-    ext.write_text(f"basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:{ip},IP:127.0.0.1,DNS:localhost\n")
-    run("openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial", "-days", "397", "-sha256",
-        "-out", "server.crt", "-extfile", str(ext))
-    (d / "server.csr").unlink(missing_ok=True); ext.unlink(missing_ok=True)
-    for f in ("ca.key", "server.key"):
-        (d / f).chmod(0o600)
-    end = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", str(d / "server.crt")], capture_output=True, text=True).stdout.strip()
-    return {"dir": str(d), "ip": ip, "server_cert": end, "phone": f"open http://{ip}:{config.PORT}/ca.crt once (with ALTITUDE_TLS=0) or install ca.crt by other means, then trust it in the phone's certificate settings"}
+    return tls.initialize(ip)

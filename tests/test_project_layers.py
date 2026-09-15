@@ -42,10 +42,10 @@ PROVIDER_BASELINE = {
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "README.md": 4,
+    "README.md": 3,
     "altitude/config.py": 1,
     "altitude/digest.py": 3,
-    "altitude/dispatch.py": 4,
+    "altitude/dispatch.py": 3,
     "altitude/incidents.py": 2,
     "altitude/l3.py": 3,
     "altitude/land.py": 4,

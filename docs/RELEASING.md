@@ -1,13 +1,14 @@
 # Private-preview release checkpoints
 
-Altitude uses source releases for invited collaborators. A release identifies a validated commit
+Altitude uses private versioned archives and source checkpoints for invited collaborators. A release identifies a validated commit
 and its notes. The operator decides when to publish it. No release or tag is created by running
 the test suite, merging a PR, or recording an Unreleased changelog entry.
 
-Merged changes activate through the existing [service lifecycle](OPERATIONS.md#service-lifecycle).
+Source-deployed merged changes activate through the existing [service lifecycle](OPERATIONS.md#service-lifecycle).
 That process continues while a release candidate is evaluated. A service can therefore run a
 newer commit than the latest published version. Release readiness and activation are separate;
-record the exact source SHA when reporting either. Packaging, public visibility and licensing
+record the exact source SHA when reporting either. Installed archives update only through the
+explicit [application update command](OPERATIONS.md#installed-application-lifecycle). Public visibility and licensing
 remain separate [release prerequisites](ROADMAP.md#early-user-onboarding-and-public-release).
 
 ## Cadence and versions
@@ -77,9 +78,33 @@ make check
 This validates the selected source. It does not create a release, switch a deployment to that
 source or prove live provider compatibility.
 
+## Build a private archive
+
+From the clean, committed candidate checkout, with the locked web build tools available:
+
+```sh
+python3.12 scripts/build_release.py --version v0.1.0-rc.1 --output /tmp/altitude-release
+```
+
+Use the approved candidate label. The builder exports the exact Git revision, installs frozen web
+dependencies and builds the UI, then emits the application archive, `install.py` and archive SHA-256
+file. The manifest records source identity and every packaged file hash. The archive contains the
+CLI, Python daemon, built UI, personas, hooks, templates and schemas; users need no source build.
+Existing archive names are immutable. Building artifacts creates no tag, GitHub release or public
+publication. Deliver the installer and checksum through the approved private channel.
+
+Record archive checksum and install/update/recovery evidence alongside candidate checks. The initial
+runtime target is Ubuntu 24.04 x86_64; macOS 15/26 Apple silicon remains pending native confinement
+and host validation. Deterministic fixtures do not establish physical Mac, fresh-machine, browser
+trust or live provider compatibility. No public support claim precedes that evidence.
+
 ## Recovery
 
-The ordinary recovery is a checked revert or forward-fix PR to `main`, followed by normal
+Packaged activation restores the preceding application version/service after failure, retaining
+configuration, TLS identity and user data. Interrupted recovery uses `alt recover` or the standalone
+installer's `--recover`; see [retention and recovery](OPERATIONS.md#installed-application-lifecycle).
+
+For source deployments, ordinary recovery is a checked revert or forward-fix PR to `main`, followed by normal
 automatic activation and verification of the affected API/UI behavior. Record the bad and
 known-good SHAs, the symptom, the recovery PR and its check/activation evidence. Keep main and
 its deployment checkout under the normal Git guards; do not reset that checkout to a tag or

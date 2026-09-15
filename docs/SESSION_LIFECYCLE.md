@@ -159,6 +159,17 @@ Task CLI code, personas, hooks, templates and schemas come from the activated co
 export outside worker writable roots; fresh project work starts from fetched `origin/main`.
 Deployment and activation errors remain visible independently of isolated task progress.
 
+An archive installation pins these inputs to its immutable application version; it needs no
+application source checkout. Updates select a verified version at the same narrow quiet point
+used by dispatch, resume, L3 and report verification. Independent Linux worker units survive the
+daemon replacement and retain their pinned resources; persisted ownership, sessions, messages and
+holds remain authoritative when the daemon adopts them. Previous versions stay installed.
+Failed activation restores the prior version and service definition; an interrupted recovery
+retains its receipt for `alt recover`. Stopping the daemon does not stop independent task workers.
+Uninstall refuses while unfinished tasks own worker inputs and retains versions still referenced
+by registered project guards. [Operations](OPERATIONS.md#installed-application-lifecycle) describes
+the operator commands and retention. This does not establish native macOS confinement or reboot evidence.
+
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
 unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records

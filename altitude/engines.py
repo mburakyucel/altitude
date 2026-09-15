@@ -371,7 +371,11 @@ def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
     env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
-    env["PATH"] = str(config.SOURCE / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
+                if config.RELEASE is not None else config.SOURCE / "bin")
+    env["PATH"] = str(commands) + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    if config.RELEASE is not None:
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 

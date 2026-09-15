@@ -11,6 +11,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HOME = Path.home()
+SOURCE = Path(__file__).resolve().parent.parent
+RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
+INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
+INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
+if RELEASE is not None and INSTALL_CONFIG.exists():
+    for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
+        if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
+            raise ValueError(f"invalid installation environment setting: {key}")
+        os.environ.setdefault(key, value)
 ROOT = Path(os.environ.get("ALTITUDE_HOME", HOME / ".altitude"))
 
 # A test module can set ALTITUDE_HOME before its own Altitude import and still be too late: unittest discovery
@@ -23,9 +32,8 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
         "refusing to use the live ~/.altitude state from a unittest process; "
         "set ALTITUDE_HOME to a throwaway directory before importing altitude"
     )
-SOURCE = Path(__file__).resolve().parent.parent
-REPO = SOURCE.parent.parent if SOURCE.parent.name == ".altitude-source" else SOURCE
-if SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
+REPO = SOURCE.parent.parent if RELEASE is None and SOURCE.parent.name == ".altitude-source" else SOURCE
+if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
     SOURCE = (REPO / ".altitude-source/current").resolve()
 # Product issue target, set only in altd's environment. Unset uses this installation's origin.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
@@ -41,14 +49,20 @@ WORKTREE_ROOT = Path(".claude/worktrees")
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
-HOST = os.environ.get("ALTITUDE_HOST", "10.88.0.1")
+HOST = os.environ.get("ALTITUDE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
-# Reuse the pocketbook's local CA + server cert for 10.88.0.1 when present (the phone already trusts it);
-# otherwise `alt tls-init` makes an equivalent pair under ~/.altitude/tls. ALTITUDE_TLS=0 forces plain http.
-_POCKETBOOK_TLS = HOME / ".local/state/tutor/tls"
-TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", str(_POCKETBOOK_TLS if (_POCKETBOOK_TLS / "server.crt").exists() else ROOT / "tls"))).expanduser()
+TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser()
 TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
+
+
+def installation_environment() -> dict[str, str]:
+    """Persist application choices, excluding transient actor/session authority."""
+    return {"ALTITUDE_HOME": str(ROOT), "ALTITUDE_HOST": HOST, "ALTITUDE_PORT": str(PORT),
+            "ALTITUDE_TLS_DIR": str(TLS_DIR), "ALTITUDE_TLS": "1", "PATH": os.environ.get("PATH", ""),
+            "ALTITUDE_ROOTS": ":".join(map(str, PROJECT_ROOTS)),
+            **{key: os.environ[key] for key in ("CLAUDE_BIN", "CODEX_BIN", "ALTITUDE_OPERATOR",
+               "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY") if key in os.environ}}
 
 # Context lines per engine: Claude quality degrades past
 # ~25–30% of the window in the operator's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
@@ -206,6 +220,8 @@ def restart_lock(*, exclusive: bool = False):
 
 
 def restart_in_progress() -> bool:
+    if RELEASE is not None:
+        return (INSTALL_PREFIX / "pending.json").exists()
     from . import state as S
     pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
     return bool(pending.get("requested_at") and not pending.get("failed"))

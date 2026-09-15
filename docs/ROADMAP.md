@@ -1,5 +1,27 @@
 # Roadmap
 
+## Friends-and-family readiness priorities
+
+The operator's September 14, 2026 direction selects a low-friction private trial on friends'
+own machines. Readiness tracker #350 owns
+delivery/acceptance links; selected work remains subject to proposal, security, UX and merge holds.
+
+| Priority | Scope and owner/dependency |
+| --- | --- |
+| P0 selected | #349/#348 project Setup, Git guards and scoped repair stay with `make-project-setup-visible-and-repairabl`; its design/merge holds remain independent. |
+| P0 selected | #225 native runtime, #226 installation/update lifecycle and private-trial #219 onboarding stay with `deliver-portable-installation-and-macos`. The Linux archive increment precedes native Mac confinement and host evidence. |
+| P0 before access sharing | Reconcile #233's recorded history audit and changes after its cutoff; resolve material exposure findings privately. Audit/publication authority stays separate from runtime installation. |
+| P1 after core installation | #231 private backup/staged restore and #224 remaining continuity/reboot acceptance. Neither authorizes live-provider tests or production lifecycle operations. |
+| Reassess only if trial-blocking | #222/#334 confusion observed during the trial; no broad redesign prerequisite. Composer/drafts stay with `preserve-project-drafts-and-make-voice-p`. |
+
+L3 routes subsequent issue intake using these priorities, recorded ownership, dependencies and
+verified remaining acceptance. Keep related work with its owner; do not start duplicate tasks or
+drain unrelated backlog. Pending implementation is not delivery. Parent issues remain open until
+their full acceptance, including required operator review, is verified. Public release, license,
+visibility, invitations and security-contact decisions remain separate. Private-trial readiness
+requires exact OS/architecture, application/engine versions and observed compatibility evidence;
+fixtures do not establish fresh-machine or live-provider success.
+
 ## Early-user onboarding and public release
 
 The repository is an early private preview for invited engineers. The README-first milestone of
@@ -26,28 +48,29 @@ Remaining repository-presentation work under #219:
 Private-preview [release checkpoints](RELEASING.md) use versioned source snapshots, curated
 [release notes](../CHANGELOG.md), full deterministic candidate checks and documented recovery.
 During active preview work, readiness is checked daily and useful fixes can release several times
-per day after validation; publication is explicit and does not gate automatic activation.
+per day after validation; publication is explicit and does not gate source-deployment activation.
 Live-provider testing is deferred by the operator's 2026-09-08 decision. The
 [coverage matrix](DEVELOPMENT.md#coverage-and-limits) keeps provider/host compatibility and other
 remaining validation limits explicit; this does not establish clean-machine or public readiness.
 
 The direction is the same project and task workflow across CLI engines and supported machines.
-These are intended capabilities, with no promised dates; the current setup remains the Linux
-source installation documented in [SETUP.md](SETUP.md).
+The current [setup](SETUP.md) supplies a private Linux x86_64 archive; Ubuntu 24.04 is its initial
+target. The approved next platform is macOS 15/26 Apple silicon after common confinement is proven.
+That is implementation scope, not a support claim or completed host validation.
 
 | Work | Intended outcome | Current boundary |
 | --- | --- | --- |
 | Additional CLI engines | Integrate candidates such as **OpenCode**, preserving native tools, sessions, context and helpers. | Codex and Claude Code work today. Each added engine needs launch/resume/stop, permissions, authentication and optional usage observations implemented and verified through task delivery. |
-| Engine readiness and access | Select from installed, authenticated engines; document verified model-provider, subscription and API/access configurations. | Auto reasons from quota, so single-engine use requires explicit pins. Launch environment and role-model settings constrain configuration inheritance. **Bedrock is a provider-access service**, to evaluate separately from CLI engines. |
+| Engine readiness and access | Select from installed, authenticated engines; document verified model-provider, subscription and API/access configurations. | One engine suffices with Auto or an explicit pin. Local readiness distinguishes configured, unknown and tested; it makes no provider request. Launch environment and role-model settings constrain configuration inheritance. |
 | [macOS runtime · #225](https://github.com/mburakyucel/altitude/issues/225) | Native OS/service integration with verified start, task execution, stop/resume, restart/adoption and shutdown. | Current service units and process/sandbox facilities assume Linux. |
-| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Users currently clone source, build the app and adapt configuration. The packaging/update architecture still needs an operator decision. |
+| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Linux archive installation uses localhost HTTPS, explicit CA trust and retained data. Native Mac and clean-machine acceptance remain pending; this increment does not close the parent. |
 
 Engine work belongs at the [integration boundary](ARCHITECTURE.md#engine-integration-boundary),
 with remaining assumptions outside it moved as those files are touched. Platform support and
 distribution are related but distinct: the installer depends on working lifecycle semantics on
 each OS. Clean-machine checks must cover authentication, existing Git hooks, first conversation
-and a checked task delivery. These projects are backlog, not prerequisites for reading the product
-walkthrough or claims of support already shipped.
+and a checked task delivery. Selected platform/distribution work proceeds under #350; additional
+engines remain backlog. None of this makes the product walkthrough a compatibility claim.
 
 ## Pending command-surface decision
 

@@ -7,6 +7,9 @@ use the operator's service or runtime records.
 
 ## Local checks
 
+Contributors work from a repository checkout; the private archive is for running the application.
+With repository access, clone it, then use the commands below from its root.
+
 Use Python 3.12+, Node 22.22.2+ (22.x) or 24.15+ (24.x), and the pnpm version pinned in
 `web/package.json`. From the repository root:
 
@@ -15,6 +18,12 @@ pnpm --dir web install --frozen-lockfile
 PLAYWRIGHT_BROWSERS_PATH="${ALTITUDE_HOME:-$HOME/.altitude}/browsers" pnpm --dir web exec playwright install chromium
 make check
 ```
+
+For a deliberately separate foreground preview, build with `pnpm --dir web build`, put `bin/`
+on PATH, select unused runtime and TLS directories outside project/source roots, and choose a free
+port with `ALTITUDE_PORT`. Run `alt tls-init`, follow the [certificate trust guide](SETUP.md#trust-https-on-each-device),
+then `alt serve` with the same environment. It still needs the systemd user manager for workers.
+Do not bind an existing service's reserved port or use its runtime state for a preview.
 
 `make check` times the full Python suite, web unit suite, TypeScript/build and all isolated browser
 specs. Python prints each test name so an incomplete run identifies the last test it started.
@@ -149,6 +158,9 @@ when the observable behavior breaks. Keep the expected result independent of the
 
 | Journey | Programmatic evidence | Boundary / remaining limit |
 | --- | --- | --- |
+| Private archive lifecycle | `test_installation.py`: real archives/checksums, immutable versions, install/update/uninstall retention, failed/interrupted recovery, conflicting ownership, stopped service and unsafe archive refusal. | Native service calls use deterministic fixtures; clean-machine and actual service lifecycle acceptance remain pending. |
+| Installed task inputs | `test_installed_runtime.py`: no-checkout configuration, real Git guards, dispatch/resume ownership and hold retention, missing-guard refusal, installed/source separation. | Engine execution is deterministic; no live provider or native Mac confinement evidence. |
+| Local HTTPS | `test_tls.py`, `test_https_server.py`: real OpenSSL identities and TLS handshakes, hostname/trust failure, permissions, renewal, key mismatch and unchanged external certificates. | Local CA validation does not prove OS/browser trust. Physical desktop/mobile browser and home-screen-app trust need separate evidence. |
 | Task delivery | `tests/test_offline_journeys.py`, `test_lifecycle.py`, `test_direct_l2_completion.py`: dispatch/worktree, report and archive; no-code completion refuses unlanded code or active workers. | Worker execution and GitHub responses are scripted; actual provider/GitHub permissions are unproven. |
 | Trusted launch inputs | `test_launch_source.py`, `test_git_policy_integration.py`: committed installation export, activated helper paths, dirty staged/working/untracked deployment preservation, fresh base, owned resume and independent deployment failures. | Real Git and deterministic engine fixtures establish application behavior; live provider loading and host confinement remain separate evidence. |
 | Repository rules | `test_repository_instructions.py`: fresh/resumed L2 and L3 turns on both engines, scratch cwd, shared import target, AGENTS-only and legacy CLAUDE-only projects, rule-source migration and boundary excerpts. | Fixtures establish emitted paths and file resolution, not live provider native loading or adherence. |
@@ -162,11 +174,14 @@ when the observable behavior breaks. Keep the expected result independent of the
 | API/UI streaming and projects | `project-isolation.pw.ts`, `project-lifecycle.pw.ts`: concurrent streams in both completion orders, accepted/refused errors and retry, queue/history, cross-project ownership and reattachment/session retention. | External engine output is deterministic. |
 | Phone/desktop states | `smoke.pw.ts`, task/navigation, work/decision, conversation, monitor, usage and restart specs: empty/loading/failed/denied/pending/terminal states, scrolling/navigation and visible removals. | Some states use explicit HTTP overlays. Chromium phone emulation is not physical Safari/microphone validation; restart banner assertions do not restart a service. |
 
-Service startup exports committed installation HEAD under ignored `.altitude-source/<sha>` in the
+Source-deployment startup exports committed installation HEAD under ignored `.altitude-source/<sha>` in the
 deployment checkout, outside worker writable roots. Task helpers use the activated source;
 exports remain available to existing workers. Changes to code, personas, hooks, templates, schemas
 and scripts require normal activation. Tests use disposable repositories and state for this path;
 ordinary dispatch and resume never clean, stash or reset deployment edits.
+Archive installations instead pin their immutable version's resources. Build archives through
+[the private builder](RELEASING.md#build-a-private-archive); tests never install into the operator's
+home, modify OS trust or run user services. A phone viewport is not physical phone TLS acceptance.
 
 Detached-project reads currently return HTTP 500 with an unknown-project error while the UI
 shows “Project not managed.” The removal scenario asserts those exact responses and permits

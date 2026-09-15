@@ -7,6 +7,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - Launches, landing and restart builds discover the installed nvm default when Node is absent
   from PATH. Candidate installs run inside the web project so Corepack uses its pinned pnpm (#368).
+- Private Linux x86_64 archives include the CLI, daemon and built UI, with per-user installation,
+  prerequisite inspection and recoverable versioned updates. Uninstall preserves user data and
+  referenced hooks. Fresh defaults use localhost HTTPS and a separate installation-local CA with
+  explicit device trust and server-certificate renewal. Native macOS and clean-machine/provider
+  acceptance remain pending; source deployments retain explicit lifecycle and network choices (#350).
 
 - Model allowance exhaustion is recognized without inventing a reset time. Coordinators can use
   `alt task handoff` to continue an exited, fault-blocked owner as a fresh attempt on another
