@@ -150,6 +150,9 @@ rollouts leave the observation unknown and are retried while the turn runs. The 
 kept separately, so recording a default does not turn it into an override on resume. Status, task
 header chips, and the Monitor API expose the observation; old records remain readable.
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
+an unavailable task read, including a poll crossing the task directory's archive move, returns
+HTTP 404 without a failure traceback. Subsequent reads resolve the archived task normally.
+Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
@@ -871,6 +874,8 @@ UUID `request_id`. Saved-ID retries use `image_ids` instead of new uploads. The 
 file publication and durable admission; a repeated identity returns its recorded receipt and cannot
 replace text or images. Project queue/history and task `status.json.image_messages` own receipts;
 the latter atomically projects the conversation and pending delivery, like question acceptance.
+An image queue receipt arriving after its `request_id` appears in cached history does not append
+another queued copy. History retains the accepted message while the receipt releases the composer.
 The existing maintenance tick removes files unreferenced for 24 hours. Committed images follow
 conversation retention, including archive, worktree cleanup and project detach/reattach.
 Fresh L2 attempts carry delivered image-message captions and deduplicated canonical references from

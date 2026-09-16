@@ -495,7 +495,19 @@ test("an earlier text stream cannot replace or retire a pending image admission"
   await v.picker.setInputFiles(await screenshotFile(page)); await expect(v.remove).toBeVisible(); await v.field.fill(caption);
   let release: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/chat", async (route) => { await gate; const response = await route.fetch(); await route.fulfill({ response }); });
+  let acknowledge!: () => void;
+  const receipt = new Promise<void>((resolve) => { acknowledge = resolve; });
+  let refresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => { refresh = resolve; });
+  let historyShown = false;
+  // Let a real history poll overtake the admission receipt, then hold further refreshes.
+  await page.route("**/api/chat/alpha?**", async (route) => {
+    if (historyShown) await refreshGate;
+    const response = await route.fetch();
+    historyShown ||= (await response.json()).history.some((row: { text: string }) => row.text === caption);
+    await route.fulfill({ response });
+  });
+  await page.route("**/api/chat", async (route) => { await gate; const response = await route.fetch(); await receipt; await route.fulfill({ response }); });
   await walk.state("01-image-pending-behind-stream", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
   await request.post("/fixture/release/alpha");
   const reply = "I can inspect 0 image(s). Answer this first text turn.";
@@ -507,5 +519,14 @@ test("an earlier text stream cannot replace or retire a pending image admission"
   await expect(pending.locator(".msg-row[data-pending]")).toHaveCount(1);
   await expect(v.field).toBeDisabled();
   release();
-  await walk.state("03-image-admission-finishes-independently", { visible: [v.preview, page.getByText(reply, { exact: true })], hidden: [page.getByText("Sending images…", { exact: true }), pending] });
+  try {
+    await expect.poll(async () => (await (await request.get("/fixture/calls")).json()).calls.length).toBe(2);
+    // Refocusing starts the next poll even if the preceding turn left the page idle.
+    await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }); window.dispatchEvent(new Event("visibilitychange")); });
+    await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); window.dispatchEvent(new Event("visibilitychange")); });
+    await expect(page.locator(".turn:not([data-local])").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
+    acknowledge();
+    await expect(pending).toBeHidden();
+    await walk.state("03-image-admission-finishes-independently", { visible: [v.preview, page.getByText(reply, { exact: true })], hidden: [page.getByText("Sending images…", { exact: true }), pending, page.getByRole("list", { name: "Queued messages" })] });
+  } finally { acknowledge(); refresh(); }
 });

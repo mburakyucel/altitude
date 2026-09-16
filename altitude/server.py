@@ -1488,7 +1488,10 @@ class Handler(BaseHTTPRequestHandler):
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]))
             if api == "task" and len(parts) > 3:
-                return self._json(task_view(parts[2], parts[3]))
+                try:
+                    return self._json(task_view(parts[2], parts[3]))
+                except S.TaskNotFound:
+                    return self._json({"error": "Task is not available."}, 404)
             if api == "transcript" and len(parts) > 3:
                 try:
                     return self._json(transcript.view(
@@ -2274,10 +2277,12 @@ def project_view(name: str) -> dict:
 
 def task_view(project: str, slug: str) -> dict:
     questions = T.question_views(project, slug)
-    t = S.load_task(project, slug)
-    d = S.task_dir(project, slug)
-    report = S.read_json(d / "report.json")
-    files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+    with S.project_lock(project):
+        t = S.load_task(project, slug)
+        d = S.task_dir(project, slug)
+        report = S.read_json(d / "report.json")
+        files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+        events = S.read_events(project, slug)
     try:
         activity = transcript.activity(project, slug)
     except transcript.TranscriptAccessError:
@@ -2286,7 +2291,6 @@ def task_view(project: str, slug: str) -> dict:
     if activity["generation"] != t.get("agent_id"):
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
                     "observation": None, "delivered": [], "error": "The worker changed. Refresh this task."}
-    events = S.read_events(project, slug)
     return {**t, "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),

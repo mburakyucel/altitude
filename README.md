@@ -373,6 +373,8 @@ correction. Switching views preserves the draft and selection. Finished tasks ar
 Project conversations keep their own history, waiting messages and unsent text. Drafts stay in this
 client session across project switches and route changes; a turn already sent finishes in its original project. Returning
 to that project shows its saved history and any active turn. Retry sends to the displayed project.
+An image already shown in history stays there when its admission receipt arrives; it does not
+reappear in the waiting queue.
 Leaving cancels voice input that has not been sent and releases the microphone. Once you press Send,
 transcription finishes and sends to the original project or task even after navigation. Returning while
 it is pending shows its status; a failure preserves the original text for recovery there. Another

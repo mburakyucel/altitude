@@ -251,7 +251,8 @@ export default function Conversation({
         await queryClient.cancelQueries({ queryKey: ["chat", name] });
         update(() => null);
         queryClient.setQueryData<ChatView>(["chat", name], (cached) =>
-          cached ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
+          cached && !cached.history.some((row) => row.request_id === queued.id)
+            ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
         );
       } else if (images) update(() => null);
       else {

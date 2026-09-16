@@ -1,4 +1,5 @@
 """Approved #302 journeys through HTTP/storage/Git; only external workers are fixtures."""
+import fcntl
 import http.client
 import json
 import threading
@@ -64,6 +65,103 @@ class TestL2Steering(AltitudeCase):
         stopped = self.view(task)
         self.assertEqual(stopped["steering"]["state"], "stopped")
         return stopped
+
+    def test_poll_crossing_archive_is_not_a_failed_request(self):
+        task = T.new(self.project, "Archive while polling", "Keep the archived conversation readable.")
+        slug = task["slug"]
+        live_status = S.status_path(self.project, slug)
+        status_path = S.status_path
+        archived = []
+
+        def resolve(project, requested_slug):
+            path = status_path(project, requested_slug)
+            if path == live_status and not archived:
+                archived.append(True)
+                T.reject(project, requested_slug, "The operator ended this task.")
+            return path
+
+        with mock.patch.object(S, "status_path", side_effect=resolve), mock.patch.object(server, "log") as log:
+            missing = self.request(f"/api/task/{self.project}/{slug}", status=404)
+            self.assertEqual(missing, {"error": "Task is not available."})
+            self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
+        self.assertEqual(archived, [True])
+        settled = self.view(task)
+        self.assertEqual(settled["state"], "rejected")
+        self.assertEqual(settled["files"]["request"].strip(), "Keep the archived conversation readable.")
+        self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
+
+    def test_missing_task_is_not_found_but_corrupt_state_still_fails(self):
+        with mock.patch.object(server, "log") as log:
+            self.request(f"/api/task/{self.project}/missing-task", status=404)
+            self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
+            task = T.new(self.project, "Corrupt polling", "Keep failures visible.")
+            S.status_path(self.project, task["slug"]).write_text("{corrupt}\n")
+            result = self.request(f"/api/task/{self.project}/{task['slug']}", status=500)
+            self.assertIn("corrupt JSON", result["error"])
+            self.assertTrue(any("Traceback" in str(call) for call in log.call_args_list))
+
+    def test_archive_waits_for_task_documents_and_events_snapshot(self):
+        for name in ("request.md", "events.log"):
+            with self.subTest(name=name):
+                task = T.new(self.project, f"Archive during {name}", "Keep this request readable.")
+                target = S.task_dir(self.project, task["slug"]) / name
+                read_text = Path.read_text
+                activity = server.transcript.activity
+                attempted = threading.Event()
+                errors = []
+
+                def archive():
+                    attempted.set()
+                    try:
+                        T.reject(self.project, task["slug"], "The operator ended this task.")
+                    except Exception as exc:
+                        errors.append(exc)
+
+                writer = threading.Thread(target=archive)
+
+                def read(path, *args, **kwargs):
+                    if path == target and not writer.ident:
+                        with open(config.project_dir(self.project) / ".lock") as lock:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        writer.start()
+                        self.assertTrue(attempted.wait(5))
+                    return read_text(path, *args, **kwargs)
+
+                def after_archive(project, slug):
+                    writer.join(5)
+                    self.assertFalse(writer.is_alive(), "activity runs after releasing the snapshot lock")
+                    return activity(project, slug)
+
+                try:
+                    with mock.patch.object(Path, "read_text", new=read), \
+                            mock.patch.object(server.transcript, "activity", new=after_archive), \
+                            mock.patch.object(server, "log") as log:
+                        snapshot = self.view(task)
+                        self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
+                finally:
+                    if writer.ident:
+                        writer.join(5)
+                self.assertTrue(attempted.is_set())
+                self.assertFalse(writer.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(snapshot["state"], "queued")
+                self.assertEqual(snapshot["files"]["request"].strip(), "Keep this request readable.")
+                self.assertFalse(any(event.get("kind") == "state" for event in snapshot["events"]))
+                settled = self.view(task)
+                self.assertEqual(settled["state"], "rejected")
+                self.assertEqual(settled["files"]["request"].strip(), "Keep this request readable.")
+                self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
+
+    def test_missing_question_field_is_a_logged_failure_not_a_missing_task(self):
+        task = T.new(self.project, "Malformed question", "Keep state errors visible.")
+        task = T.block(self.project, task["slug"], "Which retry policy?", actor="l2")
+        del task["questions"][0]["id"]
+        S.save_task(self.project, task)
+        with mock.patch.object(server, "log") as log:
+            result = self.request(f"/api/task/{self.project}/{task['slug']}", status=500)
+            self.assertEqual(result["error"], "'id'")
+            self.assertTrue(any("KeyError: 'id'" in call.args[0] for call in log.call_args_list))
 
     def test_stop_holds_old_racing_and_stale_tab_sends_then_correction_keeps_session_and_edits(self):
         for engine in config.ENGINES:

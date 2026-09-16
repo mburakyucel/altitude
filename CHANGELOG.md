@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Delayed image admission receipts preserve the accepted history row without adding a queued copy.
+  Task reads crossing archival return ordinary not-found responses instead of failure tracebacks.
+
 - Native helpers share a concise L1 persona, referenced explicitly in their assignments on both
   engines. L2 supplies task-specific scope, verifies results and retains delivery accountability.
 
