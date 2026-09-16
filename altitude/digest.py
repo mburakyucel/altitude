@@ -19,7 +19,7 @@ def wip() -> dict:
     return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT,
             "limit_machine": config.machine_wip(),
             "limits_per_project": {p: config.project_wip(p) for p in per},
-            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "queued" else "resume",
+            "waiting": [{"project": p, "slug": t["slug"], "why": "planned" if t.get("planned_wait") else "dispatch" if t["state"] == "queued" else "resume",
                          "hold": _waiting(p, t, restart)["reason"]}
                         for p in config.load_projects() for t in S.list_tasks(p)
                         if t["state"] == "queued" or (t["state"] == "blocked" and t.get("resume_after"))]}
@@ -27,7 +27,9 @@ def wip() -> dict:
 
 def _waiting(project: str, task: dict, restart: dict | None) -> dict:
     reason, kind = "", "checkpoint"
-    if task["state"] == "blocked" and not task.get("resume_after"):
+    if task.get("planned_wait"):
+        kind, reason = "planned", f"waits for {task['planned_wait']['reason']}"
+    elif task["state"] == "blocked" and not task.get("resume_after"):
         kind, label = T.block_status(task)
         reason = f"{label}: {task.get('blocked_reason') or 'blocked'}"
     elif restart and restart.get("requested_at") and not restart.get("failed"):
@@ -74,7 +76,7 @@ def text() -> str:
     w = wip()
     lines.append(f"Running: {w['machine']} L2 task(s) — " + ", ".join(f"{p} {n}" for p, n in w["per_project"].items() if n) + ".")
     if w["waiting"]:
-        lines.append("Waiting for a slot: " + ", ".join(f"{x['project']}/{x['slug']}" for x in w["waiting"]) + ".")
+        lines += [f"- {x['project']}/{x['slug']}: {x['hold']}" for x in w["waiting"]]
     txt = "\n".join(lines) + "\n"
     S.atomic_write(config.DIGEST_FILE, txt)
     return txt

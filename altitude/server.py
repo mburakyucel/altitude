@@ -40,7 +40,7 @@ L3_GH_READS = {
     ("run", "list"), ("run", "view"), ("run", "watch"),
 }
 L3_TASK_TARGETS = {
-    "handoff",
+    "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
@@ -1026,8 +1026,12 @@ def resume_stranded_reports(project: str) -> None:
 def dispatch_waiting(project: str) -> None:
     if config.restart_in_progress():
         return
-    for t in S.list_tasks(project):
+    queued = [T.release_dependency(project, t["slug"]) if t.get("planned_wait") else t
+              for t in S.list_tasks(project) if t["state"] == "queued"]
+    for t in queued:
         if t["state"] != "queued":
+            continue
+        if t.get("planned_wait"):
             continue
         hold = dispatch.wip_hold(project, t)
         if hold:

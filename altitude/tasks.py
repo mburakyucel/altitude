@@ -481,8 +481,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         if stop_id is not None and stop_id != task.get("stop_id"):
             raise TransitionError("The stopped session changed. Refresh before sending this correction.")
         allowed = ("running", "blocked", "reported")
-        if role != "l2" and task.get("questions"):
-            allowed += ("queued",)  # a known dilemma remains discussable while its next attempt waits
+        if role != "l2" and (task.get("questions") or not task.get("attempt")):
+            allowed += ("queued",)  # prelaunch updates never release a planned wait
         if task.get("state") not in allowed:
             raise TransitionError(f"{slug}: cannot message the L2 in {task.get('state')} state")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -684,13 +684,14 @@ def pending(project: str, slug: str) -> list[dict]:
 
 def _pending_rows(task: dict, path: Path) -> list[dict]:
     receipts = task.get("message_deliveries") or {}
-    rows = [row for row in _rows(path, "task inbox") if receipts.get(row["id"], {}).get("state") != "removed"]
+    finished = {key for key, receipt in receipts.items() if receipt.get("state", "delivered") in ("removed", "delivered")}
+    rows = [row for row in _rows(path, "task inbox") if row["id"] not in finished]
     if task.get("state") not in ("running", "blocked", "queued"):
         return rows  # historical receipts do not create new delivery work after the owner hands off
     seen = {row["id"] for row in rows}
     for message in task.get("image_messages", []):
         if (not message.get("delivered") and message["id"] not in seen
-                and receipts.get(message["id"], {}).get("state") != "removed"):
+                and message["id"] not in finished):
             rows.append({key: value for key, value in message.items() if key != "delivered"})
             seen.add(message["id"])
     for question in task.get("questions", []):
@@ -917,9 +918,18 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
-        effort: str | None = None, image_ids: list[str] | None = None) -> dict:
+        effort: str | None = None, image_ids: list[str] | None = None,
+        wait: str | None = None, after: str | None = None) -> dict:
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
+    if wait is not None and after is not None:
+        raise TransitionError("choose --wait or --after, not both")
+    planned = None
+    if wait is not None or after is not None:
+        reason = (wait if wait is not None else S.require_task_slug(after)).strip()
+        if not reason or len(reason) > 160 or len(reason.splitlines()) != 1 or not request.strip():
+            raise TransitionError("a planned task needs a written brief and one wait reason of 1–160 characters")
+        planned = {"reason": reason, "after": after}
     try:
         pin = config.pinned_option("l2", {}, engine=engine, model=model)
         if effort is not None:
@@ -938,6 +948,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         request = request.rstrip() + "\n\n" + issue
     with S.project_lock(project):
         config.project(project)
+        if after is not None:
+            S.load_task(project, after)  # dependencies are existing tasks in this project
         refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
@@ -955,11 +967,47 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "engine_model": None, "routing": None, "effort": effort,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
+        if planned:
+            task["planned_wait"] = None if after and _dependency_done(project, after) else planned
         if refs:
             task["images"] = refs
         S.save_task(project, task)
-        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True)
+        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned)
         S.regen_state_md(project)
+        return task
+
+
+def _dependency_done(project: str, slug: str) -> bool:
+    return (S.read_json(S.archive_dir(project) / S.require_task_slug(slug) / "status.json", {})
+            .get("state") == "done")
+
+
+def _release_wait(project: str, task: dict, reason: str, actor: str) -> dict:
+    previous = task.pop("planned_wait")
+    S.save_task(project, task)
+    S.append_event(project, task["slug"], "released", by=actor, reason=reason, planned_wait=previous)
+    S.regen_state_md(project)
+    return task
+
+
+def release(project: str, slug: str, reason: str, actor: str = "l3") -> dict:
+    """Clear one explicit wait; dispatch and merge gates retain their own authority."""
+    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("only L3 or the operator can release a planned task, with a reason")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "queued" or not task.get("planned_wait"):
+            raise TransitionError(f"{slug}: no planned wait to release")
+        return _release_wait(project, task, reason.strip(), actor)
+
+
+def release_dependency(project: str, slug: str) -> dict:
+    """Recheck on each dispatch pass, including after a restart or interrupted archive."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        after = (task.get("planned_wait") or {}).get("after")
+        if task["state"] == "queued" and after and _dependency_done(project, after):
+            return _release_wait(project, task, f"{after} archived done", "altd")
         return task
 
 
@@ -989,7 +1037,8 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 
 def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
              worktree: str | None, branch: str | None, l2_engine: str = "claude",
-             engine_model: str | None = None, routing: str | None = None, actor: str = "altd") -> dict:
+             engine_model: str | None = None, routing: str | None = None, actor: str = "altd",
+             messages: list[dict] | None = None, input_delivered: bool = False) -> dict:
     if not session_id or not agent_id:
         raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
     with S.project_lock(project):
@@ -997,11 +1046,18 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         _require_daemon_fence(task, slug)
         if task["state"] != "queued":
             raise TransitionError(f"{slug}: dispatch no longer owns a queued task")
+        if task.get("planned_wait"):
+            raise TransitionError(f"{slug}: planned wait must be released before dispatch")
         usage.remember(task)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
                      "routing": routing, "dispatched": S.now()})
         task.pop("next_engine", None)
+        ids = {row["id"] for row in (messages or [])} if input_delivered else set()
+        for message_id in ids:
+            task.setdefault("message_deliveries", {})[message_id] = {
+                "at": S.now(), "agent_id": agent_id, "session_id": session_id}
+        _mark_acceptance_delivered(task, ids)
         return _move(project, task, "running", actor, attempt=attempt, session_id=session_id)
 
 

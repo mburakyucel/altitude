@@ -243,6 +243,8 @@ def regen_state_md(project: str) -> str:
         lines.append(f"### {s} ({len(ts)})")
         for t in ts:
             extra = []
+            if t.get("planned_wait"):
+                extra.append("Planned: waits for " + t["planned_wait"]["reason"])
             if t.get("attempt"):
                 extra.append(f"attempt {t['attempt']}")
             if t.get("prs"):

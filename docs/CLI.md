@@ -693,7 +693,8 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ## Task lifecycle
 
 ```text
-alt task new --title <title> [--effort high|xhigh] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
+alt task new --title <title> [--wait <reason> | --after <task>] [--effort high|xhigh] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
+alt task release <slug> --reason <reason>
 alt task message <slug> <text> [--image <id>]
 alt task reply <text>
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
@@ -732,6 +733,36 @@ including operator-directed blocks. The operator flag places those decisions in 
 hide their context from L3. The notification names open members, revisions and required authority so
 L3 can settle record-backed or scope portions while operator approvals remain open. Re-parking
 unchanged members queues nothing new. Faults keep their existing separate incident/notification path.
+
+### Planned tasks
+
+Create decided short-term work with a written brief on stdin and one wait:
+
+```sh
+alt task new --title "Enable the merge CI gate" --wait "PR #376 and the browser fix to land" -
+alt task new --title "Follow up after parallel checks" --after parallelize-deterministic-checks-operato -
+alt task release enable-the-merge-ci-gate --reason "Both prerequisite merges verified"
+```
+
+`--wait` supplies one line of 1–160 characters. The mutually exclusive `--after` names one existing
+task in the same project and derives the reason from its name. Work labels these queued task
+records **Planned · waits for …** and the state digest includes their reason every turn. They
+consume no WIP slot and create no worker or worktree before release. Issues remain the long-term
+backlog; planned tasks hold work already decided by the operator.
+
+A named dependency releases the task automatically only when archived done; an already
+archived-done dependency is satisfied immediately. A merged PR alone, rejection, failure or a
+missing dependency does not satisfy it. L3 or the operator can explicitly release either kind
+with `alt task release <slug> --reason "…"`; the recorded reason also explains an early override
+of a named dependency. Release restores ordinary dispatch eligibility, subject to the existing
+capacity, engine and other launch gates, without releasing merge holds.
+
+Messages refresh a planned task's context without releasing it. They accompany the original
+brief when the owner starts; that brief's source authority remains intact. There is one reason
+and at most one named dependency, with no dependency graph or PR watcher. For issue #380, either
+`parallelize-deterministic-checks-operato` (PR #376) or `make-the-two-browser-walkthroughs-that-f`
+alone fits `--after`; their joint prerequisite uses `--wait` and explicit release after both merges
+are verified. Creating that planned task neither enables CI nor closes the issue.
 
 ### Task reasoning effort
 

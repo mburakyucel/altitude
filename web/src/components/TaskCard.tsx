@@ -70,6 +70,7 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done" };
   if (state === "rejected") return { dot: "idle", meta: "Rejected" };
   if (fault) return { dot: "danger", meta: `Blocked: ${oneSentence(reason || `a ${fault} fault stopped the task`)}` };
+  if (state === "queued" && task.planned_wait) return { dot: "idle", meta: `Planned · waits for ${task.planned_wait.reason}` };
   if (state === "queued" || held) {
     return { dot: "idle", meta: `${held ? "Waiting to resume" : "Queued"} · ${holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))}` };
   }

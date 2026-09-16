@@ -332,11 +332,10 @@ class TestOfflineJourneys(AltitudeCase):
                 self.assertIn(question["id"], self.engine.calls[-1]["prompt"])
                 self.assertIn(question["detail"], self.engine.calls[-1]["prompt"])
                 self.assertIn("Response received" if accept else question["detail"], self.engine.calls[-1]["prompt"])
-                # This is the existing checkpoint consumption used by native inbox delivery.
-                delivered = T.take_inbox(self.project, slug)
-                self.assertEqual([row["id"] for row in delivered], [message_id])
+                self.assertIn(message_id, self.engine.calls[-1]["prompt"])
                 self.assertIn("Keep fourteen days." if accept else "Can we roll back after day fourteen?",
-                              T.render_inbox(delivered))
+                              self.engine.calls[-1]["prompt"])
+                self.assertEqual(fresh["message_deliveries"][message_id]["agent_id"], fresh["agent_id"])
                 self.assertEqual(T.take_inbox(self.project, slug), [])
                 if accept:
                     self.assertEqual(self.request("/api/decide", target)["response"], response["response"])

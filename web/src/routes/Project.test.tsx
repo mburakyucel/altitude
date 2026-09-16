@@ -286,6 +286,27 @@ describe("Project page", () => {
     expect(within(panel).getByRole("link", { name: /^Shipped/ })).toHaveAccessibleName("Shipped · Done · PR #212 merged");
   });
 
+  it.each([390, 1440])("shows a planned row beside running work through release and launch at %ipx", async (width) => {
+    const task = { slug: "later", state: "queued", title: "Index follow-up", planned_wait: { reason: "index-migration", after: "index-migration" } as { reason: string; after: string } | null };
+    mockFetch({ overview: { ...overview, queue: [] }, project: { ...project, tasks: [project.tasks[0], task] } });
+    setViewport(width);
+    const { queryClient } = renderApp({ route: "/projects/altitude?tab=work" });
+    const panel = await screen.findByRole("region", { name: "Work" });
+    const row = within(panel).getByRole("link", { name: "Index follow-up · Planned · waits for index-migration" });
+    expect(row.querySelector(".dot")).toHaveAttribute("data-state", "idle");
+    expect(row).toHaveAttribute("href", "/projects/altitude/tasks/later");
+    expect(within(panel).getByRole("link", { name: /^Fix the timer · Running/ })).toBeInTheDocument();
+
+    task.planned_wait = null;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
+    await waitFor(() => expect(row).toHaveAccessibleName("Index follow-up · Queued · waits for dispatch"));
+    task.state = "running";
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
+    await waitFor(() => expect(row).toHaveAccessibleName("Index follow-up · Running"));
+    expect(row.querySelector(".dot")).toHaveAttribute("data-state", "running");
+    expect(within(panel).getAllByRole("link", { name: /^Index follow-up/ })).toHaveLength(1);
+  });
+
   it("retains one current row through partial and final answers from another surface", async () => {
     const fixtures: Fixtures = {};
     const fetchMock = mockFetch(fixtures);

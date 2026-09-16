@@ -341,8 +341,44 @@ describe("Task on desktop", () => {
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Waits for dispatch")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "Raw events" })).toBeNull();
-    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).toBeEnabled();
+    expect(screen.getByText("Delivered when Altitude starts the L2.")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
+  });
+
+  it.each([390, 1440])("keeps planned messages and drafts through release and launch at %ipx", async (width) => {
+    setViewport(width);
+    const task = { ...queued, messages: [], planned_wait: { reason: "the index migration to land", after: null } as { reason: string; after: null } | null };
+    const fetchMock = stub(task);
+    const { user, queryClient } = renderApp({ route });
+    await screen.findByText("Planned", { exact: true });
+    const conversation = screen.getByRole("region", { name: "Task conversation" });
+    expect(within(conversation).getByText("Waits for the index migration to land")).toBeInTheDocument();
+    expect(within(conversation).getByText("No messages yet.")).toBeInTheDocument();
+    const field = screen.getByRole("textbox", { name: "Message the L2" });
+    await user.type(field, "Keep pagination compatible.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(field).toHaveValue(""));
+    expect(within(conversation).getByText("Keep pagination compatible.")).toBeInTheDocument();
+    expect(screen.getByText("Planned", { exact: true })).toBeInTheDocument();
+    expect(actionCall(fetchMock)).toBeUndefined();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/transcript/"))).toBe(false);
+    await user.type(field, "Preserve this draft");
+
+    task.planned_wait = null;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
+    await screen.findByText("Queued", { exact: true });
+    expect(screen.queryByText("Waits for the index migration to land")).toBeNull();
+    expect(field).toBeEnabled();
+    expect(field).toHaveValue("Preserve this draft");
+    expect(within(conversation).getByText("Keep pagination compatible.")).toBeInTheDocument();
+
+    task.state = "running";
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
+    await screen.findByText("Running", { exact: true });
+    expect(field).toHaveValue("Preserve this draft");
+    expect(within(conversation).getByRole("button", { name: /^Stop/ })).toBeInTheDocument();
+    expect(screen.queryByText("Planned", { exact: true })).toBeNull();
   });
 
   it("reads a held task as queued, waiting for resume", async () => {

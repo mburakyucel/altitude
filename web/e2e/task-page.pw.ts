@@ -167,8 +167,13 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   await walk.open(taskPath(project.name, queued.slug));
   await walk.state("01-queued", {
     action: () => v.showLive(),
-    visible: [v.heading(title), v.main.getByText("Queued", { exact: true }).first(), v.live, v.live.getByText("Waits for dispatch"), ...(v.phone ? [] : [v.reject])],
-    hidden: [v.composer, v.stop, v.live.getByRole("button", { name: "Raw events", exact: true })],
+    visible: [v.heading(title), v.main.getByText("Queued", { exact: true }).first(), v.live, v.live.getByText("Waits for dispatch"), ...(v.phone ? [] : [v.reject, v.composer])],
+    hidden: [...(v.phone ? [v.composer] : []), v.stop, v.live.getByRole("button", { name: "Raw events", exact: true })],
+  });
+  await walk.state("01-queued-conversation", {
+    action: () => v.showConversation(),
+    visible: [v.composer],
+    hidden: [v.stop],
   });
 
   await clearRoutes(page);
