@@ -94,7 +94,7 @@ directory instructions. It resolves the file on each turn so a resumed session s
 
 Altitude maintains its own project rules only in [AGENTS.md](../AGENTS.md); root `CLAUDE.md` is the
 native `@AGENTS.md` import. Managed repositories keep their own rules and need no file migration.
-The global L2/L3 personas describe roles and retain explicit reading instructions without embedding
+The global personas describe roles and retain explicit reading instructions without embedding
 Altitude-specific rules. No session rotation or extra engine policy is needed for this reference.
 
 The [L2](../personas/l2.md) and [L3](../personas/l3.md) personas own role judgment and essential
@@ -132,6 +132,36 @@ identify validated source versions without changing the automatic activation lif
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
 a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
 keys the edit-count telemetry across worker replacements.
+
+## Native helper instructions
+
+The shared [L1 persona](../personas/l1.md) describes bounded helper work and return evidence. Each
+L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`,
+alongside the assigned worktree. L2 puts that explicit read instruction in the native helper's
+assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
+The helper reads the persona and repository rules before working; missing instructions go back to
+the parent. L2 verifies the result and retains decisions, publication, lifecycle and final reporting.
+The persona contents are not copied into the owner prompt or repository instruction files.
+
+Native discovery and inherited history are not evidence that a helper has loaded its role:
+
+- **Codex:** [repository discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+  loads project instructions, while the native spawn tool's `fork_turns` controls inherited history
+  (all, a bounded number, or none). An inherited L2 brief remains context. The explicit assignment
+  selects L1 even without parent history; native discovery does not imply reading arbitrary linked personas.
+- **Claude Code:** [subagents](https://code.claude.com/docs/en/subagents#what-loads-at-startup)
+  normally receive their own prompt and the parent's delegation message, not parent history.
+  Project instructions usually load, but Explore, Plan and configured opt-outs can skip them;
+  forks inherit the parent conversation. The explicit read instruction covers these differences
+  without relying on the parent's appended L2 system prompt reaching a helper.
+
+This is an instruction contract through the existing native delegation tool, not a spawn interceptor
+or enforcement mechanism. Altitude does not launch, manage or verify helper reads. The installed
+spawn-tool contract and upstream documentation establish the inheritance distinctions; deterministic
+dispatch/resume fixtures verify the activated path and instruction reach both owner launchers without
+duplicating the persona. They do not prove live helper consumption, model compliance or token savings.
+Existing helpers retain their native context; changed instructions reach a new assignment after
+source activation. Live-provider testing remains deferred.
 
 ## Fresh dispatch
 

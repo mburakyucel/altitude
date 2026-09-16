@@ -94,8 +94,9 @@ class TestForegroundUnits(AltitudeCase):
                         self.assertEqual(cli[cli.index("--model") + 1], model)
                     self.assertIn("DBUS_SESSION_BUS_ADDRESS", popen.call_args.kwargs["env"])
                     self.assertEqual(popen.call_args.kwargs["cwd"], str(self.repo))
-                    self.assertEqual(engines._codex_processes[row["id"]].stdin.getvalue(),
-                                     b"continue" if resume else b"brief")
+                    prompt = engines._codex_processes[row["id"]].stdin.getvalue().decode()
+                    self.assertTrue(prompt.endswith("\n\ncontinue" if resume else "\n\nbrief"))
+                    self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
 
     def test_incident_171446_provider_stream_from_real_process_preserves_result_and_error(self):
         real_popen = subprocess.Popen

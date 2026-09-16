@@ -72,7 +72,7 @@ class PersonaLoading(AltitudeCase):
         make_repo(self.repo)
         self.personas = self.tmp / "personas"
         self.personas.mkdir()
-        for role in ("l2", "l3"):
+        for role in ("l1", "l2", "l3"):
             (self.personas / f"{role}.md").write_text((config.PERSONAS / f"{role}.md").read_text())
         self.patch(config, "PERSONAS", self.personas)
         self.patch(engines, "_codex_processes", {})
@@ -106,6 +106,14 @@ class PersonaLoading(AltitudeCase):
             else:
                 self.assertTrue(process.prompt.startswith(text + "\n\n"), "fresh threads get the current persona")
 
+    def assert_helper_reference(self, process, repo):
+        path = self.personas / "l1.md"
+        self.assertEqual(process.prompt.count(str(path)), 1)
+        self.assertIn(f'You are an L1 helper. Read `{path}` before working.', process.prompt)
+        self.assertIn(f'Your assigned repository is `{repo.resolve()}`.', process.prompt)
+        self.assertNotIn(path.read_text(), process.prompt, "only the helper needs the shared persona contents")
+        self.assertNotIn(path.read_text(), process.persona or "")
+
     def test_l2_dispatch_and_resume_use_authoritative_persona_with_explicit_activation_boundary(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine), mock.patch.object(dispatch.route, "pick_engine",
@@ -117,6 +125,7 @@ class PersonaLoading(AltitudeCase):
                 dispatch.run(self.project, slug)
                 initial = self.processes[-1]
                 self.assert_persona(initial, engine, "l2", original, resumed=False)
+                self.assert_helper_reference(initial, Path(S.load_task(self.project, slug)["worktree"]))
 
                 updated = original + "\nFIXTURE PERSONA UPDATE: current owner instructions.\n"
                 persona.write_text(updated)
@@ -126,6 +135,7 @@ class PersonaLoading(AltitudeCase):
                 dispatch.resume(self.project, slug)
                 resumed = self.processes[-1]
                 self.assert_persona(resumed, engine, "l2", updated, resumed=True)
+                self.assert_helper_reference(resumed, Path(S.load_task(self.project, slug)["worktree"]))
                 self.assertEqual(resumed.session, initial.session)
                 self.assertIn("Continue the existing task with this sourced context.", resumed.prompt)
                 self.assertEqual(S.load_task(self.project, slug)["attempt"], 1)
@@ -155,6 +165,7 @@ class PersonaLoading(AltitudeCase):
                 initial = self.processes[-1]
                 self.assert_persona(initial, engine, "l3", original, resumed=False)
                 self.assertIn(handoff_context, initial.prompt)
+                self.assertNotIn(str(self.personas / "l1.md"), initial.prompt, "L3 does not delegate helpers")
 
                 updated = original + "\nFIXTURE PERSONA UPDATE: current coordinator instructions.\n"
                 persona.write_text(updated)

@@ -97,11 +97,13 @@ verification while retaining prior reports and delivery history. Ordinary resume
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
-Helpers are engine-native. The L2 may delegate bounded slices to its engine's own subagents
-(Claude Code's Agent tool, Codex's equivalent); Altitude does not supervise them, and ownership never
-transfers. Helper customization lives in engine-native files (agent definitions, skills, hooks). The
-L2 persona carries brief delegation and context-hygiene guidance and asks for a small `progress.md`
-(goal, done, next, how to verify) refreshed at milestones, never kept as a log.
+Helpers are engine-native. L2 delegates bounded assignments and remains accountable for their results;
+Altitude does not supervise helpers. The shared [L1 persona](../personas/l1.md) owns helper responsibilities.
+Each L2 launch/resume supplies its activated absolute path for an explicit read instruction in every
+native helper assignment. L2 adds context, allowed actions, exclusions and expected evidence, then
+verifies the result. Repository discovery does not select the role. No helper registry or engine
+configuration file is generated; [delivery and inheritance limits](SESSION_LIFECYCLE.md#native-helper-instructions)
+describe both integrations. L2 retains its small `progress.md` checkpoint (goal, done, next, how to verify).
 
 L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provider choice and keeps
 that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See

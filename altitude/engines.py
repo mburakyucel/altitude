@@ -1542,7 +1542,11 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
                   images: list[dict] | tuple = ()) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
     config.task_effort(engine, effort)
-    prompt = repository_rule_prompt(cwd) + prompt
+    prompt = (repository_rule_prompt(cwd) +
+              f'[altitude] Begin each native helper assignment with: "You are an L1 helper. Read '
+              f'`{config.PERSONAS / "l1.md"}` before working. Your assigned repository is '
+              f'`{cwd.resolve()}`." Then give the task-specific assignment; do not copy the persona '
+              'into the brief or rely on inherited owner instructions to select the helper role.\n\n' + prompt)
     image_args, prompt = _image_input(engine, prompt, images)
     if engine == "claude":
         # I-20260907-171446: retire daemon jobs bound to this name before launch or resume.

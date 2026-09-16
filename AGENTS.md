@@ -7,8 +7,8 @@ description; Git history is the archive.
 Current system behavior and useful rationale live in the linked documentation. Ask the operator
 only for a decision not recorded in these rules, the docs, or the task conversation.
 
-This file owns Altitude's project policy. The [L2](personas/l2.md) and [L3](personas/l3.md)
-personas own global role responsibilities on any project. Project rules, including seams,
+This file owns Altitude's project policy. The [L1](personas/l1.md), [L2](personas/l2.md) and
+[L3](personas/l3.md) personas own global role responsibilities on any project. Project rules, including seams,
 review questions and deletion first, stay here.
 
 ## Standing tenet
