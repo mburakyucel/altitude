@@ -922,6 +922,11 @@ process cannot advertise stale work.
 
 ## Polling and cleanup
 
+Required native background work stays within the active owner session. The owner keeps that
+session alive and consumes command output and exit status before a final response or fresh report;
+if results cannot be obtained, it checkpoints unfinished work and records an explicit supported block.
+Promising a later notification is not a durable wait: session exit can terminate the background work.
+
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
