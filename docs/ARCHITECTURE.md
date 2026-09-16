@@ -255,6 +255,14 @@ account-wide meter or subscription entitlement from a plan name. Safe pre-output
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
 attempt's engine, session and launch model. See [routing lifecycle](SESSION_LIFECYCLE.md#fresh-dispatch).
 
+`config.subprocess_env()` supplies the common tool environment for engine discovery/launch,
+landing and restart builds. It preserves Node on PATH, otherwise asks installed nvm for its
+default and prepends the returned executable's directory, including package-manager shims.
+It reads `$NVM_DIR` or `~/.nvm` without shell profiles, provisioning or a version-selection policy.
+Unavailable defaults leave other tools usable and are retried on the next call. Candidate installs
+run inside `web` so Corepack resolves that candidate's `packageManager` pin; the frozen lockfile
+and complete validation gate remain authoritative. See [toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+
 Current gaps are concrete: engine-specific references remain in session, dispatch, transcript and
 telemetry code outside the seam. The launch environment filters
 some engine variables and applies role/model/permission settings, so native access configurations

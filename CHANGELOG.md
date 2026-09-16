@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Launches, landing and restart builds discover the installed nvm default when Node is absent
+  from PATH. Candidate installs run inside the web project so Corepack uses its pinned pnpm (#368).
+
 - Model allowance exhaustion is recognized without inventing a reset time. Coordinators can use
   `alt task handoff` to continue an exited, fault-blocked owner as a fresh attempt on another
   configured engine, preserving saved work, task history, PRs, questions and merge holds (#310).

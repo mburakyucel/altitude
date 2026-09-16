@@ -29,6 +29,8 @@ class TestMergeApprovalJourney(AltitudeCase):
 
     def setUp(self):
         super().setUp()
+        (self.repo / "web").mkdir()
+        (self.repo / "web/package.json").write_text('{"packageManager":"pnpm@10.34.5"}')
         make_repo(self.repo)
         self.private_ledgers()
         self.quiet_engines()

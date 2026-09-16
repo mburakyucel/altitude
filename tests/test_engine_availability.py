@@ -17,9 +17,11 @@ def stream(*events):
 class TestAvailability(AltitudeCase):
     def test_installation_does_not_claim_authentication_or_entitlement(self):
         for engine, binary in (("claude", config.CLAUDE_BIN), ("codex", config.CODEX_BIN)):
-            with self.subTest(engine=engine), mock.patch.object(engines.shutil, "which", return_value=None) as which:
+            with self.subTest(engine=engine), \
+                    mock.patch.object(engines, "clean_env", return_value={"PATH": "/fixture/tools"}), \
+                    mock.patch.object(engines.shutil, "which", return_value=None) as which:
                 self.assertIs(engines.installation(engine)["available"], False)
-                which.assert_called_once_with(binary)
+                which.assert_called_once_with(binary, path="/fixture/tools")
             with mock.patch.object(engines.shutil, "which", return_value="/installed/cli"):
                 self.assertIsNone(engines.installation(engine)["available"])
 

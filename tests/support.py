@@ -36,7 +36,7 @@ def install_offline_guards() -> None:
     Real Git repositories, fixture subprocesses and loopback HTTP remain available.
     """
     for key in list(os.environ):
-        if (key.startswith(("CLAUDE", "CODEX", "OPENAI", "ANTHROPIC", "GH_", "GITHUB_", "AWS_", "AZURE_", "GOOGLE_",
+        if (key.startswith(("CLAUDE", "CODEX", "OPENAI", "ANTHROPIC", "GH_", "GITHUB_", "AWS_", "AZURE_", "GOOGLE_", "NVM_",
                             "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
                 or key in {"ALTITUDE_ACTOR", "ALTITUDE_TASK", "ALTITUDE_PROJECT", "ALTITUDE_ATTEMPT",
                            "ALTITUDE_SESSION_KEY", "ALTITUDE_ROOTS", "ALTITUDE_TLS_DIR", "ALTITUDE_HOST",

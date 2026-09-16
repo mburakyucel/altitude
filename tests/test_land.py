@@ -26,6 +26,8 @@ class TestLand(AltitudeCase):
         for key, value in (("ALTITUDE_PROJECT", "demo"), ("ALTITUDE_TASK", "fix-x"),
                            ("ALTITUDE_ACTOR", "burak"), ("ALTITUDE_ATTEMPT", "")):
             self.setenv(key, value)
+        (self.repo / "web").mkdir()
+        (self.repo / "web/package.json").write_text('{"packageManager":"pnpm@10.34.5"}')
         make_repo(self.repo)
         self.project_repo = self.repo
         self.repo = add_worktree(self.project_repo, "fix-x")
@@ -773,6 +775,31 @@ class TestLand(AltitudeCase):
             return None
 
         return self.record_commands(summary)
+
+    def test_minimal_service_path_installs_candidate_pin_and_runs_full_gate(self):
+        from tests.test_toolchain import nvm_fixture
+        self.local_policy()
+        self.staged_change()
+        node_bin = nvm_fixture(self)
+        self.fake_runner("pnpm", script=(
+            "import subprocess\n"
+            "assert json.load(open('package.json'))['packageManager'] == 'pnpm@10.34.5'\n"
+            "assert '--frozen-lockfile' in sys.argv and '--store-dir' in sys.argv\n"
+            "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
+            "print('candidate-pinned install')\n"))
+        (self.tmp / "bin/pnpm").replace(node_bin / "pnpm")
+        self.fake_runner("make", script=(
+            "import subprocess\n"
+            "assert sys.argv[1:] == ['check'] and os.environ['CI'] == 'true'\n"
+            "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
+            "print('Ran 12 tests in 0.4s\\n\\nOK')\n"))
+        result = land.land("fix: toolchain discovery", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"], result)
+        self.assertTrue(result["local_tests"]["passed"])
+        calls = self.runner_calls()
+        self.assertEqual(Path(calls[0]["cwd"]), Path(calls[1]["cwd"]) / "web")
+        self.assertEqual(calls[0]["argv"][:2], ["pnpm", "install"])
+        self.assertEqual(result["local_tests"]["tree"], self.git("rev-parse", "HEAD^{tree}").strip())
 
     def test_project_local_policy_replaces_historical_failure_and_uses_full_candidate(self):
         self.local_policy()

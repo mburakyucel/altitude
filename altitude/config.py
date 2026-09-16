@@ -4,6 +4,8 @@ import json
 import fcntl
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -94,6 +96,28 @@ def task_effort(engine: str | None, effort: str | None) -> str | None:
     if effort is not None and engine is not None and engine != "codex":
         raise ValueError(f"{engine} does not support task reasoning effort; omit --effort or select a supporting engine")
     return (effort or "high") if engine == "codex" else effort
+
+
+def subprocess_env() -> dict[str, str]:
+    """Keep an explicit Node; otherwise expose the installed nvm default without shell profiles."""
+    env = dict(os.environ)
+    path = env.get("PATH", os.defpath)
+    nvm = Path(env.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
+    if shutil.which("node", path=path) or not nvm.is_file():
+        return env
+    try:
+        probe = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-c", '. "$1" --no-use && nvm which default', "nvm", str(nvm)],
+            env={k: v for k, v in env.items() if k != "BASH_ENV"},
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+        node = Path(probe.stdout.strip())
+        if not node.is_absolute() or not os.access(node, os.X_OK):
+            raise OSError("nvm default does not name an executable Node")
+        env["PATH"] = str(node.parent) + os.pathsep + path
+    except (OSError, subprocess.SubprocessError) as exc:
+        logging.getLogger(__name__).warning("nvm default unavailable; install a supported Node and enable its pnpm: %s", exc)
+    return env
 
 
 def machine_settings() -> dict:

@@ -41,7 +41,7 @@ class LandError(RuntimeError):
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
     """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline."""
     try:
-        env = dict(os.environ)
+        env = config.subprocess_env()
         if args[0] == "gh":
             # #252: neither GH_REPO nor gh's preferred upstream may select a different adoption target.
             env.pop("GH_REPO", None)
@@ -847,8 +847,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
                 evidence_dir.mkdir(parents=True, exist_ok=True)
                 identity.update(candidate=candidate, tree=tree, evidence=str(evidence_dir))
                 # Fresh candidate worktrees have no web dependencies. Install the locked inputs.
-                install = _run(["pnpm", "--dir", "web", "install", "--frozen-lockfile",
-                                "--store-dir", str(config.ROOT / "pnpm-store")], path, timeout=LOCAL_TEST_TIMEOUT)
+                install = _run(["pnpm", "install", "--frozen-lockfile",
+                                "--store-dir", str(config.ROOT / "pnpm-store")], path / "web", timeout=LOCAL_TEST_TIMEOUT)
                 (evidence_dir / "install.log").write_text((install.stdout or "") + "\n" + (install.stderr or ""))
                 _need(install, "candidate dependency installation")
                 tests = _local_suite(path, test_cmd, log=evidence_dir / "check.log")
