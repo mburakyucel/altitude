@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { availableParallelism } from "node:os";
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
@@ -7,7 +8,7 @@ export default defineConfig({
   testMatch: "**/*.pw.ts",
   outputDir: "./ui-artifacts/results",
   reporter: [["list"], ["html", { outputFolder: "ui-artifacts/report", open: "never" }]],
-  workers: 2,
+  workers: process.env.CI ? Math.max(2, Math.floor(availableParallelism() / 2)) : 2,
   retries: 0,
   forbidOnly: Boolean(process.env.CI),
   use: {

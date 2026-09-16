@@ -25,8 +25,15 @@ port with `ALTITUDE_PORT`. Run `alt tls-init`, follow the [certificate trust gui
 then `alt serve` with the same environment. It still needs the systemd user manager for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
-`make check` times the full Python suite, web unit suite, TypeScript/build and all isolated browser
-specs. Python prints each test name so an incomplete run identifies the last test it started.
+`make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
+isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output; the
+command waits for both branches and fails if either fails. A failed web prerequisite stops its
+dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
+fresh interpreters, using half the available CPUs (at least one). Each shard streams prefixed
+verbose unittest output, including skip reasons; the final summary totals all shards for landing.
+Test names flush before execution so incomplete runs identify each shard's last started test.
+`python3 tests/run_parallel.py --workers N` selects a worker count for focused measurement.
+Serial `python3 -m unittest discover -v tests` and `make test` remain available.
 Dependency and browser installation are explicit prerequisites, so a warm run need not
 fetch packages. In a restricted worktree add `--store-dir /tmp/altitude-ui-pnpm-store` to the
 frozen install. Do not alter the lockfile to work around an installation failure. On a clean
@@ -109,7 +116,10 @@ poll returns ordinary 404, a subsequent archived read succeeds, and corrupt stat
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
-1440×900. Install the Chromium build matching the locked Playwright version. The browser cache
+1440×900. With `CI` set, Playwright uses half the available CPUs (at least two); local runs use
+two workers. Retries remain zero and CI refuses focused-only tests. Each service has its own
+temporary homes and OS-assigned port; screenshots use per-test output paths.
+Install the Chromium build matching the locked Playwright version. The browser cache
 can be shared across worktrees through `PLAYWRIGHT_BROWSERS_PATH`; use the same value for install
 and execution. Chromium's own sandbox is disabled inside the worker filesystem sandbox because
 of the documented host browser restriction; profiles/configuration remain temporary or under
@@ -288,6 +298,15 @@ completed hosted verification; local evidence remains accessible until review is
 
 Use `make check` for per-phase wall/user/system timings and retain the runner summaries with the
 source SHA and tool versions. Separate dependency/browser installation from warm execution.
+The serial baseline supplied for this change is self-hosted run
+[35065148992](https://github.com/mburakyucel/altitude/actions/runs/35065148992): 13 min 54 s
+on four CPUs, including Python at 4 min 15 s and 316 browser tests at 9 min 12 s with two workers.
+A warm concurrent implementation run on 2026-09-16 on 24 available CPUs measured Python at
+142.86 s (1,343 tests, one optional native probe skipped), web tests at 12.17 s (343 passed),
+typecheck/build at 4.75 s and browsers at 177.24 s (316 passed, 12 workers, zero retries).
+The complete concurrent gate took 194.18 s; phase wall times overlap and must not be added.
+The PR retains the current-candidate and dedicated 12-CPU self-hosted measurements.
+
 A warm local implementation run on 2026-09-08, Linux, Python 3.12.3, Node 22.22.2 and pnpm
 10.34.5 measured the following; PR/check artifacts identify the validated source revision.
 

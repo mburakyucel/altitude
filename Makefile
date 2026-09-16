@@ -1,10 +1,13 @@
-.PHONY: run test check web ui restart install-service
+.PHONY: run test check check-python check-web web ui restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
 	env -u ALTITUDE_ACTOR python3 -m unittest discover tests
 check:          ## all deterministic checks, timed (install frozen dependencies and Chromium first)
-	env -u ALTITUDE_ACTOR /usr/bin/time -p python3 -m unittest discover -v tests
+	+$(MAKE) --no-print-directory -j2 -k check-python check-web
+check-python:
+	env -u ALTITUDE_ACTOR /usr/bin/time -p python3 tests/run_parallel.py
+check-web:
 	cd web && /usr/bin/time -p pnpm test
 	cd web && /usr/bin/time -p pnpm build
 	cd web && /usr/bin/time -p pnpm ui
