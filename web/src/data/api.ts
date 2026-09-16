@@ -163,7 +163,7 @@ export const WipSchema = z
     machine: z.number(),
     limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
-    // why: "dispatch" (state queued) or "resume" (blocked with resume_after); hold: the queue's own
+    // why: "planned", "dispatch" (state queued) or "resume" (blocked with resume_after); hold: the queue's own
     // text for what the task waits on (the WIP limit, an engine hold, a pending activation, a resume
     // checkpoint, or "ready for dispatch") — digest.py wip().
     waiting: z.array(
@@ -232,6 +232,8 @@ export const OverviewSchema = z
   })
   .passthrough();
 
+const PlannedWaitSchema = z.object({ reason: z.string(), after: z.string().nullable() });
+
 export const TaskRowSchema = z
   .object({
     slug: z.string(),
@@ -241,6 +243,7 @@ export const TaskRowSchema = z
     // Set to the usage-limit reset timestamp when Altitude holds a blocked L2 to resume it
     // itself (server.py on_l2_finished), cleared back to null on resume (dispatch.py).
     resume_after: z.string().nullish(),
+    planned_wait: PlannedWaitSchema.nullish(),
     live: z.unknown().nullish(),
     progress_tail: z.unknown().nullish(),
     has: z.record(z.string(), z.boolean()).nullish(),
@@ -369,6 +372,7 @@ export const TaskViewSchema = z
     state: z.string().nullish(),
     title: z.string().nullish(),
     resume_after: z.string().nullish(),
+    planned_wait: PlannedWaitSchema.nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
     question: DecisionSchema.nullish(),

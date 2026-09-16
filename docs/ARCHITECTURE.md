@@ -333,15 +333,26 @@ reported -> done | running | blocked | rejected
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
 
-Queued tasks wait for WIP and engine availability gates. The default caps are 8 running tasks per
-project and 80 across the machine. Overlapping declared paths are information in task status and
+Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is one short wait and
+`after` optionally names one existing task in this project. `alt task new --wait` or `--after`
+creates the existing task record and written brief without a worker, worktree or WIP slot.
+Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
+the wait with `alt task release <slug> --reason "…"`. An already archived-done dependency is satisfied at
+creation; a merged PR alone, rejection, failure or a missing dependency does not release it.
+Explicit release can override a named dependency early and records its reason. Messages remain
+in the task inbox for launch and do not release it or replace the original brief's source authority.
+The state digest includes every planned task and its reason; no separate planning store,
+dependency graph or PR watcher exists.
+
+Dispatch-ready queued tasks wait for WIP and engine availability gates. The default caps are 8
+running tasks per project and 80 across the machine. Overlapping declared paths are information in task status and
 briefs; they do not hold dispatch or resume. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
 first, which answers from the record or escalates a dilemma to the operator. The durable dilemma
 stays in Needs you while its answer is still needed, independently of the worker running or waiting. After a restart L3 receives the active tasks and resumes
-faulted tasks only after verifying that their actual cause is gone. Deferral is not an active
-state: durable future work belongs in a GitHub issue, and the task exits the active set.
+faulted tasks only after verifying that their actual cause is gone. Operator-decided short-term
+work waits as a planned task; GitHub issues hold the long-term backlog.
 
 Project registration stores `wip` only when explicitly supplied; the gate reads that override or
 `config.WIP_PER_PROJECT` (8). The aggregate gate reads `config.machine_wip()`, the persistent machine
@@ -1147,9 +1158,13 @@ with real browser history at both viewports.
 The task card (`web/src/components/TaskCard.tsx`, spec §3.5) is one component in two sizes: the
 bordered card under an L3 reply that created the task and the row in the work panel. Its meta line
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
-the queue's own reason (the WIP limit, an engine hold, a restart in progress, a resume checkpoint,
-or plain dispatch), so the card never names a file list. A task blocked waiting on L3 reads "Waits
-for L3" with the running dot, and the rail's project dot counts it as running (`counts.waits_l3`);
+the queue's own reason (a planned wait, the WIP limit, an engine hold, a restart in progress,
+a resume checkpoint or plain dispatch), so the card never names a file list. A queued task with `planned_wait` reads
+**Planned · waits for <reason>** with the muted queue dot; the reason wraps on phone and desktop.
+Releasing it changes the same row to **Queued** with its ordinary dispatch hold, then **Running**
+only when launched. Planned tasks stay in Current without adding attention or a separate panel.
+A task blocked waiting on L3 reads "Waits for L3" with the running dot, and the rail's project dot
+counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. An owner/daemon park without a question, fault
 or operator stop reads "Paused" with the idle dot. Stop evidence, not the block recorder, identifies
 "Stopped". Queue and restart inventory labels share `tasks.block_status`; an unset wait owner is
@@ -1421,7 +1436,8 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the question component at its recorded message anchor, and the composer
-while the task is running, blocked, reported with open-PR owner evidence, or queued with an existing question. Waiting on L3 stays a
+while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
+dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with
 "L3 has been told". One replacing two-line public update sits above the composer, expands on
 request, and separates prose age from

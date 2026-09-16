@@ -326,7 +326,9 @@ yet."); error ("Could not load the report." and Retry).
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click
 opens the task conversation, at its current operator question when one is open (§3.7).
 
-States by task state: queued ("Queued · <hold>", where the hold is the queue's own reason: "waits
+States by task state: planned (a queued task with a planned wait: "Planned · waits for <reason>",
+muted queue dot and a reason that wraps on phone and desktop); queued ("Queued · <hold>", where
+the hold is the queue's own reason: "waits
 for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
 for resume at <time>", or plain "waits for dispatch"; never a file lease, which the queue does not
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
@@ -430,8 +432,15 @@ Each row is one link with a chevron and an accessible name including its status.
 question shows **Needs you · N questions** and opens the first current question's stable group
 anchor in the owning chat. Execution stays secondary and independent: a running or queued worker
 can still need an answer. Faults remain visible alongside any separate question. Other rows open
-their ordinary task conversation and distinguish running, queued, waiting on L3, operationally
+their ordinary task conversation and distinguish running, planned, queued, waiting on L3, operationally
 paused, faulted and reported tasks. Operational controls stay in the task.
+
+Planned rows use the existing queued treatment in Current, without a new panel or attention badge.
+One short reason names the wait; one optional task dependency releases it only when archived done.
+L3 or the operator can release either a free-text or named wait through the CLI with a recorded
+reason. The row becomes Queued with its ordinary dispatch hold, then Running only when launched.
+Opening it shows the conversation and reason; saved messages update the launch context without
+releasing the task. There is no release button in Work or the task conversation.
 
 | State or action | Visible behavior |
 | --- | --- |
@@ -439,6 +448,9 @@ paused, faulted and reported tasks. Operational controls stay in the task.
 | Empty | **No current tasks. Ask L3 to start something.** Recent completed work can still expand. |
 | Initial read fails | A specific error with Retry replaces the affected content. Independently loaded task rows remain discoverable if only attention loading fails. |
 | Cached read fails | Retain rows with a saved/stale notice and Refresh; links remain available. Destination reads govern answer controls. |
+| Planned | Muted dot and **Planned · waits for …**; the complete reason wraps and the row opens its conversation. No worker or WIP slot is allocated. |
+| Message before release | The message appears in the conversation; the wait remains. Existing composer listening, denied and send-error states apply. |
+| Release, then launch | The same row shows Queued and its dispatch hold, then Running when observed; the planned reason disappears. |
 | Answer, withdrawal or follow-up | The row keeps its order. Answers and withdrawals reduce its question count; a wake alone changes none. |
 | Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
 | Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides tasks finished in the last seven days, and is absent when none exist. |
@@ -727,6 +739,7 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 (repository URL), `POST /api/l2/message`, `POST /api/task/action`.
 
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
+planned (the wait reason replaces the live panel; the conversation accepts messages without release);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
 operator (the question inline at its recorded message anchor); blocked on L3 ("Waits for L3"
 with the full reason in details); blocked by a fault (a red line with the first sentence, at most 100 characters,

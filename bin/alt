@@ -22,7 +22,7 @@ L3_COMMANDS = READ_COMMANDS | {
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "preserve-checkout", "recheck-ci", "handoff", "machine")),
+                                    "done", "preserve-checkout", "recheck-ci", "handoff", "machine", "release")),
     *(("incident", name) for name in ("new", "amend")),
 }
 
@@ -240,6 +240,11 @@ def main(argv=None) -> None:
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     n.add_argument("--effort", choices=config.TASK_EFFORTS, help="task reasoning effort; supporting engines default to high")
     n.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
+    wait = n.add_mutually_exclusive_group()
+    wait.add_argument("--wait", help="plan without dispatch until explicitly released; one short reason")
+    wait.add_argument("--after", help="plan until one existing task in this project is archived done")
+    release = ts.add_parser("release", help="L3/operator: clear a planned wait; ordinary dispatch gates still apply")
+    release.add_argument("slug"); release.add_argument("--reason", required=True)
     for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=name == "reject")
         if name == "block":
@@ -469,7 +474,9 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge, image_ids=args.image_ids))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge, image_ids=args.image_ids, wait=args.wait, after=args.after))
+        elif tc == "release":
+            out(T.release(p, args.slug, args.reason, actor=ACTOR))
         elif tc in ("reject", "resume", "stop", "preserve-checkout", "handoff"):
             from altitude import dispatch
             options = {"engine": args.engine, "expected_attempt": args.attempt} if tc == "handoff" else {}

@@ -90,6 +90,7 @@ function faultSummary(text: string): string {
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
+  const planned = state === "queued" ? task.planned_wait : null;
   const faultKind = str(task["fault"]);
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = state === "blocked" && !held && !faultKind && str(task["waiting_on"]) === "l3";
@@ -121,7 +122,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const hold = str(task["hold_merge"]);
 
   const label = task.steering?.state === "stopped" ? "Stopped" : task.steering?.state === "stopping" ? "Stopping…"
-    : task.steering?.state === "resuming" ? "Waiting to resume" : held ? "Queued" : state === "blocked"
+    : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
     ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : awaitingAnswer ? "Needs your answer" : task.question?.response ? "Waiting for L2" : "Paused"
     : sentence(state || "unknown");
   const dot: Facts["dot"] =
@@ -141,7 +142,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const why = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug)?.why;
   const waiting =
     state === "queued"
-      ? `Waits for ${why === "resume" ? "resume" : "dispatch"}`
+      ? `Waits for ${planned?.reason ?? (why === "resume" ? "resume" : "dispatch")}`
       : held
         ? `Waits for resume${reason ? ` · ${reason}` : ""}`
         : null;
@@ -158,7 +159,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     holdReason: hold,
     engineLabel,
     finished,
-    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && Boolean(task.question)),
+    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question))),
     canStop: state === "running",
     canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
@@ -344,7 +345,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
         images={message.delivery?.state !== "removed" ? <MessageImages project={project} images={message.images} /> : undefined}
         receipt={message.delivery ? message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
-          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
+          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
         {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending}
           onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
@@ -354,6 +355,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   });
   return (
     <section className="convo" aria-label="Task conversation">
+      {task.state === "queued" && task.planned_wait ? <p className="conversation-notice" role="status">{facts.waiting}</p> : null}
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
         {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>

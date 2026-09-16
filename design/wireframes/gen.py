@@ -361,7 +361,7 @@ def work_rows(mobile=False):
         '<div><div class="sh">Current <span>5</span></div>'
         + row('Index rollout', 'Needs you · 3 questions · Running', 'dot held', question)
         + row('Design wireframes for the simplified product', 'Running · PR #176 green · Merge held')
-        + row('Persist paths when L3 resumes a task', 'Queued · waits for capacity', 'dot q')
+        + row('Enable the merge CI gate', 'Planned · waits for parallel checks and the browser fix to land', 'dot q')
         + row('Clarify the dispatch retry policy', 'Waits for L3')
         + row('Update delivery notes', 'Report landed · waits for L3')
         + f'</div><details><summary class="fold">{I("chev-r","i sm")}Done this week · 1</summary>'

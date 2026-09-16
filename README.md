@@ -170,9 +170,16 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   including missing or stale readings. Each usage window appears independently: an absent window
   is explicit, zero remains a reading, and available figures stay visible when stale.
 - **Project work at a glance.** Work lists every current project task once, including tasks
-  awaiting your answer, running, queued, waiting on L3 or paused by their owner. An unassigned pause
-  reads **Paused** with a neutral dot; **Stopped** identifies an operator stop. Compact status rows open the owning
-  conversation at its question when one needs you; questions and quick answers live in Needs you
+  awaiting your answer, running, planned, queued, waiting on L3 or paused by their owner.
+  An unassigned pause reads **Paused** with a neutral dot; **Stopped** identifies an operator stop.
+  **Planned · waits for …**
+  keeps decided short-term work visible with one reason, without a worker or WIP slot.
+  Create it with `alt task new --wait "…"` or `--after <task>` and a written brief; a named
+  dependency releases it when archived done, while L3 or the operator can explicitly release
+  either wait with `alt task release <slug> --reason "…"`. Messages stay saved for launch without
+  releasing the task or replacing the original brief's authority. Issues remain the long-term backlog.
+  Compact status rows open the owning conversation at its question when one needs you;
+  questions and quick answers live in Needs you
   and that chat. Recent completed tasks stay under **Done this week**. Only global Needs you has
   an attention badge: unanswered questions plus operational attention items, labelled separately
   in summaries. Answering changes attention immediately; execution status changes when observed.

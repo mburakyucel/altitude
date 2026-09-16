@@ -167,6 +167,7 @@ source activation. Live-provider testing remains deferred.
 
 ```text
 queued task
+  ├─ planned wait: skip until the named task is archived done or explicitly released
   ├─ fetch origin/main and create the isolated worktree from its immutable SHA
   ├─ WIP and Git isolation gates
   ├─ highest available preference tier, then weekly headroom (or explicit task/project pin)
@@ -174,6 +175,17 @@ queued task
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
+
+`alt task new --wait <reason>` or `--after <task>` records one planned wait on the queued task.
+The flags are mutually exclusive; a named dependency belongs to the same project and releases
+the wait only when archived done, including if already satisfied at creation. A PR merge alone,
+rejection, failure or missing dependency does not release it. Planned tasks create no worker or
+worktree and consume no WIP slot. L3 or the operator can use `alt task release <slug> --reason "…"`
+to release either wait explicitly, including an early named-dependency override with a recorded
+reason. The task then passes the ordinary dispatch gates; release leaves merge holds intact.
+Work and task conversations show **Planned · waits for …**, and the state digest retains the reason.
+Messages sent before release remain in the inbox, do not start work, and accompany the original
+brief at launch without replacing its source authority.
 
 WIP defaults to 8 running tasks per project and 80 across the machine. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before

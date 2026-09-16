@@ -823,6 +823,9 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
 
 def _run(project: str, slug: str, model: str | None = None) -> dict:
     # New work starts at the fetched commit; deployment HEAD, index and working files are not launch inputs.
+    task = T.release_dependency(project, slug)
+    if task.get("planned_wait"):
+        raise T.TransitionError(f"waits for {task['planned_wait']['reason']}")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task["state"] != "queued":
@@ -870,6 +873,9 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         engine = choice["engine"]
         selected_model = choice.get("model")
         selected_effort = config.task_effort(engine, task.get("effort")) if "effort" in task else None
+        messages = T.pending(project, slug)
+        for row in messages:
+            task.setdefault("message_deliveries", {})[row["id"]] = {"state": "unconfirmed", "at": None}
         task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
                      "l2_engine": engine, "engine_model": selected_model,
                      "launch_model": selected_model, "launch_effort": selected_effort, "engine_reasoning_effort": None,
@@ -885,9 +891,11 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             history = [row for row in task.get("image_messages", []) if row.get("delivered")] if task.get("attempt") else []
             if history:
                 brief_md += "\n\nPreviously delivered image context; these are saved messages, not new requests:\n" + T.render_inbox(history)
+            if messages:
+                brief_md += "\n\nMessages received before launch; retain the original brief's source authority:\n" + T.render_inbox(messages)
             T.brief(project, slug, brief_md, actor="altd")
             with S.project_lock(project):
-                refs = (task.get("images") or []) + [image for row in history for image in row["images"]]
+                refs = (task.get("images") or []) + [image for row in history + messages for image in row.get("images", [])]
                 attached = images.resolve(project, list({ref["id"]: ref for ref in refs}.values()), task=slug)
             res = engines.start_l2(
                 engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
@@ -927,7 +935,8 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         worktree = str(worktree_path)
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree),
-                   l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"])
+                   l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"],
+                   messages=messages, input_delivered=agent.get("input_delivered") is True)
     except T.TransitionError as exc:
         if agent.get("id"):
             _stop_replacement(engine, agent["id"], l2_job_root(project, slug))
