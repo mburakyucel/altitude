@@ -313,6 +313,8 @@ Task message reads and pending delivery project that entry; its delivered flag c
 with resume claims. A same-ID HTTP retry returns the original receipt after delivery or archive,
 and changed content under that identity is refused. Confirmed refusals restore the draft; uncertain
 responses keep its controls frozen and retry the same submission without creating another message.
+Local codec-probe timeouts, OS errors and nonzero exits refuse the current admission as unavailable.
+A later attempt probes the same converter again and can recover without a process restart or cache reset.
 
 Each image-bearing project message keeps its own turn and caption. Its queue claim remains on disk
 until human history and a terminal response are durable. After interruption, recovery preserves the

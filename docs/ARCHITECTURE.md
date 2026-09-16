@@ -889,6 +889,9 @@ into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversi
 local color library and runs in the same bounded child process. Unsupported color encodings fail
 with an exported-sRGB recovery instruction. The shared limits are four images, 10 MiB each,
 20 MiB total, 25 megapixels, 8192 pixels per side and a 28 MiB JSON request envelope.
+Completed codec checks are cached by converter path and modification time. Probe timeouts, OS errors
+and nonzero exits report unavailable for that attempt without caching the failure; later operations
+probe again. A missing converter or a completed check lacking required codecs remains unavailable.
 
 Canonical files and metadata live under the owning project's private runtime `images/`, outside
 worktrees and static assets. Opaque IDs resolve only through that project's committed conversation,

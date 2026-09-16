@@ -279,6 +279,53 @@ class TestImages(AltitudeCase):
             self.assertIn("-map_metadata", command)
         self.assertEqual(list((config.project_dir(self.project) / "images").iterdir()), [])
 
+    def test_codec_probe_failure_recovers_without_clearing_cache(self):
+        run = images.subprocess.run
+        for failure in (subprocess.TimeoutExpired("fixture", 5), OSError("fixture unavailable"),
+                        subprocess.CalledProcessError(1, "fixture")):
+            with self.subTest(failure=type(failure).__name__):
+                images._codecs.cache_clear()
+                self.addCleanup(images._codecs.cache_clear)
+                probes = []
+                root = config.project_dir(self.project) / "images"
+                existing = set(root.iterdir()) if root.exists() else set()
+
+                def fail_once(command, **kwargs):
+                    if "-codecs" in command:
+                        probes.append(command)
+                        if len(probes) == 1:
+                            if isinstance(failure, subprocess.CalledProcessError):
+                                return run([sys.executable, "-c", "raise SystemExit(1)"], **kwargs)
+                            raise failure
+                    return run(command, **kwargs)
+
+                with mock.patch.object(images.subprocess, "run", side_effect=fail_once):
+                    with self.assertRaisesRegex(images.ImageError, "Image input unavailable") as raised:
+                        self.store()
+                    self.assertEqual(raised.exception.status, 422)
+                    self.assertEqual(set(root.iterdir()), existing)
+                    refs = self.store()
+                    self.commit(refs)
+                    raw, saved = images.read(self.project, refs[0]["id"])
+                    self.assertEqual(self.pixels(raw), self.pixels(png()))
+                    self.assertEqual((saved["width"], saved["height"]), (2, 3))
+                    self.assertTrue(images.capability()["available"])
+                    self.assertEqual(len(probes), 2)
+                    self.assertEqual(probes[0], probes[1])
+
+    def test_completed_codec_probe_keeps_unsupported_converter_unavailable(self):
+        images._codecs.cache_clear()
+        self.addCleanup(images._codecs.cache_clear)
+        result = subprocess.CompletedProcess("fixture", 0, stdout=" DE png\n DE mjpeg\n")
+        with mock.patch.object(images.subprocess, "run", return_value=result) as run:
+            state = images.capability()
+            self.assertFalse(state["available"])
+            self.assertIn("Image input unavailable", state["reason"])
+            with self.assertRaisesRegex(images.ImageError, "Image input unavailable") as raised:
+                self.store()
+            self.assertEqual(raised.exception.status, 422)
+            run.assert_called_once()
+
     def test_foreign_forged_task_and_symlink_reads_fail_without_filesystem_paths(self):
         refs = self.store()
         self.commit(refs)
