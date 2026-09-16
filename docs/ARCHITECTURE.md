@@ -737,7 +737,14 @@ is available; L3 records the learning on the incident and fixes the cause direct
 ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
-L3 owns verified local recovery first and recurrence prevention separately. For newly investigated
+L3 owns an actionable recovery step and recurrence prevention separately. Its
+[role contract](../personas/l3.md#authority-and-coordination) requires an owned next step and trigger,
+a meaningful finite observation during a justified wait, or an explicit capability/authority decision.
+Existing task conversations and incident evidence carry this responsibility; no new timer or task
+state enforces it. Irretrievable history remains unknown. L3 uses retained evidence and supported
+reads for remaining questions, then exposes the narrow gap if they cannot establish recovery.
+A diagnostic continuation requiring a changed operational contract waits for that decision;
+missing evidence grants no retry and unrelated delivery establishes no recovery. For newly investigated
 actionable system or role/procedure defects it promptly creates/reuses a sanitized issue, records
 the prevention disposition and owner/next action (or concrete reporting failure) in incident evidence,
 and gives one concise recovery/follow-through FYI. `watch` retains pending reporting, delivery or

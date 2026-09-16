@@ -349,8 +349,9 @@ completes authorized work; it grants no automatic backlog intake or general L2 i
 
 ### Incident recovery and prevention
 
-L3 first verifies local recovery and unblocks affected work, preserving the original session and
-holds. It separately assesses recurrence, including role/procedure failures when a tool correctly
+L3 owns the next recovery action, preserving original ownership, sessions, scope, failed-check
+evidence, machine authority and holds. It verifies recovery before resume and separately assesses
+recurrence, including role/procedure failures when a tool correctly
 refuses an action. For each newly investigated actionable Altitude defect, promptly create/reuse a
 sanitized upstream issue and record the prevention owner/next action or concrete reporting failure.
 Establish current relevance and underlying cause before selecting repair. Prefer a simple shared
@@ -377,6 +378,28 @@ Unchanged repeats reuse confirmed links and remain quiet. Failed publication ret
 next action; uncertain publication is reconciled by verified linkage without duplicate creation.
 The receiving development coordinator promptly triages under its own project authority; public
 reporting grants no cross-project task control. Historical visibility authorizes no bulk backfill.
+
+The [L3 next-action contract](../personas/l3.md#authority-and-coordination) uses these existing records
+and verbs. A justified wait names its dependency or finite observation, owner, trigger and the decision
+its result informs. An incident marked `watch` alone schedules nothing. When historical evidence is
+irretrievable, record that limit, use retained evidence for specific remaining questions and expose
+any capability or authority gap through `alt task escalate <slug> --question "…"`. Escalation keeps
+the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
+correction follows the existing task/PR path. A changed operational contract requires its decision
+before execution, with the original owner, bounded action, evidence, stop condition and next decision
+stated in the proposal. Unavailable history and unrelated successful checks never establish recovery.
+
+For fictional Atlas tasks whose original worker units were collected, the procedure is:
+
+| Scenario | Evidence and executable next step |
+| --- | --- |
+| Launch failed before a session or worktree exists | Retain the original task and failed launch record. Inspect retained launch output and the supported worker read once for a specific unresolved question. If history is unavailable and recovery cannot be established, L3 uses `alt task escalate` on that task to request a decision on one observed diagnostic launch, including evidence capture and stopping on failure or unavailable evidence. This is a proposed exception to verified-recovery-before-resume, not permission to retry; do not create a replacement owner. |
+| Validation failed on an existing session and held PR | Retain the exact failed candidate, check logs, session and hold. Review retained failures for an actionable cause. If supported reads cannot establish recovery, L3 uses `alt task escalate` on that task to propose bounded diagnosis with the same owner: name the specific failing check, evidence and stop condition before any run. A full validation rerun, machine changes or broader diagnostic access needs its applicable authority; prior passing checks and a collected owner unit do not explain failed descendants. |
+
+Neither case has a meaningful timer merely because time can pass. `recheck-ci` can rerun a workflow;
+it is not passive host observation or a substitute for the missing diagnostic authority. After a
+decision, L3 verifies supported execution and reconciles its result; unsuccessful diagnosis requires
+another concrete next step, not an automatic retry. Full delivery checks and all holds still apply.
 
 ### Upstream Altitude defects
 
