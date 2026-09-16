@@ -132,7 +132,11 @@ Search scans the full local corpus rather than a recent-message slice; its cost 
 corpus and the existing broker timeout applies. Results default to five, cap at twenty, retain at
 most 1,200 characters per excerpt, and fit within 64 KiB of serialized output. Count/output omission
 and character offsets disclose incomplete context; corrupt/unreadable evidence fails explicitly.
-Empty/missing evidence produces `no_results`. Every L3 turn advertises lookup, including native
+Directories without a resolvable status record contribute no task evidence and produce `partial`
+results with an unavailable-task count and up to twenty logical task references. Available chat and
+valid task evidence remain searchable; records are neither repaired nor inferred from stray files.
+Empty corpora and absent optional files produce `no_results` only when no task evidence is unavailable.
+Every L3 turn advertises lookup, including native
 resumes and engine changes. Historical evidence is not new authority: current instructions and task
 records govern, and the coordinator checks temporary conditions and later corrections before action.
 See [source references and bounds](CLI.md#historical-evidence-search).

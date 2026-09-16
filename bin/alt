@@ -118,6 +118,10 @@ def _search_text(record: dict) -> str:
              f"{record['output_bytes']} bytes maximum output."]
     if record["status"] == "no_results":
         lines.append("No matching evidence found. No decision inferred.")
+    if record["unavailable_task_count"]:
+        lines.append(f"Partial search: {record['unavailable_task_count']} tasks lack a resolvable status record; "
+                     f"showing {len(record['unavailable_tasks'])} unavailable sources. No decision inferred.")
+        lines.extend(f"Unavailable task evidence: {source}" for source in record["unavailable_tasks"])
     if record["truncated"]:
         lines.append("Results omitted by output/result bounds; refine the query or increase --limit (maximum 20).")
     for result in record["results"]:

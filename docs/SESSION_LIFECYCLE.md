@@ -802,8 +802,10 @@ PR and tool-summary reads. Both roles share project inspection admission; mutati
 The coordinator lookup uses its project-bound transport on either engine. It scans human project chat and active/archived task conversations, reports and digests;
 no provider session identity limits the search. Original excerpts retain dates, attribution and
 source references, with adjacent context and explicit result/text/output bounds. Search writes no
-memory and performs no model calls. Empty evidence is `no_results`; unavailable evidence is an
-error. The coordinator checks original conditions and later corrections and treats history as
+memory and performs no model calls. Task directories without resolvable status records yield
+`partial` results with bounded unavailable-source references and a total gap count, preserving
+available evidence. Empty evidence without such gaps is `no_results`; corrupt or unreadable evidence
+is an error. The coordinator checks original conditions and later corrections and treats history as
 evidence under current instructions and authoritative task records. See
 [CLI semantics and limits](CLI.md#historical-evidence-search).
 

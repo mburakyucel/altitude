@@ -316,6 +316,7 @@ def search(project: str, query: str, limit: int = 5) -> dict:
                 yield from report_rows(child, f"{source}/{pointer}", at)
 
     slugs = set()
+    unavailable_tasks, unavailable_task_count = [], 0
     for parent in (S.tasks_dir(project), S.archive_dir(project)):
         local(parent)
         if parent.exists():
@@ -324,6 +325,12 @@ def search(project: str, query: str, limit: int = 5) -> dict:
         directory = local(S.task_dir(project, slug))
         for name in ("status.json", "conversation.jsonl"):
             local(directory / name)
+        # #364: event-only directories are not resolvable tasks; retain other evidence.
+        if not S.read_json(directory / "status.json"):
+            unavailable_task_count += 1
+            if len(unavailable_tasks) < 20:
+                unavailable_tasks.append(f"{project}/task/{slug}")
+            continue
         collect([message_row(row, f"{project}/task/{slug}/conversation#{row['id']}")
                  for row in T.task_messages(project, slug)])
         for name in ("report.json", "digest.md"):
@@ -336,7 +343,9 @@ def search(project: str, query: str, limit: int = 5) -> dict:
 
     record = {"project": project, "query": query, "notice": SEARCH_NOTICE, "matched": matched,
               "limit": limit, "excerpt_chars": SEARCH_EXCERPT_CHARS, "output_bytes": SEARCH_OUTPUT_BYTES,
-              "truncated": matched > len(selected), "results": [], "status": "ok" if matched else "no_results"}
+              "truncated": matched > len(selected), "results": [],
+              "unavailable_tasks": unavailable_tasks, "unavailable_task_count": unavailable_task_count,
+              "status": "partial" if unavailable_task_count else "ok" if matched else "no_results"}
     for _, _, result in sorted(selected, reverse=True):
         record["results"].append(result)
         if len(json.dumps(record).encode()) + 1 > SEARCH_OUTPUT_BYTES:

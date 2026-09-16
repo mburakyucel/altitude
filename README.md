@@ -394,7 +394,8 @@ For decisions beyond the handoff, either role uses [`alt l3 search "literal text
 It searches the project's human conversation and active/archived task conversations, reports and
 digests, returning original excerpts, dates, speaker attribution and stable source references.
 Matching records appear newest first with adjacent context; clipped text and omitted results are
-explicit. Unavailable evidence returns an error. Historical evidence preserves context for judgment;
+explicit. Tasks without a resolvable status record are counted and listed in partial results;
+corrupt or unreadable evidence returns an error. Historical evidence preserves context for judgment;
 current instructions and task records govern action. Lookup makes no model calls and writes no memory.
 
 ## Project faults

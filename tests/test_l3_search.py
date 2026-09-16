@@ -81,6 +81,82 @@ class TestL3Search(AltitudeCase):
         self.assertIn("not new authority", record["notice"])
         self.assertIn("Current instructions and task records govern", record["notice"])
 
+    def test_orphan_tasks_preserve_available_chat_and_active_and_archived_evidence(self):
+        self.chat("Atlas rollout uses version 2.")
+        sources = {f"{self.project}/chat.jsonl#L1"}
+        for title, archived in (("Active history", False), ("Archived history", True)):
+            slug = self.task(title)
+            message = T.message(self.project, slug, "l2", "Atlas rollout evidence.")
+            if archived:
+                T._archive(self.project, slug)
+            directory = S.task_dir(self.project, slug)
+            S.write_json(directory / "report.json", {"fyi": ["Atlas rollout report."]})
+            (directory / "digest.md").write_text("Atlas rollout digest.")
+            sources.update((f"{self.project}/task/{slug}/conversation#{message['id']}",
+                            f"{self.project}/task/{slug}/report.json#/fyi/0",
+                            f"{self.project}/task/{slug}/digest.md#"))
+        S.append_event(self.project, "orphan-active", "fyi", text="Unresolvable event-only directory.")
+        orphan = S.archive_dir(self.project) / "orphan-archived"
+        orphan.mkdir(parents=True)
+        S.write_json(orphan / "status.json", {})
+        (orphan / "digest.md").write_text("Atlas rollout stray digest is not task evidence.")
+        root = config.project_dir(self.project)
+        before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+        for actor in ("l2", "l3"):
+            record = self.lookup("Atlas rollout", "--limit", "20", "--json", actor=actor)
+            self.assertEqual(record["status"], "partial")
+            self.assertEqual(record["matched"], 7)
+            self.assertEqual({item["match"] for item in record["results"]}, sources)
+            self.assertEqual(record["unavailable_task_count"], 2)
+            self.assertEqual(record["unavailable_tasks"],
+                             [f"{self.project}/task/orphan-active", f"{self.project}/task/orphan-archived"])
+        missing = self.lookup("absent phrase", "--json")
+        self.assertEqual((missing["status"], missing["matched"], missing["results"]), ("partial", 0, []))
+        text = self.lookup("absent phrase")
+        self.assertIn("Partial search: 2 tasks", text)
+        self.assertIn("No decision inferred", text)
+        self.assertIn(f"Unavailable task evidence: {self.project}/task/orphan-active", text)
+        self.assertNotIn("No matching evidence found", text)
+        self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                                  for p in root.rglob("*") if p.is_file()})
+
+    def test_active_orphan_does_not_fall_back_to_same_slug_archive(self):
+        slug = self.task()
+        T.message(self.project, slug, "l2", "Archived evidence.")
+        T._archive(self.project, slug)
+        (S.tasks_dir(self.project) / slug).mkdir()
+        record = self.lookup("Archived evidence", "--json")
+        self.assertEqual((record["status"], record["matched"]), ("partial", 0))
+        self.assertEqual(record["unavailable_tasks"], [f"{self.project}/task/{slug}"])
+
+    def test_unresolved_status_variants_are_gaps_but_corrupt_or_unreadable_files_are_errors(self):
+        slug = self.task()
+        directory = S.task_dir(self.project, slug)
+        status = directory / "status.json"
+        original = status.read_bytes()
+        for content in ("", "null", "{}"):
+            with self.subTest(content=content):
+                status.write_text(content)
+                self.assertEqual(self.lookup("anything", "--json")["status"], "partial")
+        status.write_bytes(original)
+        self.chat("Available evidence")
+        for name in ("status.json", "conversation.jsonl", "report.json", "digest.md"):
+            path = directory / name
+            saved = path.read_bytes() if path.exists() else None
+            for failure in ("corrupt", "unreadable"):
+                if failure == "corrupt" and name == "digest.md":
+                    continue
+                with self.subTest(name=name, failure=failure):
+                    path.unlink(missing_ok=True)
+                    path.mkdir() if failure == "unreadable" else path.write_text("corrupt\n")
+                    result = self.alt("l3", "search", "Available evidence", "--json")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("evidence unavailable", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    path.rmdir() if failure == "unreadable" else path.unlink()
+            if saved is not None:
+                path.write_bytes(saved)
+
     def test_literal_query_count_excerpt_and_output_bounds_are_explicit(self):
         long_text = "prefix " * 400 + "[Atlas.*] only until Friday" + " suffix" * 400
         self.chat(long_text)
@@ -93,7 +169,11 @@ class TestL3Search(AltitudeCase):
         self.assertEqual(self.lookup("Atlas.+", "--json")["status"], "no_results", "query is not a regex")
         for index in range(30):
             self.chat("Atlas " + "😀" * 1200 + str(index))
+            (S.tasks_dir(self.project) / f"orphan-{index:02d}-{'x' * 65}").mkdir(parents=True)
         bounded = self.lookup("Atlas", "--limit", "20", "--json")
+        self.assertEqual(bounded["status"], "partial")
+        self.assertEqual(bounded["unavailable_task_count"], 30)
+        self.assertEqual(len(bounded["unavailable_tasks"]), 20)
         self.assertEqual(bounded["matched"], 31)
         self.assertTrue(bounded["truncated"])
         self.assertLessEqual(len(bounded["results"]), 20)
@@ -102,6 +182,8 @@ class TestL3Search(AltitudeCase):
         self.assertLessEqual(len(text.encode()), 65536)
         self.assertIn("Results omitted", text)
         self.assertIn("truncated", text)
+        self.assertIn("30 tasks", text)
+        self.assertIn("showing 20 unavailable sources", text)
         self.assertEqual(len(self.lookup("Atlas", "--limit", "1", "--json")["results"]), 1)
 
     def test_empty_missing_corrupt_and_invalid_evidence_never_invents_a_decision(self):
@@ -139,8 +221,9 @@ class TestL3Search(AltitudeCase):
             with self.assertRaisesRegex(ValueError, "socket fixes the project"):
                 server.l3_verb_request(self.project, {"kind": "alt", "args": args})
         local_task = self.task()
+        S.append_event(self.project, "orphan-active", "fyi")
         for target in ("chat.jsonl", f"tasks/{local_task}/conversation.jsonl", f"tasks/{local_task}/report.json",
-                       f"tasks/{local_task}/status.json", "archive/linked-task"):
+                       f"tasks/{local_task}/status.json", "tasks/orphan-active/status.json", "archive/linked-task"):
             with self.subTest(target=target):
                 path = config.project_dir(self.project) / target
                 saved = path.read_bytes() if path.exists() else None
@@ -161,6 +244,7 @@ class TestL3Search(AltitudeCase):
         self.chat("Atlas rollout: only during the pilot.", turn_id="original-decision")
         self.chat("Correction: Atlas rollout pilot is complete; version 2 now applies.",
                   at="2030-01-02T00:00:00+00:00")
+        S.append_event(self.project, "orphan-task", "fyi")
         for index in range(30):
             self.chat(f"Later discussion {index}.", at="2030-01-03T00:00:00+00:00")
         broker = server.start_l3_verb_broker(self.project)
@@ -193,6 +277,8 @@ class TestL3Search(AltitudeCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 evidence = json.loads(result.stdout)
             self.assertEqual(evidence["matched"], 2)
+            self.assertEqual(evidence["status"], "partial")
+            self.assertEqual(evidence["unavailable_tasks"], [f"{self.project}/task/orphan-task"])
             self.assertIn("only during the pilot", json.dumps(evidence))
             self.assertIn("version 2 now applies", json.dumps(evidence))
             self.assertEqual(evidence["results"][-1]["match"], f"{self.project}/chat.jsonl#L1")
