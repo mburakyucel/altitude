@@ -949,7 +949,8 @@ runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2
 Python modules run in fresh interpreter shards concurrently with the ordered web phases. The
 stdlib runner streams shard output and totals unittest outcomes; either branch failing fails the
 gate. CI browser concurrency uses half the available CPUs (at least two); local browsers use two
-workers. Per-test temporary homes, ports and artifacts isolate concurrent checks without retries.
+workers. CI schedules individual browser tests across workers; local runs schedule by spec file.
+Per-test temporary homes, ports and artifacts isolate concurrent checks without retries.
 Python fixtures isolate runtime/provider homes and replace external engine execution and GitHub
 responses. Core integration tests retain real routing, dispatch, task transitions, HTTP handlers,
 file storage, locks and temporary Git repositories. Unexpected real provider/service execution

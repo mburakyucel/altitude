@@ -119,6 +119,8 @@ Both projects run headlessly: phone at 390×844 with touch/mobile user agent and
 1440×900. With `CI` set, Playwright uses half the available CPUs (at least two); local runs use
 two workers. Retries remain zero and CI refuses focused-only tests. Each service has its own
 temporary homes and OS-assigned port; screenshots use per-test output paths.
+CI schedules individual tests across workers, so long spec files cannot hold one worker while
+others sit idle. Local runs retain file-level scheduling.
 Install the Chromium build matching the locked Playwright version. The browser cache
 can be shared across worktrees through `PLAYWRIGHT_BROWSERS_PATH`; use the same value for install
 and execution. Chromium's own sandbox is disabled inside the worker filesystem sandbox because
