@@ -81,7 +81,38 @@ These are read-time observations, not an atomic disk/manager snapshot.
 A removed disk file can remain loaded with `need_daemon_reload=true`; an unchanged active PID does
 not prove restoration. Compare loaded settings, reload state and process identity with the known
 pre-change baseline. The read performs no reload, apply or lifecycle action and accepts no property
-or file selectors. Other admitted Altitude unit reads retain process status only.
+or file selectors.
+
+### Worker termination and resource evidence
+
+The same coordinator read accepts an admitted Altitude worker unit, for example
+`{"kind":"service","unit":"altitude-worker-fixture.service"}`. One fixed native `show` call
+returns the existing `unit`, `state`, `substate`, `pid`, `last_restart`, and `error` fields plus
+the following evidence for both workers and the main service. Worker reads request no environment
+or filesystem paths; main-service TLS fields retain their separate filtering above.
+
+| Field | Evidence |
+| --- | --- |
+| `load_state` | Native load state; `not-found` means absent or collected, not a clean exit. Null means unknown. |
+| `invocation_id` | Native invocation identity when retained; compare with the worker's known invocation. |
+| `started_monotonic`, `exited_monotonic` | Main-process start/exit microseconds since boot, as decimal strings; zero/unset becomes null. Compare only within the same boot. |
+| `result` | Native service result such as `oom-kill`, `signal`, `exit-code`, `timeout`, `resources` or `success`; `success` alone does not establish an observed exit. |
+| `exec_main_code`, `exec_main_status` | Native main-process wait code and status as decimal strings: code `1` means exited (status is exit code), `2` killed, `3` core dumped (status is signal number). Unset code makes both null. |
+| `memory_current`, `memory_peak` | Available unit memory accounting in bytes as decimal strings, including zero; native `[not set]` becomes null. |
+| `memory_high`, `memory_max` | Unit memory throttle/hard-limit settings in bytes as decimal strings, or `infinity`. These do not describe ancestor limits or host capacity. |
+
+Non-loaded units retain process state and load evidence with an explicit `error`; termination and
+resource fields stay null. Missing, unsupported, empty or unrecognized properties stay null;
+a successful read with null fields does not prove availability or health. Command failure,
+timeout, denied access or an unavailable native manager returns the fixed inspection error and
+unknown evidence, without raw diagnostics. There is no alternate host inspection on unsupported platforms.
+
+A retained `oom-kill` result supports native unit-level OOM attribution. A main-process signal 9
+or exit code 137 alone does not establish OOM, its origin, or which descendant failed. Memory
+snapshots, peaks and cumulative OOM counters do not prove a historical kill or cleared pressure.
+Collected-unit history cannot be reconstructed by this read. It enumerates no host consumers,
+reads no journal or cgroup files, and changes no unit retention, limits, service state or resume
+policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
