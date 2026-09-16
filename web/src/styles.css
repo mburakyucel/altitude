@@ -1135,7 +1135,7 @@
   }
 }
 
-/* Needs you (§3.3): the cards in one column with the project chip, then the calm line. */
+/* Needs you (§3.3): contiguous project sections, then the calm line. */
 .needs-page {
   gap: 16px;
 }
@@ -1147,12 +1147,22 @@
 .needs-sub {
   margin: 0;
   font-size: var(--text-meta);
+  overflow-wrap: anywhere;
 }
 .needs-list {
   display: flex;
   max-width: 720px;
   flex-direction: column;
+  gap: 24px;
+}
+.needs-project {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   gap: 12px;
+}
+.needs-project h2 {
+  overflow-wrap: anywhere;
 }
 .calm {
   margin: 8px 0 0;

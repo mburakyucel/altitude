@@ -10,7 +10,7 @@ export function needsSummary(queue: Decision[]): string {
   return `${attentionSummary(queue)} ${where}`;
 }
 
-/** Needs you (SPEC.md §2.1): every decision across projects as compact cards with a project chip. */
+/** Needs you (SPEC.md §2.1): contiguous project sections in first-appearance order. */
 export default function NeedsYou() {
   const overview = useOverview();
 
@@ -40,8 +40,13 @@ export default function NeedsYou() {
       ) : (
         <>
           <div className="needs-list" aria-label="Decisions">
-            {decisionGroups(overview.data!.queue).map((group) => (
-              <DecisionCard key={`${group[0]!.project}:${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} chip from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
+            {[...new Set(overview.data!.queue.map((decision) => decision.project))].map((project) => (
+              <section className="needs-project" key={project} aria-label={`Project ${project}`}>
+                <h2 className="text-card-title font-semibold">{project}</h2>
+                {decisionGroups(overview.data!.queue.filter((decision) => decision.project === project)).map((group) => (
+                  <DecisionCard key={`${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
+                ))}
+              </section>
             ))}
           </div>
           <p className="calm text-muted">

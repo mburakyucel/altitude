@@ -432,7 +432,15 @@ options name concise actions, and the recommendation includes the material conse
 before answering. Owners rewrite long technical explanations around that decision. Full reasoning,
 implementation detail, evidence and history remain accessible in the owning conversation; additional
 saved question detail opens under **More context** there when it differs from the visible question.
-The task title is its own fully wrapping link below source/project/time and above the question.
+Needs you groups all attention items into contiguous project sections. Each section starts with
+the full owning project name as a heading; names wrap without clipping on phone and desktop,
+including shared prefixes and unbroken names. Project order follows first appearance in the queue;
+items keep their order within each project, and question groups stay together. This applies to
+single-project and mixed-project queues, including questions, reviews, stops and faults. The selected
+project never supplies an item's owner or filters the inbox. Saved reads retain the sections.
+The task title is its own fully wrapping link below source/time and above the question.
+`web/e2e/needs-ownership.pw.ts` walks ownership and navigation; `work-and-decisions.pw.ts`
+walks empty, loading, saved/read errors, sending, sent, failed and denied states at both viewports.
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.

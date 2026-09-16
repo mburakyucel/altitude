@@ -133,7 +133,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   Worktrees isolate changes; planned files guide coordination. Owners review selected changes and
   all outgoing history for scope and privacy before `alt land` publishes through their assigned PR.
   Shared-file changes still need rebasing and reconciliation by their owners.
-- **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
+- **Selective attention.** Needs you collects unresolved dilemmas in clearly named project sections,
+  with each project's items together and full project names wrapping when needed. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,
   concise actions, and the material consequences needed to answer. Detailed reasoning and history
   stay accessible in the owning conversation. The model can ask a plain question, offer one

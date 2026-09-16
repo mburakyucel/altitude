@@ -113,6 +113,26 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
 }
 
 describe("Needs you", () => {
+  it("keeps interleaved projects contiguous in first-appearance order without splitting question groups", async () => {
+    const first = { ...l2Asks, title: "Shared task title", group_id: "scope", group_revision: 1 };
+    const other = { ...asks, title: "Shared task title", group_id: "scope", group_revision: 1 };
+    mockFetch([first, other, { ...first, id: "follow-up", question: "Which regions?" }, stopped,
+      { ...other, id: "review", group_id: "review", kind: "review" }]);
+    localStorage.setItem("altitude.project", "altitude");
+    renderApp({ route: "/" });
+    const list = await screen.findByLabelText("Decisions");
+    const sections = within(list).getAllByRole("region");
+    expect(sections.map((section) => section.getAttribute("aria-label"))).toEqual(["Project tutor", "Project altitude"]);
+    expect(within(sections[0]!).getAllByRole("article")).toHaveLength(2);
+    expect(within(sections[1]!).getAllByRole("article")).toHaveLength(2);
+    const group = within(sections[0]!).getByRole("article", { name: "Shared task title" });
+    expect(within(group).getByText("2 questions to answer")).toBeInTheDocument();
+    expect(within(group).getByText("Which regions?")).toBeInTheDocument();
+    expect(within(group).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/tutor/tasks/score-phonemes?question=q-badge&revision=1");
+    expect(within(sections[0]!).getByRole("article", { name: "Fix the audio" })).toBeInTheDocument();
+    expect(screen.getByText("4 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
+  });
+
   it("removes an old group's saved receipt while retaining the new group even if the follow-up read fails", async () => {
     const old = { ...asks, group_id: "old-group", group_revision: 1 };
     const next = { ...asks, id: "q-label", group_id: "new-group", group_revision: 1, question: "What should the badge say?" };
@@ -164,8 +184,8 @@ describe("Needs you", () => {
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(reads));
   });
 
-  // §3.8: one card per decision with the project chip, the kind row, the why, and the asker's options.
-  it("lists the cards with a project chip, the kind row, the why, and unselected options", async () => {
+  // §3.8: named project sections precede their questions and answer controls.
+  it("lists cards in named project sections with the kind row, why and unselected options", async () => {
     mockFetch([asks, stopped]);
     renderApp({ route: "/" });
 
@@ -173,7 +193,9 @@ describe("Needs you", () => {
     const list = screen.getByLabelText("Decisions");
     const card = within(list).getByRole("article", { name: "Add the badge" });
     expect(within(card).getByText("L3 brought this to you")).toHaveClass("kind-label");
-    expect(within(card).getByText("altitude")).toHaveClass("chip");
+    const project = within(list).getByRole("region", { name: "Project altitude" });
+    expect(within(project).getByRole("heading", { name: "altitude", level: 2 })).toBeInTheDocument();
+    expect(project).toContainElement(card);
     expect(within(card).getByText("Which badge colour should the count use?")).toHaveClass("decision-question");
     expect(within(card).getByText("Accent matches the boards; amber matches the old build.")).toHaveClass("decision-why");
     expect(within(card).getByText("4 min ago")).toBeInTheDocument();
@@ -181,9 +203,9 @@ describe("Needs you", () => {
     expect(within(card).getByRole("button", { name: "Send answers" })).toBeDisabled();
     expect(within(card).getByRole("button", { name: "Amber" })).toHaveClass("btn-ghost");
     expect(within(card).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
-    expect(screen.queryByRole("region", { name: "altitude" })).toBeNull();
 
     const stoppedCard = within(list).getByRole("article", { name: "Fix the audio" });
+    expect(within(list).getByRole("region", { name: "Project tutor" })).toContainElement(stoppedCard);
     expect(within(stoppedCard).getByText("Stopped mid-task").closest(".decision-kind")).toHaveAttribute("data-tone", "danger");
     expect(within(stoppedCard).getByText("yesterday")).toBeInTheDocument();
     expect(within(stoppedCard).getAllByText("the recording upload fails at 10 minutes")).toHaveLength(1);
