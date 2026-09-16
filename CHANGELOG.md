@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Native helpers share a concise L1 persona, referenced explicitly in their assignments on both
+  engines. L2 supplies task-specific scope, verifies results and retains delivery accountability.
+
 - Launches, landing and restart builds discover the installed nvm default when Node is absent
   from PATH. Candidate installs run inside the web project so Corepack uses its pinned pnpm (#368).
 - Private Linux x86_64 archives include the CLI, daemon and built UI, with per-user installation,

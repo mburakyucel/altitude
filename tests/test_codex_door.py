@@ -97,7 +97,10 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(procs[0].cmd[2:5], [config.CODEX_BIN, "exec", "resume"])
         self.assertNotIn("-C", procs[0].cmd)
         self.assertEqual(procs[0].cmd[-2:], ["thr-1", "-"])
-        self.assertEqual(procs[0].stdin.getvalue(), b"brief", "the thread already holds the persona")
+        prompt = procs[0].stdin.getvalue().decode()
+        self.assertTrue(prompt.endswith("\n\nbrief"))
+        self.assertNotIn(engines.CODEX_PATCH_NOTE, prompt, "resume retains the initial thread instructions")
+        self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
         self.assertEqual((res["returncode"], res["agent"]["sessionId"]), (0, "thr-1"))
 
         with mock.patch.object(engines, "codex_stop", return_value="stopped") as stop:

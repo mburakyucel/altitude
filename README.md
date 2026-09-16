@@ -183,6 +183,9 @@ say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token
 
 **L1** means an engine-native helper used by an L2, not a separately managed Altitude role. The L2
 remains accountable; delegation suits bounded independent work and is optional for small tasks.
+Each helper assignment explicitly directs it to read the shared [L1 persona](personas/l1.md)
+from the activated installation. L2 supplies the task-specific context, scope and expected evidence;
+repository rules remain separate. See [helper instruction delivery](docs/SESSION_LIFECYCLE.md#native-helper-instructions).
 Expand **L2 usage details** in Monitor to see observed unique helpers across recorded attempts,
 their attributable tokens, and per-helper identity and owner attempt context. Direct helpers and
 descendants are distinguished when native parentage supports it; otherwise depth stays unknown.
