@@ -312,10 +312,10 @@ Use `make check` for per-phase wall/user/system timings and retain the runner su
 source SHA and tool versions. Separate dependency/browser installation from warm execution.
 The serial baseline supplied for this change is self-hosted run 35065148992: 13 min 54 s
 on four CPUs, including Python at 4 min 15 s and 316 browser tests at 9 min 12 s with two workers.
-Self-hosted run 35071375427 on 2026-09-16 completes the concurrent gate in 3 min 26 s at
-eight process-available CPUs: Python 203.75 s (1,362 tests, one optional native probe skipped,
-four processes), web tests 12.83 s (360 passed), typecheck/build 4.41 s and browsers 189.04 s
-(324 passed, twelve workers, zero retries). Phase wall times overlap and must not be added.
+Self-hosted run 35076675654 on 2026-09-16 completes the concurrent gate in 3 min 51 s at
+eight process-available CPUs: Python 149.54 s (1,371 tests, one optional native probe skipped,
+four processes), web tests 13.54 s (360 passed), typecheck/build 4.82 s and browsers 212.58 s
+(324 passed, eight workers, zero retries). Phase wall times overlap and must not be added.
 CI allocations vary with available capacity. Worker counts follow the process's available CPUs,
 not a fixed container size or host-wide count. PR evidence records each measured source revision.
 
