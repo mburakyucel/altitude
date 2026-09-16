@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { InlineProse, Prose, ProseRepository } from "../components/Prose";
+import { InlineProse, Prose, ProseScope } from "../components/Prose";
 import { TokenUsage } from "../components/TokenUsage";
 import { useOverview, useProject, useTask } from "../data/api";
 
@@ -81,7 +81,7 @@ export default function TaskReport() {
   const empty = Object.keys(report).length === 0 && !markdown && !digest;
 
   return (
-    <ProseRepository value={project.data?.repository}>
+    <ProseScope project={name} repository={project.data?.repository}>
     <div className="page report-page">
       <p className="text-meta">
         <Link to={`/projects/${name}/tasks/${slug}`}>← {view.title || slug}</Link>
@@ -153,6 +153,6 @@ export default function TaskReport() {
         </Section>
       ) : null}
     </div>
-    </ProseRepository>
+    </ProseScope>
   );
 }

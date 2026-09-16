@@ -1679,6 +1679,7 @@
 .prose-link {
   color: var(--accent-text);
   text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 .reply-from {
   font-size: 12px;

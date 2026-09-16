@@ -1204,6 +1204,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1458,6 +1459,21 @@ class Handler(BaseHTTPRequestHandler):
                 release = config.RELEASE or {}
                 return self._json({"version": release.get("version"), "commit": release.get("commit"),
                                    "pid": os.getpid()})
+            if api == "files":
+                if self.command != "GET":
+                    return self._json({"error": "Use GET to read a document."}, 405)
+                try:
+                    query = parse_qs(u.query, keep_blank_values=True, strict_parsing=True,
+                                     errors="strict", max_num_fields=1)
+                except ValueError:
+                    return self._json({"error": "Choose one file reference."}, 400)
+                if (len(parts) != 3 or u.path != "/api/files/" + parts[-1]
+                        or set(query) != {"path"} or len(query["path"]) != 1 or not query["path"][0]):
+                    return self._json({"error": "Choose one file reference."}, 400)
+                try:
+                    return self._json(T.task_file(unquote(parts[2]), query["path"][0]))
+                except T.TaskFileError as exc:
+                    return self._json({"error": str(exc)}, exc.status)
             if api == "design":
                 return self._task_design(parts[2:])
             if api == "images":
@@ -1507,6 +1523,8 @@ class Handler(BaseHTTPRequestHandler):
         image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
+            if api == "files":
+                return self._json({"error": "Use GET to read a document."}, 405)
             if api == "transcribe":
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)

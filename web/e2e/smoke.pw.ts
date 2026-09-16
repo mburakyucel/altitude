@@ -30,16 +30,21 @@ const routePaths = [...new Set(paths(source))];
 
 for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe(() => {
   const design = route.includes("/design/");
-  test.use({ serviceScript: design ? "task-design-service.py" : "" });
+  const file = route.endsWith("/file");
+  test.use({ serviceScript: design ? "task-design-service.py" : file ? "file-references-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     if (design) expect(task?.question?.design_url, "The fixture supplies a real saved proposal").toBeTruthy();
-    const url = route.replace(":name", encodeURIComponent(project.name))
+    let url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
       .replace("*", "__ui_unknown_route__");
+    if (file) {
+      const { paths } = await (await request.get("/fixture/files")).json();
+      url += `?${new URLSearchParams({ path: paths["commands.md"] })}`;
+    }
     const errors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
     page.on("pageerror", (error) => errors.push(error.message));
@@ -61,7 +66,13 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
     expect(response?.ok()).toBe(true);
     const main = page.getByRole("main");
     await expect(main).toBeVisible();
-    if (task && design) {
+    if (file) {
+      await expect(main.getByRole("heading", { name: "commands.md", exact: true })).toBeVisible();
+      const contents = main.getByRole("region", { name: "File contents", exact: true });
+      await expect(contents.getByRole("heading", { name: "Setup instructions", exact: true })).toBeVisible();
+      await expect(contents.locator("pre")).toContainText("never executed");
+      await expect(main.getByText("Loading file…", { exact: true })).toHaveCount(0);
+    } else if (task && design) {
       await expect(main.getByRole("heading", { name: "Conversation layout", exact: true })).toBeVisible();
       await expect(main.getByText(`Preview · v${task.question!.revision}`, { exact: true })).toBeVisible();
       await expect(main.getByRole("img", { name: "Phone conversation", exact: true })).toBeVisible();

@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 from . import config, github_intake, images as image_store, state as S, usage
 
@@ -44,9 +44,9 @@ DESIGN_IMAGE_COUNT = 12
 
 
 @contextmanager
-def _design_directory(root: Path, parts: list[str], *, create: bool = False):
+def _design_directory(root: Path | int, parts: list[str], *, create: bool = False):
     """Walk relative to an open root without following any symlink, including racing replacements."""
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts:
             if not part or part in (".", "..") or "/" in part or "\\" in part:
@@ -65,22 +65,97 @@ def _design_directory(root: Path, parts: list[str], *, create: bool = False):
         os.close(fd)
 
 
-def _design_bytes(root: Path, relative: str, limit: int) -> bytes:
+def _design_bytes(root: Path | int, relative: str, limit: int) -> bytes:
     parts = relative.split("/")
     if any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ValueError("invalid design path")
     with _design_directory(root, parts[:-1]) as directory:
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+            os.close(fd)
+            raise ValueError("design file is not a bounded regular file")
         with os.fdopen(fd, "rb") as stream:
-            before = os.fstat(stream.fileno())
-            if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
-                raise ValueError("design file is not a bounded regular file")
             data = stream.read(limit + 1)
             after = os.fstat(stream.fileno())
     if len(data) > limit or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
             after.st_size, after.st_mtime_ns, after.st_ctime_ns):
         raise ValueError("design file changed during capture")
     return data
+
+
+TASK_FILE_LIMIT = 1 << 20
+
+
+class TaskFileError(ValueError):
+    def __init__(self, message: str, status: int = 403):
+        super().__init__(message)
+        self.status = status
+
+
+def task_file(project: str, reference: str) -> dict:
+    """Read a direct task document; every component and the task record stay descriptor-bound."""
+    outside = "Only text documents directly in this project's task folders can open here."
+    unsupported = "Only regular UTF-8 .md or .txt documents up to 1 MiB can open here."
+    unavailable = "This document is missing or cannot be read."
+    if not config.is_managed(project) or any(ord(c) < 32 for c in reference):
+        raise TaskFileError(outside)
+    path = reference
+    if reference.startswith("file:"):
+        try:
+            uri = urlsplit(reference)
+            path = unquote(uri.path, errors="strict")
+        except ValueError:
+            raise TaskFileError(outside) from None
+        if not reference.startswith("file:///") or uri.netloc or uri.query or uri.fragment:
+            raise TaskFileError(outside)
+    if (not path.startswith("/") or any(ord(c) < 32 for c in path)
+            or any(p in ("", ".", "..") or "\\" in p for p in path.split("/")[1:])):
+        raise TaskFileError(outside)
+    try:
+        relative = Path(path).relative_to(config.project_dir(project))
+    except ValueError:
+        raise TaskFileError(outside) from None
+    if len(relative.parts) != 3 or relative.parts[0] not in ("tasks", "archive"):
+        raise TaskFileError(outside)
+    _, slug, name = relative.parts
+    try:
+        S.require_task_slug(slug)
+    except ValueError:
+        raise TaskFileError(outside) from None
+    if Path(name).suffix.lower() not in (".md", ".txt"):
+        raise TaskFileError(unsupported, 415)
+    try:
+        # Starting at / also refuses symlinks in ancestors of the configured runtime home.
+        with _design_directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
+            for location in ("tasks", "archive"):
+                try:
+                    with _design_directory(root, [location, slug]) as directory:
+                        try:
+                            record = json.loads(_design_bytes(directory, "status.json", DESIGN_IMAGE_LIMIT))
+                        except (OSError, ValueError):
+                            raise TaskFileError(unavailable, 404) from None
+                        if (not isinstance(record, dict) or record.get("slug") != slug
+                                or record.get("state") not in tuple(TRANSITIONS)):
+                            raise TaskFileError(unavailable, 404)
+                        try:
+                            text = _design_bytes(directory, name, TASK_FILE_LIMIT).decode("utf-8")
+                        except (ValueError, UnicodeError):
+                            raise TaskFileError(unsupported, 415) from None
+                        except OSError:
+                            raise TaskFileError(unavailable, 404) from None
+                        return {"name": name, "path": path,
+                                "current_path": str(config.project_dir(project) / location / slug / name),
+                                "text": text, "markdown": Path(name).suffix.lower() == ".md"}
+                except FileNotFoundError:
+                    # Only a missing task directory falls through to its archived identity.
+                    if location == "archive":
+                        raise
+    except TaskFileError:
+        raise
+    except (OSError, ValueError):
+        raise TaskFileError(unavailable, 404) from None
+    raise TaskFileError(unavailable, 404)
 
 
 def _design_hash(value: dict) -> str:

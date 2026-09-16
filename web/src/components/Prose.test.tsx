@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { InlineProse, Prose, ProseRepository, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseRepository, ProseScope, lastParagraph } from "./Prose";
 
 const repository = "https://github.com/example/project";
 function prose(text: string, repo: string | null = repository) {
@@ -9,6 +9,53 @@ function prose(text: string, repo: string | null = repository) {
 function destinations() {
   return screen.queryAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
 }
+
+describe("local file references", () => {
+  const path = "/home/operator/.altitude/atlas/tasks/setup/commands.md";
+  const route = (target: string, project = "atlas") => `/projects/${project}/file?path=${encodeURIComponent(target)}`;
+  it.each(["reply", "compact"])("links file URIs, absolute paths and labeled references in %s", (surface) => {
+    const text = `Read file://${path}, then (${path}). [Commands](${path}) and [With spaces](</srv/task/my commands.md>).`;
+    render(<ProseScope project="atlas" repository={repository}>{surface === "reply" ? <Prose text={text} /> : <InlineProse text={text} />}</ProseScope>);
+    expect(destinations()).toEqual([[`file://${path}`, route(`file://${path}`)], [path, route(path)], ["Commands", route(path)], ["With spaces", route("/srv/task/my commands.md")]]);
+    for (const link of screen.getAllByRole("link")) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(link.getAttribute("title")).toBeTruthy();
+    }
+    expect(screen.getByText(/, then/)).toBeVisible();
+  });
+  it("preserves web links and code without linking embedded paths or image resources", () => {
+    const text = `https://example.org/doc.md [Web](https://example.org/doc.md) \`${path}\`\n\n~~~sh\ncat ${path}\n~~~\n\nword/path ../relative //host/share 1 / 2 ![photo](https://example.org/photo.png) [Bad](javascript:alert)`;
+    const { container } = render(<ProseScope project="atlas" repository={repository}><Prose text={text} /></ProseScope>);
+    expect(destinations()).toEqual([["https://example.org/doc.md", "https://example.org/doc.md"], ["Web", "https://example.org/doc.md"]]);
+    expect(container.querySelector("img, iframe, a a")).toBeNull();
+  });
+  it("keeps the exact URI encoding and sends foreign-host URIs to the bounded reader for refusal", () => {
+    render(<ProseScope project="atlas"><Prose text="file:///srv/task/a%20b.md file://another-machine/etc/notes.md" /></ProseScope>);
+    expect(destinations()).toEqual([["file:///srv/task/a%20b.md", route("file:///srv/task/a%20b.md")], ["file://another-machine/etc/notes.md", route("file://another-machine/etc/notes.md")]]);
+  });
+  it("keeps balanced filename parentheses while excluding surrounding sentence punctuation", () => {
+    const target = "/srv/task/setup(v2).md";
+    render(<ProseScope project="atlas"><Prose text={`Read ${target}, then (file://${target}).`} /></ProseScope>);
+    expect(destinations()).toEqual([[target, route(target)], [`file://${target}`, route(`file://${target}`)]]);
+  });
+  it("uses the displayed project's identity independently of repository metadata", () => {
+    const view = render(<Prose text={path} />);
+    expect(destinations()).toEqual([]);
+    view.rerender(<ProseScope project="atlas"><Prose text={path} /></ProseScope>);
+    expect(destinations()).toEqual([[path, route(path)]]);
+    view.rerender(<ProseScope project="second"><Prose text={path} /></ProseScope>);
+    expect(destinations()).toEqual([[path, route(path, "second")]]);
+  });
+  it("renders document headings and code without enabling HTML or remote images", () => {
+    const text = "# Setup\n\n##\tCommands\n\n- **Review** first\n\n```sh\nprintf '<script>alert(1)</script>'\n```\n\n<script>alert(2)</script>\n\n![Remote](https://example.org/private.png)";
+    const { container } = render(<Prose text={text} document />);
+    expect(screen.getByRole("heading", { name: "Setup", level: 2 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Commands", level: 3 })).toBeVisible();
+    expect(container.querySelector("pre")?.textContent).toBe("printf '<script>alert(1)</script>'");
+    expect(container.querySelector("script, img, iframe")).toBeNull();
+  });
+});
 
 describe("project-aware GitHub references", () => {
   it.each(["reply", "compact", "folded"])("preserves same-number upstream and local issues in %s prose", (surface) => {

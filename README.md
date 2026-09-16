@@ -318,6 +318,18 @@ messages. `PR #250` and `pull request #250` open the project's pull request; `is
 repository. Links open in a new tab. Existing links and code stay intact; unqualified references
 stay text when the project's GitHub repository is unavailable.
 
+Absolute file paths and `file:///` references in conversation prose use the same ordinary link
+style. Open one to read the document in a separate browser tab on desktop or phone; the conversation
+and draft stay in place. The reader shows the full target and Copy path, renders Markdown with a
+Raw toggle, and displays `.txt` files as plain text. Reading commands never executes them.
+
+File reading is limited to regular UTF-8 `.md`/`.txt` documents directly in the selected project's
+task folders, including archived tasks, up to 1 MiB. Anyone with Altitude's existing private web
+access can read any eligible document, including one never mentioned in chat. Other machine paths,
+symlinks and nested files are unavailable; their full reference remains visible for copying.
+Missing or unreadable files show an error with Retry. Embedded HTML and remote images do not run
+or load, and code in conversation messages remains code.
+
 Generated replies, briefs and summaries preserve upstream references as full URLs or
 `owner/repo#number`. Bare references keep their local meaning; ambiguous historical text is not
 assigned a guessed upstream repository.

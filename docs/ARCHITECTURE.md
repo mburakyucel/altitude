@@ -1017,6 +1017,31 @@ Both personas and every L3 turn's guidance preserve upstream identity in generat
 and summaries as full URLs or `owner/repo#number`. The renderer keeps bare references local and does
 not infer an upstream repository from ambiguous historical text.
 
+`ProseScope` supplies the displayed project's identity independently of repository metadata.
+Absolute paths, local file URIs and labeled Markdown file links outside code use the same ordinary
+underlined link style and open `/projects/<project>/file?path=<reference>` in a separate tab.
+The original target is retained, including URI encoding; labeled links expose it on hover and
+the reader shows it in full. Bare paths with spaces use a Markdown angle-bracket destination or
+a percent-encoded file URI. Stored messages remain unchanged and rendering performs no file reads.
+
+`GET /api/files/<project>?path=<reference>` reads only regular UTF-8 `.md`/`.txt` files directly in
+a registered project's active or archived task directories, up to 1 MiB. Original active-task paths
+resolve through task identity after archival; the response identifies the current location too.
+Task existence, path shape and the configured runtime root bind each read. Descriptor-based
+no-follow directory/file reads refuse symlinks, traversal and special files, bound read size, and
+reject files changed during reading. Foreign-host file URIs and other locations are refused.
+There is no listing, recursive publication, native opener, execution or arbitrary filesystem route.
+This uses existing private network/OS-user access: all eligible task-root documents are readable,
+even without a conversation reference. Extension and location do not classify confidentiality;
+trusted local processes can still copy or hard-link contents into an eligible document.
+
+The file page shows the complete reference and Copy path, with current contents read on opening.
+Markdown uses the shared inert prose renderer with document headings and a Raw toggle; text files
+remain literal. HTML and images stay text, with no embedded resource fetch or command execution.
+Loading, empty, missing, denied and unsupported states are explicit; Retry clears stale contents
+while reading, and copy failure leaves the full path selectable. Reads are uncached. Closing the
+tab preserves the source conversation and draft. This feature introduces no provider coupling.
+
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
 its run order and Remove until

@@ -219,6 +219,37 @@ from `GET /api/project/<name>`, and each Needs you card uses its own project.
 Phone (390×844) and desktop (1440×900) evidence: `web/e2e/prose-references.pw.ts` uses
 `walkthrough.ts` and a disposable real service, with named metadata failure/delay overlays.
 
+File references use ordinary accent-coloured underlined links, with no chip, icon, border or
+background. Preserve the supplied absolute path, `file:///` URI or Markdown link label. Hover
+exposes the full target; opening exposes it on both viewports. References outside code open a
+separate read-only browser tab, retaining the conversation's scroll position and draft. Long paths
+wrap. A Markdown angle-bracket destination or percent-encoded file URI supports spaces.
+
+The reader shows filename, full selectable reference, Copy path and current contents. After task
+archival it also identifies the current location. Markdown renders headings, paragraphs, lists,
+bold, links and literal code blocks; a small Raw toggle exposes its exact source. `.txt` stays
+plain text. Embedded HTML and images stay text; opening performs no command execution, automatic
+external-resource fetch, download or native-app launch. The operator approved simple link styling
+and bounded task-document access with rendered Markdown on 2026-09-15 Pacific.
+
+| File state | Appearance and interaction |
+| --- | --- |
+| No reference / code | No new controls; inline and fenced code remain unchanged. |
+| Hover / focus / touch | Ordinary link focus styling; keyboard activation or tap opens the same reader in another tab. |
+| Loading / retry | Loading file; previous contents disappear while the new read is pending. |
+| Readable Markdown / text | Rendered Markdown with Raw toggle, or plain text; commands remain selectable text. |
+| Empty file | This file is empty; full target remains visible. |
+| Missing / unreadable / denied / unsupported | File unavailable with the reason and Retry. The full target stays selectable and copyable. |
+| Copy succeeds / clipboard denied | Path copied confirmation, or a manual-copy hint with selectable path. |
+| Return to conversation | Closing the tab retains the source draft and reading position. |
+| Listening / microphone denied | Existing composer behavior remains; file references neither start nor cancel recording. |
+
+Access covers regular UTF-8 `.md`/`.txt` files directly in the selected registered project's task
+folders, active or archived, up to 1 MiB. It includes unmentioned documents within existing private
+web access. Other locations, subdirectories, symlinks, special files and foreign-host URIs are
+refused. Actual phone/desktop journey evidence lives in `web/e2e/file-references.pw.ts`; review
+captures stay in ignored artifacts.
+
 Data: `GET /api/chat/<project>` → `history[]` rows `{at, role, text, trigger, engine, turn_id}`,
 `active {id, started_at, trigger}`, `queued[]`. Rows with `trigger == "chat"` are the conversation;
 every other trigger is a system turn. The assistant row of a turn that created tasks carries their

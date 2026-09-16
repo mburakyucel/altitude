@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { imageSendRefused, sendImageChat, streamChat, useChatDequeue } from "../data/api";
 import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
-import { ProseRepository } from "../components/Prose";
+import { ProseScope } from "../components/Prose";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -347,7 +347,7 @@ export default function Conversation({
   }
 
   return (
-    <ProseRepository value={project.data?.repository}>
+    <ProseScope project={name} repository={project.data?.repository}>
     <section className="convo" aria-label="Conversation">
       <div
         className="convo-scroll"
@@ -407,6 +407,6 @@ export default function Conversation({
         />
       </div>
     </section>
-    </ProseRepository>
+    </ProseScope>
   );
 }
