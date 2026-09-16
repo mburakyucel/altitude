@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -378,19 +379,62 @@ def service_status(unit: str = "altitude.service") -> dict:
     """Read the user service's state once; inspection failure stays in the record."""
     record = {"unit": unit, "state": None, "substate": None, "pid": None,
               "last_restart": None, "error": None}
+    properties = ["ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp"]
+    source_service = unit in {"altitude", "altitude.service"}
+    if source_service:
+        properties += ["LoadState", "InvocationID", "ExecMainStartTimestampMonotonic", "Environment",
+                       "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "DropInPaths", "NeedDaemonReload"]
+        record.update(dict.fromkeys(("invocation_id", "started_monotonic", "need_daemon_reload",
+                                     "owned_tls_drop_in_loaded", "owned_tls_drop_in_present",
+                                     "loaded_tls_environment", "indirect_environment")))
     try:
         result = subprocess.run(
-            [SYSTEMCTL_BIN, "--user", "show", unit, "--property=ActiveState",
-             "--property=SubState", "--property=MainPID", "--property=ActiveEnterTimestamp"],
+            [SYSTEMCTL_BIN, "--user", "show", unit, *[f"--property={key}" for key in properties]],
             capture_output=True, text=True, timeout=15, env=codex_env(retain_user_bus=True))
         if result.returncode:
-            raise RuntimeError((result.stderr or result.stdout).strip() or f"exit {result.returncode}")
+            raise RuntimeError
         values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         record.update({"state": values.get("ActiveState"), "substate": values.get("SubState"),
                        "pid": int(values.get("MainPID") or 0) or None,
                        "last_restart": values.get("ActiveEnterTimestamp") or None})
-    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
-        record["error"] = str(exc)[:240]
+        if source_service:
+            record["need_daemon_reload"] = {"yes": True, "no": False}.get(values.get("NeedDaemonReload"))
+            for key, native, pattern in (("invocation_id", "InvocationID", r"[0-9a-f]{32}"),
+                                         ("started_monotonic", "ExecMainStartTimestampMonotonic", r"[1-9][0-9]*")):
+                value = values.get(native, "")
+                record[key] = value if re.fullmatch(pattern, value) else None
+            owned = Path.home() / ".config/systemd/user/altitude.service.d/90-altitude-source-tls.conf"
+            try:
+                owned.lstat()
+                record["owned_tls_drop_in_present"] = True
+            except FileNotFoundError:
+                record["owned_tls_drop_in_present"] = False
+            if values.get("LoadState") != "loaded":
+                raise ValueError
+            # Escaped native strings are unknown rather than interpreted with shell escape semantics.
+            drop_ins = values["DropInPaths"]
+            if "\\" in drop_ins:
+                raise ValueError
+            record["owned_tls_drop_in_loaded"] = str(owned) in shlex.split(drop_ins)
+            record["indirect_environment"] = any([values[key] for key in (
+                "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment")])
+            environment = values["Environment"]
+            if "\\" in environment:
+                raise ValueError
+            selected = {}
+            for entry in shlex.split(environment):
+                key, separator, value = entry.partition("=")
+                if not separator or any(ord(c) < 32 or ord(c) == 127 for c in entry):
+                    raise ValueError
+                if key in {"ALTITUDE_TLS", "ALTITUDE_TLS_DIR"}:
+                    if key in selected or len(value) > 4096:
+                        raise ValueError
+                    selected[key] = value
+            record["loaded_tls_environment"] = selected
+            if record["need_daemon_reload"] is None:
+                raise ValueError
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError):
+        record["error"] = "Service inspection incomplete; unavailable fields remain null."
     return record
 
 
