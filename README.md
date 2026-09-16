@@ -326,7 +326,8 @@ agent's provider with the message. Managed copies remove metadata, preserve orie
 supported color profiles to sRGB. They survive reload, task archive and worktree cleanup; accepted
 images follow conversation retention, while unreferenced uploads expire after 24 hours. Selection
 alone creates no server copy. A failed or uncertain send offers a safe retry, and unavailable image
-input or missing content is explicit. Fresh task attempts receive previously delivered image context
+input or missing content is explicit. A temporary local converter check failure can recover on a later
+image operation without restarting Altitude. Fresh task attempts receive previously delivered image context
 with its captions and source messages. L3 can give its assigned L2 the relevant image through the
 [existing task commands](docs/CLI.md#image-handoffs). This covers operator input; agent-produced
 results and downloadable deliverables remain outside this increment of issue #230.

@@ -50,22 +50,18 @@ class ImageError(ValueError):
 @lru_cache(maxsize=8)
 def _codecs(binary: str, modified: int) -> bool:
     del modified  # A replaced converter invalidates this capability observation.
-    try:
-        result = subprocess.run([binary, "-hide_banner", "-codecs"], capture_output=True,
-                                text=True, timeout=5)
-        rows = {parts[1]: parts[0] for line in result.stdout.splitlines()
-                if len(parts := line.split()) >= 2}
-        return result.returncode == 0 and all(rows.get(c, "").startswith("DE")
-                                             for c in ("png", "mjpeg")) and rows.get("webp", "").startswith("D")
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    result = subprocess.run([binary, "-hide_banner", "-codecs"], capture_output=True,
+                            text=True, timeout=5, check=True)
+    rows = {parts[1]: parts[0] for line in result.stdout.splitlines()
+            if len(parts := line.split()) >= 2}
+    return all(rows.get(c, "").startswith("DE") for c in ("png", "mjpeg")) and rows.get("webp", "").startswith("D")
 
 
 def capability() -> dict:
     binary = shutil.which("ffmpeg")
     try:
         available = bool(binary and _codecs(binary, os.stat(binary).st_mtime_ns))
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
         available = False
     return {"available": available,
             "reason": None if available else "Image input unavailable: the local image converter is unavailable."}
