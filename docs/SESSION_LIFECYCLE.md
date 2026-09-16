@@ -186,6 +186,10 @@ reason. The task then passes the ordinary dispatch gates; release leaves merge h
 Work and task conversations show **Planned · waits for …**, and the state digest retains the reason.
 Messages sent before release remain in the inbox, do not start work, and accompany the original
 brief at launch without replacing its source authority.
+Fresh dispatch includes its pending messages and images in the initial prompt. Confirmed input
+delivery records receipts with the worker binding; later inbox reads exclude those messages.
+Failed or unconfirmed input stays pending, and messages arriving during launch remain for the
+next checkpoint. Queued tasks before their first dispatch keep their composer available after release.
 
 WIP defaults to 8 running tasks per project and 80 across the machine. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before

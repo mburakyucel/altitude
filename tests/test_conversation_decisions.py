@@ -498,12 +498,16 @@ class ConversationDecisions(AltitudeCase):
         self.assertIn(coordinator["id"], needs_l3)
         self.assertNotIn(operator["id"], needs_l3)
 
-    def test_new_queued_task_without_question_history_still_refuses_task_messages(self):
+    def test_prelaunch_updates_wait_without_starting_an_owner(self):
         queued = T.new(self.project, "No owner yet", "Wait for dispatch.")
-        for role in (T.OPERATOR_MESSAGE_ROLE, "l3", "l2"):
-            with self.subTest(role=role), self.assertRaisesRegex(T.TransitionError, "in queued state"):
-                T.message(self.project, queued["slug"], role, "A new message")
-        self.assertEqual(T.pending(self.project, queued["slug"]), [])
+        rows = [T.message(self.project, queued["slug"], role, "A prelaunch update")
+                for role in (T.OPERATOR_MESSAGE_ROLE, "l3")]
+        with self.assertRaisesRegex(T.TransitionError, "in queued state"):
+            T.message(self.project, queued["slug"], "l2", "An owner cannot speak before launch")
+        self.assertEqual(T.pending(self.project, queued["slug"]), rows)
+        saved = S.load_task(self.project, queued["slug"])
+        self.assertEqual((saved["state"], saved["attempt"], saved["agent_id"]), ("queued", 0, None))
+        self.assertFalse(saved.get("resume_after"))
 
     def test_owner_cli_records_cited_message_and_refuses_cross_task_or_stale_attempt(self):
         question = self.current()
