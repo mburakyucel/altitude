@@ -152,4 +152,5 @@ Altitude restarts itself at the next narrow quiet point after a merged change to
 dispatch or resume claim, report verification, or L3 turn in flight; running workers do not hold it).
 New dispatches continue while activation is pending and wait only during the requested restart window.
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
-separate explicit authorization and post-change health verification.
+separate explicit authorization and post-change health verification; a recorded machine grant whose purpose
+names the service is that authorization for its owner, and every command under it is recorded on the task.

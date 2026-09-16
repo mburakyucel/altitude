@@ -139,6 +139,11 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   Worktrees isolate changes; planned files guide coordination. Owners review selected changes and
   all outgoing history for scope and privacy before `alt land` publishes through their assigned PR.
   Shared-file changes still need rebasing and reconciliation by their owners.
+  Builds, tests and installs inside the workspace run autonomously. A change the workspace or
+  sandbox cannot make, such as a service configuration, needs the operator's yes to one concrete
+  purpose; the recorded grant then lets the owner run commands through Altitude outside its sandbox,
+  with each command and its output recorded on the task, until the purpose is done or the grant is
+  revoked. The owner never hands terminal commands back to the operator for authorized work.
 - **Selective attention.** Needs you collects unresolved dilemmas in clearly named project sections,
   with each project's items together and full project names wrapping when needed. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,

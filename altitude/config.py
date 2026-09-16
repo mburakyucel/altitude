@@ -94,6 +94,7 @@ MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 WIP_PER_PROJECT = 8
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
+MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
 L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30
 

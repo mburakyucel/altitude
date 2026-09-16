@@ -791,6 +791,21 @@ sandbox is unavailable on this host because unprivileged bwrap namespaces cannot
 hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
 Claude's confinement, while Codex retains its native filesystem sandbox.
 
+Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and a
+Codex L2 cannot write outside its writable roots. A task that needs such a change asks the operator for
+machine access for one purpose; the owner resolves the answer, and L3 or the operator records the grant
+(`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
+that current question revision. `alt task run` then writes the run's row and executes each command as the
+operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
+carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit appends output
+to the task's `machine.log` and writes the exit status itself; altd completes the row in `machine.jsonl` and
+records the task event and the project log entry. A grant binds to one task attempt, survives resume, and is
+revoked by the owner, L3 or the operator; a non-running task, a stale attempt, an earlier attempt's grant or a
+missing grant refuses with the reason. A command that restarts Altitude ends the CLI connection while the unit
+and its record continue; the owner verifies with a fresh command afterwards. The door is altd's
+operator-trusted HTTP surface, reachable by every worker on this single-account host; altd checks the task
+record, not the calling process.
+
 The September 7 coordinator outage is verified with the real Codex Linux sandbox, not profile assertions:
 `ALTITUDE_TEST_CODEX_SANDBOX=1 python3 -m unittest tests.test_l3_privilege` runs the broker transport tests
 and a native sandbox probe for checkout/state/Git writes and direct socket/HTTP access. The opt-in requires
