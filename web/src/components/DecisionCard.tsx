@@ -7,7 +7,7 @@ import { useToast } from "../data/Toast";
 import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { InlineProse, Prose, ProseRepository } from "./Prose";
+import { InlineProse, Prose, ProseScope } from "./Prose";
 
 type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
@@ -183,7 +183,7 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
   const state = { from, tab: from === "needs" ? "needs" : "work" };
   const navigate = useNavigate();
   const open = () => { setSelectedProject(decision.project); navigate(to, { state }); };
-  return <ProseRepository value={project.data?.repository}>
+  return <ProseScope project={decision.project} repository={project.data?.repository}>
     <article className="decision" data-selected={selected || undefined} aria-label={title} onClick={(event) => {
       if (!(event.target as HTMLElement).closest("a,button,input,textarea,summary")) open();
     }}>
@@ -195,5 +195,5 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
       <QuestionSet decisions={decisions} disabled={disabled} from={from} />
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
-  </ProseRepository>;
+  </ProseScope>;
 }

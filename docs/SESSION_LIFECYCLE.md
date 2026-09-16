@@ -463,6 +463,18 @@ acceptance checks saved content integrity; unavailable or altered evidence leave
 Interactive wireframes are shown as captured states, and submitted HTML never executes. See
 [selection bounds and owner commands](CLI.md#task-design-previews).
 
+File references in saved and arriving task/project prose open a separate read-only browser tab,
+preserving the conversation, draft and worker state. Ordinary underlined links retain their
+original path or supplied label; the reader shows the full target and Copy path. Markdown renders
+with a Raw toggle and text files stay literal; opening or copying a document executes no commands
+and supplies no approval, message or resume. Code spans and fenced commands remain unlinked.
+The reader admits only regular UTF-8 `.md`/`.txt` files up to 1 MiB directly in that registered
+project's task folders. Original task paths can find the task after archival and show its current
+location; deleted/unreadable files remain unavailable. No document snapshot is retained. All
+eligible documents are visible through existing private web access, whether mentioned or not;
+other filesystem locations, symlinks and nested artifacts are refused. See
+[the file-reading boundary](ARCHITECTURE.md#interfaces-and-storage).
+
 The provider conversation, attempt, engine and model remain under the ordinary continuity rules.
 When those rules queue a fresh attempt after a provider limit, an existing dilemma still accepts
 replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;

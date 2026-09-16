@@ -2,10 +2,14 @@ import { createContext, Fragment, useContext } from "react";
 import type { ReactNode } from "react";
 
 export const ProseRepository = createContext<string | null | undefined>(null);
+export const ProseProject = createContext<string | undefined>(undefined);
+export function ProseScope({ project, repository, children }: { project: string; repository?: string | null; children: ReactNode }) {
+  return <ProseProject value={project}><ProseRepository value={repository}>{children}</ProseRepository></ProseProject>;
+}
 const REPO = "[a-z\\d](?:[a-z\\d-]*[a-z\\d])?/(?=[a-z\\d_.-]*[a-z\\d_])[a-z\\d_.-]+";
 const REPOSITORY = new RegExp(`^https://github\\.com/(${REPO})/?$`, "i");
 const REFERENCE = new RegExp(`(?<![\\w/#@\\\\.-])(?:(PR|pull request|issue)\\s+)?(${REPO})?#([1-9]\\d*)(?![\\w/#]|[.,]\\d)`, "gi");
-const INLINE = /(`+)([\s\S]*?)\1(?!`)|\*\*[^*]+\*\*|\[[^\]]+\]\([^\s)]+\)|https?:\/\/[^\s<>)]+/g;
+const INLINE = /(`+)([\s\S]*?)\1(?!`)|\*\*[^*]+\*\*|!?\[[^\]]+\]\((?:<[^>\n]+>|[^\s)]+)\)|https?:\/\/[^\s<>)]+|\bfile:\/\/[^\s<>`"'\]}]+|(?<![\w/:\\.-])\/(?!\/)[^\s<>`"'[\]{}]+/g;
 
 /** Share fence boundaries across full prose, compact mirrors, and folded summaries. */
 function codeBlocks(text: string): { text: string; code: boolean }[] {
@@ -49,16 +53,17 @@ function references(text: string, repository?: string | null): ReactNode[] {
 
 export function InlineProse({ text }: { text: string }) {
   const repository = useContext(ProseRepository);
+  const project = useContext(ProseProject);
   return <>{codeBlocks(text).map((block, index) => (
     <Fragment key={index}>
       {index > 0 ? "\n" : null}
-      {block.code ? <code>{block.text}</code> : inline(block.text, repository)}
+      {block.code ? <code>{block.text}</code> : inline(block.text, repository, project)}
     </Fragment>
   ))}</>;
 }
 
 /** Inline code, bold, existing links, and GitHub references in plain text. */
-export function inline(text: string, repository?: string | null): ReactNode[] {
+export function inline(text: string, repository?: string | null, project?: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let end = 0;
   for (const match of text.matchAll(INLINE)) {
@@ -71,7 +76,20 @@ export function inline(text: string, repository?: string | null): ReactNode[] {
       continue;
     }
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
-      nodes.push(<strong key={index}>{inline(part.slice(2, -2), repository)}</strong>);
+      nodes.push(<strong key={index}>{inline(part.slice(2, -2), repository, project)}</strong>);
+      continue;
+    }
+    const fileLink = /^\[([^\]]+)\]\(<?((?:file:\/\/|\/)[\s\S]*?)>?\)$/.exec(part);
+    let fileTarget = fileLink?.[2] ?? (/^(file:\/\/|\/(?!\/))/.test(part) ? part.replace(/[.,;:!?]+$/, "") : null);
+    if (fileTarget && !fileLink) {
+      let closing = (fileTarget.match(/\)/g)?.length ?? 0) - (fileTarget.match(/\(/g)?.length ?? 0);
+      while (closing-- > 0 && fileTarget.endsWith(")")) fileTarget = fileTarget.slice(0, -1);
+    }
+    if (project && fileTarget) {
+      nodes.push(<a className="prose-link" key={index} href={`/projects/${encodeURIComponent(project)}/file?path=${encodeURIComponent(fileTarget)}`} title={fileTarget} target="_blank" rel="noopener noreferrer">
+        {fileLink?.[1] ?? fileTarget}
+      </a>);
+      if (!fileLink) nodes.push(part.slice(fileTarget.length));
       continue;
     }
     const link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(part);
@@ -106,8 +124,9 @@ const HEADING = /^\s*#{1,6}\s+(.*)$/;
  * kept, bulleted and numbered lists, fenced code blocks, inline code, bold, and links. A heading line
  * reads as a plain paragraph: replies carry no headings and no tables, so neither gets a shape here.
  */
-export function Prose({ text }: { text: string }) {
+export function Prose({ text, document = false }: { text: string; document?: boolean }) {
   const repository = useContext(ProseRepository);
+  const project = useContext(ProseProject);
   const blocks: ReactNode[] = [];
   let para: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
@@ -116,7 +135,7 @@ export function Prose({ text }: { text: string }) {
     if (para.length > 0) {
       blocks.push(
         <p key={blocks.length}>
-          {inline(para.join("\n"), repository)}
+          {inline(para.join("\n"), repository, project)}
         </p>,
       );
     }
@@ -128,7 +147,7 @@ export function Prose({ text }: { text: string }) {
       blocks.push(
         <Tag key={blocks.length}>
           {list.items.map((item, index) => (
-            <li key={index}>{inline(item, repository)}</li>
+            <li key={index}>{inline(item, repository, project)}</li>
           ))}
         </Tag>,
       );
@@ -169,6 +188,12 @@ export function Prose({ text }: { text: string }) {
       }
       flushList();
       const heading = HEADING.exec(line);
+      if (document && heading) {
+        flushPara();
+        const Tag = `h${Math.min(6, /^#+/.exec(line.trimStart())![0].length + 1)}` as "h2" | "h3" | "h4" | "h5" | "h6";
+        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, repository, project)}</Tag>);
+        continue;
+      }
       para.push(heading?.[1] ?? line);
     }
   }

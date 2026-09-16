@@ -11,6 +11,7 @@ import DecisionPage from "./routes/Decision";
 import Task from "./routes/Task";
 import TaskReport from "./routes/TaskReport";
 import TaskDesign from "./routes/TaskDesign";
+import TaskFile from "./routes/TaskFile";
 import Monitor from "./routes/Monitor";
 
 /** /projects: the first managed project, or First run when nothing is managed
@@ -57,6 +58,7 @@ export const routes: RouteObject[] = [
       { path: "/", element: <NeedsYou /> },
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
+      { path: "/projects/:name/file", element: <TaskFile /> },
       // Saved decision URLs replace themselves with the owning conversation and durable question anchor.
       { path: "/projects/:name/decisions/:slug", element: <DecisionPage /> },
       // One page for both: the desktop shows the conversation beside the live session, the phone

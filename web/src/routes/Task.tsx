@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
-import { InlineProse, ProseRepository } from "../components/Prose";
+import { InlineProse, ProseScope } from "../components/Prose";
 import { agoText, when } from "../data/observed";
 import { questionPath } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
@@ -596,8 +596,8 @@ function TaskPage({
   }, [phone, readOnly, voiceOwnsEscape, actions.confirm, steering]);
   const showLive = () => { if (phone) void navigate(`${base}/live${location.search}`, { replace: true, state: location.state }); else setPanelOpen(true); };
 
-  const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={steering} readOnly={readOnly} /></ProseRepository>;
-  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} showLive={showLive} phone={phone} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseRepository>;
+  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={steering} readOnly={readOnly} /></ProseScope>;
+  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} showLive={showLive} phone={phone} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseScope>;
 
   if (phone) {
     return (
