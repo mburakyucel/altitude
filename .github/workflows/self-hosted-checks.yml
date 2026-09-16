@@ -1,0 +1,61 @@
+name: Self-hosted checks
+
+# Supplements the existing exact-candidate local landing gate.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Keep the job id `check` and no `name:`: the self-hosted launcher and its
+  # in-container pre-job hook admit only this job id, initiated by the owner.
+  check:
+    if: github.repository == 'mburakyucel/altitude' && github.event.repository.private && github.actor == 'mburakyucel' && github.triggering_actor == 'mburakyucel'
+    runs-on: [self-hosted, Linux, X64, altitude-ci-docker]
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      ALTITUDE_HOME: ${{ runner.temp }}/altitude
+      PLAYWRIGHT_BROWSERS_PATH: /opt/browsers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact commit and install frozen dependencies
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --version
+          pnpm --version
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web exec playwright --version
+          browser=$(cd web && node -p "require('@playwright/test').chromium.executablePath()")
+          test -x "$browser"
+
+      - name: Full deterministic checks
+        id: check
+        shell: bash
+        run: |
+          set -o pipefail
+          make check 2>&1 | tee "$RUNNER_TEMP/ci-check.log"
+
+      - name: Record local evidence identity
+        if: always()
+        env:
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          def revision(ref):
+              result = subprocess.run(['git', 'rev-parse', ref], capture_output=True, text=True)
+              return result.stdout.strip() if result.returncode == 0 else None
+          sha = revision('HEAD')
+          record = {'sha': sha, 'tree': revision('HEAD^{tree}'), 'expected_sha': os.environ['GITHUB_SHA'],
+                    'command': 'make check', 'passed': os.environ['CHECK_OUTCOME'] == 'success' and sha == os.environ['GITHUB_SHA'],
+                    'run_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'ci-result.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY

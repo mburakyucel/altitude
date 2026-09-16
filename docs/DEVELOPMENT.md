@@ -200,7 +200,11 @@ local `make check` through the existing landing candidate mechanism. Other proje
 gates. Shared hosted-check handling ignores completed nonrequired skips without parsing workflow
 conditions. Required checks must succeed; failures, pending checks, missing required results and
 entirely skipped CI block. Candidate identity and complete requiredness evidence remain mandatory.
-No runner installation, new service, billing change or generic bypass flag is involved.
+No billing change or generic bypass flag is involved. Since the operator's 2026-09-15 decision,
+the supplemental `.github/workflows/self-hosted-checks.yml` runs the same unmodified `make check`
+at the exact main or manually dispatched commit on the operator's dedicated ephemeral-container
+runner (label `altitude-ci-docker`; owner-initiated jobs only; no artifact uploads or caches).
+It supplements the local gate, is not a required check, and does not change landing policy.
 
 `alt land` pins the current base and head, constructs the candidate for the selected merge method,
 installs frozen web dependencies from the candidate's `web` directory using its pinned package
