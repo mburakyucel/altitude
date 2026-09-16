@@ -68,7 +68,9 @@ bare `origin.git` lives beside its checkout. The fault/recovery reporting test g
 initial commits distinct timestamps so shared origins cannot hide behind identical commits.
 The automatic-GC fixture uses `git repack -a` without `-d` to retain two packs and trigger real
 fetch housekeeping. Unlike `pack-objects --all`, it supplies its own revision input rather than
-waiting for the caller's stdin to close. A bounded subprocess regression holds stdin open while
+waiting for the caller's stdin to close. Its auxiliary loose refs are created in one real Git
+transaction, keeping repeated hook startup out of the bounded probe under concurrent suite load.
+A bounded subprocess regression holds stdin open while
 capturing stdout/stderr, matching landing's inherited-input condition, and checks the same real
 packing, pruning, protected-tip and fast-forward assertions. The shared CLI fixture supplies empty
 input explicitly; the same regression includes real issue-close CLI/API validation so it cannot
