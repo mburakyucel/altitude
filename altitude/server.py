@@ -1529,6 +1529,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            if parts == ["api", "task", "run"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "command"}:
+                        raise ValueError("alt task run: unsupported fields")
+                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command")))
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if parts == ["api", "pr", "close"]:
                 try:
                     if o.keys() - {"project", "number", "body"}:
@@ -1883,6 +1892,60 @@ def repository_url(origin: str) -> str | None:
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                          r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", origin.strip(), re.I)
     return f"https://github.com/{match[1]}/{match[2]}" if match else None
+
+
+MACHINE_COMMAND_LIMIT = 16384
+_machine_running: set[str] = set()   # tasks with a command under way; one at a time keeps the log readable
+
+
+def run_machine_command(project: str, slug: str, attempt: object, command: object) -> dict:
+    """One command under the task's recorded machine grant, executed by altd outside the worker sandbox.
+
+    Only the running owner's current attempt may call it, and only while a grant is recorded. The command, unit,
+    exit status and output land in the task folder (`machine.jsonl`, `machine.log`), the task events and the
+    project log, so the operator can read exactly what ran under their grant.
+    """
+    S.require_task_slug(slug)
+    if not isinstance(command, str) or not command.strip() or len(command) > MACHINE_COMMAND_LIMIT:
+        raise ValueError(f"alt task run: supply one non-empty command of at most {MACHINE_COMMAND_LIMIT} characters")
+    folder = S.task_dir(project, slug)
+    runs = folder / "machine.jsonl"
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
+            raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
+        grant = task.get("machine_access")
+        if not grant:
+            raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for a "
+                                  "concrete purpose, resolve their answer, then have L3 record it with "
+                                  "alt task machine --grant")
+        if grant.get("attempt") != task.get("attempt"):
+            raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
+        if f"{project}/{slug}" in _machine_running:
+            raise ValueError("alt task run: one command at a time; the previous command is still running")
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+        sequence = len(rows) + 1
+        # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
+        row = {"n": sequence, "purpose": grant["purpose"], "command": command,
+               "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
+               "started": S.now(), "finished": None, "error": "still running or interrupted with altd"}
+        T._append_jsonl(runs, row)
+        _machine_running.add(f"{project}/{slug}")
+    try:
+        result = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
+                                         log=folder / "machine.log", unit=row["unit"],
+                                         identity=dispatch.l2_env(project, slug, task["attempt"]))
+    finally:
+        _machine_running.discard(f"{project}/{slug}")
+    row.update({key: result[key] for key in ("exit", "timed_out", "started", "finished", "error")})
+    with S.project_lock(project):
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
+        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == sequence else r, sort_keys=True) + "\n"
+                                     for r in rows))
+    S.append_event(project, slug, "machine-run", actor="l2", **row)
+    S.project_log(project, "machine-run", slug=slug, command=command, unit=row["unit"], exit=row["exit"],
+                  timed_out=row["timed_out"])
+    return {**result, "n": sequence}
 
 
 def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:

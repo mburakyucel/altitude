@@ -700,6 +700,9 @@ alt task block <slug> --reason <question> [--recommendation <approach> --label <
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
+alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
+alt task machine <slug> --revoke --reason <why>
+alt task run <slug> <command>
 alt task done <slug> --digest <text>
 alt task reject <slug> --reason <reason>
 ```
@@ -1160,3 +1163,41 @@ Failed reconciliation follows L3's recovery path.
 
 Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
 operator-only; approval mode cannot combine with it or `--why`.
+
+### Machine access
+
+A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
+or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
+under a machine grant:
+
+```text
+alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task machine <slug> --revoke --reason <why>
+alt task run <slug> <command>
+```
+
+The owner asks the operator a plain question naming the purpose and its verification and resolves
+the operator's answer with `alt task resolve`. L3 or the operator then records the grant citing that
+same message after judging that the answer is a yes; the owner cannot record its own. The rest is
+mechanical: the cited message must be the operator's own and must have answered the current
+revision of that operator question with no remainder. The grant binds to the task's current
+attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
+answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
+record `machine-grant-refused` and change nothing.
+
+`alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
+first, then runs the command as the operator in a transient user unit outside every worker sandbox,
+in the task worktree, through a login shell, with the user service manager reachable and the
+owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
+runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
+appends output to `machine.log` in the task folder and records the exit status, so a command that
+restarts Altitude keeps its row and unit. The CLI prints the output and a status line, then exits
+with the command's status (124 on timeout). Each run completes its `machine.jsonl` row and adds a
+`machine-run` task event and a `machine-run` project event with the command, unit, exit status and
+purpose. A missing grant, a non-running task, a stale attempt, a grant from an earlier attempt or a
+revoked grant refuses with the reason; no exit status within the limit is reported as a timeout or
+an explicit uncertainty, never as success. `alt task status <slug> --brief` shows the active purpose.
+
+The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
+can reach, the same surface that answers questions and posts messages. altd checks the task record,
+not which local process calls; the grant record and its per-command log are the boundary.

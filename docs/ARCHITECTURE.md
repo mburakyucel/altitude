@@ -607,7 +607,17 @@ recovery; its fresh dispatch still requires a fetched current base and a valid i
 
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
-project lock. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
+project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
+workspace runs only under a recorded machine grant: the operator's answer to the owner's purpose
+question, recorded by L3 or the operator and verified mechanically against that question revision,
+opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
+executes the command in its own transient user unit through `engines.machine_command`, with the bus
+reachable and the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`; the
+unit appends output and exit status to the task folder itself, and altd completes `machine.jsonl`
+and adds a task event and a project event per command. The owner, L3 and the operator can revoke
+the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
+on this single-account host can reach; the task record and the per-command log are the boundary,
+not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
 hooks for inbox delivery and telemetry. Codex keeps its native workspace-write sandbox inside the same
 unit boundary and uses the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a

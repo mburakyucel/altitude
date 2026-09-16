@@ -14,14 +14,15 @@ from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
-L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done")}
+L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
+                               ("task", "machine"), ("task", "run")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "preserve-checkout", "recheck-ci", "handoff")),
+                                    "done", "preserve-checkout", "recheck-ci", "handoff", "machine")),
     *(("incident", name) for name in ("new", "amend")),
 }
 
@@ -156,6 +157,7 @@ def _brief_text(record: dict) -> str:
     return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}", f"engine/model: {engine}",
                       f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
                       f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
+                      f"machine access: {(record.get('machine_access') or {}).get('purpose') or 'none'}",
                       "planned files: " + (", ".join(record["lease"]) or "none"),
                       "overlaps: " + ("; ".join(overlaps) or "none")]
                      + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
@@ -285,6 +287,14 @@ def main(argv=None) -> None:
     hm.add_argument("--source", choices=("task", "project"), default="task")
     hm.add_argument("--question"); hm.add_argument("--revision", type=int)
     hm.add_argument("--pr-number", dest="pr", type=int); hm.add_argument("--head"); hm.add_argument("--reason")
+    mc = ts.add_parser("machine", help="record the operator's machine grant for a task (L3 or operator), or revoke it (owner, L3 or operator)")
+    mc.add_argument("slug"); mode = mc.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--grant", action="store_true"); mode.add_argument("--revoke", action="store_true")
+    mc.add_argument("--approval", help="the operator message that answered the purpose question")
+    mc.add_argument("--question"); mc.add_argument("--revision", type=int)
+    mc.add_argument("--source", choices=("task", "project"), default="task"); mc.add_argument("--reason", required=True)
+    rn = ts.add_parser("run", help="current L2: run one command under the task's machine grant, outside the worker sandbox")
+    rn.add_argument("slug"); rn.add_argument("command")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
@@ -356,12 +366,15 @@ def main(argv=None) -> None:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
-    if c == "issue" or closing_pr or setup_command:
+    machine_run = c == "task" and args.tcmd == "run"
+    if machine_run and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT")):
+        sys.exit("alt task run: only the current L2 runs commands, and only for its own task")
+    if c == "issue" or closing_pr or setup_command or machine_run:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
-        payload = {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+        body = "" if setup_command or machine_run or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
@@ -372,16 +385,23 @@ def main(argv=None) -> None:
         tls = config.TLS
         ca = config.TLS_DIR / "ca.crt"
         from urllib.parse import quote
-        endpoint = ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
+        endpoint = "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
-            with urllib.request.urlopen(request, context=context, timeout=130) as response:
+            with urllib.request.urlopen(request, context=context, timeout=config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
                 result = json.load(response)
+                if machine_run:
+                    sys.stdout.write(result["output"])
+                    print(f"[altitude] {result['unit']}: exit {result['exit']}"
+                          + (f"; {result['error']}" if result.get("error") else "")
+                          + ("; output truncated, read the log" if result.get("output_truncated") else "")
+                          + f"; log {result['log']}")
+                    sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
                 out(result if closing_pr or setup_command else result["url"])
         except urllib.error.HTTPError as exc:
-            sys.exit(f"alt {c}: " + json.load(exc).get("error", str(exc)))
+            sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
         except OSError as exc:
             sys.exit(f"alt {c}: altd unavailable: {exc}")
         return
@@ -547,6 +567,18 @@ def main(argv=None) -> None:
             if args.off and ACTOR != "burak":
                 sys.exit("alt task hold-merge: only Burak may release a merge hold")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
+        elif tc == "machine":
+            attempt = os.environ.get("ALTITUDE_ATTEMPT")
+            if ACTOR == "l2" and (args.grant or args.slug != os.environ.get("ALTITUDE_TASK") or not attempt):
+                sys.exit("alt task machine: an L2 only revokes the grant on its own task; L3 or the operator records one")
+            if args.grant:
+                if not (args.approval and args.question and args.revision):
+                    sys.exit("alt task machine --grant: --approval <message-id> --question <id> --revision <n> --reason <why>")
+                out(T.grant_machine_access(p, args.slug, args.approval, question=args.question, revision=args.revision,
+                                           reason=args.reason, actor=ACTOR, source=args.source))
+            else:
+                out(T.revoke_machine_access(p, args.slug, args.reason, actor=ACTOR,
+                                            expected_attempt=int(attempt) if ACTOR == "l2" else None))
         elif tc == "done":
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):
                 sys.exit("alt task done: ALTITUDE_ATTEMPT is required for the L2")

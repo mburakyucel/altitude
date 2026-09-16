@@ -680,6 +680,67 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
             "--", *scrub, *command]
 
 
+def machine_unit(project: str, slug: str, sequence: int) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{project}-{slug}")
+    return f"altitude-machine-{safe}-{sequence}.service"
+
+
+def _machine_service_command(unit: str, command: str, *, log: Path, status: Path, env: dict[str, str],
+                             timeout: int) -> list[str]:
+    """One operator-granted command as a transient user unit outside every worker sandbox.
+
+    The unit itself appends output to the task's machine log and records the exit status, so a command that
+    restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it; the user bus stays reachable
+    because the granted purpose is usually a service or toolchain change the worker's sandbox cannot make.
+    The environment carries the owner's task identity, so `alt` inside the unit acts as that L2, never as the
+    operator.
+    """
+    scrub = [ENV_BIN, "-i", *(f"{key}={env[key]}" for key in sorted(env))]
+    runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2"; exit "$status"'
+    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
+            "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
+            f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
+            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
+            "--", *scrub, "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
+
+
+def machine_command(command: str, *, cwd: Path, log: Path, unit: str, identity: dict,
+                    timeout: int = config.MACHINE_COMMAND_TIMEOUT) -> dict:
+    """Run one command as the operator's user outside the worker sandbox; return its exit status and the output
+    it appended to `log`. No exit status within the limit is reported as a timeout or an explicit uncertainty,
+    never as success."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.touch()
+    offset = log.stat().st_size
+    status = log.with_name(f"{unit}.exit")
+    status.unlink(missing_ok=True)
+    env = codex_env(identity, retain_user_bus=True)
+    started = datetime.now(timezone.utc)
+    record = {"unit": unit, "command": command, "exit": None, "timed_out": False, "started": started.isoformat(),
+              "finished": None, "error": None, "log": str(log)}
+    try:
+        run = subprocess.run(_machine_service_command(unit, command, log=log, status=status, env=env, timeout=timeout),
+                             cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout + 30)
+        launch_error = (run.stderr or run.stdout).strip()[:300]
+    except (OSError, subprocess.SubprocessError) as exc:
+        launch_error = str(exc)[:300]
+    finished = datetime.now(timezone.utc)
+    record["finished"] = finished.isoformat()
+    try:
+        record["exit"] = int(status.read_text().strip())
+    except (OSError, ValueError):
+        record["timed_out"] = (finished - started).total_seconds() >= timeout
+        record["error"] = (f"stopped at the {timeout}s limit" if record["timed_out"]
+                           else f"no exit status recorded: {launch_error or 'the unit ended before the command ran'}")
+    status.unlink(missing_ok=True)
+    with open(log, "rb") as stream:
+        stream.seek(offset)
+        data = stream.read()
+    record["output_truncated"] = len(data) > 16384
+    record["output"] = data[-16384:].decode(errors="replace")
+    return record
+
+
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
     root = Path(job_root)
     return {"record": root / f"{worker_id}.json", "stdout": root / f"{worker_id}.stdout.jsonl",

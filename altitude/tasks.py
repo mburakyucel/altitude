@@ -1999,6 +1999,62 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
+def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
+                         actor: str, source: str = "task") -> dict:
+    """The operator's answer to the owner's purpose question is the only authority that opens the machine to a task.
+
+    The check is mechanical: the cited operator message resolved that exact current question revision as answered
+    with no remainder, so the recorded purpose is the question the operator actually read. L3 or the operator
+    records it after judging that the answer is a yes to that purpose; the owner cannot record its own grant,
+    and nobody can widen one. The grant binds to the current attempt.
+    """
+    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("a machine grant needs the coordinator or the operator and a reason")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        try:
+            if task["state"] not in ("running", "blocked", "reported"):
+                raise ValueError("task is not active")
+            decision = _question_target(task, question, revision)
+            saved = decision.get("resolution") or {}
+            if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
+                    or decision["status"] != "resolved" or decision["audience"] != "operator"
+                    or saved.get("disposition") != "answered" or saved.get("remaining")
+                    or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
+                raise ValueError("cite the operator message that answered the current operator question revision")
+            operator = _decision_source(project, slug, decision, approval, source)
+        except (ValueError, KeyError, TypeError, TransitionError) as exc:
+            S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
+                           revision=revision, reason=reason, error=str(exc))
+            raise TransitionError(f"machine grant refused: {exc}") from exc
+        grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
+                 "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
+                 "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
+        task["machine_access"] = grant
+        S.save_task(project, task)
+        S.append_event(project, slug, "machine-grant", **grant)
+        return grant
+
+
+def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
+                          expected_attempt: int | None = None) -> dict:
+    """Revocation narrows authority: the coordinator or the operator at any time, the owner for its own attempt."""
+    if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("revoking a machine grant needs the owner, the coordinator or the operator and a reason")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        previous = task.get("machine_access")
+        if not previous:
+            raise TransitionError("task has no machine grant")
+        if actor == "l2" and expected_attempt != task.get("attempt"):
+            raise TransitionError("the owner revokes a grant only for its current attempt")
+        task["machine_access"] = None
+        S.save_task(project, task)
+        S.append_event(project, slug, "machine-revoke", actor=actor, reason=reason.strip(),
+                       purpose=previous["purpose"], approval=previous["approval"])
+        return task
+
+
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
                          reason: str, actor: str,
                          question: str | None = None, revision: int | None = None,
