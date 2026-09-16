@@ -584,8 +584,9 @@ process identity, definition-reload state, the two direct TLS environment assign
 for indirect environment sources, and exact owned source-TLS drop-in membership. A metadata-only
 disk read separately reports that fixed drop-in's presence. Worker-unit reads retain process status
 only. Raw environment, other drop-in paths, file contents and native diagnostics are not returned.
-Missing or ambiguous fields stay null; direct assignments do not establish effective next-start TLS
-when indirect environment sources exist. The read neither compares a saved baseline nor certifies
+Native `show` omits the `EnvironmentFiles` line for an empty list; a successful loaded-service read
+recognizes that convention. Other missing or ambiguous fields stay null; direct assignments do not
+establish effective next-start TLS when indirect environment sources exist. The read neither compares a saved baseline nor certifies
 restoration. [The response contract](CLI.md#loaded-service-evidence) describes recovery interpretation.
 Git log/diff/show reads include full patches and historical files, disable external diff/text-conversion
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox

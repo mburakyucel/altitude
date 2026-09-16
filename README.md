@@ -387,7 +387,8 @@ bound to their launch project; mutation and publication permissions remain separ
 reads include full diffs and historical files, with external diff and text-conversion helpers disabled.
 The existing service read includes bounded loaded TLS settings, owned drop-in presence on disk and
 in the service manager, definition-reload state, and process identity for recovery comparisons.
-Unavailable evidence stays unknown; an active process alone does not establish TLS restoration.
+Unavailable evidence stays unknown; native omission of an empty environment-file list is recognized.
+An active process alone does not establish TLS restoration.
 See [service inspection](docs/CLI.md#loaded-service-evidence) for the read and its limits.
 For decisions beyond the handoff, either role uses [`alt l3 search "literal text"`](docs/CLI.md#historical-evidence-search).
 It searches the project's human conversation and active/archived task conversations, reports and
