@@ -37,7 +37,7 @@ export const test = base.extend<{ service: string; scenario: string; single: boo
       if (child.exitCode === null) child.kill("SIGTERM");
       const forced = setTimeout(() => child.kill("SIGKILL"), 3_000);
       try { await exited; } finally { clearTimeout(forced); }
-      expect(child.exitCode, "Disposable service must finish cleanup within three seconds").toBe(0);
+      expect(child.exitCode, `Disposable service must finish cleanup within three seconds: ${stderr}`).toBe(0);
       expect(stderr, "The isolated server must not hide failed background workflows").toBe("");
     }
   },

@@ -1,11 +1,14 @@
 """Parallel checks retain test outcomes and wait for both required phases."""
+import json
 import os
 from pathlib import Path
+import selectors
 import signal
 import subprocess
 import sys
 import textwrap
 import time
+import urllib.request
 
 from tests.support import AltitudeCase, REPO
 from altitude.land import _test_counts
@@ -69,6 +72,45 @@ class TestParallelChecks(AltitudeCase):
         ''')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("test_exits (test_0.Cases.test_exits)", result.stderr)
+
+    def test_browser_service_shutdown_finishes_request_thread_startup(self):
+        script = textwrap.dedent('''
+            import os, signal, sys, threading
+            from http.server import BaseHTTPRequestHandler
+            sys.path.insert(0, "web/e2e")
+            from service_support import serve
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"complete")
+                def log_message(self, *args): pass
+            original_start = threading.Thread.start
+            def interrupt_start(thread):
+                # ThreadingMixIn has registered this thread but has not started it yet.
+                if getattr(thread._target, "__name__", "") == "process_request_thread":
+                    os.kill(os.getpid(), signal.SIGTERM)
+                return original_start(thread)
+            threading.Thread.start = interrupt_start
+            serve(Handler)
+        ''')
+        process = subprocess.Popen([sys.executable, "-c", script], cwd=REPO,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            with selectors.DefaultSelector() as ready:
+                ready.register(process.stdout, selectors.EVENT_READ)
+                self.assertTrue(ready.select(timeout=5), "Disposable service did not start")
+            address = json.loads(process.stdout.readline())
+            with urllib.request.urlopen(address["url"], timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.read(), b"complete")
+            _, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertEqual(stderr, "")
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
 
     def test_make_overlaps_phases_preserves_order_and_propagates_each_failure(self):
         (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())

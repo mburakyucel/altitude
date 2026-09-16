@@ -949,8 +949,8 @@ runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2
 Python modules run in fresh interpreter shards concurrently with the ordered web phases. The
 stdlib runner streams shard output and totals unittest outcomes; either branch failing fails the
 gate. The full gate uses Node's process-available CPU count for both language budgets, including
-container quotas: Python gets half (at least one), and CI browsers get 1.5 workers per CPU, rounded
-up, to overlap fixture waits without changing resource quotas. Local browsers use two
+container quotas: Python gets half (at least one), and CI browsers get one worker per CPU.
+Both phases overlap fixture waits without changing resource quotas. Local browsers use two
 workers. CI schedules individual browser tests across workers; local runs schedule by spec file.
 Per-test temporary homes, ports and artifacts isolate concurrent checks without retries.
 Python fixtures isolate runtime/provider homes and replace external engine execution and GitHub
