@@ -167,6 +167,7 @@ class TestServiceGitPreflight(AltitudeCase):
 
     def test_failed_api_bind_keeps_restart_hold_even_with_a_safe_checkout(self):
         with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "0"}), \
+             mock.patch.object(config, "TLS", False), \
              mock.patch.object(git_policy, "activate_source") as preflight, \
              mock.patch.object(server, "ThreadingHTTPServer", side_effect=OSError("stop after preflight")) as httpd, \
              mock.patch.object(server, "log"):

@@ -1,0 +1,107 @@
+"""HTTPS startup, identity probes and renewal use isolated sockets and certificates."""
+import json
+import os
+import ssl
+import threading
+import urllib.request
+from unittest import mock
+
+from tests.support import AltitudeCase
+from altitude import config, server, tls
+
+
+class TestHTTPSServer(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.patch(config, "TLS", True)
+        self.patch(config, "TLS_DIR", self.tmp / "private-tls")
+        self.patch(config, "HOST", "127.0.0.1")
+        self.patch(config, "PORT", 0)
+        self.patch(server, "log")
+        self.setenv("ALTITUDE_SERVICE", None)
+        self.setenv("ALTITUDE_TIMERS", "0")
+
+    def test_missing_https_identity_refuses_before_binding_or_brokers(self):
+        with mock.patch.object(server, "ThreadingHTTPServer") as httpd, \
+             mock.patch.object(server, "ensure_l3_verb_broker") as broker, \
+             mock.patch.object(server.threading, "Thread") as worker:
+            with self.assertRaises(SystemExit) as stopped:
+                server.main()
+        self.assertEqual(stopped.exception.code, 1)
+        httpd.assert_not_called()
+        broker.assert_not_called()
+        worker.assert_not_called()
+        self.assertIn("HTTPS startup refused", server.log.call_args.args[0])
+
+    def test_mismatched_bind_host_refuses_before_binding(self):
+        server.tls_init()
+        with mock.patch.object(server, "ThreadingHTTPServer") as httpd:
+            with self.assertRaises(SystemExit):
+                server.main(host="unconfigured.example")
+        httpd.assert_not_called()
+
+    def test_real_https_startup_serves_installed_and_source_health_identity(self):
+        server.tls_init()
+        factory = server.ThreadingHTTPServer
+        observed = []
+
+        def create(address, handler):
+            httpd = factory(address, handler)
+            serve = httpd.serve_forever
+
+            def probe():
+                thread = threading.Thread(target=serve, daemon=True)
+                thread.start()
+                try:
+                    context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt"))
+                    url = f"https://127.0.0.1:{httpd.server_port}/api/health"
+                    for release in ({"version": "trial.1", "commit": "a" * 40}, None):
+                        with mock.patch.object(config, "RELEASE", release), \
+                             mock.patch.object(config, "load_projects", side_effect=AssertionError("health reads state")):
+                            with urllib.request.urlopen(url, context=context, timeout=5) as response:
+                                observed.append(json.load(response))
+                finally:
+                    httpd.shutdown()
+                    thread.join(5)
+
+            httpd.serve_forever = probe
+            return httpd
+
+        with mock.patch.object(server, "ThreadingHTTPServer", side_effect=create), \
+             mock.patch.object(server, "ensure_l3_verb_broker"), \
+             mock.patch.object(server, "stop_l3_verb_brokers") as stop:
+            server.main()
+        self.assertEqual(observed, [{"version": "trial.1", "commit": "a" * 40, "pid": os.getpid()},
+                                    {"version": None, "commit": None, "pid": os.getpid()}])
+        stop.assert_called_once()
+
+    def test_explicit_development_http_does_not_require_certificates(self):
+        with mock.patch.object(config, "TLS", False), \
+             mock.patch.object(server, "ThreadingHTTPServer") as httpd, \
+             mock.patch.object(server, "ensure_l3_verb_broker"), \
+             mock.patch.object(server, "stop_l3_verb_brokers"), \
+             mock.patch.object(tls, "check") as check:
+            server.main()
+        httpd.return_value.serve_forever.assert_called_once()
+        check.assert_not_called()
+
+    def test_daily_refresh_uses_existing_timer_and_reports_failure_without_http(self):
+        context = mock.Mock(spec=ssl.SSLContext)
+        with mock.patch.object(server.time, "monotonic", side_effect=[0, 86400, 86400]), \
+             mock.patch.object(server.time, "sleep", side_effect=KeyboardInterrupt), \
+             mock.patch.object(server, "tick") as tick, \
+             mock.patch.object(tls, "check", side_effect=tls.TLSFailure("signing key missing")) as check:
+            with self.assertRaises(KeyboardInterrupt):
+                server.timer_loop(context, "localhost")
+        check.assert_called_once_with("localhost", context=context)
+        tick.assert_called_once()
+        self.assertIn("active certificate is retained", server.log.call_args.args[0])
+        self.assertIn("signing key missing", server.log.call_args.args[0])
+
+    def test_archive_upstream_target_uses_release_metadata_and_explicit_override(self):
+        with mock.patch.object(config, "RELEASE", {"repository": "fictional/altitude"}), \
+             mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", None), \
+             mock.patch.object(server.subprocess, "run", side_effect=AssertionError("archive has no git checkout")):
+            self.assertEqual(server.upstream_issue_repository(), "https://github.com/fictional/altitude")
+            with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "other/product"):
+                self.assertEqual(server.upstream_issue_repository(), "https://github.com/other/product")

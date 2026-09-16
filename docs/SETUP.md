@@ -1,9 +1,9 @@
 # Set up an early private preview
 
-Altitude currently targets one operator on a Linux machine. This guide uses a foreground server
-on localhost so you can evaluate the workspace before configuring a persistent service or remote
-access. Installation is manual; there is no packaged installer or verified native macOS/Windows
-runtime. See the [walkthrough](WALKTHROUGH.md) for the experience this setup enables.
+Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The private
+archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
+Native macOS, Windows and genuine clean-machine/provider acceptance are not established.
+See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
 ## Prerequisites
 
@@ -11,36 +11,81 @@ runtime. See the [walkthrough](WALKTHROUGH.md) for the experience this setup ena
   selected engine's sandbox. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
   compatibility matrix is not established.
-- Python 3.12, Git, GitHub CLI (`gh`), Node 22.22.2+ (22.x) or 24.15+ (24.x), and pnpm (pinned
-  in [`web/package.json`](../web/package.json)). The [locked development dependencies](../web/pnpm-lock.yaml)
-  require these newer Node releases even though the package declares 22+. The backend uses
-  Python's standard library.
+- Python 3.12 or newer, Git, GitHub CLI (`gh`) and OpenSSL on PATH. The archive needs no Node,
+  package manager, application source checkout or UI build. The backend uses Python's standard library.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
   Authenticate GitHub CLI, verify `gh auth status`, and configure Git name/email and your
   SSH or HTTPS Git credentials. Altitude's delivery path expects a clean primary `main`
   checkout with an `origin/main` branch and the project's applicable checks.
 - At least one installed, authenticated **Codex or Claude Code CLI**, usable from the same
-  Linux account that runs Altitude. Authenticate using the engine's native setup and verify a
-  small interactive request before launching Altitude. CLI versions must support the headless,
+  Linux account that runs Altitude. Authenticate using the engine's native setup. CLI versions must support the headless,
   session and permission features in the [launcher](../altitude/engines.py); there is no tested
   version matrix yet. Codex task owners use the CLI's configured model unless an Auto option or
   explicit pin supplies one. Its coordinator runs with user configuration ignored and uses the CLI
   default unless a model override is supplied. Configure Auto with the engine/models you intend to
   use; access to every default preference is not required.
 
-Clone and build using the [README commands](../README.md#get-started). From that checkout, make
-the CLI available in this terminal:
+## Install the application
+
+Obtain `install.py`, the versioned `.tar.gz` archive and its SHA-256 checksum through the approved
+private release channel. The example version below is a placeholder, not a published release.
+Verify the source of the installer and checksum; a checksum from the same untrusted download
+does not establish authenticity. Run these commands as the account that will use Altitude:
 
 ```sh
-export PATH="$PWD/bin:$PATH"
+python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>'
+export PATH="$HOME/.local/bin:$PATH"
+alt doctor
 ```
 
-Keep this checkout in place: the CLI resolves its source, personas, hooks and built web assets
-relative to it. For engines outside their default locations, set `CODEX_BIN` or `CLAUDE_BIN` to
-the executable's absolute path before starting Altitude. Confirm both it and the project's test
-tools are on the launch environment's PATH. For nvm installations, Altitude can discover the
-installed default when Node is absent from that PATH; enable its Corepack pnpm shim and keep
-the default within the project's supported range. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+Installation starts and enables an owned per-user service and prints its HTTPS URL and public
+CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
+migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
+An initial custom `--prefix` must be empty; updates retain customized hook launchers and refuse
+to overwrite them. Resolve the named ownership conflict before retrying.
+`alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
+It checks GitHub authentication without a provider request; repository permissions, model access
+and each browser's certificate trust remain separately unverified. Follow its actionable failures.
+One engine suffices; optional voice, GPU and telemetry do not block typing.
+
+The installation saves its discovered toolchain PATH for service startup. Include the engine and
+project test tools before installing; updates preserve the saved environment.
+For engines outside their default locations, the existing `CODEX_BIN` or `CLAUDE_BIN` settings
+select absolute paths. [Configuration](#configuration-and-limits) describes saved settings.
+For nvm installations, Altitude discovers the installed default when Node is absent from PATH;
+enable its Corepack pnpm shim for project builds. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+
+### Trust HTTPS on each device
+
+Import only the printed `ca.crt` file and compare its SHA-256 fingerprint with the local installer
+output. For another device, transfer it using a cable, verified AirDrop or an existing authenticated
+file-transfer channel. Never transfer `ca.key` or `server.key`. Do not bypass a browser warning or
+use HTTP to obtain the first trusted certificate. Trust grants the CA authority to identify sites.
+
+- **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
+  certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →
+  Privacy & Security → Certificates → View Certificates → Authorities → Import; enable website
+  trust. Firefox on Linux may need this separate import even when the OS already trusts the CA.
+  [Chromium guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md),
+  [Firefox guidance](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
+- **Mac clients:** import the CA in Keychain Access and set its SSL trust explicitly. Safari and
+  Chrome honor that setting; Firefox normally imports trusted roots from the System keychain,
+  otherwise use its Authorities import. This is client guidance, not native Mac runtime support.
+  [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
+  [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+- **iPhone/iPad:** install the certificate profile in Settings, then enable its root under
+  General → About → Certificate Trust Settings. Installing the profile alone does not enable TLS
+  trust. [Apple guidance](https://support.apple.com/en-us/102390).
+- **Android:** Settings → Security → Encryption & credentials → Install a certificate →
+  **CA certificate**; names vary by device. Select the transferred public CA and confirm trust.
+  [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
+
+Open the exact HTTPS URL without a warning and reload it before adding a home-screen app. Check
+the installed app separately: a shortcut or cached page does not prove TLS works. A phone needs
+the explicitly configured remote address, not `localhost`. Device/browser acceptance remains
+pending until observed. Remove this CA in the same browser/OS certificate manager when retiring
+the installation; on iOS remove its profile under General → VPN & Device Management. Do not
+clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 
 ## Register a project and start a conversation
 
@@ -56,8 +101,7 @@ cd /absolute/path/to/example-project
 alt project add example --path "$PWD"
 alt project list
 
-# Select a free port on your own machine; keep this terminal running.
-ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=18890 ALTITUDE_TLS=0 alt serve
+alt service status
 ```
 
 Open the project's **Setup** checklist to inspect its results. Altitude automatically configures
@@ -79,7 +123,7 @@ The daemon applies the setting on its next tick. This reason-bearing command is 
 the project's L3; no restart is needed. See [CLI routing examples](CLI.md#automatic-routing-preferences)
 for tied options, fallback tiers, unavailable Fable and strict one-off pins.
 
-Open **http://127.0.0.1:18890/projects/example**. Send:
+Open **https://127.0.0.1:8890/projects/example**, or the URL printed by your installation. Send:
 
 > Describe this project and suggest one small improvement. Let's discuss it before creating work.
 
@@ -89,7 +133,7 @@ to its owner (L2), and follow its session and PR. You can ask for a merge hold w
 review the result before merge. Engine calls use your authenticated account and can consume its
 allowance or incur its normal charges.
 
-Register before starting this foreground server when you want to use `alt chat` immediately:
+Register before starting a foreground development server when you want to use `alt chat` immediately:
 startup creates the project's coordinator broker. Web conversations also create the broker on
 demand, so a project registered after startup can start from the web app. Its First run / Add
 project flow registers the folder and opens Setup immediately, using Auto and the project's
@@ -153,7 +197,9 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_HOME` | Runtime state directory, default `~/.altitude`; use the same value for CLI and server. Keep it out of Git. |
 | `ALTITUDE_ROOTS` | Colon-separated parent folders scanned by First run, default `~/Projects`; `project add --path` also supports other folders. |
 | `ALTITUDE_OPERATOR` | Name shown for the operator; defaults to “Operator”. |
-| `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Bind address, port and TLS switch. Set all three as above for predictable localhost evaluation. |
+| `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
+| `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
+| `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 
@@ -171,18 +217,23 @@ the Codex coordinator ignores user configuration, including custom provider sett
 Do not assume an interactive API/Bedrock configuration transfers unchanged to a launched session.
 See the [engine boundary and gaps](ARCHITECTURE.md#engine-integration-boundary).
 
-For persistent operation, adapt the [systemd unit](../systemd/altitude.service) deliberately:
-it assumes the maintainer's checkout location, PATH and private-network address. `make install-service`
-installs and immediately starts that template; it is not the generic onboarding command. Remote
-phone access needs your own private network and HTTPS/certificate trust setup. The server has no
-application login layer; localhost or a deliberately controlled private network is the current
-access model. Voice additionally needs `ffmpeg` and a compatible local speech service; typing
-remains available without them. See [operations](OPERATIONS.md) for those steps and lifecycle rules.
+The installer generates the user service from this installation's paths. It keeps immutable
+application versions under `~/.local/share/altitude`, configuration/TLS under `~/.config/altitude`,
+runtime state under `ALTITUDE_HOME`, and project checkouts/worktrees in their existing locations.
+Keep those directories separate. Updates retain previous versions and settings.
+
+Remote access is explicit: configure a controlled private interface/address, matching certificate
+host and firewall/network access. There is no application login layer; HTTPS authenticates the
+server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
+and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
+for update/recovery and source deployments. Voice needs `ffmpeg` and a compatible local speech
+service; typing remains available without them. Installation downloads no models and makes no
+paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work
 
-- **The page does not load:** check the foreground server output, selected port and URL scheme;
-  `ALTITUDE_TLS=0` makes the example HTTP. Verify `web/dist/index.html` exists from the build.
+- **The page does not load:** inspect `alt service status` and `alt service logs`, the printed HTTPS
+  address and certificate trust. Do not disable TLS to bypass trust, hostname or expiry errors.
 - **The first conversation fails:** verify the chosen CLI works as this user, its binary path
   and model configuration, and the systemd user manager. For immediate `alt chat` use, register
   before foreground startup; a web conversation can start its coordinator broker on demand.
@@ -201,7 +252,8 @@ remains available without them. See [operations](OPERATIONS.md) for those steps 
   interruption handling and the separate resume step.
 - **Usage is unknown:** inspect Monitor's explanation and the optional telemetry setup above.
 
-Report setup friction with the command, environment, commit and sanitized error through
+Report setup friction with the command, OS/architecture, application version/commit, engine/browser
+versions and sanitized error through
 [Feedback](../README.md#feedback). These commands are checked against the CLI/source and repository
 tests; installation on a second clean machine remains an explicit
 [onboarding follow-up](ROADMAP.md#early-user-onboarding-and-public-release).

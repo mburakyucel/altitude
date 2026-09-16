@@ -61,6 +61,7 @@ holds still apply. Other projects keep their own gates. See
 
 Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
 use the installed nvm default and its package-manager shims without loading shell profiles.
+New archive installations save the discovered tool path for their service.
 Candidate dependency installation runs inside `web` so Corepack reads its pinned pnpm version.
 See [toolchain setup](docs/DEVELOPMENT.md#noninteractive-toolchain).
 
@@ -253,26 +254,17 @@ support and installable distribution.
 
 ## Get started
 
-**Early private preview for invited engineers.** Altitude currently runs for one operator on a
-Linux machine with a systemd user manager. Setup uses a source checkout and manual configuration;
-native macOS support and packaged installation are planned. Desktop and phone layouts are
-available; remote phone access needs your private network and HTTPS setup.
+**Early private preview for invited engineers.** The versioned Linux x86_64 archive includes the
+CLI, daemon and built UI. Ubuntu 24.04 is the initial target; native macOS and clean-machine
+acceptance remain pending. Installation needs Python 3.12+, Git, authenticated GitHub CLI,
+OpenSSL, a systemd user manager and one authenticated coding CLI. Node and a source checkout are
+only needed for development. Managed projects use `main`, `origin/main` and GitHub PR delivery.
 
-You need Git, authenticated GitHub CLI, Python 3.12, Node 22.22.2+ (22.x) or 24.15+ (24.x), pnpm,
-and one supported, authenticated coding CLI. Managed projects use `main`, `origin/main` and
-GitHub PR delivery. With repository access:
-
-```sh
-git clone git@github.com:mburakyucel/altitude.git
-cd altitude
-pnpm --dir web install --frozen-lockfile
-pnpm --dir web build
-```
-
-Follow [setup: register a project and start a conversation](docs/SETUP.md#register-a-project-and-start-a-conversation)
-for routing preferences, project Git guards and a foreground localhost server. The guide distinguishes
-source-checked commands from the remaining clean-machine setup verification. No open-source
-license has been selected; public release is a separate milestone.
+Follow [setup](docs/SETUP.md) to install a privately supplied archive, trust its local HTTPS
+certificate and start your first project conversation. Fresh installs bind to localhost; phone
+access requires an explicitly configured private network and certificate trust on that device.
+Updates preserve configuration and user data. No open-source license has been selected; public
+release and compatibility claims require separate evidence and approval.
 
 Each project's **Setup** status opens a revisitable checklist of its folder, repository,
 instructions, Git guards and coordinator. Altitude performs routine setup automatically and
@@ -282,6 +274,11 @@ and missing requirements without losing their conversations or repeating healthy
 L3 can request bounded repair even when tasks cannot launch, and programmatic checks verify the
 result before a step is complete. Custom hooks require your integration choice. See
 [project setup and repair](docs/SETUP.md#project-setup-and-repair).
+
+Existing source deployments can [prepare their current TLS setting](docs/OPERATIONS.md#preserve-source-tls-before-upgrading)
+from the verified archive before upgrading. The operator reviews and explicitly applies one service
+override; preparation preserves the running process, certificate identity and network binding.
+Verification failures name the changed fields without printing environment values.
 
 Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
 to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
@@ -492,8 +489,9 @@ messages. Removing the last project opens First run; otherwise a remaining proje
 | [CLI usage](docs/CLI.md) | [Service operations and mobile access](docs/OPERATIONS.md) |
 | [Roadmap and release prerequisites](docs/ROADMAP.md) | [Design boards and UI specification](design/wireframes/README.md) |
 
-For an installed service, [operations](docs/OPERATIONS.md#service-lifecycle) documents automatic
-activation and the operator's `make restart` command. Browser target and installation instructions
+For an archive installation, [operations](docs/OPERATIONS.md#installed-application-lifecycle) documents
+versioned updates and recovery. Source deployments use [automatic activation](docs/OPERATIONS.md#service-lifecycle)
+and the operator's `make restart` command. Browser target and installation instructions
 are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
 
 Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop browser flows
@@ -506,7 +504,7 @@ curated documentation illustrations describe the current product. See the [UI ru
 These repeated checks make no model calls. Live-provider validation is deferred; the
 [coverage matrix](docs/DEVELOPMENT.md#coverage-and-limits) records what the tests establish.
 Daily preview readiness checkpoints and as-needed releases select a validated source version and curated notes;
-the operator decides whether to publish it. Merged changes continue activating automatically.
+the operator decides whether to publish it. Source-deployed merged changes continue activating automatically.
 
 The [project rules](AGENTS.md#working-rules-for-every-pr) govern implementation and review;
 the architecture and lifecycle pages describe the current system. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;

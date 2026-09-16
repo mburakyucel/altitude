@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
 
@@ -319,10 +320,24 @@ def main(argv=None) -> None:
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
     sub.add_parser("install-git-guards")
+    sub.add_parser("doctor", help="inspect application prerequisites without provider requests")
+    sub.add_parser("recover", help="restore the previous installation after interrupted activation")
+    sub.add_parser("uninstall", help="remove the owned application service and retain user data")
+    for verb in ("install", "update"):
+        installer = sub.add_parser(verb, help="install an exact verified private application archive")
+        installer.add_argument("--archive", type=Path, required=True)
+        installer.add_argument("--sha256", required=True)
+        if verb == "install":
+            installer.add_argument("--prefix", type=Path)
+    service = sub.add_parser("service", help="manage the installed application user service")
+    service.add_argument("operation", choices=("start", "stop", "status", "logs", "prepare-tls"))
+    service.add_argument("--directory", type=Path, help="existing source deployment certificate directory")
+    service.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
-    config.ensure_root()
+    if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
+        config.ensure_root()
     c = args.cmd
     closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
@@ -354,13 +369,14 @@ def main(argv=None) -> None:
             sys.exit(f"alt {c}: L3 must use its project-bound runtime alt socket")
         if setup_command and (bool(args.repair) != bool(args.reason and args.reason.strip())):
             ap.error("project setup --repair requires --reason; reads accept no reason")
-        tls = config.TLS and all((config.TLS_DIR / name).is_file() for name in ("server.crt", "server.key"))
-        context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt")) if tls else None
+        tls = config.TLS
+        ca = config.TLS_DIR / "ca.crt"
         from urllib.parse import quote
         endpoint = ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
+            context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
             with urllib.request.urlopen(request, context=context, timeout=130) as response:
                 result = json.load(response)
                 out(result if closing_pr or setup_command else result["url"])
@@ -368,6 +384,28 @@ def main(argv=None) -> None:
             sys.exit(f"alt {c}: " + json.load(exc).get("error", str(exc)))
         except OSError as exc:
             sys.exit(f"alt {c}: altd unavailable: {exc}")
+        return
+    if c in ("install", "update", "recover", "uninstall", "doctor", "service"):
+        from altitude import installation
+        try:
+            if c in ("install", "update"):
+                prefix = installation._prefix() if c == "update" else args.prefix
+                result = installation.install(args.archive, args.sha256, prefix)
+            elif c == "service":
+                if args.operation == "prepare-tls":
+                    if args.directory is None:
+                        ap.error("service prepare-tls requires --directory")
+                    from altitude import source_tls
+                    result = source_tls.prepare(args.directory, apply=args.apply)
+                else:
+                    if args.directory is not None or args.apply:
+                        ap.error("--directory and --apply require service prepare-tls")
+                    result = installation.service(args.operation)
+            else:
+                result = getattr(installation, c)()
+            out(result)
+        except (ValueError, RuntimeError, OSError) as exc:
+            sys.exit(f"alt {c}: {exc}")
         return
     if c == "machine":
         from altitude import dispatch

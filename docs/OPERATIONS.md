@@ -4,6 +4,7 @@ This is the runtime guide for an already configured installation. New users shou
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
 its checkout path, PATH and tunnel binding need deliberate configuration for another machine.
+Private archives generate their own user service; they do not install that source template.
 
 ## Runtime and inspection
 
@@ -83,15 +84,50 @@ retain the snapshot and fault evidence. Legacy `preserved_checkout` stash SHAs s
 apply with `git stash apply --index <SHA>` in the owner's worktree; existing stashes remain untouched.
 Restart notices retain unresolved faults and require observed resolution before resume.
 
+## Installed application lifecycle
+
+These are operator lifecycle actions for a packaged installation, not commands for ordinary code
+agents or a source deployment:
+
+```sh
+alt doctor
+alt service status
+alt service logs
+alt update --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>'
+```
+
+Use the exact privately supplied version/checksum, not the placeholder above. Installation checks
+the archive and manifest before selecting an immutable version. Activation waits for dispatch,
+resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
+service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
+Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
+independent task workers are not stopped with the daemon. Projects continue using ordinary checked
+PR delivery; a managed source clone does not update the installed application.
+Lifecycle commands reject shell overrides that disagree with the owned service's saved runtime,
+binding, TLS or project-root settings. Remove the named overrides before retrying.
+
+Failed activation restores the previous version and service. If interrupted or recovery remains
+incomplete, use `alt recover`; if the launcher is unavailable, use the same trusted installer:
+`python3.12 install.py --recover` (with `--prefix` when a custom prefix was selected). A recovery
+receipt remains until restoration succeeds and prevents new dispatch/coordinator work while activation is unverified. Changed service ownership or unconfirmed stop refuses
+further mutation. Retain the failing archive/version and sanitized error for diagnosis.
+
+`alt uninstall` stops/removes only the owned service and launcher. It refuses unfinished tasks
+that still own worker inputs. Registered projects keep installed hook resources; otherwise
+application versions are removed. Configuration, certificate trust, histories, provider sessions
+and project worktrees remain. Updates do not prune prior versions. Removing retained data or
+device trust is a separate deliberate action, not part of uninstall or recovery. Code restoration
+does not roll back data; incompatible state needs the [release recovery procedure](RELEASING.md#recovery).
+
 ## Service lifecycle
 
-[Versioned releases](RELEASING.md) are validated source checkpoints. They do not select the
+[Versioned releases](RELEASING.md) are validated checkpoints. For source deployments, they do not select the
 deployed revision or delay activation. Recovery normally uses a checked revert/fix PR followed
 by the activation path below; the release guide distinguishes web-bundle restoration from source
 and runtime-state recovery. Never reset the deployment checkout to a release tag as a rollback.
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
+Source-deployed Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
 merges even while their workers run. A self-deploy fast-forward marks activation
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
@@ -114,19 +150,65 @@ web page to answer from a new process. The prior bundle is restored if verificat
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
 
+## Preserve source TLS before upgrading
+
+An existing source deployment that relies on implicit certificate discovery needs an explicit TLS
+setting before upgrading. Keep its current certificate directory and trust; this is not an archive
+migration. Run as the operator from a supported Linux host with visibility into its own `/proc`
+process/socket records. This operation handles legacy external certificate pairs, a concrete IP binding and a direct
+source `bin/alt serve` unit (optionally invoked with Python 3). Managed Altitude CA directories,
+wildcard/DNS bindings, environment files and foreign drop-ins require separate reconciliation.
+
+Obtain the reviewed installer, archive and verified checksum, then inspect:
+
+```sh
+python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>' \
+  --prepare-source-tls /absolute/path/to/existing-certificates
+```
+
+The version is illustrative. The command verifies the archive and checks the active source unit,
+effective process settings, listener ownership and the exact served certificate. It prints the
+single service override without writing it. After reviewing that output, repeat with `--apply`.
+With a CLI containing this operation, the equivalent is:
+
+```sh
+alt service prepare-tls --directory /absolute/path/to/existing-certificates
+alt service prepare-tls --directory /absolute/path/to/existing-certificates --apply
+```
+
+Apply reloads the unit definition and verifies the loaded TLS-directory setting, unchanged daemon
+PID and HTTPS identity. It does not restart the service, change binding or certificates, install
+the archive, or alter device trust. Changed/ambiguous ownership or identity refuses preparation;
+failed reload/verification restores only the unchanged owned override and reports any unconfirmed
+restoration. Existing custom overrides need deliberate reconciliation. Save the successful result
+privately and verify normal activation after the separately authorized upgrade. L2 and L3 cannot
+run preparation, and a passing fixture test is not evidence that a production unit is prepared.
+Verification compares the configured command and live process identity; command execution-history
+timestamps can reset during a definition reload. On failure, the message names changed fields
+without printing environment values and includes the original failure if restoration is uncertain.
+Do not retry an uncertain restoration until the loaded unit and running identity are inspected.
+If interrupted after writing the override, inspect that file and any other pending unit changes
+before running `systemctl --user daemon-reload` from the operator terminal. This reloads definitions
+without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
+never counts as successful preservation.
+
 ## Voice input on iPhone
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a
-secure context, so the phone must trust the local CA used by Altitude's certificate; `/ca.crt` serves
-that CA when it needs to be installed. The microphone button remains a typing-only hint on plain
+secure context, so the phone must trust the local CA used by Altitude's certificate. Follow the
+[per-device trust steps](SETUP.md#trust-https-on-each-device); `/ca.crt` is available over already
+trusted HTTPS, not a first-trust bootstrap. The microphone button remains a typing-only hint on plain
 HTTP or an unsupported browser.
 
 For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-network endpoint,
 and use `alt tls-init --ip <private-address>` to create the local CA and server certificate.
-`ALTITUDE_TLS_DIR` selects the certificate directory; `ALTITUDE_TLS=0` explicitly disables TLS.
+`ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
 Install the CA on the phone and enable its trust in Certificate Trust Settings. Arrange the
 private tunnel and any firewall rule for your chosen interface/port separately. The shipped
 service template's tunnel address and checkout path are not defaults to copy to another machine.
+Generated server certificates renew automatically while the original CA remains valid; an expired
+or replaced CA needs explicit new trust on every device. External certificate pairs are not renewed
+or overwritten. Existing configured TLS paths and exposure remain operator choices.
 
 The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
 converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV

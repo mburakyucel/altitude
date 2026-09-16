@@ -169,7 +169,7 @@ names the repository rule file each turn; [instruction loading](SESSION_LIFECYCL
 describes selection, imports and activation limits. Brief boundary excerpts use the task worktree's
 rule file. Managed projects retain their own policy.
 
-On successful service startup, Altitude exports its committed installation HEAD into the ignored
+Source deployments export their committed installation HEAD on successful service startup into the ignored
 deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots and remain available to existing workers. Managed
@@ -179,6 +179,44 @@ Task inputs use activated source independently of
 uncommitted deployment files or newer code awaiting activation.
 An unavailable project guard update reports a project fault without stopping service startup;
 that project's launch waits for trusted guards while other projects continue.
+
+Private archive installations use verified immutable `versions/<version>` trees and a `current`
+link under `~/.local/share/altitude`. `release.json` binds the packaged CLI, daemon, built UI and
+launch resources to a source commit and file hashes; no application Git checkout is required.
+`config.SOURCE` pins the selected version for workers, while managed guards use installation-owned
+`hooks` launchers that invoke `current/hooks` with the saved Python and configuration.
+Consented custom-hook compositions and their receipts live in installation-owned `git-guards`,
+outside immutable version trees; their launchers use the saved Python and `current` code.
+Previous versions remain available to existing workers. Installation configuration lives in
+`~/.config/altitude/install.json`, apart from runtime state and project worktrees. Explicit
+CLI environment settings override saved values. The generated service pins its saved settings,
+including binding and runtime paths, against ambient user-manager values. Source deployments ignore installed configuration.
+New installation settings capture the discovered toolchain PATH, including a custom nvm default;
+updates retain the saved environment.
+`installation.py` owns archive validation, activation receipts, recovery and retention;
+`platform.py` owns the generated Linux x86_64 per-user daemon service. A pending installation
+receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
+containment remain in the common engine contract. macOS runtime acceptance remains pending.
+
+`source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
+The operator selects its existing certificate directory; native unit/process/listener evidence and
+a verified HTTPS handshake bind that selection to the running source deployment. Check-only shows
+the fixed TLS-directory override. Explicit apply writes only that owned drop-in, reloads the unit
+definition and verifies the unchanged process and identity; failed verification restores the owned
+override or reports unconfirmed recovery. The verified archive installer exposes the same operation
+before installation. It adds no L2/L3 service authority, daemon endpoint or certificate migration.
+Reload verification compares the configured executable/arguments and live PID, invocation and
+main-start timestamp; resettable command-history metadata is not process identity. Failure messages
+name changed fields and preserve both apply and recovery errors without exposing environment values.
+
+Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA and
+server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,
+with private directories and keys. Startup validates identity and hostname; the existing daily
+timer renews managed server certificates within thirty days of expiry, retaining the CA/key.
+Invalid TLS refuses startup or reports renewal failure without switching to HTTP. External
+certificates are validated without replacement. Browser/device trust stays explicitly unknown
+until the user imports the public CA and verifies it. Remote binding and trust remain explicit;
+HTTPS supplies no application login. See [setup](SETUP.md#trust-https-on-each-device).
 
 ### Project setup
 
@@ -763,7 +801,7 @@ notification. Reports without an incident still notify after success and expose 
 source-project FYI. Failed or uncertain publication and failed link verification never notify. There is
 no automatic publication retry or historical notification backfill.
 
-A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
+A merged source-deployed Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `personas/`, `hooks/`,
 `templates/`, `schemas/`) or tracked inputs to the served web bundle
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
@@ -1252,9 +1290,9 @@ success or failure. It neither persists raw audio nor owns or starts a speech mo
 Unreadable media, timeouts, and an unavailable Whisper service become concise client errors while
 converter paths and diagnostics stay in the private server log. The composer announces recording
 and transcribing, restores the editable field after cancel or error, and leaves the microphone as
-progressive enhancement. Altitude's WireGuard origin is HTTPS on `10.88.0.1:8890`; the service reuses
-the local-CA certificate whose SAN contains that address, which makes `getUserMedia` available to
-Safari after the CA is trusted on the phone.
+progressive enhancement. Phone access uses an explicitly configured private HTTPS address whose
+certificate covers that address. Safari can use the microphone after the CA is trusted on the phone;
+typing remains available without speech services.
 
 The same server serves each project's wireframe boards. `GET /design/<project>` redirects to
 `/design/<project>/design/wireframes/index.html`, read from that project's own deployment checkout on
