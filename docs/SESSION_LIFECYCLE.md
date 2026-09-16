@@ -51,8 +51,9 @@ launchers from the broader extensibility direction; this page describes their cu
 New and resumed workers receive the shared [noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain)
 environment: an existing PATH-selected Node, or the installed nvm default with its package-manager
 shims when Node is absent. Engine discovery uses the same PATH. Running workers retain their
-environment; each landing invocation resolves tools again. Committed-source activation applies
-launch changes at the next ordinary launch/resume, preserving session identity, attempt and holds.
+environment and committed CLI export; updated landing code resolves tools on each invocation.
+Committed-source activation applies launch changes at the next ordinary launch/resume, preserving
+session identity, attempt and holds.
 
 ## Project setup and recovery
 

@@ -73,9 +73,11 @@ Recovery is rechecked on the next invocation, without a cached failure.
 An explicit unsupported Node or missing pnpm shim remains a setup error: select the supported
 toolchain and enable its shim. Other installation managers continue to supply their normal PATH.
 Ordinary shell commands such as `make check` use that shell's PATH; the shared discovery applies
-when Altitude launches the process. Existing workers retain their environment until resumed;
-landing resolves tools again even from an older worker. Normal committed-source activation
-applies the correction to future launches without rotating sessions or changing merge holds.
+when Altitude launches the process. Updated landing code resolves tools on each invocation.
+Existing workers retain their environment and committed CLI export until resumed; normal
+committed-source activation applies the correction to future launches/resumes without rotating
+sessions or changing merge holds. Recovery of a worker still using the earlier CLI requires
+the verified toolchain on its PATH or an ordinary resume after activation.
 
 `test_toolchain.py` exercises minimal PATH, custom/default nvm locations, explicit Node precedence,
 unavailable/default recovery, engine discovery, fresh/resumed worker execution and failed worker

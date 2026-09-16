@@ -26,6 +26,8 @@ class TestLand(AltitudeCase):
         for key, value in (("ALTITUDE_PROJECT", "demo"), ("ALTITUDE_TASK", "fix-x"),
                            ("ALTITUDE_ACTOR", "burak"), ("ALTITUDE_ATTEMPT", "")):
             self.setenv(key, value)
+        (self.repo / "web").mkdir()
+        (self.repo / "web/package.json").write_text('{"packageManager":"pnpm@10.34.5"}')
         make_repo(self.repo)
         self.project_repo = self.repo
         self.repo = add_worktree(self.project_repo, "fix-x")
@@ -761,9 +763,6 @@ class TestLand(AltitudeCase):
 
     def local_policy(self, *, exit_code=0, output="Ran 12 tests in 0.4s\n\nOK\n"):
         self.patch(land.config, "LOCAL_CHECK_REPOSITORY", "team/demo")
-        (self.repo / "web").mkdir(exist_ok=True)
-        (self.repo / "web/package.json").write_text('{"packageManager":"pnpm@10.34.5"}')
-        self.git("add", "web/package.json")
         self.fake_runner("pnpm", 0, "frozen dependencies installed\n")
         self.fake_runner("make", exit_code, output)
         self.pr_body = "The reviewed change.\n"
