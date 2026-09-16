@@ -128,10 +128,14 @@ def status_path(project: str, slug: str) -> Path:
     return task_dir(project, slug) / "status.json"
 
 
+class TaskNotFound(KeyError):
+    """The resolved task status is absent, including an archive crossing its read."""
+
+
 def load_task(project: str, slug: str) -> dict:
     t = read_json(status_path(project, slug))
     if not t:
-        raise KeyError(f"no task {slug!r} in {project!r}")
+        raise TaskNotFound(f"no task {slug!r} in {project!r}")
     return t
 
 

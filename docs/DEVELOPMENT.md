@@ -102,6 +102,11 @@ service URL or active worker is needed. Tests clean up their owned service proce
 storage, with bounded termination. Never point routine acceptance at operator data.
 Cleanup releases fixture gates and finishes HTTP requests and background work before closing L3
 broker sockets; unfinished work or logged background failures fail the walkthrough.
+The image stream/admission walkthrough holds a real admission receipt until a history poll shows
+its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
+The task-read regression archives a real task between path resolution and status read: the crossing
+poll returns ordinary 404, a subsequent archived read succeeds, and corrupt state still logs a failure.
+Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. Install the Chromium build matching the locked Playwright version. The browser cache

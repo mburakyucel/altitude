@@ -549,6 +549,9 @@ storage is unavailable, submission does not start and the editable text stays vi
 streams do not pause conversation polling, and receipt updates cancel older reads of their own
 conversation before updating cached records. Later failed recovery writes retain edits for in-app
 navigation, with a keep-tab-open warning until storage succeeds; reload cannot recover unwritten edits.
+Image admission receipts preserve newer history for the same submission identity without
+reintroducing a queued copy. Task polling that crosses archival returns an ordinary 404 when
+the resolved live record has moved; subsequent reads use the archived conversation.
 
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
