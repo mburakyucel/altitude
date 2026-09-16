@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Coordinator service reads expose bounded native worker termination and memory evidence;
+  missing/collected units and unsupported fields remain unknown, with no service-control access (#384).
+
 - Delayed image admission receipts preserve the accepted history row without adding a queued copy.
   Task reads crossing archival return ordinary not-found responses instead of failure tracebacks.
 

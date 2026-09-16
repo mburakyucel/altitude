@@ -1,4 +1,4 @@
-"""Read-only TLS recovery evidence uses fictional native-service snapshots (#362)."""
+"""Read-only recovery evidence uses fictional native-service snapshots (#362, #384)."""
 import json
 import socket
 import subprocess
@@ -24,16 +24,100 @@ class TestServiceEvidence(AltitudeCase):
             "DropInPaths": "", "NeedDaemonReload": "no",
         }
 
-    def read(self, values=None, **result):
+    def read(self, values=None, *, unit="altitude.service", **result):
         native = self.native if values is None else values
         completed = SimpleNamespace(returncode=0, stderr="", stdout="".join(
             f"{key}={value}\n" for key, value in native.items()))
         completed.__dict__.update(result)
         with mock.patch.object(engines.subprocess, "run", return_value=completed) as run:
-            record = engines.service_status()
+            record = engines.service_status(unit)
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0][:4], [engines.SYSTEMCTL_BIN, "--user", "show", "altitude.service"])
+        self.assertEqual(run.call_args.args[0][:4], [engines.SYSTEMCTL_BIN, "--user", "show", unit])
         return record
+
+    def test_worker_termination_distinguishes_exit_signal_and_native_oom_result(self):
+        native = self.native | {"ActiveState": "failed", "SubState": "failed", "MainPID": "0",
+                               "ExecMainExitTimestampMonotonic": "234567890", "MemoryCurrent": "[not set]",
+                               "MemoryPeak": "4194304", "MemoryHigh": "infinity", "MemoryMax": "8388608"}
+        for result, code, status in (("oom-kill", "2", "9"), ("signal", "2", "9"),
+                                     ("exit-code", "1", "137"), ("core-dump", "3", "11"),
+                                     ("success", "1", "0"), ("timeout", "2", "15"),
+                                     ("resources", "0", "0")):
+            with self.subTest(result=result), mock.patch.object(engines.Path, "lstat") as disk:
+                record = self.read(native | {"Result": result, "ExecMainCode": code, "ExecMainStatus": status},
+                                   unit="altitude-worker-fixture.service")
+                disk.assert_not_called()
+                self.assertIsNone(record["error"])
+                self.assertIsNone(record["pid"])
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["substate"], "failed")
+                self.assertEqual(record["last_restart"], self.native["ActiveEnterTimestamp"])
+                self.assertEqual(record["load_state"], "loaded")
+                self.assertEqual(record["invocation_id"], "a" * 32)
+                self.assertEqual(record["started_monotonic"], "123456789")
+                self.assertEqual(record["exited_monotonic"], "234567890")
+                self.assertEqual(record["result"], result)
+                self.assertEqual(record["exec_main_code"], code if code != "0" else None)
+                self.assertEqual(record["exec_main_status"], status if code != "0" else None)
+                self.assertIsNone(record["memory_current"])
+                self.assertEqual(record["memory_peak"], "4194304")
+                self.assertEqual(record["memory_high"], "infinity")
+                self.assertEqual(record["memory_max"], "8388608")
+                self.assertNotIn("loaded_tls_environment", record)
+                self.assertNotIn("SECRET", json.dumps(record))
+
+    def test_running_and_missing_or_collected_units_never_infer_clean_exit(self):
+        native = self.native | {"Result": "success", "ExecMainCode": "0", "ExecMainStatus": "0",
+                               "ExecMainExitTimestampMonotonic": "0", "MemoryCurrent": "0"}
+        running = self.read(native, unit="altitude-worker-fixture.service")
+        self.assertEqual(running["memory_current"], "0")
+        self.assertIsNone(running["exec_main_code"])
+        self.assertIsNone(running["exec_main_status"])
+        self.assertIsNone(running["exited_monotonic"])
+        for load in ("not-found", "error", "masked", "", "SECRET"):
+            with self.subTest(load=load):
+                record = self.read(native | {"LoadState": load, "ActiveState": "inactive", "SubState": "dead"},
+                                   unit="altitude-worker-fixture.service")
+                self.assertEqual(record["state"], "inactive")
+                self.assertEqual(record["load_state"], load if load in {"not-found", "error", "masked"} else None)
+                self.assertTrue(record["error"])
+                for key in ("result", "invocation_id", "started_monotonic", "exited_monotonic",
+                            "exec_main_code", "exec_main_status", "memory_current"):
+                    self.assertIsNone(record[key])
+                self.assertNotIn("SECRET", json.dumps(record))
+
+    def test_unsupported_missing_and_malformed_properties_stay_null(self):
+        for native, key in (("MemoryPeak", "memory_peak"), ("MemoryCurrent", "memory_current"),
+                            ("MemoryHigh", "memory_high"), ("MemoryMax", "memory_max"),
+                            ("ExecMainCode", "exec_main_code"), ("ExecMainStatus", "exec_main_status"),
+                            ("Result", "result"), ("ExecMainExitTimestampMonotonic", "exited_monotonic")):
+            for value in (None, "", "[not set]", "SECRET", "-1"):
+                with self.subTest(native=native, value=value):
+                    values = self.native | {"ExecMainCode": "1"}
+                    values.pop(native, None)
+                    if value is not None:
+                        values[native] = value
+                    record = self.read(values, unit="altitude-worker-fixture.service")
+                    self.assertIsNone(record[key])
+                    self.assertEqual(record["pid"], 99)
+                    self.assertIsNone(record["error"])
+                    self.assertNotIn("SECRET", json.dumps(record))
+        missing = self.read({}, unit="altitude-worker-fixture.service")
+        self.assertIsNone(missing["load_state"])
+        self.assertTrue(missing["error"])
+
+    def test_worker_native_failure_and_unsupported_platform_keep_evidence_unknown(self):
+        unit = "altitude-worker-fixture.service"
+        record = self.read(unit=unit, returncode=1, stderr="SECRET")
+        self.assertTrue(record["error"])
+        self.assertIsNone(record["load_state"])
+        self.assertIsNone(record["result"])
+        for error in (FileNotFoundError("SECRET"), PermissionError("SECRET"),
+                      subprocess.TimeoutExpired("SECRET", 15, output="SECRET")):
+            with mock.patch.object(engines.subprocess, "run", side_effect=error):
+                failed = engines.service_status(unit)
+            self.assertEqual(failed, record)
+        self.assertNotIn("SECRET", json.dumps(record))
 
     def test_restored_loaded_selection_and_process_continuity_are_separate_evidence(self):
         restored = self.read()
@@ -181,5 +265,21 @@ class TestServiceEvidence(AltitudeCase):
             worker = request({"kind": "service", "unit": "altitude-worker-fixture.service"})
             self.assertNotIn("loaded_tls_environment", worker)
             self.assertNotIn("--property=Environment", run.call_args.args[0])
+            result.stdout += ("Result=oom-kill\nExecMainCode=2\nExecMainStatus=9\n"
+                              "ExecMainExitTimestampMonotonic=234567890\nMemoryPeak=4194304\n")
+            worker = request({"kind": "service", "unit": "altitude-worker-fixture.service",
+                              "properties": ["Environment", "ExecStart"], "args": ["restart"],
+                              "path": "/SECRET", "project": "foreign"})
+            self.assertEqual(worker["result"], "oom-kill")
+            self.assertEqual(worker["exec_main_status"], "9")
+            self.assertEqual(worker["memory_peak"], "4194304")
+            self.assertNotIn("SECRET", json.dumps(worker))
+            self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "show",
+                "altitude-worker-fixture.service", *["--property=" + name for name in (
+                    "ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp", "LoadState",
+                    "InvocationID", "ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic",
+                    "Result", "ExecMainCode", "ExecMainStatus", "MemoryCurrent", "MemoryPeak", "MemoryHigh", "MemoryMax")]])
+            self.assertEqual(run.call_args.kwargs["timeout"], 15)
+            self.assertNotIn("shell", run.call_args.kwargs)
             alias = request({"kind": "service", "unit": "altitude"})
             self.assertEqual(alias["loaded_tls_environment"], record["loaded_tls_environment"])

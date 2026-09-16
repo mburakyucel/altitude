@@ -658,12 +658,20 @@ re-applies the L3 command door, accepts only flat task identifiers and stdin, an
 For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
 process identity, definition-reload state, the two direct TLS environment assignments, a boolean
 for indirect environment sources, and exact owned source-TLS drop-in membership. A metadata-only
-disk read separately reports that fixed drop-in's presence. Worker-unit reads retain process status
-only. Raw environment, other drop-in paths, file contents and native diagnostics are not returned.
+disk read separately reports that fixed drop-in's presence. All admitted units also expose load state,
+invocation/start/exit identity, native service result and main-process wait code/status, plus memory
+current/peak accounting and high/max settings. These fixed scalar fields are filtered to known native
+enums and numeric forms; workers request no environment or filesystem paths. Non-loaded units retain
+load/process evidence with an error and null termination/resource fields. Absent/collected units,
+unsupported properties and failed reads never become clean-exit or health evidence. Raw environment,
+other drop-in paths, file contents and native diagnostics are not returned.
 Native `show` omits the `EnvironmentFiles` line for an empty list; a successful loaded-service read
 recognizes that convention. Other missing or ambiguous fields stay null; direct assignments do not
 establish effective next-start TLS when indirect environment sources exist. The read neither compares a saved baseline nor certifies
 restoration. [The response contract](CLI.md#loaded-service-evidence) describes recovery interpretation.
+Native unit OOM results can support attribution while retained; signal/exit numbers or resource
+snapshots alone cannot. This read recovers no collected history, identifies no host consumers,
+and changes no retention, service control or recovery policy.
 Git log/diff/show reads include full patches and historical files, disable external diff/text-conversion
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;

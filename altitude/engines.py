@@ -383,12 +383,28 @@ def service_status(unit: str = "altitude.service") -> dict:
     """Read the user service's state once; inspection failure stays in the record."""
     record = {"unit": unit, "state": None, "substate": None, "pid": None,
               "last_restart": None, "error": None}
-    properties = ["ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp"]
+    evidence = {
+        "load_state": ("LoadState", r"loaded|error|not-found|bad-setting|masked|merged|stub"),
+        "invocation_id": ("InvocationID", r"[0-9a-f]{32}"),
+        "started_monotonic": ("ExecMainStartTimestampMonotonic", r"[1-9][0-9]*"),
+        "exited_monotonic": ("ExecMainExitTimestampMonotonic", r"[1-9][0-9]{0,19}"),
+        "result": ("Result", r"success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|"
+                              r"start-limit-hit|oom-kill|exec-condition|skip-condition"),
+        "exec_main_code": ("ExecMainCode", r"[123]"),
+        "exec_main_status": ("ExecMainStatus", r"[0-9]{1,3}"),
+        "memory_current": ("MemoryCurrent", r"[0-9]{1,20}"),
+        "memory_peak": ("MemoryPeak", r"[0-9]{1,20}"),
+        "memory_high": ("MemoryHigh", r"[0-9]{1,20}|infinity"),
+        "memory_max": ("MemoryMax", r"[0-9]{1,20}|infinity"),
+    }
+    record.update(dict.fromkeys(evidence))
+    properties = ["ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp",
+                  *(native for native, _ in evidence.values())]
     source_service = unit in {"altitude", "altitude.service"}
     if source_service:
-        properties += ["LoadState", "InvocationID", "ExecMainStartTimestampMonotonic", "Environment",
+        properties += ["Environment",
                        "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "DropInPaths", "NeedDaemonReload"]
-        record.update(dict.fromkeys(("invocation_id", "started_monotonic", "need_daemon_reload",
+        record.update(dict.fromkeys(("need_daemon_reload",
                                      "owned_tls_drop_in_loaded", "owned_tls_drop_in_present",
                                      "loaded_tls_environment", "indirect_environment")))
     try:
@@ -401,12 +417,16 @@ def service_status(unit: str = "altitude.service") -> dict:
         record.update({"state": values.get("ActiveState"), "substate": values.get("SubState"),
                        "pid": int(values.get("MainPID") or 0) or None,
                        "last_restart": values.get("ActiveEnterTimestamp") or None})
+        for key, (native, pattern) in evidence.items():
+            value = values.get(native, "")
+            if (key == "load_state" or values.get("LoadState") == "loaded") and re.fullmatch(pattern, value):
+                record[key] = value
+        if not record["exec_main_code"]:
+            record["exec_main_status"] = None  # Native defaults are not an observed clean exit (#384).
+        if record["load_state"] != "loaded":
+            record["error"] = "Unit not loaded or load state unavailable; termination/resource evidence is unknown."
         if source_service:
             record["need_daemon_reload"] = {"yes": True, "no": False}.get(values.get("NeedDaemonReload"))
-            for key, native, pattern in (("invocation_id", "InvocationID", r"[0-9a-f]{32}"),
-                                         ("started_monotonic", "ExecMainStartTimestampMonotonic", r"[1-9][0-9]*")):
-                value = values.get(native, "")
-                record[key] = value if re.fullmatch(pattern, value) else None
             owned = Path.home() / ".config/systemd/user/altitude.service.d/90-altitude-source-tls.conf"
             try:
                 owned.lstat()

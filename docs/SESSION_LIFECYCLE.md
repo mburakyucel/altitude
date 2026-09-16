@@ -761,6 +761,12 @@ It recognizes the native empty environment-file list's omitted line after a succ
 It compares no baseline and performs no reload or lifecycle action. PID, start time and invocation
 identity support continuity checks independently of loaded settings; disk absence alone does not
 prove a drop-in is unloaded. The fields become available through normal merged-code activation.
+All admitted service reads include [bounded termination and memory evidence](CLI.md#worker-termination-and-resource-evidence)
+from the same fixed native query. Invocation/start/exit identity and native result/code/status can
+describe retained worker termination; absent or collected units, unsupported fields and failed reads
+stay unknown. Signal 9, exit 137, memory snapshots and cumulative OOM counters do not establish a
+historical kill or cleared pressure. No host consumers or collected history are reconstructed, and
+the read changes neither worker retention nor L3's verified-resume responsibility.
 `alt issue upstream --title "…" -` uses that same broker/MCP boundary on either engine, with a
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
