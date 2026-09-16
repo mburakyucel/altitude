@@ -670,6 +670,7 @@ GitHub/service read through the project-bound socket, where altd supplies the pr
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
 write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check.
 The main-service read also returns [bounded loaded TLS evidence](CLI.md#loaded-service-evidence).
+It recognizes the native empty environment-file list's omitted line after a successful loaded read.
 It compares no baseline and performs no reload or lifecycle action. PID, start time and invocation
 identity support continuity checks independently of loaded settings; disk absence alone does not
 prove a drop-in is unloaded. The fields become available through normal merged-code activation.

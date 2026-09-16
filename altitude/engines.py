@@ -416,8 +416,9 @@ def service_status(unit: str = "altitude.service") -> dict:
             if "\\" in drop_ins:
                 raise ValueError
             record["owned_tls_drop_in_loaded"] = str(owned) in shlex.split(drop_ins)
-            record["indirect_environment"] = any([values[key] for key in (
-                "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment")])
+            # Native show emits no EnvironmentFiles line for an empty array, even with --all.
+            record["indirect_environment"] = any([values.get("EnvironmentFiles", ""),
+                                                  values["PassEnvironment"], values["UnsetEnvironment"]])
             environment = values["Environment"]
             if "\\" in environment:
                 raise ValueError

@@ -75,7 +75,9 @@ After normal activation, the main-service record includes:
 Unknown booleans remain null, never false. Native read or parsing failures return a fixed `error`
 without raw diagnostics and retain evidence already obtained. Unsupported native escaping, malformed
 assignments and duplicate TLS keys remain unknown. Unset values do not prove application defaults
-or the running certificate. These are read-time observations, not an atomic disk/manager snapshot.
+or the running certificate. Native `show` omits `EnvironmentFiles` when its list is empty; after a
+successful loaded-service read this means no environment files. Other missing properties stay unknown.
+These are read-time observations, not an atomic disk/manager snapshot.
 A removed disk file can remain loaded with `need_daemon_reload=true`; an unchanged active PID does
 not prove restoration. Compare loaded settings, reload state and process identity with the known
 pre-change baseline. The read performs no reload, apply or lifecycle action and accepts no property

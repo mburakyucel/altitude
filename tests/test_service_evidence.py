@@ -20,7 +20,7 @@ class TestServiceEvidence(AltitudeCase):
             "ActiveEnterTimestamp": "Tue 2026-09-15 10:00:00 UTC", "LoadState": "loaded",
             "InvocationID": "a" * 32, "ExecMainStartTimestampMonotonic": "123456789",
             "Environment": 'ALTITUDE_TLS=1 "ALTITUDE_TLS_DIR=/fictional/TLS identity=one" TOKEN=SECRET',
-            "EnvironmentFiles": "", "PassEnvironment": "", "UnsetEnvironment": "",
+            "PassEnvironment": "", "UnsetEnvironment": "",
             "DropInPaths": "", "NeedDaemonReload": "no",
         }
 
@@ -70,15 +70,15 @@ class TestServiceEvidence(AltitudeCase):
         self.assertEqual(self.read(self.native | {"Environment": ""})["loaded_tls_environment"], {})
         self.assertEqual(self.read(self.native | {"Environment": "ALTITUDE_TLS=0 ALTITUDE_TLS_DIR="})[
             "loaded_tls_environment"], {"ALTITUDE_TLS": "0", "ALTITUDE_TLS_DIR": ""})
-        for key in ("EnvironmentFiles", "PassEnvironment", "UnsetEnvironment"):
+        for key, value in {"EnvironmentFiles": "/fictional/SECRET.env (ignore_errors=no)",
+                           "PassEnvironment": "SECRET", "UnsetEnvironment": "SECRET"}.items():
             with self.subTest(key=key):
-                record = self.read(self.native | {key: "SECRET"})
+                record = self.read(self.native | {key: value})
                 self.assertIs(record["indirect_environment"], True)
                 self.assertNotIn("SECRET", json.dumps(record))
 
     def test_missing_native_properties_are_unknown_not_empty(self):
         for native, field in (("Environment", "loaded_tls_environment"),
-                              ("EnvironmentFiles", "indirect_environment"),
                               ("PassEnvironment", "indirect_environment"),
                               ("UnsetEnvironment", "indirect_environment"),
                               ("DropInPaths", "owned_tls_drop_in_loaded"),
@@ -96,6 +96,19 @@ class TestServiceEvidence(AltitudeCase):
             record = self.read(self.native | {native: "SECRET"})
             self.assertIsNone(record[field])
             self.assertNotIn("SECRET", json.dumps(record))
+
+    def test_native_empty_environment_files_omission_preserves_tls_evidence(self):
+        # systemctl-show's struct-array formatter emits no line for an empty EnvironmentFiles.
+        self.assertNotIn("EnvironmentFiles", self.native)
+        omitted = self.read()
+        explicit = self.read(self.native | {"EnvironmentFiles": ""})
+        self.assertEqual(omitted, explicit)
+        self.assertIsNone(omitted["error"])
+        self.assertIs(omitted["indirect_environment"], False)
+        self.assertEqual(omitted["loaded_tls_environment"]["ALTITUDE_TLS_DIR"], "/fictional/TLS identity=one")
+        failed = self.read(returncode=1)
+        self.assertIsNone(failed["indirect_environment"])
+        self.assertIsNone(failed["loaded_tls_environment"])
 
     def test_ambiguous_or_escaped_environment_never_becomes_a_guessed_selection(self):
         for raw in ('"ALTITUDE_TLS_DIR=/fictional/unterminated SECRET',
