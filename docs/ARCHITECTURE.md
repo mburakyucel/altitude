@@ -238,6 +238,10 @@ Pending, running, created, reused, not-applicable, failed and input-needed resul
 observed work. A queued notification or saved start request never proves an agent is running.
 Recorded task worktrees expose their own hook overrides; inherited healthy guards share the
 project result. Launch repair checks only the project and the launching task's checkout.
+Lock contention is a temporary launch hold: queued dispatch waits, and resume releases its unlaunched
+claim without consuming the authorized request, restoring its message batch ahead of later arrivals.
+The existing daemon scheduler retries the same request after release and rechecks guards, worktree
+provenance and lifecycle fences before launching. Actual setup/provenance errors retain their fault path.
 
 The permanent **Setup** control opens these results and actions. Programmatic repair installs or
 refreshes owned guards and establishes the coordinator command connection. **Retry** requests that

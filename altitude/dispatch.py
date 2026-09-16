@@ -1046,6 +1046,11 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             project_setup.ensure_guards(project, slug=slug)
         # A resume continues owned work, including edits, without needing a fresh remote base.
         _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
+    except project_setup.SetupBusy as exc:
+        T.release_resume_claim(project, slug, claim["id"], consume_request=False)
+        T.mark_resume_held(project, slug, str(exc), expected_daemon_request=daemon_request_id,
+                           expected_block_id=task.get("block_id"), **daemon_fence)
+        return {"held": str(exc)}
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence

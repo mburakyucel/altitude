@@ -6,8 +6,8 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from tests.support import AltitudeCase, git, make_repo
-from altitude import config, engines, git_policy, l3, project_setup as setup, server, state as S, tasks as T
+from tests.support import AltitudeCase, add_worktree, git, make_repo
+from altitude import config, dispatch, engines, git_policy, l3, project_setup as setup, server, state as S, tasks as T
 
 
 class ProjectSetup(AltitudeCase):
@@ -28,6 +28,178 @@ class ProjectSetup(AltitudeCase):
 
     def step(self, name, view=None):
         return next(s for s in (view or setup.observe(self.project))["steps"] if s["id"] == name)
+
+    def blocked_owner(self):
+        task = T.new(self.project, "Continue saved work", "Preserve the owner", hold_merge="Review required")
+        worktree = add_worktree(self.repo, task["slug"])
+        task.update(state="running", attempt=1, agent_id="old-worker", session_id="saved-session",
+                    worktree=str(worktree))
+        S.save_task(self.project, task)
+        T.block(self.project, task["slug"], "Review this approach", actor="l2", updates={"waiting_on": "burak"})
+        self.patch(engines, "worker_live", return_value=False)
+        return S.load_task(self.project, task["slug"]), worktree
+
+    def test_contended_daemon_resume_keeps_request_messages_and_one_saved_owner(self):
+        task, worktree = self.blocked_owner()
+        slug = task["slug"]
+        (worktree / "draft.txt").write_text("Keep unfinished work\n")
+        first = T.message(self.project, slug, "burak", "Continue with this approach", by="burak")
+        request = dispatch.request_task_operation(self.project, slug, "resume", "Continue authorized work", actor="l3")
+        before = S.load_task(self.project, slug)
+        with setup.operation_lock(self.project) as acquired:
+            self.assertTrue(acquired)
+            for _ in range(2):
+                held = dispatch.run_task_operation(self.project, slug)
+                self.assertTrue(held["pending"])
+                self.assertIn("setup", held["held"])
+                current = S.load_task(self.project, slug)
+                for key in ("agent_id", "session_id", "attempt", "questions", "hold_merge", "block_id", "resume_request"):
+                    self.assertEqual(current.get(key), before.get(key), key)
+                self.assertEqual(current["daemon_request"]["id"], request["request"]["id"])
+                self.assertEqual(current["daemon_request"]["status"], "executing")
+                self.assertFalse(current.get("resume_claim"))
+                self.assertFalse(current.get("dispatching"))
+                self.assertFalse(current.get("fault"))
+                self.assertFalse(current.get("resume_failed"))
+                self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
+            self.assertEqual(dispatch.pending_task_operations(self.project), [slug])
+            self.assertEqual(dispatch.resume_due(self.project), [])
+            second = T.message(self.project, slug, "burak", "Also keep my draft", by="burak")
+        self.assertFalse(config.INCIDENT_INDEX.exists())
+        self.assertEqual(len([e for e in S.read_events(self.project, slug) if e["kind"] == "resume-held"]), 1)
+        self.assertEqual(self.perform()["status"], "ready")
+
+        def launch(_engine, _name, session_id, prompt, **_kwargs):
+            self.assertEqual(session_id, "saved-session")
+            self.assertLess(prompt.index(first["text"]), prompt.index(second["text"]))
+            self.assertTrue(dispatch.run_task_operation(self.project, slug)["already_resuming"])
+            return {"returncode": 0, "agent": {"id": "replacement", "sessionId": session_id, "input_delivered": True}}
+
+        with mock.patch.object(engines, "resume_l2", side_effect=launch) as resume:
+            result = dispatch.run_task_operation(self.project, slug)
+            self.assertEqual(result["request"]["status"], "done")
+            self.assertTrue(dispatch.run_task_operation(self.project, slug)["idempotent"])
+            resume.assert_called_once()
+        current = S.load_task(self.project, slug)
+        self.assertEqual((current["state"], current["session_id"], current["attempt"]), ("running", "saved-session", 1))
+        self.assertEqual(current["questions"], before["questions"])
+        self.assertEqual(current["hold_merge"], "Review required")
+        self.assertFalse(current.get("resume_claim"))
+        self.assertEqual(T.pending(self.project, slug), [])
+        self.assertEqual((worktree / "draft.txt").read_text(), "Keep unfinished work\n")
+        self.assertFalse(config.INCIDENT_INDEX.exists())
+
+    def test_contended_message_wake_restores_racing_message_then_obeys_stop(self):
+        task, _ = self.blocked_owner()
+        slug = task["slug"]
+        first = T.message(self.project, slug, "burak", "Resume this work", by="burak")
+        real_ensure = setup.ensure_guards
+        arrived = []
+        def preflight(*args, **kwargs):
+            arrived.append(T.message(self.project, slug, "burak", "Later steering", by="burak"))
+            return real_ensure(*args, **kwargs)
+        with setup.operation_lock(self.project), mock.patch.object(setup, "ensure_guards", side_effect=preflight):
+            self.assertTrue(dispatch.resume(self.project, slug)["held"])
+        self.assertEqual(dispatch.resume_due(self.project), [slug])
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"], arrived[0]["id"]])
+        self.assertEqual(S.load_task(self.project, slug)["resume_request"], arrived[0]["id"])
+        with mock.patch.object(engines, "stop_l2_worker", return_value="Stopped"):
+            dispatch.stop(self.project, slug)
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        self.assertEqual(dispatch.resume(self.project, slug), {"waiting": True})
+        self.assertEqual(len(T.pending(self.project, slug)), 2)
+        self.assertEqual(S.load_task(self.project, slug)["hold_merge"], "Review required")
+
+    def test_contended_message_wake_continues_through_daemon_scheduler(self):
+        task, _ = self.blocked_owner()
+        slug = task["slug"]
+        T.message(self.project, slug, "burak", "Continue saved session", by="burak")
+        def spawn(_key, fn, *args):
+            fn(*args)
+            return True
+        with mock.patch.object(server, "spawn", side_effect=spawn), mock.patch.object(
+                engines, "resume_l2", return_value={"returncode": 0, "agent": {
+                    "id": "replacement", "sessionId": "saved-session", "input_delivered": True}}) as launch:
+            with setup.operation_lock(self.project):
+                self.assertTrue(server.request_task_resume(self.project, slug))
+                launch.assert_not_called()
+            self.assertTrue(server.request_task_resume(self.project, slug))
+            self.assertFalse(server.request_task_resume(self.project, slug))
+            launch.assert_called_once()
+        self.assertEqual(S.load_task(self.project, slug)["state"], "running")
+        self.assertEqual(T.pending(self.project, slug), [])
+
+    def test_new_question_during_contention_supersedes_resume_without_fault(self):
+        task, _ = self.blocked_owner()
+        slug = task["slug"]
+        message = T.message(self.project, slug, "burak", "Continue", by="burak")
+        real_ensure = setup.ensure_guards
+        def preflight(*args, **kwargs):
+            T.escalate(self.project, slug, "A newer decision is needed")
+            return real_ensure(*args, **kwargs)
+        with setup.operation_lock(self.project), mock.patch.object(setup, "ensure_guards", side_effect=preflight):
+            with self.assertRaises(dispatch.ResumeFailure):
+                dispatch.resume(self.project, slug)
+        current = S.load_task(self.project, slug)
+        self.assertEqual(current["blocked_reason"], "A newer decision is needed")
+        self.assertNotEqual(current["block_id"], task["block_id"])
+        self.assertFalse(current.get("resume_claim"))
+        self.assertFalse(current.get("fault"))
+        self.assertFalse(current.get("resume_after"))
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        pending = T.pending(self.project, slug)
+        self.assertEqual(pending[0]["id"], message["id"])
+        self.assertEqual(pending[1]["text"], "A newer decision is needed")
+        self.assertFalse(pending[1]["wake"])
+        self.assertFalse(config.INCIDENT_INDEX.exists())
+
+    def test_queued_launch_waits_for_setup_release_without_fault_or_attempt(self):
+        task = T.new(self.project, "Queued launch", "Launch when setup is ready")
+        with mock.patch.object(engines, "start_l2", return_value={"returncode": 0, "agent": {
+                "id": "first-worker", "sessionId": "first-session"}}) as launch:
+            with setup.operation_lock(self.project):
+                server.dispatch_waiting(self.project)
+                current = S.load_task(self.project, task["slug"])
+                self.assertEqual((current["state"], current["attempt"]), ("queued", 0))
+                self.assertFalse(current.get("fault"))
+                launch.assert_not_called()
+            server.dispatch_waiting(self.project)
+            server.dispatch_waiting(self.project)
+            launch.assert_called_once()
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+        self.assertFalse(config.INCIDENT_INDEX.exists())
+
+    def test_setup_and_provenance_failures_after_contention_still_fail_closed(self):
+        task, worktree = self.blocked_owner()
+        slug = task["slug"]
+        first = T.message(self.project, slug, "burak", "Continue", by="burak")
+        dispatch.request_task_operation(self.project, slug, "resume", "Authorized resume", actor="l3")
+        with setup.operation_lock(self.project):
+            self.assertTrue(dispatch.run_task_operation(self.project, slug)["held"])
+        custom = self.repo / ".git/hooks/pre-commit"
+        custom.write_text("#!/bin/sh\nexit 0\n")
+        custom.chmod(0o755)
+        with self.assertRaises(dispatch.ResumeFailure):
+            dispatch.run_task_operation(self.project, slug)
+        current = S.load_task(self.project, slug)
+        self.assertEqual(current["fault"], "project-setup")
+        self.assertEqual(current["daemon_request"]["status"], "failed")
+        self.assertFalse(current.get("resume_claim"))
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
+
+        custom.unlink()
+        setup.ensure_guards(self.project, slug=slug)
+        git("switch", "-c", "wrong-owner", cwd=worktree)
+        dispatch.request_task_operation(self.project, slug, "resume", "Guards repaired", actor="l3")
+        with self.assertRaisesRegex(dispatch.ResumeFailure, "wrong-owner"):
+            dispatch.run_task_operation(self.project, slug)
+        current = S.load_task(self.project, slug)
+        self.assertEqual(current["fault"], "task-git-provenance")
+        self.assertEqual(current["daemon_request"]["status"], "failed")
+        self.assertFalse(current.get("resume_claim"))
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
 
     def test_fresh_setup_records_real_pending_running_and_verified_installation(self):
         requested = setup.request(self.project, "repair", actor="operator")

@@ -81,6 +81,9 @@ worker has restarted: capacity and recovery waits remain visible. Done, archived
 remain read-only; reopening their lifecycle is a separate, unsettled product decision.
 An exited worker whose transient unit has been collected can resume once systemd confirms it is
 inactive; unavailable or ambiguous status keeps the task blocked to prevent overlapping workers.
+Temporary project setup contention keeps launches queued and authorized resumes pending. The daemon
+continues after the setup lock is released, preserving the saved session, messages, questions and
+merge holds. Actual setup or worktree provenance failures still require verified recovery.
 
 Large or complex issues can move through small, reviewable increments that keep supported user journeys
 working. L3 records the breakdown and delivery evidence in the issue; each task completes its agreed

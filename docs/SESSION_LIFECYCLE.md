@@ -593,6 +593,9 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 1. a task blocked before any launch goes back to the queue;
 2. `resume_after` makes a message request or operational retry due; an exhausted window of a pinned engine or a
    WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
+   temporary setup lock contention also retains the authorized request and restores the unlaunched
+   claim's inbox batch. The daemon retries after release with the same session and attempt; questions,
+   Stop authority and merge holds remain intact, and genuine setup/provenance failures still block;
 3. the owner's worktree path, branch and adopted ancestry are validated without a remote fetch or
    deployment gate, and a worker that is still live is stopped first;
    systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
