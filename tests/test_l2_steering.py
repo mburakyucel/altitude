@@ -106,6 +106,7 @@ class TestL2Steering(AltitudeCase):
                 task = T.new(self.project, f"Archive during {name}", "Keep this request readable.")
                 target = S.task_dir(self.project, task["slug"]) / name
                 read_text = Path.read_text
+                activity = server.transcript.activity
                 attempted = threading.Event()
                 errors = []
 
@@ -127,8 +128,15 @@ class TestL2Steering(AltitudeCase):
                         self.assertTrue(attempted.wait(5))
                     return read_text(path, *args, **kwargs)
 
+                def after_archive(project, slug):
+                    writer.join(5)
+                    self.assertFalse(writer.is_alive(), "activity runs after releasing the snapshot lock")
+                    return activity(project, slug)
+
                 try:
-                    with mock.patch.object(Path, "read_text", new=read), mock.patch.object(server, "log") as log:
+                    with mock.patch.object(Path, "read_text", new=read), \
+                            mock.patch.object(server.transcript, "activity", new=after_archive), \
+                            mock.patch.object(server, "log") as log:
                         snapshot = self.view(task)
                         self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
                 finally:
