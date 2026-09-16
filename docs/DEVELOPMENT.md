@@ -298,8 +298,7 @@ completed hosted verification; local evidence remains accessible until review is
 
 Use `make check` for per-phase wall/user/system timings and retain the runner summaries with the
 source SHA and tool versions. Separate dependency/browser installation from warm execution.
-The serial baseline supplied for this change is self-hosted run
-[35065148992](https://github.com/mburakyucel/altitude/actions/runs/35065148992): 13 min 54 s
+The serial baseline supplied for this change is self-hosted run 35065148992: 13 min 54 s
 on four CPUs, including Python at 4 min 15 s and 316 browser tests at 9 min 12 s with two workers.
 A warm concurrent implementation run on 2026-09-16 on 24 available CPUs measured Python at
 142.86 s (1,343 tests, one optional native probe skipped), web tests at 12.17 s (343 passed),
