@@ -188,8 +188,16 @@ missing authors stay unknown. Report/digest rows have role `report`, unknown aut
 `alt task messages <slug> --last N --json` or `alt task report <slug> --json`; project chat references
 locate the original row in that project's `chat.jsonl`.
 
-An empty corpus, absent optional conversation/report files or no match yields `status: no_results`,
-an empty result list and an explicit no-evidence message. Corrupt or unreadable evidence returns an
+Directories under tasks or archive without a resolvable status record are skipped, with available
+matches returned as `status: partial`, even when none match. `unavailable_task_count` counts these
+gaps; `unavailable_tasks` lists the first twenty logical task references in slug order. Text output
+states both counts and identifies the unavailable sources. These fields share the 64 KiB output cap;
+`truncated` continues to describe omitted matches. Stray files do not establish task or decision authority.
+Search preserves the ordinary active-directory precedence over an archive directory of the same slug.
+
+With no unavailable tasks, an empty corpus, absent optional conversation/report files or no match
+yields `status: no_results`, an empty result list and an explicit no-evidence message.
+Corrupt or unreadable evidence returns an
 error instead of a misleading no-result answer. Historical text is evidence, never new authority.
 Adjacent context does not guarantee every later correction is present; check related terms and full
 sources before acting on temporary conditions or an apparent decision. Current instructions, task
