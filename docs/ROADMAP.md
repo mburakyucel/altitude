@@ -9,7 +9,7 @@ delivery/acceptance links; selected work remains subject to proposal, security, 
 | Priority | Scope and owner/dependency |
 | --- | --- |
 | P0 selected | #349/#348 project Setup, Git guards and scoped repair stay with `make-project-setup-visible-and-repairabl`; its design/merge holds remain independent. |
-| P0 selected | #225 native runtime, #226 installation/update lifecycle and private-trial #219 onboarding stay with `deliver-portable-installation-and-macos`. The Linux archive increment precedes native Mac confinement and host evidence. |
+| P0, Linux increment delivered | #225 native runtime, #226 installation/update lifecycle and private-trial #219 onboarding: PR #356 delivers the Linux archive. Remaining work is documented below for L3's later intake; native Mac implementation and host evidence are deferred. |
 | P0 before access sharing | Reconcile #233's recorded history audit and changes after its cutoff; resolve material exposure findings privately. Audit/publication authority stays separate from runtime installation. |
 | P1 after core installation | #231 private backup/staged restore and #224 remaining continuity/reboot acceptance. Neither authorizes live-provider tests or production lifecycle operations. |
 | Reassess only if trial-blocking | #222/#334 confusion observed during the trial; no broad redesign prerequisite. Composer/drafts stay with `preserve-project-drafts-and-make-voice-p`. |
@@ -21,6 +21,38 @@ their full acceptance, including required operator review, is verified. Public r
 visibility, invitations and security-contact decisions remain separate. Private-trial readiness
 requires exact OS/architecture, application/engine versions and observed compatibility evidence;
 fixtures do not establish fresh-machine or live-provider success.
+
+### Portable installation: delivered and remaining
+
+[PR #356](https://github.com/mburakyucel/altitude/pull/356) delivers the Linux CLI, daemon and
+built UI archive, localhost HTTPS with explicit certificate trust, prerequisite/readiness checks,
+recoverable updates and uninstall with retained user data. Independent review and the exact-candidate
+suite pass: 1,342 Python tests, 343 web tests, typecheck/build and 316 phone/desktop browser cases;
+one optional host probe is skipped. Deployment is verified. These checks do not prove a fresh-machine
+installation, native Mac behavior or engine authentication.
+
+The operator's September 16, 2026 direction finishes the installation task after this handoff and
+defers physical Mac testing. The private-trial path remains Linux-only. L3 retains the following
+remaining acceptance under #225/#226/#219/#350; those issues stay open:
+
+- **Native macOS runtime and installation:** implement the common engine/authority contract with
+  native per-user service lifecycle, confinement and installed update/recovery behavior. macOS 15
+  and 26 on Apple silicon are proposed targets, not supported platforms. No Mac runtime is delivered.
+- **Native evidence:** on a disposable Mac account, record exact OS/chip, application, Python and
+  engine versions. Verify allowed writes and denied writes outside the task, ordinary and detached
+  descendant Stop, timeout after owner exit, restart/adoption without duplicate workers, preserved
+  sessions/messages/holds, and login/logout behavior. Record reboot evidence separately. Fixtures
+  alone cannot prove these guarantees; weaker confinement or a new privilege model needs review.
+- **Install-to-first-task acceptance:** verify a clean-machine install, explicit OS/browser trust,
+  one-engine readiness, project Setup/guards, first conversation, isolated task, Stop/resume and
+  checked PR delivery. Cover failed update/rollback and uninstall retention on each claimed platform;
+  keep untested rows and actionable failures explicit in the onboarding/compatibility documentation.
+
+The operator offers a Mac for later testing, with timing still deferred; no immediate Mac use or
+paid runner is authorized. Native probes make no provider calls or model downloads. Live-provider
+testing retains its separate standing deferral. Project Setup/guards and composer/drafts retain
+their existing ownership; future integration consumes those interfaces. Public-release/history-audit
+work and P1 backup/continuity remain separately sequenced above.
 
 ## Early-user onboarding and public release
 
@@ -55,8 +87,8 @@ remaining validation limits explicit; this does not establish clean-machine or p
 
 The direction is the same project and task workflow across CLI engines and supported machines.
 The current [setup](SETUP.md) supplies a private Linux x86_64 archive; Ubuntu 24.04 is its initial
-target. The approved next platform is macOS 15/26 Apple silicon after common confinement is proven.
-That is implementation scope, not a support claim or completed host validation.
+target. Native macOS 15/26 Apple-silicon implementation and validation remain deferred as described
+above. The common confinement contract still needs proof before any support claim.
 
 | Work | Intended outcome | Current boundary |
 | --- | --- | --- |
