@@ -16,6 +16,10 @@ class SetupError(git_policy.GitPolicyError):
     pass
 
 
+class SetupBusy(T.TransitionError):
+    """Launch preflight waits for the current setup operation to release its lock."""
+
+
 def path(project: str):
     return config.project_dir(project) / "setup.json"
 
@@ -304,7 +308,7 @@ def ensure_guards(project: str, *, slug: str | None = None) -> None:
     try:
         with operation_lock(project) as acquired:
             if not acquired:
-                raise T.TransitionError("Project setup is in progress; launch waits for its result.")
+                raise SetupBusy("Project setup is in progress; launch waits for its result.")
             for identity, _, checkout in _guard_paths(project, slug):
                 result = git_policy.repair_hooks(checkout)
                 _save_guard(project, identity, result)
