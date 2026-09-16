@@ -56,6 +56,31 @@ same-user altd Unix socket. The socket fixes the project independently of reques
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
 repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
 
+### Loaded service evidence
+
+The coordinator tool reads `{"kind":"service","unit":"altitude.service"}`. The same record is
+available under `service` in `alt repo --json` (coordinator tool:
+`{"kind":"alt","args":["repo","--json"]}`). The status shell shim retains its compact process line.
+After normal activation, the main-service record includes:
+
+| Field | Evidence |
+| --- | --- |
+| `pid`, `last_restart`, `invocation_id`, `started_monotonic` | Native process identity and start observations; compare with a prior observation for continuity. |
+| `need_daemon_reload` | Native definition-reload requirement: true, false, or null when unknown. |
+| `owned_tls_drop_in_loaded` | Exact owned `90-altitude-source-tls.conf` path appears in loaded drop-ins. |
+| `owned_tls_drop_in_present` | That fixed source-service drop-in exists on disk, including a symlink; contents and ownership are not verified. |
+| `loaded_tls_environment` | Only direct `ALTITUDE_TLS` and `ALTITUDE_TLS_DIR` assignments; `{}` means both unset, an empty string stays empty, and null means unknown. |
+| `indirect_environment` | Any environment-file, pass-environment or unset-environment setting exists; true or null leaves effective next-start selection unresolved. |
+
+Unknown booleans remain null, never false. Native read or parsing failures return a fixed `error`
+without raw diagnostics and retain evidence already obtained. Unsupported native escaping, malformed
+assignments and duplicate TLS keys remain unknown. Unset values do not prove application defaults
+or the running certificate. These are read-time observations, not an atomic disk/manager snapshot.
+A removed disk file can remain loaded with `need_daemon_reload=true`; an unchanged active PID does
+not prove restoration. Compare loaded settings, reload state and process identity with the known
+pre-change baseline. The read performs no reload, apply or lifecycle action and accepts no property
+or file selectors. Other admitted Altitude unit reads retain process status only.
+
 ### Explicit provider handoff
 
 L3 or the operator can continue an exited owner as a fresh attempt on another configured engine:

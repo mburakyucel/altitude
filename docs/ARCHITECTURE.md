@@ -579,6 +579,14 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
+For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
+process identity, definition-reload state, the two direct TLS environment assignments, a boolean
+for indirect environment sources, and exact owned source-TLS drop-in membership. A metadata-only
+disk read separately reports that fixed drop-in's presence. Worker-unit reads retain process status
+only. Raw environment, other drop-in paths, file contents and native diagnostics are not returned.
+Missing or ambiguous fields stay null; direct assignments do not establish effective next-start TLS
+when indirect environment sources exist. The read neither compares a saved baseline nor certifies
+restoration. [The response contract](CLI.md#loaded-service-evidence) describes recovery interpretation.
 Git log/diff/show reads include full patches and historical files, disable external diff/text-conversion
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;

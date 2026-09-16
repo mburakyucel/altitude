@@ -669,6 +669,10 @@ disabled, and the altitude journal. Claude's runtime shims and the MCP tool send
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
 write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check.
+The main-service read also returns [bounded loaded TLS evidence](CLI.md#loaded-service-evidence).
+It compares no baseline and performs no reload or lifecycle action. PID, start time and invocation
+identity support continuity checks independently of loaded settings; disk absence alone does not
+prove a drop-in is unloaded. The fields become available through normal merged-code activation.
 `alt issue upstream --title "…" -` uses that same broker/MCP boundary on either engine, with a
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
