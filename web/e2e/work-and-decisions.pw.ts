@@ -336,7 +336,7 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
       v.main.getByText(/^1 question · 1 stopped task/),
       card,
       card.getByText("L3 brought this to you", { exact: true }),
-      card.locator(".chip", { hasText: project.name }),
+      v.main.getByRole("heading", { name: project.name, level: 2, exact: true }),
       card.getByText(decision.question, { exact: true }),
       card.getByRole("button", { name: "Fast-forward it", exact: true }),
       card.getByRole("link", { name: "Open L2 chat", exact: true }),
@@ -380,6 +380,17 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
     action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
     visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
     hidden: [card.locator(".spinner")],
+  });
+
+  await clearRoutes(page);
+  await overlay(page, project.name, state);
+  await interceptWrites(page, { decideStatus: 403 });
+  await walk.open("/");
+  await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
+  await card.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(card.getByRole("button", { name: "Fast-forward it", exact: true })).toBeDisabled();
+  await walk.state("06b-denied-retains-owner-and-response", {
+    visible: [v.main.getByRole("heading", { name: project.name, level: 2, exact: true }), card.getByText(/You cannot send answers here/)], hidden: [],
   });
 
   await clearRoutes(page);

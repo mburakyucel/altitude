@@ -172,8 +172,8 @@ export function Question({ decision, ...props }: QuestionProps & { decision: Dec
   return <QuestionSet decisions={[decision]} {...props} />;
 }
 
-export function DecisionCard({ decision, decisions = [decision], chip = false, selected = false, from = "project", disabled = false }: {
-  decision: Decision; decisions?: Decision[]; chip?: boolean; selected?: boolean;
+export function DecisionCard({ decision, decisions = [decision], selected = false, from = "project", disabled = false }: {
+  decision: Decision; decisions?: Decision[]; selected?: boolean;
   from?: "needs" | "project"; disabled?: boolean;
 }) {
   const project = useProject(decision.project);
@@ -189,7 +189,6 @@ export function DecisionCard({ decision, decisions = [decision], chip = false, s
     }}>
       <div className="decision-kind" data-tone={kind.tone}>
         <span className="kind-label">{kind.label}</span>
-        {chip ? <span className="chip">{decision.project}</span> : null}
         <span className="ml-auto text-muted" title={exactTime(decision.asked)}>{ageText(decision.asked)}</span>
       </div>
       <Link className="decision-task" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>

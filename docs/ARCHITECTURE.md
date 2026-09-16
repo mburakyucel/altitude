@@ -1061,6 +1061,10 @@ moves it out of Current. Saving an answer does not assert that the worker resume
 Only global Needs you carries a numeric attention badge. Project rail and switcher rows retain
 their state dots. The badge counts operator questions awaiting a response plus existing operational
 attention items; Needs you and project summaries label questions and operational items separately.
+Needs you groups items by their `project` into contiguous sections with fully wrapping project
+headings on phone and desktop, including question groups, reviews, stops and faults. Projects
+follow first appearance in the queue; items retain their order within each project. Sections are
+independent of the selected project and remain visible on saved reads after a failed refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
