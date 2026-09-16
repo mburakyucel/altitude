@@ -350,6 +350,14 @@ class TestSystemFault(AltitudeCase):
         running.update({"state": "running"}); S.save_task(PROJECT, running)
         done = T.new(PROJECT, "finished", "request", actor="burak")
         done.update({"state": "done"}); S.save_task(PROJECT, done)
+        cases = [({}, "paused"), ({"waiting_on": None}, "paused"),
+                 ({"waiting_on": "l3"}, "waiting on L3"),
+                 ({"waiting_on": T.OPERATOR_MESSAGE_ROLE}, f"waiting on {config.OPERATOR}"),
+                 ({"stop_id": "operator-stop", "waiting_on": "l3"}, "stopped")]
+        blocked = []
+        for index, (fields, label) in enumerate(cases):
+            task = T.new(PROJECT, f"Parked {index}", "request")
+            blocked.append((T.block(PROJECT, task["slug"], "Saved wait", updates=fields), label))
         with mock.patch.object(server, "log"):
             server.restart_notice()
         notice = [row for row in self.queued() if row["trigger"] == "restart"]
@@ -358,6 +366,8 @@ class TestSystemFault(AltitudeCase):
         self.assertIn(f"{faulty['slug']}: blocked (fault worker:{faulty['slug']})", text)
         self.assertIn(f"{running['slug']}: running (running)", text)
         self.assertNotIn(done["slug"], text)
+        for task, label in blocked:
+            self.assertIn(f"{task['slug']}: blocked ({label}); Saved wait", text)
         self.assertIn("alt task resume", text)
 
     def test_repair_task_fault_reaches_the_inbox_without_waking_l3(self):

@@ -109,6 +109,27 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(row["revision"], 1)
         self.assertEqual(T.question_views(self.project, task["slug"])[0]["status"], "resolved")
 
+    def test_daemon_park_never_invents_operator_attention(self):
+        for fields in ({}, {"waiting_on": None}):
+            with self.subTest(fields=fields):
+                task = T.new(self.project, f"Park {len(S.list_tasks(self.project))}", "Wait for the landing window.")
+                T.block(self.project, task["slug"], "Landing window pending", updates=fields)
+                self.assertEqual(T.decisions(self.project), [])
+                row = next(row for row in digest.queue_status()["waiting"] if row["slug"] == task["slug"])
+                self.assertEqual((row["kind"], row["reason"]), ("paused", "paused: Landing window pending"))
+
+    def test_resolved_coordination_question_then_report_park_is_paused(self):
+        task = self.blocked("Landing window", "May I land now?", waiting_on="l3")
+        question = task["questions"][-1]
+        answer = T.message(self.project, task["slug"], "l3", "Wait for the preceding delivery.")
+        T.resolve_question(self.project, task["slug"], question["id"], 1, answer["id"],
+                           disposition="answered", reason="Landing order recorded", expected_attempt=1)
+        T.resume(self.project, task["slug"])
+        T.block(self.project, task["slug"], "Landing window pending", actor="altd")
+        self.assertEqual(T.decisions(self.project), [])
+        [row] = digest.queue_status()["waiting"]
+        self.assertEqual((row["kind"], row["reason"]), ("paused", "paused: Landing window pending"))
+
     def test_accept_records_the_explicit_recommendation_once_and_survives_delivery(self):
         task = self.blocked("Landscape rule", DILEMMA)
         question = task["questions"][-1]

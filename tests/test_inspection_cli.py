@@ -208,6 +208,19 @@ class TestInspectionCLI(AltitudeCase):
         queued = [row for row in restarted["waiting"] if row["state"] == "queued"]
         self.assertEqual({row["kind"] for row in queued}, {"restart"})
 
+    def test_queue_distinguishes_parks_stops_and_explicit_waits(self):
+        self.task("parked", state="blocked", block_actor="altd", blocked_reason="Landing window pending")
+        self.task("stopped", state="blocked", stop_id="operator-stop", blocked_reason="Operator stopped the task")
+        self.task("l3-wait", state="blocked", waiting_on="l3", blocked_reason="Coordination question")
+        self.task("operator-wait", state="blocked", waiting_on="burak", blocked_reason="Choose a colour")
+        text = cli("queue")
+        rows = {row["slug"]: row for row in json.loads(cli("queue", "--json"))["waiting"]}
+        self.assertEqual(rows["parked"]["reason"], "paused: Landing window pending")
+        self.assertEqual(rows["stopped"]["reason"], "stopped: Operator stopped the task")
+        self.assertEqual(rows["l3-wait"]["reason"], "waiting on L3: Coordination question")
+        self.assertEqual(rows["operator-wait"]["reason"], f"waiting on {config.OPERATOR}: Choose a colour")
+        self.assertIn("paused: Landing window pending", text)
+
     def test_repo_combines_git_restart_faults_and_systemd(self):
         (self.repo / "README.md").write_text("changed\n")
         (self.repo / "new.txt").write_text("new\n")

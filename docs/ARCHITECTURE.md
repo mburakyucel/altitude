@@ -1150,7 +1150,10 @@ comes from the task's state and, for a queued task, from `GET /api/overview` `wi
 the queue's own reason (the WIP limit, an engine hold, a restart in progress, a resume checkpoint,
 or plain dispatch), so the card never names a file list. A task blocked waiting on L3 reads "Waits
 for L3" with the running dot, and the rail's project dot counts it as running (`counts.waits_l3`);
-only a decision in the queue turns either dot amber. The work panel (spec §3.7) reads the project's
+only a decision in the queue turns either dot amber. An owner/daemon park without a question, fault
+or operator stop reads "Paused" with the idle dot. Stop evidence, not the block recorder, identifies
+"Stopped". Queue and restart inventory labels share `tasks.block_status`; an unset wait owner is
+a pause, never an inferred operator wait or attention item. The work panel (spec §3.7) reads the project's
 tasks and the overview queue filtered to the project. **Current** contains every unfinished task
 once as a compact status row; tasks done or rejected in the last seven days fold under **Done this
 week**. A row with an open operator question shows **Needs you** and its question count alongside

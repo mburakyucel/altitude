@@ -330,7 +330,7 @@ describe("Project page", () => {
   });
 
   it("keeps an explicit stop and fault visible alongside the unanswered question", async () => {
-    const fixtures: Fixtures = { project: { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", block_actor: "operator" }] } };
+    const fixtures: Fixtures = { project: { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", stop_id: "operator-stop" }] } };
     mockFetch(fixtures);
     setViewport(1440);
     const { queryClient } = renderApp({ route: "/projects/altitude" });

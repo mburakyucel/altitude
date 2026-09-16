@@ -170,7 +170,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   including missing or stale readings. Each usage window appears independently: an absent window
   is explicit, zero remains a reading, and available figures stay visible when stale.
 - **Project work at a glance.** Work lists every current project task once, including tasks
-  awaiting your answer, running, queued or waiting on L3. Compact status rows open the owning
+  awaiting your answer, running, queued, waiting on L3 or paused by their owner. An unassigned pause
+  reads **Paused** with a neutral dot; **Stopped** identifies an operator stop. Compact status rows open the owning
   conversation at its question when one needs you; questions and quick answers live in Needs you
   and that chat. Recent completed tasks stay under **Done this week**. Only global Needs you has
   an attention badge: unanswered questions plus operational attention items, labelled separately

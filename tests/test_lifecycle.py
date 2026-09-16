@@ -17,8 +17,9 @@ class TestLifecycle(AltitudeCase):
         T.dispatch(self.project, t["slug"], attempt=1, session_id="sid", agent_id="aid", worktree="/wt", branch="b")
         self.assertEqual(S.load_task(self.project, t["slug"])["attempt"], 1)
 
-        T.block(self.project, t["slug"], "Which rollback signal should I use?")
-        self.assertEqual(T.decisions(self.project)[0]["kind"], "stopped", "a block by altd without an L2 question")
+        parked = T.block(self.project, t["slug"], "Landing window pending")
+        self.assertEqual(T.decisions(self.project), [], "a daemon park has no operator question")
+        self.assertEqual(T.block_status(parked), ("paused", "paused"))
 
         T.resume(self.project, t["slug"])
         T.report(self.project, t["slug"], {"verdict": "ok", "prs": [140]})

@@ -651,7 +651,7 @@ def request_project_setup(project: str, action: str, *, actor: str, expected: st
 
 
 def restart_notice() -> None:
-    """One message per project with active tasks: L3 resumes what a fault had stopped and leaves Burak's to him."""
+    """Give L3 the active tasks and their explicit waits after a restart."""
     for project in config.load_projects():
         if not config.is_managed(project):
             continue
@@ -660,14 +660,13 @@ def restart_notice() -> None:
             continue
         lines = []
         for t in active:
-            tag = (f"fault {t['fault']}" if t.get("fault") else f"waiting on {t.get('waiting_on', 'burak')}"
-                   if t["state"] == "blocked" else t["state"])
+            tag = T.block_status(t)[1] if t["state"] == "blocked" or t.get("fault") else t["state"]
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
                          + "\n\n" + incidents.upstream_summary(project)
                          + "\n\nCheck each with `alt task status <slug>`. A restart does not resolve checkout faults. "
                          "Resume only after observing that the cause is gone (`alt task resume <slug> --reason \"<observed fix>\"`); leave a task waiting on "
-                         "Burak to him; a running task keeps "
+                         "the operator to them; a running task keeps "
                          "its worker. Reply in two or three plain sentences.", trigger="restart")
         log(f"[{project}] restart notice queued for L3 ({len(active)} active tasks)")
 

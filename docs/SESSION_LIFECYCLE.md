@@ -987,6 +987,10 @@ No summarizer or duplicate reply is generated. View changes preserve the draft a
 blocked questions use the existing question conversation, and finished tasks remove the preview,
 composer and Stop.
 
+An owner/daemon park without a question, fault or operator stop remains blocked and displays
+**Paused** with an idle card dot. Queue and restart inventories call an unassigned wait **paused**;
+they attribute waits only to a recorded recipient. **Stopped** identifies an operator stop.
+
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline
 in time order, and the page renders it as a conversation. Prompts (the brief, a resume, a task message the

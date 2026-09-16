@@ -44,12 +44,11 @@ PROVIDER_BASELINE = {
 OPERATOR_BASELINE = {
     "README.md": 3,
     "altitude/config.py": 1,
-    "altitude/digest.py": 3,
     "altitude/dispatch.py": 3,
     "altitude/incidents.py": 2,
     "altitude/l3.py": 3,
     "altitude/land.py": 4,
-    "altitude/server.py": 14,
+    "altitude/server.py": 11,
     "altitude/tasks.py": 9,
     "bin/alt": 11,
     "docs/ARCHITECTURE.md": 4,

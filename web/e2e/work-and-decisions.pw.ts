@@ -208,11 +208,14 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   const { decision, blocked } = dilemma(project.name, base);
   const queued: Row = { slug: "walk-queued", state: "queued", title: "Add the beta stage", updated: minutesAgo(5) };
   const waitsL3: Row = { slug: "walk-l3", state: "blocked", title: "Score pronunciation per phoneme", updated: minutesAgo(3), waiting_on: "l3", blocked_reason: "which suite?" };
+  const parked: Row = { slug: "walk-parked", state: "blocked", title: "Wait for the landing window", block_actor: "altd", waiting_on: null };
+  const stoppedTask: Row = { slug: "walk-stopped", state: "blocked", title: "Stopped validation", stop_id: "operator-stop" };
+  const faulty: Row = { slug: "walk-fault", state: "blocked", title: "Repair checkout", fault: "checkout", blocked_reason: "Checkout unavailable." };
   const done: Row = { slug: "walk-done", state: "done", title: "Link task PR chips", updated: minutesAgo(90), prs: [208] };
   const state: Overlay = {
     queue: [decision],
     wip: { per_project: {}, machine: 1, waiting: [{ project: project.name, slug: queued.slug, why: "dispatch", hold: `WIP limit 1 reached for ${project.name} (1 running)` }] },
-    project: (json) => ({ ...json, tasks: [...(json.tasks as Row[]).map((t) => t.slug === base.slug ? blocked : t), queued, waitsL3], archive: [done] }),
+    project: (json) => ({ ...json, tasks: [...(json.tasks as Row[]).map((t) => t.slug === base.slug ? blocked : t), queued, waitsL3, parked, stoppedTask, faulty], archive: [done] }),
     task: { [base.slug]: blocked },
   };
   await overlay(page, project.name, state);
@@ -229,6 +232,18 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(waiting).toHaveAttribute("href", new RegExp(`question=${decision.id}&revision=1`));
   await expect(v.panel.getByRole("article")).toHaveCount(0);
   await expect(v.panel.getByRole("button", { name: "Fast-forward it", exact: true })).toHaveCount(0);
+  const pausedRow = current.getByRole("link", { name: `${parked.title} · Paused`, exact: true });
+  const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · Stopped`, exact: true });
+  const faultRow = current.getByRole("link", { name: `${faulty.title} · Blocked: Checkout unavailable.`, exact: true });
+  await expect(pausedRow.locator(".dot")).toHaveAttribute("data-state", "idle");
+  await expect(stoppedRow.locator(".dot")).toHaveAttribute("data-state", "danger");
+  await expect(faultRow.locator(".dot")).toHaveAttribute("data-state", "danger");
+  await expect(waiting.locator(".dot")).toHaveAttribute("data-state", "waiting");
+  await expect(pausedRow).toHaveAttribute("href", `/projects/${project.name}/tasks/${parked.slug}`);
+  await walk.state("01a-paused-stopped-fault-and-operator-answer", {
+    visible: [pausedRow, stoppedRow, faultRow, waiting.getByText("Waiting for your answer", { exact: true })],
+    hidden: [pausedRow.getByText(/Needs you|Stopped/)],
+  });
   await walk.state("01-current-waiting-queued-and-l3", {
     visible: [waiting.getByText(/Needs you/), current.getByRole("link", { name: startsWith(queued.title as string) }), current.getByRole("link", { name: `${waitsL3.title} · Waits for L3`, exact: true }), fold],
     hidden: [v.panel.getByText(decision.question, { exact: true }), v.panel.getByRole("link", { name: /^Link task PR chips/ })],
@@ -259,7 +274,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await walk.open(projectRoute(project.path, v.phone));
   await v.openPanel();
   await walk.state("04-empty-current-retains-history", {
-    visible: [v.panel.getByText("No current tasks. Ask L3 to start something.", { exact: true }), v.panel.getByText("0 current · 1 done this week", { exact: true }), fold], hidden: [current],
+    visible: [v.panel.getByText("No current tasks. Ask L3 to start something.", { exact: true }), v.panel.getByText("0 current · 1 done this week", { exact: true }), fold], hidden: [current, pausedRow, stoppedRow, faultRow],
   });
   await clearRoutes(page);
   await overlay(page, project.name, { projectDelay: 4_000 });
