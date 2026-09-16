@@ -60,8 +60,8 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   const fault = str(task["fault"]);
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = str(task["waiting_on"]) === "l3";
-  const actor = str(task["block_actor"]);
-  const stopped = decision?.kind === "stopped" || Boolean(actor && !["l2", "l3"].includes(actor));
+  const steering = task["steering"] as { state?: string } | undefined;
+  const stopped = decision?.kind === "stopped" || steering?.state === "stopped" || Boolean(task["stop_id"]);
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
   const engine = l2Label(task, overview);
   const prs = (Array.isArray(task["prs"]) ? task["prs"] : []).filter((n): n is number => typeof n === "number");
@@ -78,9 +78,10 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
     return { dot: "running", meta: ["Running", engine, started ? `started ${started}` : ""].filter(Boolean).join(" · ") };
   }
   if (state === "blocked") {
+    if (stopped) return { dot: "danger", meta: "Stopped" };
     // A block waiting on L3 is Altitude's wait: the running dot, not amber (§3.5).
     if (waitsOnL3) return { dot: "running", meta: "Waits for L3" };
-    return { dot: stopped ? "danger" : "idle", meta: stopped ? "Stopped" : decision?.id ? "Waiting for your answer" : "Paused" };
+    return { dot: "idle", meta: decision?.id ? "Waiting for your answer" : "Paused" };
   }
   if (state === "reported") return { dot: "running", meta: "Report landed · waits for L3" };
   return { dot: "idle", meta: state ? sentence(state) : "Status unavailable" };

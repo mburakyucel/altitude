@@ -28,9 +28,8 @@ def wip() -> dict:
 def _waiting(project: str, task: dict, restart: dict | None) -> dict:
     reason, kind = "", "checkpoint"
     if task["state"] == "blocked" and not task.get("resume_after"):
-        who = task.get("waiting_on") or "burak"
-        kind = f"waiting-{who}"
-        reason = f"waiting on {'Burak' if who == 'burak' else 'L3'}: {task.get('blocked_reason') or 'blocked'}"
+        kind, label = T.block_status(task)
+        reason = f"{label}: {task.get('blocked_reason') or 'blocked'}"
     elif restart and restart.get("requested_at") and not restart.get("failed"):
         kind = "restart"
         reason = f"restart in progress since {restart['requested_at']}"

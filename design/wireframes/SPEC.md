@@ -333,7 +333,9 @@ hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("R
 on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
 operator ("Needs you · N questions" plus independent execution status, amber dot); blocked by a
-fault ("Blocked: <one sentence>", red dot); reported ("Report landed · waits for L3", running dot);
+fault ("Blocked: <one sentence>", red dot); operator-stopped ("Stopped", red dot);
+owner/daemon-parked without a question, fault or operator stop ("Paused", idle dot);
+reported ("Report landed · waits for L3", running dot);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
 week).
 

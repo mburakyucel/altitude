@@ -1908,6 +1908,18 @@ def _queue_acceptance(project: str, task: dict, question: dict) -> None:
         _append_jsonl(path, message)
 
 
+def block_status(task: dict) -> tuple[str, str]:
+    """Describe a block without inferring an operator wait from its recorder."""
+    if task.get("fault"):
+        return "fault", f"fault {task['fault']}"
+    if task.get("stop_id"):
+        return "stopped", "stopped"
+    who = task.get("waiting_on")
+    if who in (OPERATOR_MESSAGE_ROLE, "l3"):
+        return f"waiting-{who}", f"waiting on {config.OPERATOR if who == OPERATOR_MESSAGE_ROLE else 'L3'}"
+    return "paused", "paused"
+
+
 def decision_row(project: str, task: dict) -> dict:
     """Project an operational block for navigation, without inventing a recommendation or decision action."""
     events = S.read_events(project, task["slug"])
@@ -1934,14 +1946,13 @@ def decision_row(project: str, task: dict) -> dict:
 
 
 def decisions(project: str) -> list[dict]:
-    """Tasks blocked on the operator: an L2's block flagged for them, L3's escalation, or a block from before
-    L3 saw blocks first. A block waiting on L3, or on a timed hold, is Altitude's wait, not a decision."""
+    """Operator questions and explicit operator blocks; an unassigned pause needs no answer."""
     rows = []
     for task in S.list_tasks(project):
         questions = question_views(project, task["slug"])
         rows.extend(q for q in questions if q["status"] == "open" and q["audience"] == "operator" and not q["response"])
         if (not questions and task["state"] == "blocked" and not task.get("resume_after")
-                and task.get("waiting_on", OPERATOR_MESSAGE_ROLE) == OPERATOR_MESSAGE_ROLE):
+                and (task.get("waiting_on") == OPERATOR_MESSAGE_ROLE or task.get("stop_id"))):
             rows.append(decision_row(project, task))
     return rows
 
