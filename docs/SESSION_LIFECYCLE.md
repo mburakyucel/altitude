@@ -505,7 +505,13 @@ upstream-report summary with confirmed links and missing/failed/uncertain gaps. 
 uses that inventory without repeating unchanged blocker nudges. The originating L3 checks public
 delivery evidence and local observations that the actual cause is gone, then requests the existing
 reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
-repair. Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
+repair. Irretrievable historical evidence stays unknown: L3 records the next supported diagnostic
+action, a justified wait with a finite meaningful observation, or the exact capability/authority
+decision when no supported path can establish recovery. A changed operational contract for bounded
+diagnostic continuation requires that decision before execution; there is no implicit retry.
+The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
+and incident evidence, not a new lifecycle state or perpetual polling.
+Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
 the saved block in place; they are readable in the conversation and delivered at a later supported
 resume. Operator discussion retains its ordinary wake behavior. Explicit resume can requeue a
 workerless `main-unpushed` task independently of deployment recovery. Fresh dispatch validates its

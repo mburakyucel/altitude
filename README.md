@@ -465,8 +465,14 @@ issue closure and unrelated restarts do not establish repair. Coordinator messag
 remain readable without waking them; direct operator discussion remains available. Landing checks
 and merge holds still apply.
 
-Recovery and recurrence prevention are separate responsibilities. L3 first unblocks affected work,
-then promptly reports/reuses a sanitized issue for actionable system or role defects and records
+L3 keeps unfinished work actionable with an owned next step, a meaningful finite observation or a
+genuine decision. Legitimate waits name their dependency and follow-through; they need no continuously
+running worker. Irretrievable historical evidence stays unknown. When supported diagnosis cannot
+establish recovery, L3 exposes the narrow capability or authority gap before any diagnostic continuation;
+missing evidence grants no retry or bypass. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
+
+Recovery and recurrence prevention are separate responsibilities. L3 promptly reports/reuses a
+sanitized issue for actionable system or role defects and records
 prevention ownership and next action. Existing incident evidence and `watch` status keep pending
 follow-through visible in coordinator state even after recovery or confirmed publication. A concise
 FYI states recovery and follow-through; unchanged repeats remain quiet. Closure records verified
