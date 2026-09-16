@@ -116,9 +116,7 @@ def validate_bundle(directory: Path) -> None:
 
 def build_bundle() -> Path:
     staging = Path(tempfile.mkdtemp(prefix=".dist-next-", dir=WEB))
-    env = os.environ.copy()
-    node_bin = Path.home() / ".nvm" / "versions" / "node" / "v24.14.0" / "bin"
-    env["PATH"] = f"{node_bin}:{env.get('PATH', '')}"
+    env = config.subprocess_env()
     try:
         run(["pnpm", "install", "--frozen-lockfile"], cwd=WEB, env=env)
         run(["pnpm", "exec", "tsc", "-b"], cwd=WEB, env=env)

@@ -38,7 +38,9 @@ export PATH="$PWD/bin:$PATH"
 Keep this checkout in place: the CLI resolves its source, personas, hooks and built web assets
 relative to it. For engines outside their default locations, set `CODEX_BIN` or `CLAUDE_BIN` to
 the executable's absolute path before starting Altitude. Confirm both it and the project's test
-tools are on the launch environment's PATH.
+tools are on the launch environment's PATH. For nvm installations, Altitude can discover the
+installed default when Node is absent from that PATH; enable its Corepack pnpm shim and keep
+the default within the project's supported range. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
 
 ## Register a project and start a conversation
 

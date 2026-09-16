@@ -59,6 +59,11 @@ Timed-out validation keeps the gate failed. Hosted CI is suspended; review and m
 holds still apply. Other projects keep their own gates. See
 [local validation and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
+Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
+use the installed nvm default and its package-manager shims without loading shell profiles.
+Candidate dependency installation runs inside `web` so Corepack reads its pinned pnpm version.
+See [toolchain setup](docs/DEVELOPMENT.md#noninteractive-toolchain).
+
 One active task can deliver several PRs. When authorized work remains after a merge, the same owner
 continues in its existing conversation and worktree and runs `alt land` again. It puts only the
 follow-up changes onto current main and opens another PR, with its own checks and review holds.

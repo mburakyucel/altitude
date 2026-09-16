@@ -60,7 +60,7 @@ CODEX_PATCH_NOTE = (
 def installation(engine: str) -> dict:
     """An executable proves installation, never account or model access."""
     binary = {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}[engine]
-    if not shutil.which(binary):
+    if not shutil.which(binary, path=clean_env()["PATH"]):
         return {"available": False, "why": f"{engine} executable is missing; install it or configure its binary"}
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
@@ -72,7 +72,7 @@ class ImageInputError(ValueError):
 def image_capability(engine: str) -> dict:
     """Inspect local CLI help only; native transport support does not prove model/account access."""
     binary = {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}.get(engine)
-    executable = shutil.which(binary) if binary else None
+    executable = shutil.which(binary, path=clean_env()["PATH"]) if binary else None
     if not executable:
         return {"available": False, "why": "Image input unavailable: the selected engine is not installed."}
     try:
@@ -369,7 +369,7 @@ def claude_stop(agent_id: str) -> str:
 
 def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     env["PATH"] = str(config.SOURCE / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     return env

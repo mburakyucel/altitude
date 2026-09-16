@@ -55,6 +55,33 @@ packing, pruning, protected-tip and fast-forward assertions. The shared CLI fixt
 input explicitly; the same regression includes real issue-close CLI/API validation so it cannot
 wait on the worker's input stream either. Tests that submit a body supply that input themselves.
 
+## Noninteractive toolchain
+
+Install a Node version supported by the project's `package.json` and enable its Corepack pnpm
+shim (`corepack enable pnpm`). Corepack reads the `packageManager` pin from its working directory;
+run package commands from `web` for this repository. Dependency installation stays frozen.
+
+Altitude preserves a Node executable already on PATH, including an explicit project selection.
+If Node is absent, launches, landing subprocesses and restart builds ask the installed nvm for
+`nvm which default` and prepend that executable's directory. nvm lives at `$NVM_DIR` or
+`~/.nvm`; its default must name an installed supported version with the pnpm shim enabled.
+Resolution loads only `nvm.sh --no-use`, without interactive profiles or `BASH_ENV`, and does
+not install tools, change aliases or choose versions from repository files. A missing or broken
+default leaves the inherited environment available to other tools; failed resolution is logged.
+Recovery is rechecked on the next invocation, without a cached failure.
+
+An explicit unsupported Node or missing pnpm shim remains a setup error: select the supported
+toolchain and enable its shim. Other installation managers continue to supply their normal PATH.
+Ordinary shell commands such as `make check` use that shell's PATH; the shared discovery applies
+when Altitude launches the process. Existing workers retain their environment until resumed;
+landing resolves tools again even from an older worker. Normal committed-source activation
+applies the correction to future launches without rotating sessions or changing merge holds.
+
+`test_toolchain.py` exercises minimal PATH, custom/default nvm locations, explicit Node precedence,
+unavailable/default recovery, engine discovery, fresh/resumed worker execution and failed worker
+results. `test_land.py` runs the real candidate pipeline with fictional GitHub and tooling,
+checking the candidate manifest directory, frozen install, complete gate and candidate identity.
+
 ## Browser walkthroughs
 
 Build the candidate app before `make ui`; `make check` does this in order. Every test uses a
@@ -174,7 +201,8 @@ entirely skipped CI block. Candidate identity and complete requiredness evidence
 No runner installation, new service, billing change or generic bypass flag is involved.
 
 `alt land` pins the current base and head, constructs the candidate for the selected merge method,
-installs frozen web dependencies using the shared Altitude-home pnpm store, then runs the full
+installs frozen web dependencies from the candidate's `web` directory using its pinned package
+manager and the shared Altitude-home pnpm store, then runs the full
 suite with `CI=true`, retaining the test runners' refusal of focused-only tests. Install the
 supported tools and matching shared Chromium first. Candidate `install.log`, `check.log`, the
 self-contained `ui-artifacts/report/` and `result.json` stay in the task's `local-checks/<candidate>/`

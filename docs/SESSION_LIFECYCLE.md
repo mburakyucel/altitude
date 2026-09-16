@@ -48,6 +48,12 @@ For first-run configuration, Auto preferences and explicit pins, see [setup](SET
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
 
+New and resumed workers receive the shared [noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain)
+environment: an existing PATH-selected Node, or the installed nvm default with its package-manager
+shims when Node is absent. Engine discovery uses the same PATH. Running workers retain their
+environment; each landing invocation resolves tools again. Committed-source activation applies
+launch changes at the next ordinary launch/resume, preserving session identity, attempt and holds.
+
 ## Project setup and recovery
 
 The project's **Setup** checklist observes current configuration throughout its lifetime.
