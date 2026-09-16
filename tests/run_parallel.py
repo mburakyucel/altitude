@@ -48,7 +48,7 @@ def run_shard(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers", type=int, default=max(1, len(os.sched_getaffinity(0)) // 2)
-                        if hasattr(os, "sched_getaffinity") else max(1, (os.cpu_count() or 1) // 2))
+                        if hasattr(os, "sched_getaffinity") else 1)
     parser.add_argument("--directory", default="tests")
     args = parser.parse_args()
     if args.workers < 1:

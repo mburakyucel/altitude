@@ -8,7 +8,7 @@ export default defineConfig({
   testMatch: "**/*.pw.ts",
   outputDir: "./ui-artifacts/results",
   reporter: [["list"], ["html", { outputFolder: "ui-artifacts/report", open: "never" }]],
-  workers: process.env.CI ? Math.max(2, Math.floor(availableParallelism() / 2)) : 2,
+  workers: process.env.CI ? availableParallelism() : 2,
   fullyParallel: Boolean(process.env.CI),
   retries: 0,
   forbidOnly: Boolean(process.env.CI),

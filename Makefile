@@ -6,7 +6,7 @@ test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
 check:          ## all deterministic checks, timed (install frozen dependencies and Chromium first)
 	+$(MAKE) --no-print-directory -j2 -k check-python check-web
 check-python:
-	env -u ALTITUDE_ACTOR /usr/bin/time -p python3 tests/run_parallel.py
+	env -u ALTITUDE_ACTOR /usr/bin/time -p python3 tests/run_parallel.py --workers "$$(node -p 'Math.max(1, Math.floor(require("node:os").availableParallelism() / 2))')"
 check-web:
 	cd web && /usr/bin/time -p pnpm test
 	cd web && /usr/bin/time -p pnpm build

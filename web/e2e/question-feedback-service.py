@@ -59,6 +59,11 @@ def main():
     class Handler(server.Handler):
         def do_POST(self):
             if self.path == "/fixture/checkpoint":
+                # The fixture owner cannot act until the real resume commits its running state.
+                with server._bg_guard:
+                    resumed = server._bg[f"resume:atlas:{slug}"]
+                resumed.join(10)
+                assert not resumed.is_alive(), "The fixture resume did not finish"
                 owner.checkpoint(slug)
                 return self._json({"ok": True})
             if self.path == "/fixture/revise":

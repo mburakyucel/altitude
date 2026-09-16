@@ -29,7 +29,10 @@ Do not bind an existing service's reserved port or use its runtime state for a p
 isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output; the
 command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
-fresh interpreters, using half the available CPUs (at least one). Each shard streams prefixed
+fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
+budget from Node's `availableParallelism()` for both languages: container CPU quotas may be
+smaller than Python's affinity mask. The runner itself remains stdlib-only; standalone invocations
+default to half the affinity mask, or one worker where affinity is unavailable. Each shard streams prefixed
 verbose unittest output, including skip reasons; the final summary totals all shards for landing.
 Test names flush before execution so incomplete runs identify each shard's last started test.
 `python3 tests/run_parallel.py --workers N` selects a worker count for focused measurement.
@@ -114,9 +117,11 @@ its image, then holds later reads while verifying that receipt cannot recreate a
 The task-read regression archives a real task between path resolution and status read: the crossing
 poll returns ordinary 404, a subsequent archived read succeeds, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
+Question-response and failed-setup checkpoints join their owned workflows before observing the
+scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
-1440×900. With `CI` set, Playwright uses half the available CPUs (at least two); local runs use
+1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use
 two workers. Retries remain zero and CI refuses focused-only tests. Each service has its own
 temporary homes and OS-assigned port; screenshots use per-test output paths.
 CI schedules individual tests across workers, so long spec files cannot hold one worker while
@@ -306,7 +311,8 @@ A warm concurrent implementation run on 2026-09-16 on 24 available CPUs measured
 142.86 s (1,343 tests, one optional native probe skipped), web tests at 12.17 s (343 passed),
 typecheck/build at 4.75 s and browsers at 177.24 s (316 passed, 12 workers, zero retries).
 The complete concurrent gate took 194.18 s; phase wall times overlap and must not be added.
-The PR retains the current-candidate and dedicated 12-CPU self-hosted measurements.
+The current self-hosted allocation is four CPUs per job. PR evidence records the exact source,
+worker counts and timing at that allocation; host-wide CPU counts do not establish a job's budget.
 
 A warm local implementation run on 2026-09-08, Linux, Python 3.12.3, Node 22.22.2 and pnpm
 10.34.5 measured the following; PR/check artifacts identify the validated source revision.

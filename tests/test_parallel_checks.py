@@ -75,12 +75,15 @@ class TestParallelChecks(AltitudeCase):
         (self.tmp / "web").mkdir()
         bindir = self.tmp / "bin"
         bindir.mkdir()
+        (bindir / "node").write_text("#!/bin/sh\necho 2\n")
+        (bindir / "node").chmod(0o755)
         shim = f"#!{sys.executable}\n" + textwrap.dedent('''
             import os, pathlib, sys, time
             root = pathlib.Path(os.environ["CHECK_FIXTURE"])
             phase = "python" if pathlib.Path(sys.argv[0]).name == "python3" else sys.argv[1]
             (root / phase).touch()
             if phase == "python":
+                assert sys.argv[-2:] == ["--workers", "2"]
                 deadline = time.monotonic() + 5
                 while not (root / "test").exists():
                     if time.monotonic() > deadline: sys.exit(99)
@@ -114,6 +117,8 @@ class TestParallelChecks(AltitudeCase):
         (self.tmp / "web").mkdir()
         bindir = self.tmp / "bin"
         bindir.mkdir()
+        (bindir / "node").write_text("#!/bin/sh\necho 2\n")
+        (bindir / "node").chmod(0o755)
         for command in ("python3", "pnpm"):
             path = bindir / command
             path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f'''
