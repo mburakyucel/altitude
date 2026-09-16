@@ -24,7 +24,7 @@ fixtures do not establish fresh-machine or live-provider success.
 
 ### Portable installation: delivered and remaining
 
-[PR #356](https://github.com/mburakyucel/altitude/pull/356) delivers the Linux CLI, daemon and
+PR #356 delivers the Linux CLI, daemon and
 built UI archive, localhost HTTPS with explicit certificate trust, prerequisite/readiness checks,
 recoverable updates and uninstall with retained user data. Independent review and the exact-candidate
 suite pass: 1,342 Python tests, 343 web tests, typecheck/build and 316 phone/desktop browser cases;
