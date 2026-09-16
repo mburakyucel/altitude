@@ -18,7 +18,6 @@ jobs:
     timeout-minutes: 45
     env:
       CI: 'true'
-      ALTITUDE_HOME: ${{ runner.temp }}/altitude
       PLAYWRIGHT_BROWSERS_PATH: /opt/browsers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
