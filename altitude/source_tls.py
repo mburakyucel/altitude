@@ -29,7 +29,17 @@ _PROPERTIES = ("LoadState", "ActiveState", "SubState", "Type", "MainPID", "Fragm
 def _native() -> dict:
     text = platform.run("systemctl", "--user", "show", platform.SERVICE,
                         "--property=" + ",".join(_PROPERTIES))
-    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    values = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+    # systemd/systemd#12375: daemon-reload can clear command execution history.
+    # Keep the command/policy; MainPID, invocation and main-start time prove process continuity.
+    command = re.fullmatch(
+        r"(\{ path=.+? ; argv\[\]=.+? ; ignore_errors=(?:yes|no) ;)"
+        r"(?: start_time=\[[^\]]*\] ; stop_time=\[[^\]]*\] ; pid=[0-9]+ ; code=[^;]+ ; status=[^;]+)? \}",
+        values.get("ExecStart", ""))
+    if not command:
+        raise RuntimeError("Unsupported source command metadata; inspect the loaded ExecStart definition")
+    values["ExecStart"] = command[1] + " }"
+    return values
 
 
 def _environment(raw: str) -> dict:
@@ -209,14 +219,16 @@ def _observe(directory: Path) -> dict:
             "unit": unit, "previous": previous, "fingerprint": fingerprint, "pid": pid, "host": host, "port": port}
 
 
-def _unchanged(before: dict, after: dict) -> bool:
-    return (before["unit"] == after["unit"] and before["unit_identity"] == after["unit_identity"]
-            and before["process"] == after["process"]
-            and before["fingerprint"] == after["fingerprint"]
-            and {k: v for k, v in before["native"].items() if k not in ("Environment", "DropInPaths")}
-            == {k: v for k, v in after["native"].items() if k not in ("Environment", "DropInPaths")}
-            and {k: v for k, v in before["environment"].items() if k != "ALTITUDE_TLS_DIR"}
-            == {k: v for k, v in after["environment"].items() if k != "ALTITUDE_TLS_DIR"})
+def _changes(before: dict, after: dict) -> list[str]:
+    changes = [label for key, label in (("unit", "unit contents"), ("unit_identity", "unit identity"),
+                                       ("process", "process settings"), ("fingerprint", "certificate"))
+               if before[key] != after[key]]
+    changes += [key for key in _PROPERTIES if key not in ("Environment", "DropInPaths")
+                and before["native"].get(key, "") != after["native"].get(key, "")]
+    if ({k: v for k, v in before["environment"].items() if k != "ALTITUDE_TLS_DIR"}
+            != {k: v for k, v in after["environment"].items() if k != "ALTITUDE_TLS_DIR"}):
+        changes.append("other loaded environment")
+    return changes
 
 
 def prepare(directory: Path, *, apply: bool = False) -> dict:
@@ -256,8 +268,11 @@ def _apply(directory: Path, before: dict, content: bytes, result: dict) -> dict:
     try:
         platform.control("reload")
         after = _observe(directory)
-        if not _unchanged(before, after) or after["environment"].get("ALTITUDE_TLS_DIR") != str(directory):
-            raise RuntimeError("Source process, binding or loaded TLS selection changed unexpectedly")
+        changes = _changes(before, after)
+        if after["environment"].get("ALTITUDE_TLS_DIR") != str(directory):
+            changes.append("loaded TLS directory")
+        if changes:
+            raise RuntimeError("Source verification changed: " + ", ".join(changes))
     except Exception as exc:
         try:
             if _existing_override(path) != content:
@@ -268,9 +283,12 @@ def _apply(directory: Path, before: dict, content: bytes, result: dict) -> dict:
                 atomic(path, before["previous"].decode())
             platform.control("reload")
             restored = _observe(directory)
-            if not _unchanged(before, restored) or restored["environment"] != before["environment"]:
-                raise RuntimeError("Restored source settings could not be verified")
+            changes = _changes(before, restored)
+            if restored["environment"].get("ALTITUDE_TLS_DIR") != before["environment"].get("ALTITUDE_TLS_DIR"):
+                changes.append("loaded TLS directory")
+            if changes:
+                raise RuntimeError("Restored source settings differ: " + ", ".join(changes))
         except Exception as recovery:
-            raise RuntimeError(f"Source TLS preparation failed; restoration/reload is uncertain: {recovery}") from exc
+            raise RuntimeError(f"Source TLS preparation failed ({exc}); restoration/reload is uncertain: {recovery}") from exc
         raise RuntimeError(f"Source TLS preparation failed; owned override restored and reload verified: {exc}") from exc
     return {**result, "applied": True, "loaded_tls_dir": str(directory)}

@@ -1,6 +1,8 @@
 """Packaged code has no Git checkout; project ownership and guards remain real."""
+import hashlib
 import json
 import os
+from pathlib import Path
 import shlex
 import shutil
 import subprocess
@@ -9,7 +11,7 @@ from unittest import mock
 
 from tests.support import REPO, AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, engines, git_policy, server, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, project_setup, server, state as S, tasks as T
 
 
 class InstalledRuntime(AltitudeCase):
@@ -41,6 +43,9 @@ class InstalledRuntime(AltitudeCase):
         self.patch(config, "REPO", self.source)
         self.patch(config, "RELEASE", self.release)
         self.patch(config, "INSTALL_PREFIX", self.prefix)
+        settings = self.tmp / "installed settings.json"
+        settings.write_text(json.dumps({"python": sys.executable, "environment": {}}))
+        self.patch(config, "INSTALL_CONFIG", settings)
         for name in ("PERSONAS", "SCHEMAS", "TEMPLATES", "HOOKS"):
             self.patch(config, name, self.source / name.lower())
         self.engine = FakeL2()
@@ -113,13 +118,14 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(resumed["hold_merge"], running["hold_merge"])
         self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
 
-    def test_missing_guards_refuse_dispatch_before_launch(self):
+    def test_missing_guard_resources_refuse_dispatch_before_launch(self):
+        (self.prefix / "hooks/pre-commit").unlink()
         task = T.new(self.project, "Guard required", "Never launch without project guards.")
         with mock.patch("altitude.incidents.system_fault"):
-            with self.assertRaisesRegex(T.TransitionError, "Git guards are not installed"):
+            with self.assertRaisesRegex(T.TransitionError, "missing: pre-commit"):
                 dispatch.run(self.project, task["slug"])
         self.assertEqual(self.engine.calls, [])
-        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "blocked")
 
     def test_removed_guards_refuse_resume_without_losing_session_or_message(self):
         git_policy.install_hooks(self.repo)
@@ -129,14 +135,39 @@ class InstalledRuntime(AltitudeCase):
         self.engine.stop_l2_worker(running["l2_engine"], running["agent_id"], job_root=None)
         T.block(self.project, task["slug"], "Awaiting context", updates={"waiting_on": "l3"})
         message = T.message(self.project, task["slug"], "l3", "Continue after repair.")
-        git("config", "--unset", "core.hooksPath", cwd=self.repo)
+        (self.prefix / "hooks/pre-commit").unlink()
         with mock.patch("altitude.incidents.system_fault"):
-            with self.assertRaisesRegex(T.TransitionError, "Git guards are not installed"):
+            with self.assertRaisesRegex(T.TransitionError, "missing: pre-commit"):
                 dispatch.resume(self.project, task["slug"])
         blocked = S.load_task(self.project, task["slug"])
         self.assertEqual((blocked["state"], blocked["session_id"]), ("blocked", running["session_id"]))
         self.assertEqual(len(self.engine.calls), 1)
         self.assertIn(message["id"], [row["id"] for row in T.pending(self.project, task["slug"])])
+
+    def test_installed_dispatch_repairs_missing_project_guard_selection(self):
+        task = T.new(self.project, "Routine setup", "Install the required guards before dispatch.")
+        dispatch.run(self.project, task["slug"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+        self.assertEqual(git_policy.require_hooks_installed(self.repo), self.prefix / "hooks")
+        self.assertEqual(project_setup.read(self.project)["guards"]["action"], "installed")
+
+    def test_unrecorded_existing_task_worktree_cannot_bypass_custom_hook_consent(self):
+        git_policy.install_hooks(self.repo)
+        git("config", "extensions.worktreeConfig", "true", cwd=self.repo)
+        task = T.new(self.project, "Interrupted first dispatch", "Recheck guards before adopting the existing checkout.")
+        worktree = self.repo / config.WORKTREE_ROOT / task["slug"]
+        git("worktree", "add", "-q", "-b", f"worktree-{task['slug']}", str(worktree), "origin/main", cwd=self.repo)
+        custom = self.tmp / "worktree-specific-hooks"
+        custom.mkdir()
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        (custom / "pre-commit").chmod(0o755)
+        git("config", "--worktree", "core.hooksPath", str(custom), cwd=worktree)
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("worktree"))
+        with mock.patch("altitude.incidents.system_fault"):
+            with self.assertRaisesRegex(T.TransitionError, "Git guards are not installed or current"):
+                dispatch.run(self.project, task["slug"])
+        self.assertEqual(self.engine.calls, [])
+        self.assertEqual(git("config", "--worktree", "--get", "core.hooksPath", cwd=worktree).strip(), str(custom))
 
     def test_managed_application_clone_cannot_replace_installed_application(self):
         self.register(self.project, self_deploy=True)
@@ -264,3 +295,122 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(status.read_bytes(), before)
         self.assertEqual((self.prefix / "current").resolve(), self.source)
         self.assertEqual(self.engine.calls, [])
+
+    def custom_hooks(self):
+        custom = self.tmp / "custom hooks"
+        custom.mkdir()
+        for name in ("pre-commit", "pre-push", "post-checkout"):
+            hook = custom / name
+            hook.write_text("#!/bin/sh\nprintf '%s\\n' " + shlex.quote(name)
+                            + " >> " + shlex.quote(str(self.tmp / "custom-events"))
+                            + '\nexit "${CUSTOM_REJECTION:-0}"\n')
+            hook.chmod(0o755)
+        git("config", "core.hooksPath", str(custom), cwd=self.repo)
+        return custom
+
+    @staticmethod
+    def package_snapshot(source):
+        return {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in source.rglob("*") if path.is_file()}
+
+    def test_custom_hook_consent_survives_archive_update_without_mutating_releases(self):
+        python = self.tmp / "saved Python"
+        python.write_text("#!/bin/sh\nprintf 'used\\n' >> " + shlex.quote(str(self.tmp / "interpreter-calls"))
+                          + "\nexec " + shlex.quote(sys.executable) + ' "$@"\n')
+        python.chmod(0o755)
+        config.INSTALL_CONFIG.write_text(json.dumps({"python": str(python), "environment": {}}))
+        custom = self.custom_hooks()
+        original = (custom / "pre-commit").read_bytes()
+        before = self.package_snapshot(self.source)
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        with self.assertRaisesRegex(PermissionError, "Only the operator"):
+            project_setup.request(self.project, "combine", actor="l3", expected=observed["fingerprint"])
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        approved = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        combined = Path(approved["hooks_path"])
+        self.assertTrue(combined.is_relative_to(self.prefix / "git-guards"))
+        self.assertFalse(combined.is_relative_to(config.ROOT))
+        self.assertEqual(self.package_snapshot(self.source), before)
+        self.assertEqual((custom / "pre-commit").read_bytes(), original)
+
+        tools = self.tmp / "unrelated-python"
+        tools.mkdir()
+        (tools / "python3").write_text("#!/bin/sh\necho wrong interpreter >&2\nexit 86\n")
+        (tools / "python3").chmod(0o755)
+        environment = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"]}
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        refused = subprocess.run(["git", "commit", "--allow-empty", "-m", "Protected main"],
+                                 cwd=self.repo, env=environment, capture_output=True, text=True, timeout=30)
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn("commit on a task branch", refused.stderr)
+        self.assertTrue((self.tmp / "interpreter-calls").is_file())
+        self.assertFalse((self.tmp / "custom-events").exists())
+        git("switch", "-c", "composed-topic", cwd=self.repo)
+        accepted = subprocess.run(["git", "commit", "--allow-empty", "-m", "Composed topic"],
+                                  cwd=self.repo, env=environment, capture_output=True, text=True, timeout=30)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertIn("pre-commit", (self.tmp / "custom-events").read_text())
+        rejected = subprocess.run([str(combined / "pre-commit")], cwd=self.repo,
+                                  env={**environment, "CUSTOM_REJECTION": "17"},
+                                  capture_output=True, text=True, timeout=30)
+        self.assertEqual(rejected.returncode, 17, rejected.stderr)
+
+        later = self.prefix / "versions/trial-2"
+        shutil.copytree(self.source, later)
+        (later / "release.json").write_text(json.dumps({**self.release, "version": "trial-2"}))
+        later_before = self.package_snapshot(later)
+        (self.prefix / "current").unlink()
+        (self.prefix / "current").symlink_to(later, target_is_directory=True)
+        with mock.patch.object(config, "SOURCE", later), mock.patch.object(config, "REPO", later):
+            self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "ready")
+            self.assertEqual(git_policy.repair_hooks(self.repo)["action"], "reused")
+            self.assertEqual(git_policy.require_hooks_installed(self.repo), combined)
+            accepted = subprocess.run([str(combined / "pre-commit")], cwd=self.repo, env=environment,
+                                      capture_output=True, text=True, timeout=30)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(self.package_snapshot(self.source), before)
+        self.assertEqual(self.package_snapshot(later), later_before)
+
+    def test_installed_composition_retries_failed_write_and_rejects_stale_or_forged_consent(self):
+        custom = self.custom_hooks()
+        observed = git_policy.inspect_hooks(self.repo)
+        run = git_policy._run
+
+        def denied(repository, *args, **kwargs):
+            if args[:3] == ("config", "--local", "core.hooksPath"):
+                raise git_policy.GitPolicyError("fixture configuration permission denied")
+            return run(repository, *args, **kwargs)
+
+        with mock.patch.object(git_policy, "_run", side_effect=denied):
+            with self.assertRaisesRegex(git_policy.GitPolicyError, "permission denied"):
+                git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(git("config", "--get", "core.hooksPath", cwd=self.repo).strip(), str(custom))
+        approved = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        combined = Path(approved["hooks_path"])
+        saved = (combined / "original.json").read_bytes()
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 7\n")
+        changed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(changed["status"], "conflict")
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "ownership changed"):
+            git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        invoked = subprocess.run([str(combined / "pre-commit")], cwd=self.repo,
+                                 capture_output=True, text=True, timeout=30)
+        self.assertEqual(invoked.returncode, 1)
+        self.assertIn("original hooks changed", invoked.stderr)
+        self.assertEqual((combined / "original.json").read_bytes(), saved)
+        refreshed = Path(git_policy.repair_hooks(self.repo, combine=True, expected=changed["fingerprint"])["hooks_path"])
+        receipt = json.loads((refreshed / "original.json").read_text())
+        self.assertEqual(receipt["path"], str(custom))
+        forged = config.project_dir(self.project) / "forged-hooks" / refreshed.name
+        shutil.copytree(refreshed, forged)
+        git("config", "core.hooksPath", str(forged), cwd=self.repo)
+        self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "conflict")
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(self.repo)
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        self.assertEqual(json.loads((refreshed / "original.json").read_text()), receipt)

@@ -185,6 +185,8 @@ link under `~/.local/share/altitude`. `release.json` binds the packaged CLI, dae
 launch resources to a source commit and file hashes; no application Git checkout is required.
 `config.SOURCE` pins the selected version for workers, while managed guards use installation-owned
 `hooks` launchers that invoke `current/hooks` with the saved Python and configuration.
+Consented custom-hook compositions and their receipts live in installation-owned `git-guards`,
+outside immutable version trees; their launchers use the saved Python and `current` code.
 Previous versions remain available to existing workers. Installation configuration lives in
 `~/.config/altitude/install.json`, apart from runtime state and project worktrees. Explicit
 CLI environment settings override saved values. The generated service pins its saved settings,
@@ -201,6 +203,9 @@ the fixed TLS-directory override. Explicit apply writes only that owned drop-in,
 definition and verifies the unchanged process and identity; failed verification restores the owned
 override or reports unconfirmed recovery. The verified archive installer exposes the same operation
 before installation. It adds no L2/L3 service authority, daemon endpoint or certificate migration.
+Reload verification compares the configured executable/arguments and live PID, invocation and
+main-start timestamp; resettable command-history metadata is not process identity. Failure messages
+name changed fields and preserve both apply and recovery errors without exposing environment values.
 
 Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA and
 server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,

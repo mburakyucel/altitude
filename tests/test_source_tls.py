@@ -127,6 +127,98 @@ class TestSourceTLS(AltitudeCase):
                                     "ignore_errors=no ; }")
         self.assertTrue(source_tls.prepare(self.directory)["verified"])
 
+    def test_reload_resets_command_history_without_changing_process_identity(self):
+        command = self.native["ExecStart"].removesuffix(" }")
+        self.native["ExecStart"] = command + " start_time=[Mon 2026-09-14 12:00:00 UTC] ; stop_time=[n/a] ; pid=1234 ; code=(null) ; status=0/0 }"
+        control = self.control
+
+        def reload(action):
+            control(action)
+            # systemd/systemd#12375: command history can reset on daemon-reload.
+            self.native["ExecStart"] = command + " start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+
+        with mock.patch.object(platform, "control", side_effect=reload):
+            result = source_tls.prepare(self.directory, apply=True)
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["pid"], 1234)
+        self.assertEqual(self.controls, ["reload"])
+
+    def test_rollback_accepts_reset_command_history_but_preserves_original_failure(self):
+        command = self.native["ExecStart"].removesuffix(" }")
+        self.native["ExecStart"] = command + " start_time=[Mon 2026-09-14 12:00:00 UTC] ; stop_time=[n/a] ; pid=1234 ; code=(null) ; status=0/0 }"
+        control = self.control
+
+        def reload(action):
+            control(action)
+            self.native["ExecStart"] = command + " start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+            if len(self.controls) == 1:
+                raise RuntimeError("simulated reload acknowledgement failure")
+
+        with mock.patch.object(platform, "control", side_effect=reload):
+            with self.assertRaisesRegex(RuntimeError, "owned override restored and reload verified: simulated reload"):
+                source_tls.prepare(self.directory, apply=True)
+        self.assertFalse(self.override.exists())
+        self.assertEqual(self.controls, ["reload", "reload"])
+
+    def test_actual_identity_and_command_policy_changes_remain_uncertain(self):
+        for key, value in (("InvocationID", "replacement-invocation"),
+                           ("ExecMainStartTimestampMonotonic", "2000"),
+                           ("ExecStart", self.native["ExecStart"].replace("ignore_errors=no", "ignore_errors=yes"))):
+            with self.subTest(key=key):
+                previous = self.native[key]
+                self.controls.clear()
+                control = self.control
+
+                def reload(action):
+                    control(action)
+                    self.native[key] = value
+
+                with mock.patch.object(platform, "control", side_effect=reload):
+                    with self.assertRaisesRegex(RuntimeError, "restoration/reload is uncertain"):
+                        source_tls.prepare(self.directory, apply=True)
+                self.assertFalse(self.override.exists())
+                self.assertEqual(self.controls, ["reload", "reload"])
+                self.native[key] = previous
+
+    def test_command_change_after_reload_is_not_hidden_by_metadata_normalization(self):
+        control = self.control
+
+        def reload(action):
+            control(action)
+            self.native["ExecStart"] = (f"{{ path=/usr/bin/python3.12 ; argv[]=/usr/bin/python3.12 {self.repo}/bin/alt serve ; "
+                                        "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }")
+
+        with mock.patch.object(platform, "control", side_effect=reload):
+            with self.assertRaisesRegex(RuntimeError, "restoration/reload is uncertain:.*ExecStart"):
+                source_tls.prepare(self.directory, apply=True)
+        self.assertFalse(self.override.exists())
+        self.assertEqual(self.controls, ["reload", "reload"])
+
+    def test_unknown_command_metadata_refuses_before_writing(self):
+        self.native["ExecStart"] = self.native["ExecStart"].replace(" ; }", " ; unknown_flag=yes ; }")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported source command metadata"):
+            source_tls.prepare(self.directory, apply=True)
+        self.assertFalse(self.override.exists())
+        self.assertEqual(self.controls, [])
+
+    def test_mismatch_diagnostics_include_both_failures_without_environment_values(self):
+        control = self.control
+
+        def reload(action):
+            control(action)
+            self.environment["TOKEN_SECRET"] = "fictional-sensitive-value"
+            self._loaded_environment()
+
+        with mock.patch.object(platform, "control", side_effect=reload):
+            with self.assertRaises(RuntimeError) as raised:
+                source_tls.prepare(self.directory, apply=True)
+        message = str(raised.exception)
+        self.assertIn("Source verification changed: other loaded environment", message)
+        self.assertIn("Restored source settings differ: other loaded environment", message)
+        self.assertNotIn("TOKEN_SECRET", message)
+        self.assertNotIn("fictional-sensitive-value", message)
+        self.assertFalse(self.override.exists())
+
     def test_reload_failure_restores_owned_override_and_reports_verified_rollback(self):
         self.fail_reload = 1
         before = self.snapshot()

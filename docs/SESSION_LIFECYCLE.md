@@ -174,6 +174,8 @@ Source TLS preparation checks the existing process, listener and certificate bef
 explicit TLS-directory service override. It reloads the user-unit definition without restarting
 the daemon or its workers; task ownership, sessions, messages and holds are unaffected. Actual
 source preparation is a separate operator action from archive installation and code activation.
+Verification retains the live PID, invocation and main-start timestamp across unit reloads,
+independently of resettable command-history metadata; actual identity changes still refuse success.
 
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,

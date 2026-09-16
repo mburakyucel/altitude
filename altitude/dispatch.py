@@ -696,7 +696,7 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
         raise T.TransitionError(
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
         )
-    if config.SOURCE != config.REPO:
+    if config.RELEASE is not None or config.SOURCE != config.REPO:
         # #348: a worktree-specific custom hook selection must not evade project guard verification.
         git_policy.require_hooks_installed(worktree)
     task = S.read_json(S.status_path(project, slug), {}) or {}

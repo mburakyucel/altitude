@@ -183,6 +183,10 @@ failed reload/verification restores only the unchanged owned override and report
 restoration. Existing custom overrides need deliberate reconciliation. Save the successful result
 privately and verify normal activation after the separately authorized upgrade. L2 and L3 cannot
 run preparation, and a passing fixture test is not evidence that a production unit is prepared.
+Verification compares the configured command and live process identity; command execution-history
+timestamps can reset during a definition reload. On failure, the message names changed fields
+without printing environment values and includes the original failure if restoration is uncertain.
+Do not retry an uncertain restoration until the loaded unit and running identity are inspected.
 If interrupted after writing the override, inspect that file and any other pending unit changes
 before running `systemctl --user daemon-reload` from the operator terminal. This reloads definitions
 without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
