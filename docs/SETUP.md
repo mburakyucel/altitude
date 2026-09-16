@@ -48,7 +48,8 @@ It checks GitHub authentication without a provider request; repository permissio
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.
 One engine suffices; optional voice, GPU and telemetry do not block typing.
 
-The installation captures its PATH. Include the engine and project test tools before installing.
+The installation saves its discovered toolchain PATH for service startup. Include the engine and
+project test tools before installing; updates preserve the saved environment.
 For engines outside their default locations, the existing `CODEX_BIN` or `CLAUDE_BIN` settings
 select absolute paths. [Configuration](#configuration-and-limits) describes saved settings.
 For nvm installations, Altitude discovers the installed default when Node is absent from PATH;

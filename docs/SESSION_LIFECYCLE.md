@@ -164,6 +164,7 @@ application source checkout. Updates select a verified version at the same narro
 used by dispatch, resume, L3 and report verification. Independent Linux worker units survive the
 daemon replacement and retain their pinned resources; persisted ownership, sessions, messages and
 holds remain authoritative when the daemon adopts them. Previous versions stay installed.
+New installations save the discovered toolchain PATH for native service startup; updates preserve it.
 Failed activation restores the prior version and service definition; an interrupted recovery
 retains its receipt for `alt recover`. Stopping the daemon does not stop independent task workers.
 Uninstall refuses while unfinished tasks own worker inputs and retains versions still referenced

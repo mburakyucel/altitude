@@ -191,6 +191,8 @@ Previous versions remain available to existing workers. Installation configurati
 `~/.config/altitude/install.json`, apart from runtime state and project worktrees. Explicit
 CLI environment settings override saved values. The generated service pins its saved settings,
 including binding and runtime paths, against ambient user-manager values. Source deployments ignore installed configuration.
+New installation settings capture the discovered toolchain PATH, including a custom nvm default;
+updates retain the saved environment.
 `installation.py` owns archive validation, activation receipts, recovery and retention;
 `platform.py` owns the generated Linux x86_64 per-user daemon service. A pending installation
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and

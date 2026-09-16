@@ -61,6 +61,7 @@ holds still apply. Other projects keep their own gates. See
 
 Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
 use the installed nvm default and its package-manager shims without loading shell profiles.
+New archive installations save the discovered tool path for their service.
 Candidate dependency installation runs inside `web` so Corepack reads its pinned pnpm version.
 See [toolchain setup](docs/DEVELOPMENT.md#noninteractive-toolchain).
 

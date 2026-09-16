@@ -4,12 +4,14 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import REPO, SUITE
@@ -166,6 +168,57 @@ class Installation(unittest.TestCase):
         self.assertEqual(saved["ALTITUDE_OPERATOR"], "Trial user")
         self.assertEqual(saved["ALTITUDE_ROOTS"], str(self.home / "Projects"))
         self.assertNotIn("ALTITUDE_TASK", saved)
+
+    def test_install_preserves_discovered_custom_nvm_tools_in_clean_service_environment(self):
+        from tests.test_toolchain import nvm_fixture
+
+        with mock.patch.dict(os.environ, {"ALTITUDE_TASK": "transient-task", "ALTITUDE_SESSION_KEY": "transient-session"}):
+            node_bin = nvm_fixture(SimpleNamespace(tmp=self.tmp, setenv=os.environ.__setitem__))
+            engine = node_bin / "fixture-engine"
+            engine.write_text("#!/bin/sh\necho provider invocation forbidden >&2\nexit 86\n")
+            engine.chmod(0o755)
+            os.environ["CODEX_BIN"] = "fixture-engine"
+            profile = self.tmp / "profile-must-not-run"
+            profile.write_text("exit 99\n")
+            os.environ["BASH_ENV"] = str(profile)
+            before = dict(os.environ)
+            self.assertEqual(shutil.which("node", path=config.subprocess_env()["PATH"]), str(node_bin / "node"))
+            self.install()
+            self.assertEqual(dict(os.environ), before)
+
+        saved = json.loads(self.settings.read_text())["environment"]
+        self.assertEqual(saved["PATH"], str(node_bin) + os.pathsep + before["PATH"])
+        for name in ("NVM_DIR", "BASH_ENV", "ALTITUDE_TASK", "ALTITUDE_SESSION_KEY"):
+            self.assertNotIn(name, saved)
+        settings_before, unit_before = self.settings.read_bytes(), self.unit.read_bytes()
+        next_bin = node_bin.parents[1] / "v24.22.0/bin"
+        shutil.copytree(node_bin, next_bin)
+        (next_bin / "node").write_text("#!/bin/sh\nprintf 'v24.22.0\\n'\n")
+        manager = node_bin.parents[3] / "nvm.sh"
+        manager.write_text(manager.read_text().replace("v24.21.0", "v24.22.0"))
+        with mock.patch.dict(os.environ, before, clear=True):
+            self.assertEqual(shutil.which("node", path=config.subprocess_env()["PATH"]), str(next_bin / "node"))
+            self.install("v0.1.1", edited=True)
+            self.assertEqual(dict(os.environ), before)
+        self.assertEqual(self.settings.read_bytes(), settings_before)
+        self.assertEqual(self.unit.read_bytes(), unit_before)
+        # Reproduce the generated service's environment without a login shell or manager root.
+        environment = {"HOME": str(self.home), "PATH": before["PATH"]}
+        for line in self.unit.read_text().splitlines():
+            if line.startswith("Environment="):
+                key, value = shlex.split(line.partition("=")[2])[0].split("=", 1)
+                environment[key] = value
+        self.assertEqual(environment["PATH"], saved["PATH"])
+        self.assertNotIn("NVM_DIR", environment)
+        for command, expected in (("node", "v24.21.0"), ("pnpm", "10.34.5")):
+            self.assertEqual(subprocess.check_output([command, "--version"], env=environment, text=True).strip(), expected)
+        checked = subprocess.run([str(self.launcher), "doctor"], cwd=self.tmp, env=environment,
+                                 capture_output=True, text=True, timeout=30)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        reported = json.loads(checked.stdout)
+        fixture = next(row for row in reported["engines"] if row["name"] == config.ENGINE_LABELS["codex"])
+        self.assertIsNone(fixture["available"], "discovered engine stays installed; account access remains unknown")
+        self.assertNotIn("provider invocation forbidden", checked.stderr)
 
     def test_installed_lifecycle_rejects_conflicting_shell_runtime_before_native_effects(self):
         self.install()

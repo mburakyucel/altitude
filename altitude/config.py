@@ -59,7 +59,7 @@ TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 def installation_environment() -> dict[str, str]:
     """Persist application choices, excluding transient actor/session authority."""
     return {"ALTITUDE_HOME": str(ROOT), "ALTITUDE_HOST": HOST, "ALTITUDE_PORT": str(PORT),
-            "ALTITUDE_TLS_DIR": str(TLS_DIR), "ALTITUDE_TLS": "1", "PATH": os.environ.get("PATH", ""),
+            "ALTITUDE_TLS_DIR": str(TLS_DIR), "ALTITUDE_TLS": "1", "PATH": subprocess_env().get("PATH", ""),
             "ALTITUDE_ROOTS": ":".join(map(str, PROJECT_ROOTS)),
             **{key: os.environ[key] for key in ("CLAUDE_BIN", "CODEX_BIN", "ALTITUDE_OPERATOR",
                "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY") if key in os.environ}}
