@@ -121,8 +121,9 @@ Question-response and failed-setup checkpoints join their owned workflows before
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
-1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use
-two workers. Retries remain zero and CI refuses focused-only tests. Each service has its own
+1440×900. With `CI` set, Playwright uses 1.5 workers per available CPU, rounded up, to overlap
+fixture waits (six workers in a four-CPU job); local runs use two workers. CPU and memory quotas
+remain unchanged. Retries remain zero and CI refuses focused-only tests. Each service has its own
 temporary homes and OS-assigned port; screenshots use per-test output paths.
 CI schedules individual tests across workers, so long spec files cannot hold one worker while
 others sit idle. Local runs retain file-level scheduling.
