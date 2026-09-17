@@ -528,8 +528,9 @@ Re-asking supplies fresh controls, retaining earlier history without carrying ap
 
 Under the Needs you heading, one switch offers **Alert me about new decisions** and reads **Alerts on**
 once permission is granted. It is set per device, because each browser grants its own permission, and
-its line below states the reach honestly: alerts arrive only while Altitude is open, which on a phone
-means while it is on screen. A browser that cannot show notifications disables the switch and says so;
+its line below states the reach honestly: a device the browser's push service can wake alerts with
+Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
+woken alerts only while Altitude is open, which on a phone means while it is on screen. A browser that cannot show notifications disables the switch and says so;
 refused permission says the browser's settings block alerts and how to allow them again. Every state
 leaves Needs you, its cards and all typing untouched.
 

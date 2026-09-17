@@ -93,9 +93,13 @@ Needs you offers an alert for each new decision. Turn it on once per device and 
 notification permission there; trusted HTTPS is a prerequisite, so finish the step above first. An
 iPhone shows the switch only for Altitude added to the Home Screen and opened from there.
 
-Alerts reach a page that is open: a desktop tab alerts in the background, and a phone alerts while
-Altitude is on screen. A closed tab, and a phone that has put the page to sleep, receive nothing.
-Each alert names the project and the task and opens that decision; it carries no conversation text.
+Turning the switch on also subscribes that device to its browser's push service, so a decision
+reaches a closed phone. Altitude signs each push with a key it generates in `~/.altitude/push/` and
+sends no payload, so the push service learns only that this device should wake; the device then asks
+Altitude what is waiting. On your own network the alert names the project and task, and away from it
+the alert says a decision is waiting and nothing more. It needs outbound internet from altd; where a
+push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
+phone means while it is on screen. Each alert opens that decision and carries no conversation text.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
 ## Register a project and start a conversation

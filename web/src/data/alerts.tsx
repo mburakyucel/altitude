@@ -14,6 +14,7 @@ import { questionPath } from "./decisions";
  */
 export const ALERTS_KEY = "altitude.alerts";
 export const ALERTS_SEEN_KEY = "altitude.alerts.seen";
+export const ALERTS_PUSH_KEY = "altitude.alerts.push";
 
 /** "off" also covers a browser that has neither granted nor refused permission yet. */
 export type AlertState = "unsupported" | "off" | "on" | "blocked";
@@ -46,12 +47,67 @@ function announce() {
   listeners.forEach((listener) => listener());
 }
 
-function store(value: string | null) {
+function store(key: string, value: string | null) {
   try {
-    if (value === null) localStorage.removeItem(ALERTS_KEY);
-    else localStorage.setItem(ALERTS_KEY, value);
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
     // no persistence: the switch still reflects this page's permission
+  }
+}
+
+/** Whether this device also gets a push while Altitude is closed; the note says which it is. */
+export function readPushState(): boolean {
+  try {
+    return supported() && localStorage.getItem(ALERTS_PUSH_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function keyBytes(key: string): Uint8Array<ArrayBuffer> {
+  const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(key.length / 4) * 4, "="));
+  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
+  raw.split("").forEach((character, index) => { bytes[index] = character.charCodeAt(0); });
+  return bytes;
+}
+
+async function tell(endpoint: string, remove = false): Promise<boolean> {
+  const response = await fetch("/api/alerts/subscription", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(remove ? { endpoint, remove } : { endpoint }),
+  });
+  return response.ok;
+}
+
+/**
+ * Ask the push service to wake this device for Altitude. It returns false whenever the device cannot
+ * be woken — no key on the machine, no push service reachable, or an iPhone not added to the Home
+ * Screen — and alerts then arrive only while Altitude is open, which the note says.
+ */
+async function subscribePush(registration: ServiceWorkerRegistration): Promise<boolean> {
+  try {
+    if (!registration.pushManager) return false;
+    const { key } = (await (await fetch("/api/alerts")).json()) as { key?: string | null };
+    if (!key) return false;
+    const existing = await registration.pushManager.getSubscription();
+    const subscription = existing ?? await registration.pushManager.subscribe(
+      { userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+    return await tell(subscription.endpoint);
+  } catch {
+    return false;
+  }
+}
+
+async function unsubscribePush(): Promise<void> {
+  try {
+    const registration = await navigator.serviceWorker.getRegistration("/sw.js");
+    const subscription = await registration?.pushManager?.getSubscription();
+    if (!subscription) return;
+    await tell(subscription.endpoint, true);
+    await subscription.unsubscribe();
+  } catch {
+    // this device stops alerting either way, and altd drops an endpoint its push service rejects
   }
 }
 
@@ -82,32 +138,34 @@ export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
     announce();
     return readAlertState();
   }
-  await navigator.serviceWorker.register("/sw.js");
+  const registration = await navigator.serviceWorker.register("/sw.js");
   writeSeen(pending.filter((decision) => decision.id).map(alertKey));
-  store("on");
+  store(ALERTS_KEY, "on");
+  announce();
+  store(ALERTS_PUSH_KEY, await subscribePush(registration) ? "on" : null);
   announce();
   return "on";
 }
 
 export function disableAlerts(): void {
-  store(null);
+  store(ALERTS_KEY, null);
+  store(ALERTS_PUSH_KEY, null);
   announce();
+  void unsubscribePush();
+}
+
+function watch(listener: () => void) {
+  listeners.add(listener);
+  // Permission can also change in browser settings, which shows on the next return to the page.
+  document.addEventListener("visibilitychange", listener);
+  return () => {
+    listeners.delete(listener);
+    document.removeEventListener("visibilitychange", listener);
+  };
 }
 
 export function useAlertState(): AlertState {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      // Permission can also change in browser settings, which shows on the next return to the page.
-      document.addEventListener("visibilitychange", listener);
-      return () => {
-        listeners.delete(listener);
-        document.removeEventListener("visibilitychange", listener);
-      };
-    },
-    readAlertState,
-    () => "unsupported",
-  );
+  return useSyncExternalStore(watch, readAlertState, () => "unsupported");
 }
 
 /**
@@ -185,9 +243,13 @@ const NOTE: Record<AlertState, string> = {
   blocked: "Alerts are blocked in this browser's settings. Allow notifications for this site, then turn them on again.",
 };
 
+/** The honest difference the operator needs: this device wakes for a decision, closed app and all. */
+const PUSHED = "Alerts arrive on this device even when Altitude is closed. Away from your network the alert says a decision is waiting, without naming it.";
+
 /** The switch on Needs you (SPEC.md §2.1), set on each device that should alert. */
 export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
   const state = useAlertState();
+  const pushed = useSyncExternalStore(watch, readPushState, () => false);
   const [asking, setAsking] = useState(false);
   const on = state === "on";
   const settled = state === "unsupported" || state === "blocked";
@@ -208,7 +270,7 @@ export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
       >
         {on ? "Alerts on" : "Alert me about new decisions"}
       </button>{" "}
-      <span>{NOTE[state]}</span>
+      <span>{state === "on" && pushed ? PUSHED : NOTE[state]}</span>
     </p>
   );
 }

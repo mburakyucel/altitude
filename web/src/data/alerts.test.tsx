@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
-import { ALERTS_KEY, ALERTS_SEEN_KEY } from "./alerts";
+import { ALERTS_KEY, ALERTS_PUSH_KEY, ALERTS_SEEN_KEY } from "./alerts";
 
 /** Decision alerts (issue #221) through the whole app: the shell watches, Needs you switches. */
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -29,11 +29,16 @@ function overview(queue: unknown[]) {
   };
 }
 
+/** A 65-byte application server key, as altd hands it to the page. */
+const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
 /** The fixture queue the next overview read returns; tests grow it like altd would. */
-function mockFetch(initial: unknown[]) {
+function mockFetch(initial: unknown[], key: string | null = PUSH_KEY) {
   let queue = initial;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/api/alerts/subscription")) return jsonResponse({ push: true });
+    if (url.includes("/api/alerts")) return jsonResponse({ key });
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
@@ -43,7 +48,15 @@ function mockFetch(initial: unknown[]) {
   return (next: unknown[]) => { queue = next; };
 }
 
+const ENDPOINT = "https://push.example/wake/device-1";
+
 class FakeRegistration {
+  pushManager = {
+    subscribe: vi.fn(async (_options: PushSubscriptionOptionsInit) => this.subscription),
+    getSubscription: vi.fn(async () => this.subscribed),
+  };
+  subscribed: { endpoint: string; unsubscribe: () => Promise<boolean> } | null = null;
+  subscription = { endpoint: ENDPOINT, unsubscribe: vi.fn(async () => true) };
   async showNotification(_title: string, _options?: NotificationOptions) {}
 }
 
@@ -55,6 +68,7 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
   const listeners = new Set<(event: MessageEvent) => void>();
   const worker = {
     register,
+    getRegistration: vi.fn(async () => registration),
     ready: Promise.resolve(registration),
     addEventListener: (_type: string, listener: (event: MessageEvent) => void) => listeners.add(listener),
     removeEventListener: (_type: string, listener: (event: MessageEvent) => void) => listeners.delete(listener),
@@ -71,7 +85,7 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
   };
   vi.stubGlobal("Notification", notification);
   return {
-    shown, register, request: notification.requestPermission,
+    shown, register, registration, request: notification.requestPermission,
     click: (url: string) => act(() => {
       listeners.forEach((listener) => listener(new MessageEvent("message", { data: { type: "alert-open", url } })));
     }),
@@ -104,7 +118,35 @@ describe("decision alerts", () => {
     expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([KEY]);
     expect(browser.shown).not.toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "Alerts on" })).toHaveAttribute("aria-pressed", "true");
+
+    // This device also subscribes for a push, so a closed phone still learns a decision is waiting.
+    await waitFor(() => expect(browser.registration.pushManager.subscribe).toHaveBeenCalled());
+    const [options] = browser.registration.pushManager.subscribe.mock.calls[0]!;
+    expect(options.userVisibleOnly).toBe(true);
+    expect((options.applicationServerKey as Uint8Array).length).toBe(65);
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ endpoint: "https://push.example/wake/device-1" }),
+    }));
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
+    expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+  });
+
+  it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
+    const browser = alertingBrowser("default", "granted");
+    const setQueue = mockFetch([question], null); // altd has no key: nothing can wake this device
+    const { user, queryClient, router } = renderApp({ route: "/" });
+
+    await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
+    expect(await screen.findByRole("button", { name: "Alerts on" })).toBeVisible();
+    expect(browser.registration.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
     expect(screen.getByText(/only while Altitude is open/)).toBeVisible();
+
+    // The open page still alerts for a decision that is not on screen.
+    await act(async () => { await router.navigate("/projects/altitude"); });
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
   });
 
   it("alerts once for a new question, with the task name only, and never again for the same one", async () => {
@@ -173,12 +215,17 @@ describe("decision alerts", () => {
     expect(screen.getByText("This browser cannot show alerts.")).toBeVisible();
   });
 
-  it("stops alerting when the switch goes off", async () => {
+  it("stops alerting and gives up its push subscription when the switch goes off", async () => {
     const browser = alreadyOn([]);
+    browser.registration.subscribed = browser.registration.subscription;
     const setQueue = mockFetch([]);
     const { queryClient, user } = renderApp({ route: "/" });
     await user.click(await screen.findByRole("button", { name: "Alerts on" }));
     expect(localStorage.getItem(ALERTS_KEY)).toBeNull();
+    await waitFor(() => expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: "https://push.example/wake/device-1", remove: true }),
+    }));
 
     setQueue([question]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });

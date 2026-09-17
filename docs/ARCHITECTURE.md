@@ -1042,8 +1042,17 @@ task is recorded without an alert, and the recorded keys make refresh, reconnect
 repeat none. A key names the waiting decision, not its revision, so a block and the escalation that
 republishes it alert once; a decision that is answered leaves the queue, and an ask that returns
 alerts again. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
-closes it. The reach is the open page: a closed tab, and a phone that has stopped the page, receive
-nothing.
+closes it.
+
+A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key under
+`~/.altitude/push/` and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
+daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
+from `/api/alerts`. Each tick, a decision key that is newly waiting sends one empty, signed POST per
+device: no payload, so no encryption library and no word of the decision leaves the machine. The
+worker's `push` handler reads `/api/overview` and names the project and task, and shows that a
+decision is waiting when the device cannot reach Altitude; a page already on screen alerts for itself,
+so the worker stays quiet. An endpoint the service reports gone is dropped, a refusal is logged and
+kept, and a machine without OpenSSL or outbound reach simply has no push, which the switch states.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
 as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,
 refetching, when shown, so background tabs hold none of the browser's connections to altd. Ordinary 20-second polling, the 2-second
