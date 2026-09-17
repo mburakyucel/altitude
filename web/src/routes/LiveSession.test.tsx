@@ -116,7 +116,7 @@ describe("LiveSession", () => {
     expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("title", transcript.redaction);
     expect(within(panel).getByText("Following live · new steps appear at the bottom").closest("[role=separator]")).toHaveAttribute("data-tone", "live");
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "live");
-    expect(within(panel).getByRole("status")).toHaveTextContent(/^Recorded output changed · \d+ sec ago$/);
+    expect(within(panel).getByRole("status")).toHaveTextContent(/^Working · output \d+ sec ago$/);
     expect(within(panel).getByRole("status").querySelector(".dot")).toHaveAttribute("data-pulse", "true");
   });
 

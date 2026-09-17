@@ -661,14 +661,16 @@ status enables **Stopped** and Continue. Desktop Stop advertises **Esc**; the ke
 input, composition, dialog, recording, menu or overlay owns it. Recording cancels and overlays close
 before Escape can reach the worker. Phone always has the visible button.
 
-One compact **Latest from L2** area above the composer shows the current worker's public text verbatim
-after redaction, clamped to two lines. **Expand** reveals it; **Collapse** folds it. Each newer update
-replaces the preview without moving or duplicating Conversation. Prose has its source age or **Time
-unavailable**; a separate row shows recorded output and its age. After 60 seconds without output it
-reads **Last update** and **No new activity for …**, with a still neutral dot; within 60 seconds of
-output the accent dot pulses softly. Reduced motion keeps it steady. Activity never proves useful
-progress. **No public update yet.** covers empty commentary; **Activity unavailable** labels a retained
-last known update and offers **Retry activity**. Generation changes clear previous words. Short
+One compact L2 activity area above the composer opens with the activity line: a dot and **Working ·
+output 12 sec ago** while output was recorded within 60 seconds (the accent dot pulses softly; reduced
+motion keeps it steady), **No new activity for …** with a still neutral dot after that, **Output
+recorded · time unavailable** or **No activity recorded yet** without evidence, and **Expand** on the
+right. Below it, the current worker's public text appears verbatim after redaction, clamped to two
+lines, with its source time in the §3.4 format or **time unavailable**. **Expand** reveals it;
+**Collapse** folds it. Each newer update replaces the preview without moving or duplicating
+Conversation. Activity never proves useful progress. **No public update yet.** covers empty
+commentary; **Activity unavailable** keeps a retained update marked **Last known update ·** its time,
+and offers **Retry activity**. Generation changes clear previous words. Short
 viewports fold the words and age until expanded, keeping activity and controls reachable. **View live
 session** opens older output under existing retention. Questions, decisions and results stay durable;
 there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
@@ -739,7 +741,7 @@ carry no diff counts. **Raw events** toggles the transcript to the raw list; its
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
 resumes", or "Session ended"; Pause and Follow control following while the worker runs. While
-running, a line under the footer repeats the Conversation activity cue (dot and text), and the header
+running, the same activity line sits under the footer without the words, and the header
 dot pulses only while that cue shows recent output; quiet, unavailable, waiting and ended sessions
 keep it still.
 

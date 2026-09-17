@@ -5,7 +5,7 @@ import { ApiError, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
 import { SteeringControls } from "../components/TaskSteering";
 import { Stamp } from "../components/Stamp";
-import { CueDot, activityCue, duration, elapsed, useNow } from "../components/TaskActivity";
+import { CueLine, activityCue, duration, elapsed, useNow } from "../components/TaskActivity";
 import type { Steering } from "../components/TaskSteering";
 
 function str(value: unknown): string {
@@ -137,8 +137,7 @@ function LiveCue({ activity }: { activity: TaskView["activity"] }) {
   const cue = activityCue(activity, useNow());
   return (
     <p className="live-activity text-meta text-muted" role="status">
-      <CueDot state={cue.state} />
-      {cue.text}
+      <CueLine cue={cue} />
     </p>
   );
 }

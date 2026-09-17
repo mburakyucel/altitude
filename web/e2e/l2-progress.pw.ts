@@ -24,7 +24,7 @@ for (const index of [0, 1]) {
     const next = "I am checking the message race.";
     await walk.open(path);
     await walk.state("01-running-public-direction", {
-      visible: [preview.getByText("Latest from L2"), preview.getByText(/I am checking where pagination/), preview.getByText(/Recorded output changed/), stop, field],
+      visible: [preview.getByText(/^Working · output/), preview.getByText(/I am checking where pagination/), stop, field],
       hidden: [page.getByRole("group", { name: "Stop this task?" })],
     });
     expect(await convo.locator('[data-role="l2"]').count()).toBe(1);
@@ -34,11 +34,11 @@ for (const index of [0, 1]) {
     await walk.state("03-new-direction-replaces-preview", { visible: [preview.getByText(next, { exact: true })], hidden: [preview.getByText(/I am checking where pagination/)] });
     expect(await convo.locator('[data-role="l2"]').count()).toBe(1);
     await control("quiet", next);
-    await walk.state("04-quiet-is-not-progress", { visible: [preview.getByText("Last update"), preview.getByText(/No new activity for/)], hidden: [preview.getByText("Latest from L2")] });
+    await walk.state("04-quiet-is-not-progress", { visible: [preview.getByText(/No new activity for/)], hidden: [preview.getByText(/^Working · output/)] });
     await control("unknown-time", next);
-    await walk.state("05-prose-time-unavailable", { visible: [preview.getByText("Time unavailable")], hidden: [preview.getByText("Last update")] });
+    await walk.state("05-prose-time-unavailable", { visible: [preview.getByText("time unavailable", { exact: true })], hidden: [preview.getByText(/No new activity for/)] });
     await control("unavailable");
-    await walk.state("06-unavailable-retains-labeled-last-update", { visible: [preview.getByText("Activity unavailable"), preview.getByText("Last known update."), preview.getByRole("button", { name: "Retry activity" })], hidden: [] });
+    await walk.state("06-unavailable-retains-labeled-last-update", { visible: [preview.getByText("Activity unavailable"), preview.getByText(/Last known update ·/), preview.getByRole("button", { name: "Retry activity" })], hidden: [] });
     await field.fill("Keep the original page size.");
     await convo.getByRole("button", { name: "Send", exact: true }).click();
     await walk.state("07-steering-is-queued", { visible: [convo.getByText("Queued · waiting for a checkpoint", { exact: true })], hidden: [convo.getByText("Delivered to session", { exact: true })] });
@@ -166,7 +166,7 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   await expect(field).toBeVisible();
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: viewport.width, height: 620 });
-  await walk.state("02-short-viewport-folds-public-words", { visible: [preview.getByText("Latest from L2"), stop, field], hidden: [preview.locator(".task-activity-words"), preview.locator(".task-activity-age")] });
+  await walk.state("02-short-viewport-folds-public-words", { visible: [preview.getByText(/^Working · output/), stop, field], hidden: [preview.locator(".task-activity-words"), preview.locator(".task-activity-age")] });
   await preview.getByRole("button", { name: "Expand" }).click();
   await walk.state("03-short-viewport-expands-public-words", { visible: [preview.locator(".task-activity-words"), stop], hidden: [] });
   await page.setViewportSize(viewport);
@@ -210,7 +210,7 @@ for (const index of [0, 1]) {
     const phone = info.project.name === "phone";
     const convo = page.getByRole("region", { name: "Task conversation", exact: true });
     const preview = convo.getByRole("region", { name: "L2 activity" });
-    const cueDot = preview.locator(".task-activity-observation .dot");
+    const cueDot = preview.locator(".cue-line .dot");
     const live = page.getByRole("region", { name: "Live session", exact: true });
     const liveCue = live.getByRole("status");
     const toLive = async () => { if (phone) await convo.getByRole("button", { name: "View live session" }).click(); };
@@ -218,14 +218,14 @@ for (const index of [0, 1]) {
     const animation = (locator: typeof cueDot) => locator.evaluate((node) => getComputedStyle(node).animationName);
     await walk.open(`/projects/atlas/tasks/${slug}`);
     await control("output", "Running the pagination suite now.");
-    await walk.state("01-conversation-working-cue", { visible: [preview.getByText(/Recorded output changed · \d+ sec ago/)], hidden: [preview.getByText(/No new activity/)] });
+    await walk.state("01-conversation-working-cue", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });
     await expect(cueDot).toHaveAttribute("data-pulse", "true");
     expect(await animation(cueDot)).toBe("voice-pulse");
     await convo.getByText("Activity & evidence").click();
     await walk.state("02-task-events-show-recorded-times", { visible: [convo.locator(".conversation-activity time.event-time").first()], hidden: [convo.locator(".conversation-activity .event-time[data-unavailable]")] });
     await toLive();
     await walk.state("03-live-working-cue-and-operation-times", {
-      visible: [liveCue.getByText(/Recorded output changed · \d+ sec ago/), live.locator("article.session-reply time.session-time").last()],
+      visible: [liveCue.getByText(/^Working · output \d+ sec ago$/), live.locator("article.session-reply time.session-time").last()],
       hidden: [liveCue.getByText(/No new activity/)],
     });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "live");
@@ -233,16 +233,16 @@ for (const index of [0, 1]) {
     const call = live.locator("details.session-tool").filter({ hasText: "pnpm test --run" });
     await walk.state("04-live-long-operation-without-output", {
       visible: [call.getByText(/^running · 4 min$/), call.locator("time.session-time"), liveCue.getByText("No new activity for 4 min")],
-      hidden: [liveCue.getByText(/Recorded output changed/)],
+      hidden: [liveCue.getByText(/^Working · output/)],
     });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "muted");
     await expect(liveCue.locator(".dot")).not.toHaveAttribute("data-pulse");
     await toConversation();
-    await walk.state("05-conversation-quiet-matches-live", { visible: [preview.getByText("No new activity for 4 min"), preview.getByText("Last update")], hidden: [preview.getByText(/Recorded output changed/)] });
+    await walk.state("05-conversation-quiet-matches-live", { visible: [preview.getByText("No new activity for 4 min"), preview.locator("time.activity-time")], hidden: [preview.getByText(/^Working · output/)] });
     await expect(cueDot).not.toHaveAttribute("data-pulse");
     await page.emulateMedia({ reducedMotion: "reduce" });
     await control("output", "The suite is still running.");
-    await walk.state("06-reduced-motion-steady-working-dot", { visible: [preview.getByText(/Recorded output changed · \d+ sec ago/)], hidden: [preview.getByText(/No new activity/)] });
+    await walk.state("06-reduced-motion-steady-working-dot", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });
     await expect(cueDot).toHaveAttribute("data-pulse", "true");
     expect(await animation(cueDot)).toBe("none");
     await toLive();
@@ -251,7 +251,7 @@ for (const index of [0, 1]) {
     const untimed = live.locator("article.session-reply").filter({ hasText: "A reply without a recorded time." });
     await walk.state("07-live-operation-time-unavailable", { visible: [untimed.getByText("time unavailable", { exact: true })], hidden: [] });
     await control("unavailable");
-    await walk.state("08-live-activity-unavailable-claims-nothing", { visible: [liveCue.getByText("Activity unavailable")], hidden: [liveCue.getByText(/Recorded output changed/)] });
+    await walk.state("08-live-activity-unavailable-claims-nothing", { visible: [liveCue.getByText("Activity unavailable")], hidden: [liveCue.getByText(/^Working · output/)] });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "muted");
     await control("finished");
     await walk.open(`/projects/atlas/tasks/${slug}/live`);

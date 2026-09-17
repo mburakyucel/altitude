@@ -1017,12 +1017,12 @@ messages and no generic Resume. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
 
-Conversation shows a replacing two-line preview of the current worker's public words above its
-composer. Expand reveals the full update after existing redaction. Prose uses its native source time
-only when identifiable; untimed words say Time unavailable. Recorded output has a separate observed
-age. Output within 60 seconds shows a softly pulsing dot; no new output for 60 seconds reads as quiet
-with a still dot, without inferring useful progress or failure. Live session shows the same cue under
-its footer from the same projection, and its header dot pulses only while output is recent. Reduced
+Conversation shows one activity line above its composer, over a replacing two-line preview of the
+current worker's public words. The line reads the recorded output time: output within 60 seconds shows
+"Working · output 12 sec ago" with a softly pulsing dot; no new output for 60 seconds reads "No new
+activity for …" with a still dot, without inferring useful progress or failure. Expand reveals the
+full update after existing redaction. Prose shows its native source time only when identifiable;
+untimed words say time unavailable. Live session shows the same activity line under its footer, and its header dot pulses only while output is recent. Reduced
 motion keeps every dot steady. Unavailable activity never pulses.
 Missing commentary, an empty source and an unavailable source are distinct. Resume clears the old
 direction until the new worker emits public output. Questions, decisions and explicit results stay

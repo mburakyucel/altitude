@@ -1572,7 +1572,7 @@
 .task-activity p { margin: 3px 0 0; }
 .task-activity-words { font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .task-activity[data-expanded] .task-activity-words { display: block; max-height: 25vh; overflow-y: auto; }
-.task-activity-observation { display: flex; align-items: center; gap: 6px; }
+.cue-line { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; color: var(--text-muted); }
 .task-dock-controls { min-height: 42px; font-size: 12px; margin-bottom: 3px; }
 .task-steering { flex-wrap: wrap; justify-content: flex-end; font-size: 12px; }
 .task-stop { border: 1px solid var(--border); gap: 8px; }

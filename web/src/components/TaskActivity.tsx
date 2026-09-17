@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { TaskView } from "../data/api";
+import { Stamp } from "./Stamp";
 
 export function elapsed(at: string | null | undefined, now: number) {
   const time = at ? Date.parse(at) : NaN;
@@ -29,45 +30,43 @@ export interface Cue {
   text: string;
 }
 
-/** The one activity cue Conversation and Live session share (SPEC.md §3.10), from the recorded output time. */
+/** The one activity line Conversation and Live session share (SPEC.md §3.10), from the recorded output time. */
 export function activityCue(activity: TaskView["activity"], now: number): Cue {
   const observation = activity?.observation;
   const quiet = elapsed(observation?.at, now);
   if (activity?.state === "unavailable") return { state: "idle", text: "Activity unavailable" };
   if (!observation) return { state: "idle", text: activity ? "No activity recorded yet" : "Reading activity…" };
-  if (quiet == null) return { state: "idle", text: `${observation.label} · ${age(quiet)}` };
+  if (quiet == null) return { state: "idle", text: "Output recorded · time unavailable" };
   if (quiet >= 60) return { state: "quiet", text: `No new activity for ${duration(quiet)}` };
-  return { state: "working", text: `${observation.label} · ${age(quiet)}` };
+  return { state: "working", text: `Working · output ${age(quiet)}` };
 }
 
-/** The cue's dot: it pulses only while output is recent (never under reduced motion). */
-export function CueDot({ state }: { state: Cue["state"] }) {
-  return <span className="dot" data-state={state === "working" ? "running" : "idle"} data-pulse={state === "working" || undefined} aria-hidden />;
+/** The dot and words of the activity line; the dot pulses only while output is recent (never under reduced motion). */
+export function CueLine({ cue }: { cue: Cue }) {
+  return <span className="cue-line">
+    <span className="dot" data-state={cue.state === "working" ? "running" : "idle"} data-pulse={cue.state === "working" || undefined} aria-hidden />
+    {cue.text}
+  </span>;
 }
 
-/** A replaceable projection of existing public output; the task conversation owns lasting replies. */
+/** The activity line over a replaceable preview of public output; the task conversation owns lasting replies. */
 export function TaskActivity({ activity, refresh }: { activity: TaskView["activity"]; refresh: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const now = useNow();
   const last = useRef(activity);
   if (activity?.state !== "unavailable" || last.current?.generation !== activity.generation) last.current = activity;
   const unavailable = activity?.state === "unavailable";
-  const known = unavailable ? last.current : activity;
-  const commentary = known?.commentary;
-  const observation = known?.observation;
-  const cue = activityCue(activity, now);
+  const commentary = (unavailable ? last.current : activity)?.commentary;
   useEffect(() => setExpanded(false), [activity?.generation]);
   return <section className="task-activity" aria-label="L2 activity" data-expanded={expanded || undefined}>
-    <div className="task-activity-heading">
-      <strong>{unavailable ? "Activity unavailable" : cue.state === "quiet" ? "Last update" : "Latest from L2"}</strong>
+    <div className="task-activity-heading text-meta">
+      <CueLine cue={activityCue(activity, now)} />
+      {unavailable ? <button type="button" className="link" onClick={refresh}>Retry activity</button> : null}
       {commentary ? <button type="button" className="link" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "Collapse" : "Expand"}</button> : null}
     </div>
-    {unavailable ? <p className="text-meta text-muted">{commentary ? "Last known update. " : "Could not read activity. "}<button type="button" className="link" onClick={refresh}>Retry activity</button></p> : null}
     <p className="task-activity-words">{commentary?.text ?? (activity ? "No public update yet." : "Reading activity…")}</p>
-    {commentary ? <p className="task-activity-age text-meta text-muted">{age(elapsed(commentary.time_kind === "source" ? commentary.at : null, now))}</p> : null}
-    <p className="task-activity-observation text-meta text-muted">
-      <CueDot state={unavailable ? "idle" : cue.state} />
-      {unavailable ? activityCue({ ...known!, state: "available" }, now).text : cue.text}
-    </p>
+    {commentary ? <p className="task-activity-age text-meta text-muted">
+      {unavailable ? "Last known update · " : ""}<Stamp at={commentary.time_kind === "source" ? commentary.at : null} className="activity-time" />
+    </p> : null}
   </section>;
 }
