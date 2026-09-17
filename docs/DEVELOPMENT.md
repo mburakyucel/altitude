@@ -125,6 +125,9 @@ The change-stream outage fixture reports its captured shutdown targets; connecti
 erase them from the count before the response reaches the browser assertion.
 The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
 so the intended queued request is the only send it interrupts.
+The reattachment walkthrough forces an overlapping browser overview read while registration fails.
+It releases the read after the error appears and keeps its route handler until teardown; removing
+the last page route also continues held requests, so their callbacks cannot continue them again.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
