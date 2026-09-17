@@ -1,8 +1,10 @@
 name: Self-hosted checks
 
-# Supplements the existing exact-candidate local landing gate.
+# Altitude requires this PR job before merging; main runs verify delivery.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
 
@@ -23,11 +25,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify exact commit and install frozen dependencies
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, os, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          if os.environ['GITHUB_EVENT_NAME'] == 'pull_request':
+              pr = json.load(open(os.environ['GITHUB_EVENT_PATH']))['pull_request']
+              base, head = pr['base']['sha'], pr['head']['sha']
+              assert git('rev-list', '--parents', '-n', '1', 'HEAD').split()[1:] == [base, head]
+              subprocess.run(['git', 'merge-base', '--is-ancestor', base, head], check=True)
+              assert git('rev-parse', 'HEAD^{tree}') == git('rev-parse', head + '^{tree}')
+          PY
           node --version
           pnpm --version
           pnpm --dir web install --frozen-lockfile
@@ -40,21 +54,39 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          make check 2>&1 | tee "$RUNNER_TEMP/ci-check.log"
+          mkdir -p "$RUNNER_TEMP/altitude-ci-evidence"
+          make check 2>&1 | tee "$RUNNER_TEMP/altitude-ci-evidence/check.log"
 
-      - name: Record local evidence identity
+      - name: Retain report and candidate identity
         if: always()
         env:
           CHECK_OUTCOME: ${{ steps.check.outcome }}
         run: |
           python3 - <<'PY'
-          import json, os, pathlib, subprocess
+          import json, os, pathlib, shutil, subprocess
           def revision(ref):
               result = subprocess.run(['git', 'rev-parse', ref], capture_output=True, text=True)
               return result.stdout.strip() if result.returncode == 0 else None
           sha = revision('HEAD')
+          pr = json.load(open(os.environ['GITHUB_EVENT_PATH'])).get('pull_request', {})
           record = {'sha': sha, 'tree': revision('HEAD^{tree}'), 'expected_sha': os.environ['GITHUB_SHA'],
+                    'base': pr.get('base', {}).get('sha'), 'head': pr.get('head', {}).get('sha'),
+                    'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                     'command': 'make check', 'passed': os.environ['CHECK_OUTCOME'] == 'success' and sha == os.environ['GITHUB_SHA'],
                     'run_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}
-          pathlib.Path(os.environ['RUNNER_TEMP'], 'ci-result.json').write_text(json.dumps(record, indent=2) + '\n')
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP'], 'altitude-ci-evidence')
+          evidence.mkdir(exist_ok=True)
+          (evidence / 'ci-result.json').write_text(json.dumps(record, indent=2) + '\n')
+          report = pathlib.Path('web/ui-artifacts/report')
+          if report.is_dir():
+              shutil.copytree(report, evidence / 'report')
           PY
+
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/altitude-ci-evidence
+          retention-days: 3
+          if-no-files-found: error

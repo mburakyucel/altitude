@@ -718,14 +718,16 @@ An owner whose branch needs manual conflict reconciliation updates it in the wor
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
-This repository's temporary local policy runs `make check` on the current merge candidate through
-`alt land`, including PR preparation without merging. Logs, the self-contained browser report and
-candidate-bound results stay in the task's `local-checks/` folder, without duplicate raw attachments.
-Landing uses the same concurrent Python/web phases and aggregate unittest results as `make check`;
-its `CI=true` environment also selects CPU-scaled browser workers. Every required phase must pass.
-Suite timeouts preserve captured stdout and stderr in `check.log` and leave validation failed.
-Only passing current evidence supplies the PR test
-line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
+Owners and helpers run relevant tests during development. This repository's self-hosted PR
+`check` runs full `make check`, including concurrent Python/web phases and both browser viewports.
+`alt land` requires successful CI for the current head and tested tree, without a duplicate
+local full run. The branch includes current main; a branch missing it needs reconciliation
+and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
+owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
+Owners download the three-day report/log/identity artifact before expiry and retain needed evidence
+through review. A bounded CI wait ends in an explicit owner block with run and missing evidence;
+L3 owns the existing finite `recheck-ci`. Missing runs need trigger/runner recovery. Runner or
+storage outages pause merges without a local bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
 activation does not establish billing/artifact recovery or release an operator hold.

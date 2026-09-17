@@ -762,278 +762,6 @@ class TestLand(AltitudeCase):
         })
         self.assertEqual(self.runner_log(), [["make", "test"]])
 
-    def local_policy(self, *, exit_code=0, output="Ran 12 tests in 0.4s\n\nOK\n"):
-        self.patch(land.config, "LOCAL_CHECK_REPOSITORY", "team/demo")
-        self.fake_runner("pnpm", 0, "frozen dependencies installed\n")
-        self.fake_runner("make", exit_code, output)
-        self.pr_body = "The reviewed change.\n"
-
-        def summary(args):
-            if args[:2] == ["gh", "pr"] and args[2] == "view" and args[-2:] == ["--json", "body"]:
-                return subprocess.CompletedProcess(args, 0, json.dumps({"body": self.pr_body}), "")
-            if args[:3] == ["gh", "pr", "edit"] and "--body-file" in args:
-                self.pr_body = Path(args[args.index("--body-file") + 1]).read_text()
-            return None
-
-        return self.record_commands(summary)
-
-    def test_minimal_service_path_installs_candidate_pin_and_runs_full_gate(self):
-        from tests.test_toolchain import nvm_fixture
-        self.local_policy()
-        self.staged_change()
-        node_bin = nvm_fixture(self)
-        self.fake_runner("pnpm", script=(
-            "import subprocess\n"
-            "assert json.load(open('package.json'))['packageManager'] == 'pnpm@10.34.5'\n"
-            "assert '--frozen-lockfile' in sys.argv and '--store-dir' in sys.argv\n"
-            "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
-            "print('candidate-pinned install')\n"))
-        (self.tmp / "bin/pnpm").replace(node_bin / "pnpm")
-        self.fake_runner("make", script=(
-            "import subprocess\n"
-            "assert sys.argv[1:] == ['check'] and os.environ['CI'] == 'true'\n"
-            "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
-            "print('Ran 12 tests in 0.4s\\n\\nOK')\n"))
-        result = land.land("fix: toolchain discovery", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(result["merged"], result)
-        self.assertTrue(result["local_tests"]["passed"])
-        calls = self.runner_calls()
-        self.assertEqual(Path(calls[0]["cwd"]), Path(calls[1]["cwd"]) / "web")
-        self.assertEqual(calls[0]["argv"][:2], ["pnpm", "install"])
-        self.assertEqual(result["local_tests"]["tree"], self.git("rev-parse", "HEAD^{tree}").strip())
-
-    def test_project_local_policy_replaces_historical_failure_and_uses_full_candidate(self):
-        self.local_policy()
-        self.staged_change()
-        self.advance_base("src/integration.py")
-        (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
-        (self.ghdir / "runs.json").write_text('[{"databaseId": 7, "conclusion": "failure"}]')
-        # The selected policy also handles a workflow still present on the pinned base.
-        self.advance_base(".github/workflows/ci.yml", "on: [push]\n")
-        self.fake_runner("make", script=(
-            "import subprocess\n"
-            "assert os.environ.get('CI') == 'true'\n"
-            "assert os.path.exists('src/thing.py') and os.path.exists('src/integration.py')\n"
-            "assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()\n"
-            "os.makedirs('web/ui-artifacts/report/data', exist_ok=True)\n"
-            "open('web/ui-artifacts/report/index.html', 'w').write('<img src=\"data/state.png\">')\n"
-            "open('web/ui-artifacts/report/data/state.png', 'wb').write(b'fictional screenshot')\n"
-            "os.makedirs('web/ui-artifacts/results', exist_ok=True)\n"
-            "open('web/ui-artifacts/results/state.png', 'wb').write(b'fictional screenshot')\n"
-            "os.makedirs('web/ui-artifacts/browser-config', exist_ok=True)\n"
-            "print('Ran 12 tests in 0.4s\\n\\nOK')\n"))
-        result = land.land("fix: local project policy", cwd=self.repo, wait=0, merge=True, test_cmd="false")
-        tests = result["local_tests"]
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["checks"], "local-pass")
-        self.assertIsNone(result["main_run"])
-        self.assertEqual(self.runner_log()[-1], ["make", "check"])
-        self.assertIn("--frozen-lockfile", self.runner_log()[0])
-        self.assertEqual(tests["head"], result["head"])
-        self.assertEqual(self.git("rev-parse", tests["candidate"] + "^{tree}").strip(), tests["tree"])
-        evidence = Path(tests["evidence"])
-        self.assertEqual(json.loads((evidence / "result.json").read_text()), tests)
-        self.assertIn("Ran 12 tests", (evidence / "check.log").read_text())
-        report = evidence / "ui-artifacts/report"
-        self.assertEqual((report / "index.html").read_text(), '<img src="data/state.png">')
-        self.assertEqual((report / "data/state.png").read_bytes(), b"fictional screenshot")
-        self.assertEqual([p.name for p in (evidence / "ui-artifacts").iterdir()], ["report"])
-        self.assertIn(f"Tests: make check passed locally ({tests['candidate']})", self.pr_body)
-        self.assertIn(f"base {tests['base']}, head {tests['head']}", self.pr_body)
-        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
-
-    def test_local_policy_is_selected_only_for_the_configured_repository(self):
-        self.staged_change()
-        self.configure_ci()
-        (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
-        result = land.land("fix: ordinary hosted gate", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "fail")
-        self.assertFalse(result["merged"])
-        self.assertEqual(self.runner_log(), [])
-
-    def test_project_local_failure_retains_evidence_without_passing_summary(self):
-        self.local_policy(exit_code=1, output="Ran 12 tests in 0.4s\n\nFAILED (failures=1)\n")
-        self.staged_change()
-        result = land.land("fix: failing local check", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["checks"], "local-fail")
-        evidence = Path(result["local_tests"]["evidence"])
-        self.assertIn("FAILED", (evidence / "check.log").read_text())
-        self.assertFalse((evidence / "ui-artifacts").exists())
-        self.assertFalse(json.loads((evidence / "result.json").read_text())["passed"])
-        self.assertNotIn("Tests:", self.pr_body)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
-    def test_project_local_timeout_retains_output_and_failed_candidate_identity(self):
-        self.local_policy()
-        self.fake_runner("make", script=(
-            "import time\n"
-            "print('phase: Python complete\\nRan 12 tests in 0.4s', flush=True)\n"
-            "sys.stderr.buffer.write(b'phase: web stalled \\xe2\\x82'); sys.stderr.flush()\n"
-            "time.sleep(10)\n"))
-        self.staged_change()
-        with mock.patch.object(land, "LOCAL_TEST_TIMEOUT", 0.5):
-            result = land.land("fix: retain timeout evidence", cwd=self.repo, wait=0, merge=True)
-        tests = result["local_tests"]
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["checks"], "local-fail")
-        self.assertFalse(tests["passed"])
-        self.assertIsNone(tests["returncode"])
-        self.assertIsNone(tests["tests"])
-        self.assertEqual(tests["head"], result["head"])
-        self.assertEqual(self.git("rev-parse", tests["candidate"] + "^{tree}").strip(), tests["tree"])
-        evidence = Path(tests["evidence"])
-        self.assertEqual(json.loads((evidence / "result.json").read_text()), tests)
-        output = (evidence / "check.log").read_text()
-        self.assertIn("phase: Python complete\nRan 12 tests", output)
-        self.assertIn("phase: web stalled \ufffd", output)
-        self.assertIn("timed out", output)
-        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
-        self.assertNotIn("Tests:", self.pr_body)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
-    def test_local_timeout_without_output_still_records_failure(self):
-        self.fake_runner("quiet-suite", script="import time\ntime.sleep(10)\n")
-        log = self.tmp / "check.log"
-        with mock.patch.object(land, "LOCAL_TEST_TIMEOUT", 0.1):
-            result = land._local_suite(self.repo, "quiet-suite", log=log)
-        self.assertFalse(result["passed"])
-        self.assertIsNone(result["returncode"])
-        self.assertIn("timed out", log.read_text())
-
-    def test_project_local_browser_failure_retains_report_attachments_without_raw_duplicates(self):
-        self.local_policy()
-        self.fake_runner("make", script=(
-            "from pathlib import Path\n"
-            "report = Path('web/ui-artifacts/report')\n"
-            "(report / 'data').mkdir(parents=True)\n"
-            "(report / 'trace').mkdir()\n"
-            "(report / 'trace/index.html').write_text('trace viewer')\n"
-            "(report / 'index.html').write_text('<img src=\"data/failure.png\"><a href=\"data/trace.zip\">trace</a>')\n"
-            "for name, data in [('failure.png', b'failure screenshot'), ('trace.zip', b'failure trace')]:\n"
-            "    (report / 'data' / name).write_bytes(data)\n"
-            "    raw = Path('web/ui-artifacts/results')\n"
-            "    raw.mkdir(exist_ok=True)\n"
-            "    (raw / name).write_bytes(data)\n"
-            "print('Ran 12 tests in 0.4s\\n\\nFAILED (failures=1)')\n"
-            "sys.exit(1)\n"))
-        self.staged_change()
-        result = land.land("fix: retain failed browser evidence", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["checks"], "local-fail")
-        evidence = Path(result["local_tests"]["evidence"])
-        report = evidence / "ui-artifacts/report"
-        self.assertIn('src="data/failure.png"', (report / "index.html").read_text())
-        self.assertIn('href="data/trace.zip"', (report / "index.html").read_text())
-        self.assertEqual((report / "data/failure.png").read_bytes(), b"failure screenshot")
-        self.assertEqual((report / "data/trace.zip").read_bytes(), b"failure trace")
-        self.assertEqual((report / "trace/index.html").read_text(), "trace viewer")
-        self.assertEqual([p.name for p in (evidence / "ui-artifacts").iterdir()], ["report"])
-        self.assertIn("FAILED", (evidence / "check.log").read_text())
-        self.assertFalse(json.loads((evidence / "result.json").read_text())["passed"])
-        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
-        self.assertNotIn("Tests:", self.pr_body)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
-    def test_project_local_install_failure_does_not_run_or_claim_tests(self):
-        self.local_policy()
-        self.fake_runner("pnpm", 1, "installation failed\n")
-        self.staged_change()
-        result = land.land("fix: missing prerequisites", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["checks"], "local-fail")
-        self.assertIn("installation", result["local_tests"]["error"])
-        evidence = Path(result["local_tests"]["evidence"])
-        self.assertIn("installation failed", (evidence / "install.log").read_text())
-        self.assertEqual(json.loads((evidence / "result.json").read_text()), result["local_tests"])
-        self.assertEqual(len(self.runner_log()), 1)
-        self.assertNotIn("Tests:", self.pr_body)
-
-    def test_project_local_gate_tests_held_pr_without_merging(self):
-        self.local_policy()
-        self.staged_change()
-        task = S.load_task("demo", "fix-x")
-        task["hold_merge"] = "operator UX review"
-        S.save_task("demo", task)
-        result = land.land("fix: held local check", cwd=self.repo, wait=0)
-        self.assertEqual(result["checks"], "local-pass")
-        self.assertFalse(result["merged"])
-        self.assertIn("Tests:", self.pr_body)
-        with self.assertRaisesRegex(land.LandError, "merge hold"):
-            land.land("fix: held local check", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
-    def test_project_local_gate_rechecks_base_and_head_after_tests(self):
-        for moving_ref in ("main", "worktree-fix-x"):
-            with self.subTest(ref=moving_ref):
-                self.local_policy()
-                self.staged_change()
-                real = land._local_suite
-
-                def moving(cwd, command, **kwargs):
-                    result = real(cwd, command, **kwargs)
-                    other = self.clone("moved-" + moving_ref)
-                    git("checkout", "-q", moving_ref, cwd=other)
-                    (other / (moving_ref + ".txt")).write_text("late change\n")
-                    git("add", ".", cwd=other)
-                    git("commit", "-q", "-m", "move", cwd=other)
-                    git("push", "-q", "origin", moving_ref, cwd=other)
-                    return result
-
-                with mock.patch.object(land, "_local_suite", side_effect=moving):
-                    result = land.land("fix: reject stale pair", cwd=self.repo, wait=0, merge=True)
-                self.assertFalse(result["merged"])
-                self.assertEqual(result["checks"], "local-fail")
-                self.assertIn("moved", result["local_tests"]["error"])
-                self.assertNotIn("Tests:", self.pr_body)
-                evidence = Path(result["local_tests"]["evidence"]) / "result.json"
-                self.assertIn("moved", json.loads(evidence.read_text())["error"])
-
-    def test_project_local_gate_preserves_late_hold_and_required_reviews(self):
-        self.local_policy()
-        self.staged_change()
-        real = land._local_suite
-
-        def hold(cwd, command, **kwargs):
-            result = real(cwd, command, **kwargs)
-            task = S.load_task("demo", "fix-x")
-            task["hold_merge"] = "operator security review"
-            S.save_task("demo", task)
-            return result
-
-        with mock.patch.object(land, "_local_suite", side_effect=hold):
-            with self.assertRaisesRegex(land.LandError, "merge hold"):
-                land.land("fix: late hold", cwd=self.repo, wait=0, merge=True)
-        task = S.load_task("demo", "fix-x")
-        task["hold_merge"] = None
-        S.save_task("demo", task)
-        pr = json.loads((self.ghdir / "pr.json").read_text())
-        pr["reviewDecision"] = "CHANGES_REQUESTED"
-        (self.ghdir / "pr.json").write_text(json.dumps(pr))
-        with self.assertRaisesRegex(land.LandError, "outstanding required reviews"):
-            land.land("fix: review refusal", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
-    def test_project_local_gate_refuses_required_hosted_checks_even_after_passing_tests(self):
-        self.local_policy()
-        self.staged_change()
-        real = land._local_suite
-
-        def require_check(cwd, command, **kwargs):
-            result = real(cwd, command, **kwargs)
-            evidence = json.loads((self.ghdir / "last_check_evidence.json").read_text())
-            evidence["pullRequest"]["baseRef"]["rules"]["nodes"] = [{"type": "REQUIRED_STATUS_CHECKS",
-                "parameters": {"requiredStatusChecks": [{"context": "hosted", "integrationId": 1}]}}]
-            evidence["pullRequest"]["baseRef"]["rules"]["totalCount"] = 1
-            S.write_json(self.ghdir / "check_evidence.json", evidence)
-            return result
-
-        with mock.patch.object(land, "_local_suite", side_effect=require_check):
-            with self.assertRaisesRegex(land.LandError, "remove hosted required checks"):
-                land.land("fix: rule appears", cwd=self.repo, wait=0, merge=True)
-        self.assertNotIn("Tests:", self.pr_body)
-        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
-
     def test_the_suite_runs_on_the_merge_candidate_not_on_this_worktree(self):
         self.staged_change()
         self.no_checks()
@@ -1500,6 +1228,9 @@ class TestCheckEvidence(AltitudeCase):
 
     def setUp(self):
         super().setUp()
+        self.setup_check_evidence()
+
+    def setup_check_evidence(self):
         self.ghdir = self.fake_gh()
         self.register("demo", path=self.repo)
         make_repo(self.repo)
@@ -1557,7 +1288,8 @@ class TestCheckEvidence(AltitudeCase):
         contexts = copy.deepcopy(self.contexts()["nodes"]) if checks else []
         for check in contexts:
             check["checkSuite"]["commit"]["oid"] = oid
-        merge = {"oid": oid, "parents": {"totalCount": 2, "nodes": [{"oid": self.base}, {"oid": self.head}]},
+        merge = {"oid": oid, "tree": {"oid": tree},
+                 "parents": {"totalCount": 2, "nodes": [{"oid": self.base}, {"oid": self.head}]},
                  "statusCheckRollup": {"contexts": self.connection(contexts)}}
         self.pr["potentialMergeCommit"] = merge
         return merge
@@ -1871,6 +1603,271 @@ class TestCheckEvidence(AltitudeCase):
                 S.write_json(self.ghdir / "graphql_response.json", response)
                 with self.assertRaises(land.LandError):
                     self.classify()
+
+
+class TestRequiredPrCheck(AltitudeCase):
+    """The repository policy gates real Git delivery without GitHub branch protection."""
+    git = TestLand.git
+    clone = TestLand.clone
+    advance_base = TestLand.advance_base
+    staged_change = TestLand.staged_change
+    runner_log = TestLand.runner_log
+    runner_calls = TestLand.runner_calls
+    connection = staticmethod(TestCheckEvidence.connection)
+    refresh = TestCheckEvidence.refresh
+    contexts = TestCheckEvidence.contexts
+    classify = TestCheckEvidence.classify
+    merge_candidate = TestCheckEvidence.merge_candidate
+    diverge_base = TestCheckEvidence.diverge_base
+    workflow_path = ".github/workflows/self-hosted-checks.yml"
+    source = TestCheckEvidence.source
+
+    def setUp(self):
+        super().setUp()
+        TestCheckEvidence.setup_check_evidence(self)
+        self.patch(land.config, "PR_CHECK_REPOSITORY", "team/demo")
+        self.configure_required_check()
+        (self.ghdir / "merge_git.txt").touch()
+
+    def configure_required_check(self):
+        self.pair["required_pr_check"] = True
+        self.required_check = self.contexts()["nodes"][0]
+        self.required_check.update(name="check", isRequired=False)
+        self.required_check["checkSuite"].update(
+            app={"databaseId": 15368},
+            workflowRun={"event": "pull_request", "file": {"path": self.workflow_path}})
+
+    def assert_not_merged(self):
+        self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
+        self.assertEqual(self.runner_log(), [])
+
+    def test_head_bound_check_lands_same_tree_without_local_full_run(self):
+        self.assertEqual(self.classify(), "pass")
+        expected = self.git("rev-parse", "HEAD^{tree}").strip()
+        self.assertEqual(self.pair["tree"], expected)
+        result = land.land("green required PR check", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["checks"], "pass")
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), expected)
+
+    def test_exact_merge_bound_check_lands_same_tree(self):
+        candidate = self.merge_candidate()
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("green tested merge", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), candidate["tree"]["oid"])
+        self.assertEqual(self.runner_log(), [])
+
+    def test_merge_result_with_a_different_tree_cannot_claim_verified_delivery(self):
+        self.classify()
+        (self.ghdir / "merge_tree.txt").write_text(self.git("rev-parse", self.base + "^{tree}").strip())
+        with self.assertRaisesRegex(land.LandError, "tree"):
+            land.land("verify merged content", cwd=self.repo, wait=0, merge=True)
+
+    def test_failure_pending_missing_and_runner_outage_never_use_local_fallback(self):
+        for bucket, status, conclusion in (("fail", "COMPLETED", "FAILURE"),
+                                           ("pending", "IN_PROGRESS", None),
+                                           ("pending", "QUEUED", None),
+                                           ("skipped", "COMPLETED", "SKIPPED")):
+            with self.subTest(status=status, conclusion=conclusion):
+                self.required_check.update(status=status, conclusion=conclusion)
+                self.assertEqual(self.classify(), bucket)
+                result = land.land("blocked required PR check", cwd=self.repo, wait=0, merge=True,
+                                   test_cmd="true")
+                self.assertFalse(result["merged"])
+                self.assertEqual(result["checks"], bucket)
+                self.assertIsNone(result["local_tests"])
+        self.contexts().update(self.connection([]))
+        S.write_json(self.ghdir / "checks.json", [])
+        self.assertEqual(self.classify(), "skipped")
+        missing = land.land("missing required check", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(missing["merged"])
+        self.assertIsNone(missing["local_tests"])
+        self.assert_not_merged()
+
+    def test_name_app_workflow_and_event_must_identify_the_required_pr_run(self):
+        original = copy.deepcopy(self.required_check)
+        for change in ("name", "app", "workflow", "push", "pull_request_target"):
+            with self.subTest(change=change):
+                check = copy.deepcopy(original)
+                if change == "name":
+                    check["name"] = "unrelated-check"
+                elif change == "app":
+                    check["checkSuite"]["app"]["databaseId"] = 1
+                elif change == "workflow":
+                    check["checkSuite"]["workflowRun"]["file"]["path"] = ".github/workflows/unrelated.yml"
+                else:
+                    check["checkSuite"]["workflowRun"]["event"] = change
+                self.contexts().update(self.connection([check]))
+                self.assertEqual(self.classify(), "skipped")
+        self.assert_not_merged()
+
+    def test_unknown_or_different_candidate_tree_refuses(self):
+        candidate = self.merge_candidate()
+        for tree in (None, {}, {"oid": "0" * 40}):
+            with self.subTest(tree=tree):
+                candidate["tree"] = tree
+                with self.assertRaises(land.LandError):
+                    self.classify()
+        self.assert_not_merged()
+
+    def test_main_movement_requires_updated_head_and_a_fresh_required_run(self):
+        self.diverge_base()
+        self.merge_candidate()
+        with self.assertRaises(land.LandError):
+            self.classify()
+        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate current main")
+        with self.assertRaises(land.LandError):
+            land.land("stale check cannot authorize updated head", cwd=self.repo, wait=0, merge=True)
+        self.assert_not_merged()
+        self.refresh()
+        self.configure_required_check()
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("fresh CI covers updated main", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), self.pair["tree"])
+
+    def test_late_head_movement_refuses_before_merging(self):
+        self.classify()
+        other = self.clone("other-owner")
+        git("checkout", "-q", "worktree-fix-x", cwd=other)
+        (other / "late.txt").write_text("changed after CI\n")
+        git("add", "late.txt", cwd=other)
+        git("commit", "-qm", "late change", cwd=other)
+        git("push", "-q", "origin", "worktree-fix-x", cwd=other)
+        with self.assertRaises(land.LandError):
+            self.classify()
+        self.assert_not_merged()
+
+    def test_required_check_is_refreshed_inside_merge_lock(self):
+        import fcntl
+        self.classify()
+        common = Path(self.git("rev-parse", "--git-common-dir").strip())
+        with (common / ".altitude-merge.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(land.LandError):
+                land.land("another owner is merging", cwd=self.repo, wait=0, merge=True)
+        self.assert_not_merged()
+
+    def test_two_owners_serialize_merges_and_reject_the_second_stale_candidate(self):
+        self.assertEqual(self.classify(), "pass")
+        first_task = S.load_task("demo", "fix-x")
+        S.save_task("demo", {**first_task, "attempt": 1})
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        self.setenv("ALTITUDE_ATTEMPT", "1")
+        second = add_worktree(self.project_repo, "fix-y")
+        (second / "second.txt").write_text("second owner's change\n")
+        git("add", "second.txt", cwd=second)
+        git("commit", "-qm", "second candidate", cwd=second)
+        git("push", "-q", "origin", "worktree-fix-y", cwd=second)
+        second_head = git("rev-parse", "HEAD", cwd=second).strip()
+        S.save_task("demo", {"slug": "fix-y", "state": "running", "attempt": 1,
+                             "worktree": str(second), "branch": "worktree-fix-y"})
+        self.assertEqual(self.git("rev-parse", "--git-common-dir"),
+                         git("rev-parse", "--git-common-dir", cwd=second))
+
+        # Each external PR has its own successful run against the same original main.
+        second_gh = self.tmp / "second-gh-state"
+        second_gh.mkdir()
+        second_pr = json.loads((self.ghdir / "pr.json").read_text())
+        second_pr.update(number=102, headRefName="worktree-fix-y", url="https://example.invalid/pr/102")
+        S.write_json(second_gh / "pr.json", second_pr)
+        second_evidence = copy.deepcopy(self.evidence)
+        pull = second_evidence["pullRequest"]
+        pull.update(number=102, headRefName="worktree-fix-y", headRefOid=second_head)
+        commit = pull["commits"]["nodes"][0]["commit"]
+        commit.update(oid=second_head, tree={"oid": git("rev-parse", "HEAD^{tree}", cwd=second).strip()})
+        suite = commit["statusCheckRollup"]["contexts"]["nodes"][0]["checkSuite"]
+        suite.update(commit={"oid": second_head}, branch={"name": "worktree-fix-y"},
+                     matchingPullRequests=self.connection([
+                         {"number": 102, "baseRefName": "main", "headRefName": "worktree-fix-y"}]))
+        S.write_json(second_gh / "check_evidence.json", second_evidence)
+        second_env = {"ALTITUDE_TASK": "fix-y", "FAKE_GH_DIR": str(second_gh)}
+        with mock.patch.dict(os.environ, second_env):
+            prepared = land.land("second owner has green CI", cwd=second, wait=0)
+        self.assertEqual((prepared["pr"], prepared["checks"], prepared["merged"]), (102, "pass", False))
+
+        real = land._run
+        competing_attempts = []
+
+        def github_merge(args, cwd, timeout=120):
+            if args[:3] == ["gh", "pr", "merge"] and cwd == self.repo:
+                # Yield at the external merge boundary while the first owner holds the real lock.
+                with mock.patch.dict(os.environ, second_env):
+                    with self.assertRaisesRegex(land.LandError, "another Altitude merge"):
+                        land.land("second owner overlaps first merge", cwd=second, wait=0, merge=True)
+                competing_attempts.append(True)
+            return real(args, cwd, timeout=timeout)
+
+        with mock.patch.object(land, "_run", side_effect=github_merge):
+            first = land.land("first owner merges green CI", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(first["merged"])
+        self.assertEqual(competing_attempts, [True])
+        merged_main = self.git("rev-parse", "origin/main").strip()
+        self.assertNotEqual(merged_main, self.base)
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), self.pair["tree"])
+
+        # Fresh GitHub metadata still exposes the old green run; its head lacks the merged main.
+        pull["baseRef"]["target"]["oid"] = merged_main
+        S.write_json(second_gh / "check_evidence.json", second_evidence)
+        with mock.patch.dict(os.environ, second_env):
+            with self.assertRaisesRegex(land.LandError, "head checks do not include"):
+                land.land("second owner retries after first merge", cwd=second, wait=0, merge=True)
+        second_calls = [json.loads(row) for row in (second_gh / "log.jsonl").read_text().splitlines()]
+        self.assertFalse(any(call[:2] == ["pr", "merge"] for call in second_calls))
+        self.assertEqual(git("rev-parse", "main", cwd=self.remote).strip(), merged_main)
+        self.assertEqual(S.load_task("demo", "fix-y")["delivery"]["head"], second_head)
+
+    def test_new_failure_and_hold_during_final_recheck_refuse(self):
+        real = land._checks_evidence
+        for late in ("failure", "hold"):
+            with self.subTest(late=late):
+                self.required_check.update(status="COMPLETED", conclusion="SUCCESS")
+                self.classify()
+                calls = 0
+
+                def recheck(root, pair):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 2:
+                        if late == "failure":
+                            self.required_check["conclusion"] = "FAILURE"
+                            S.write_json(self.ghdir / "check_evidence.json", self.evidence)
+                        else:
+                            task = S.load_task("demo", "fix-x")
+                            task["hold_merge"] = "operator review"
+                            S.save_task("demo", task)
+                    return real(root, pair)
+
+                with mock.patch.object(land, "_checks_evidence", side_effect=recheck):
+                    if late == "hold":
+                        with self.assertRaisesRegex(land.LandError, "merge hold"):
+                            land.land("late review hold", cwd=self.repo, wait=0, merge=True)
+                    else:
+                        result = land.land("late CI failure", cwd=self.repo, wait=0, merge=True)
+                        self.assertFalse(result["merged"])
+                self.assertGreaterEqual(calls, 2)
+                self.assert_not_merged()
+
+    def test_main_moves_between_green_check_and_final_merge_decision(self):
+        self.classify()
+        real = land._checks_evidence
+        calls = 0
+
+        def move_main(root, pair):
+            nonlocal calls
+            calls += 1
+            value = real(root, pair)
+            if calls == 1:
+                self.advance_base("late-main.txt")
+            return value
+
+        with mock.patch.object(land, "_checks_evidence", side_effect=move_main):
+            with self.assertRaisesRegex(land.LandError, "moved"):
+                land.land("main changes after green CI", cwd=self.repo, wait=0, merge=True)
+        self.assert_not_merged()
 
 
 if __name__ == "__main__":

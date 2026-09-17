@@ -9,6 +9,8 @@ use the operator's service or runtime records.
 
 Contributors work from a repository checkout; the private archive is for running the application.
 With repository access, clone it, then use the commands below from its root.
+Owners and helpers run tests relevant to their changes during development. The required PR
+check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
 
 Use Python 3.12+, Node 22.22.2+ (22.x) or 24.15+ (24.x), and the pnpm version pinned in
 `web/package.json`. From the repository root:
@@ -102,8 +104,8 @@ the verified toolchain on its PATH or an ordinary resume after activation.
 
 `test_toolchain.py` exercises minimal PATH, custom/default nvm locations, explicit Node precedence,
 unavailable/default recovery, engine discovery, fresh/resumed worker execution and failed worker
-results. `test_land.py` runs the real candidate pipeline with fictional GitHub and tooling,
-checking the candidate manifest directory, frozen install, complete gate and candidate identity.
+results. `test_land.py` uses real Git repositories with fictional GitHub responses to check
+the delivery gate and candidate identity.
 
 ## Browser walkthroughs
 
@@ -254,74 +256,74 @@ and Python harnesses replace image capability checks and native execution at the
 
 ## CI and candidate identity
 
-The operator's 2026-09-09 Pacific decision suspends hosted CI for this repository while billing
-and artifact capacity are unavailable. The workflow is removed; Git history retains its source.
-The repository-specific `LOCAL_CHECK_REPOSITORY` in the trusted `config.py` selects mandatory
-local `make check` through the existing landing candidate mechanism. Other projects retain their
-gates. Shared hosted-check handling ignores completed nonrequired skips without parsing workflow
-conditions. Required checks must succeed; failures, pending checks, missing required results and
-entirely skipped CI block. Candidate identity and complete requiredness evidence remain mandatory.
-No billing change or generic bypass flag is involved. Since the operator's 2026-09-15 decision,
-the supplemental `.github/workflows/self-hosted-checks.yml` runs the same unmodified `make check`
-at the exact main or manually dispatched commit on the operator's dedicated ephemeral-container
-runner (label `altitude-ci-docker`; owner-initiated jobs only; no artifact uploads or caches).
-It supplements the local gate, is not a required check, and does not change landing policy.
+The self-hosted `.github/workflows/self-hosted-checks.yml` runs `make check` for owner-initiated
+private pull requests, pushes to main and manual dispatches on the dedicated ephemeral-container
+runner (label `altitude-ci-docker`). Its PR `check` is required by `alt land`; owners and helpers
+run relevant tests during development instead of repeating a full local suite at every landing.
+Python, web unit tests, typecheck/build and both browser viewports must execute and pass.
+No unrun or failed phase is green; live-provider validation stays deferred.
 
-`alt land` takes the repository turn first, so this machine runs one candidate `make check` at
-a time and sibling suites cannot fail each other by load; the wait is printed and returned as
-`waited` (see [concurrent landings](CLI.md#concurrent-landings)). The self-hosted container runner
-and hand-run suites are outside the turn. It then pins the current base and head, constructs the
-candidate for the selected merge method,
-installs frozen web dependencies from the candidate's `web` directory using its pinned package
-manager and the shared Altitude-home pnpm store, then runs the full
-suite with `CI=true`, retaining the test runners' refusal of focused-only tests. Install the
-supported tools and matching shared Chromium first. Candidate `install.log`, `check.log`, the
-self-contained `ui-artifacts/report/` and `result.json` stay in the task's `local-checks/<candidate>/`
-folder, including failed-test evidence. Raw `results/` and browser configuration are not copied;
-their attached screenshots and failure traces are already in the report. Installation or test
-failures before a report exists retain the available logs and result record. Open the retained
-report with `pnpm --dir web exec playwright show-report /path/to/ui-artifacts/report`.
-Results name command, exit status, base, head, candidate SHA and tree.
-On suite timeout, `check.log` retains captured stdout and stderr before the timeout diagnostic;
-an incomplete encoded character is replaced so it cannot prevent evidence retention. The result
-remains failed with no exit status or passing-test count, even if an earlier phase passed.
-The synthetic commit's metadata differs from the eventual GitHub commit; the tree and bound
-base/head identify the tested merge content. A local pass updates the PR with
-`Tests: make check passed locally (<candidate SHA>)` plus its base/head. A stale pair, failed test
-or failed prerequisite cannot authorize a merge. Python, web, build and both browser viewports
-remain required. No unrun or failed phase is green; live-provider validation stays deferred.
+CI records its event base, head, candidate SHA and tree, verifying that the head includes that base
+and that the tested merge tree equals the head tree. Landing requires the specific successful PR
+job on the current head, verifies that current main is an ancestor of that head, and serializes
+final validation and merge across Altitude owners. Any base or head movement during landing
+refuses the merge. A later invocation can reuse the successful head when main is already an
+ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
+commits outside the head and require reconciliation, a push and fresh checks on the new head.
+Landing verifies the merged tree against the tested tree; commit metadata can differ.
+Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block.
+Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
+a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
+All main updates must use `alt land` for its guarantee.
 
-Historical hosted failures on open PRs are retained but do not gate this explicitly selected
-local policy. Branch protection and active rules are still inspected: required hosted checks
-must be removed by the operator before local delivery. Outstanding reviews and task/UX merge
-holds remain enforced. Local logs do not claim GitHub billing or artifact capacity recovered.
+Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
+completed nonrequired skips without parsing workflow conditions; failed or pending checks still
+block, and at least one hosted check must actually pass. Requiredness and candidate association
+must be established. Projects without CI retain the full local candidate suite and `--test-cmd`;
+neither provides an outage bypass for this repository.
 
-The first transition PR needs a one-time operator bootstrap: the pre-transition trusted landing
-code inspects workflows on both base and head and has no local-policy override. Prepare and
-review the PR through `alt land`, run full local checks on its exact current merge candidate,
-and publish that evidence through `alt land --pr-body-file`. The operator disables repository
-Actions in Settings → Actions → General, removes any required hosted checks shown in the current
-rule inventory, then merges that exact reviewed PR through GitHub. Recheck base/head immediately
-before merging; changed tips require fresh tests. Do not run the candidate's modified landing code
-against live state. Verify the merged tree, main ancestry and normal automatic activation.
+CI uploads one artifact per run with three-day retention: the self-contained browser HTML report,
+its named screenshots and failure-only traces, suite logs and candidate identity. Duplicate raw
+results and caches are excluded. Early failures retain the logs available before a report exists.
+Owners download needed evidence into the task folder before expiry and keep it through review.
+Open the downloaded report with `pnpm --dir web exec playwright show-report /path/to/report`;
+verify its attachments and failure traces open. Failed upload prevents complete evidence and green
+readiness, even if the suite itself passed.
 
-L3 retains resume authority. Existing owners rebase onto the activated main, retain their sessions
-and PRs, and run their own full candidate checks. CI-only blockers can then proceed; real local
-test/provider blockers and pending UX acceptance remain unresolved. L3 reconciles obsolete hosted
-workflow prerequisite and artifact-recovery dependencies, including PR #315, without silently
-discarding agreed work or closing its issues. Finite CI probes do not authorize owner recovery.
+Uploads keep only essential evidence, with three-day retention and no additional paid usage.
+Verify the no-paid-usage boundary before enabling them. GitHub blocks usage at
+the included quota when the account has no valid payment method. An account with a payment method
+needs a zero-paid-usage Actions budget with **Stop usage when budget limit is reached** enabled.
+The operator applies that maintainer setting if needed, scoped to this repository where supported;
+do not change unrelated budgets. Short retention alone does not prevent billing. Verify actual
+upload success and remove older artifacts if storage approaches its limit, preserving evidence
+still needed for review in the task folder first. An unverifiable spending boundary or exhausted
+storage blocks uploads and readiness; L3 receives the concrete blocker. No paid runner or generic
+bypass is authorized.
 
-To restore CI, obtain an operator decision and deliver a reviewed PR reverting this policy
-transition, reconciling the historical workflow with the prerequisite work in PR #315 and any
-later changes. Run the same full local gate before that merge. The operator then re-enables
-Actions and restores only the required checks recorded in the pre-disable rule inventory.
-Verify a fresh main run actually executes Python, web, build and both browser viewports before
-relying on hosted delivery; artifact recovery needs fresh uploaded evidence separately.
-Preserve failure-only traces and all named screenshots when restoring artifact upload: package
-the self-contained HTML report and necessary logs once, excluding duplicate raw results, with
-the previous three-day hosted retention. Verify report attachments and failure traces open from
-the downloaded artifact. These are restoration requirements, not an active hosted workflow or
-completed hosted verification; local evidence remains accessible until review is complete.
+An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
+it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
+[`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger/runner recovery, not an invented
+run ID. Runner or storage outages pause merges until verified recovery and fresh CI. A probe
+does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.
+
+### Gate activation
+
+The transition PR uses trusted landing's existing full local candidate gate as well as a fresh PR
+run. Before publication enables uploads, verify the zero-paid-usage boundary. Actions is already
+enabled; no plan upgrade or branch protection change is required. Verify the runner admits PR
+events and that a fresh PR run executes Python, web, build and both browser viewports. A bounded
+failing PR revision demonstrates downloadable browser reports and failure traces; restore a
+passing revision before review. Runner configuration changes require scoped machine authority.
+Known browser/setup flakes require verified correction before activation; fewer duplicate full
+runs do not establish a fix. L3 owns prerequisite coordination.
+
+The operator reviews the green PR, L3 records its hold release, and the owner uses trusted
+`alt land --merge`. Normal source activation applies the gate. L3 coordinates existing owners
+using older committed exports so later mergers share the serialization contract, preserving
+their sessions, PRs and holds. Verify fresh main checks, tested/merged tree equality and a live
+CI-only delivery before declaring the rollout complete. Do not run candidate landing code against
+live state to bootstrap its own authority.
 [Release readiness](RELEASING.md) still binds validation to a final main SHA.
 
 ## Runtime evidence

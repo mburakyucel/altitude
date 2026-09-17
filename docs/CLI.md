@@ -1036,10 +1036,10 @@ without `CI` set uses two browser workers. External writers and older landing ve
 can still change refs: stale base/head evidence refuses merge and is never reused or retried
 automatically. Only invocations using this installed version share serialization.
 
-### This repository's temporary local gate
+### This repository's required PR check
 
-The operator's 2026-09-09 Pacific policy selects verified local checks for this repository through
-the trusted configuration seam. Use the existing commands:
+Owners and helpers run relevant tests during development. The self-hosted PR `check` runs
+the full suite. Use the existing commands:
 
 ```sh
 git add <selected-files>
@@ -1048,19 +1048,18 @@ alt land --message "fix: describe the change" --pr-body-file /tmp/pr.md
 alt land --message "fix: describe the change" --merge
 ```
 
-Each invocation tests its actual current merge candidate with `make check`; `--test-cmd` cannot
-replace that command here. Frozen web dependencies are installed in the candidate first; supported
-tooling and the matching shared Chromium remain prerequisites. `checks` is `local-pass` or
-`local-fail`, and `local_tests` binds the result to base/head, candidate SHA, tree and retained
-evidence directory. Successful current validation updates the PR body with one passing-test line.
-The synthetic commit can differ from GitHub's final commit metadata; compare its tree and bound
-parents to verify delivery. A new base or head needs a new run.
+Landing publishes the PR and waits for its required `check` on the current head; it does not
+run the full suite locally. The task branch includes current main. A branch missing current main
+needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
+serialized across Altitude owners; the merged tree must equal the tested tree. Failed, pending, missing, skipped,
+cancelled, stale or unrelated required runs block. `--test-cmd` supplies no bypass for this gate.
 
-Hosted failures on existing PRs do not supply this gate's verdict. Required hosted branch checks
-still refuse local delivery until the operator removes them. Reviews and live task merge holds
-remain mandatory. Opening a held PR runs validation without merging; later landing revalidates.
-Other repositories keep their hosted/no-CI behavior and local command choice. See
-[bootstrap, owner recovery and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
+After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
+[durable CI recheck](#durable-ci-recheck). A missing run needs trigger/runner recovery, not an
+invented run ID. Runner or storage outages pause merges until verified recovery and fresh checks.
+Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
+GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
+behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 
 ### Continue after a PR merges
 
