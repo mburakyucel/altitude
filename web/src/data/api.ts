@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { z } from "zod";
+import { readAlertState } from "./alerts";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
 /**
@@ -66,7 +67,8 @@ const CHANGE_RECONNECT_MS = 5_000;
  * between a snapshot and the subscription is lost. The chat conversation keeps its own reads.
  * EventSource retries network failures itself; a refused stream closes it and this reconnects. A hidden
  * tab closes its stream, so background tabs hold none of the browser's few connections per host, and
- * reopens it when shown. Polling stays the floor while the stream is down.
+ * reopens it when shown. A tab with decision alerts on keeps its stream, because that is how a new
+ * decision reaches an alert while the page is out of sight. Polling stays the floor while the stream is down.
  */
 export function useChangeStream() {
   const queryClient = useQueryClient();
@@ -97,7 +99,11 @@ export function useChangeStream() {
       };
       source = stream;
     };
-    const visibility = () => (document.hidden ? disconnect() : connect());
+    // An alerting tab keeps the stream it already holds; only a closed one reconnects.
+    const visibility = () => {
+      if (document.hidden && readAlertState() !== "on") disconnect();
+      else if (!source || source.readyState === EventSource.CLOSED) connect();
+    };
     if (!document.hidden) connect();
     document.addEventListener("visibilitychange", visibility);
     return () => {

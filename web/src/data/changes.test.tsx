@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ALERTS_KEY } from "./alerts";
 import { useChangeStream } from "./api";
 
 class FakeEventSource extends EventTarget {
@@ -103,5 +104,22 @@ describe("useChangeStream", () => {
     expect(stale(client)).toEqual([]);
     act(() => FakeEventSource.all[1]!.open());
     expect(stale(client)).toHaveLength(6);
+  });
+
+  it("keeps a hidden tab's stream open while decision alerts are on, so a new decision still alerts", () => {
+    Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: {} });
+    vi.stubGlobal("ServiceWorkerRegistration", class { showNotification() {} });
+    vi.stubGlobal("Notification", { permission: "granted" });
+    localStorage.setItem(ALERTS_KEY, "on");
+    let hidden = false;
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    mount(seeded());
+    const first = FakeEventSource.all[0]!;
+    hidden = true;
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(first.readyState).not.toBe(FakeEventSource.CLOSED);
+    expect(FakeEventSource.all).toHaveLength(1);
+    Reflect.deleteProperty(navigator, "serviceWorker");
   });
 });

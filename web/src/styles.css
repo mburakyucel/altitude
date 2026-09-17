@@ -1149,6 +1149,16 @@
   font-size: var(--text-meta);
   overflow-wrap: anywhere;
 }
+.needs-alerts {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.needs-alerts button[aria-pressed="true"] {
+  font-weight: 600;
+}
 .needs-list {
   display: flex;
   max-width: 720px;

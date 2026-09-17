@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Outlet, useMatch, useParams } from "react-router";
+import { Link, Outlet, useLocation, useMatch, useParams } from "react-router";
+import { useDecisionAlerts } from "../data/alerts";
 import { ToastViewport } from "../data/Toast";
 import { useChangeStream, useOverview } from "../data/api";
 import FirstRun from "../routes/FirstRun";
@@ -19,6 +20,9 @@ export default function AppShell() {
   useChangeStream();
   const { phone } = useViewport();
   const params = useParams();
+  const location = useLocation();
+  // One place watches the queue, so an alert arrives on any page and on none twice (issue #221).
+  useDecisionAlerts(overview.data, location.pathname);
   const [addingFolder, setAddingFolder] = useState(false);
   const closeFirstRun = useCallback(() => setAddingFolder(false), []);
   const shell = useRef<HTMLDivElement>(null);

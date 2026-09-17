@@ -1024,6 +1024,17 @@ registered project when the registry did); the page refetches the mounted overvi
 project and task queries. The server reads its baseline before the response opens, and every open,
 first or after a reconnect, refetches all of those queries, so a change between a snapshot and the
 subscription is never lost. Events carry no records: repeated events only refetch canonical reads.
+
+Decision alerts (issue #221) ride that stream. `web/src/data/alerts.tsx` holds the per-device switch
+under `altitude.alerts`, the permission states, and the keys already alerted under
+`altitude.alerts.seen`; the shell watches the overview queue on every page. A newly published operator
+question is shown through `web/public/sw.js`, the one service worker, whose registration Android
+requires for a notification and whose click handler focuses the open app and routes it to the
+decision. Content is the project and task name only. A decision visible in Needs you or its owning
+task is recorded without an alert, and the recorded keys make refresh, reconnection and polling
+repeat none. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
+closes it. The reach is the open page: a closed tab, and a phone that has stopped the page, receive
+nothing.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
 as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,
 refetching, when shown, so background tabs hold none of the browser's connections to altd. Ordinary 20-second polling, the 2-second
