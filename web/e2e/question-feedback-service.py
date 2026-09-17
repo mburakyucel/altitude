@@ -9,7 +9,13 @@ QUESTIONS = [
     {"question": "How long should we keep the old index?", "options": [
         {"key": "seven", "label": "7 days", "text": "Keep the index for seven days."},
         {"key": "fourteen", "label": "14 days", "text": "Keep the index for fourteen days."}],
-     "recommended_key": "seven", "why": "Covers the first week of rollback."},
+     "recommended_key": "seven", "why": (
+         "Covers the first week of rollback. The old index remains readable while the team verifies "
+         "search results and checks the nightly import. Keeping it for fourteen days also covers "
+         "the next weekly report, but uses twice as much storage during the transition. "
+         "The retained copy receives no new writes, so restoring it requires replaying later updates. "
+         "Choose the period that gives the release team enough time to finish those checks; "
+         "you can propose a different period or ask for more detail before choosing.")},
     {"question": "Where should the backup live?", "options": [
         {"key": "west", "label": "West", "text": "Use the west region."},
         {"key": "east", "label": "East", "text": "Use the east region."}],

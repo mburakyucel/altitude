@@ -438,6 +438,7 @@ Question responses name the question ID/revision and either a chosen option or c
 answers also name the group ID/revision; the server validates the whole selection before saving one
 operator message and its delivery receipt. **Other…** opens a field in the question; plain questions
 show it directly. **Send N answers** submits presets, custom answers and follow-up questions together.
+Its row follows the questions in normal flow and scrolls with them on phone and desktop.
 Sent members leave the attention count and retain **Sent to L2** receipts; unsubmitted members remain
 answerable. The task keeps each question semantically open until the owner interprets the response.
 Delivery uses the existing inbox/resume path. Retries reuse the saved receipt and current group state;

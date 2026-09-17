@@ -516,7 +516,8 @@ The card leaves Needs you when no members await a response. This records deliver
 the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
 Failure retains responses with Retry. Denied writes require a refreshed read. A changed question
 clears only its own stale draft; independent drafts survive refresh and another member's submission.
-The send row remains reachable at the bottom while a long group scrolls, including phone keyboard use.
+The send row follows the questions in normal flow on phone and desktop and scrolls with them.
+With the phone keyboard open, the focused answer stays unobscured; scroll to the end to send.
 Question fields have no voice controls; ordinary chat keeps its existing voice states.
 Withdrawal likewise removes only affected controls and updates counts; stale submissions fail.
 Re-asking supplies fresh controls, retaining earlier history without carrying approval forward.
