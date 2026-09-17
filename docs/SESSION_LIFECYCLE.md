@@ -510,7 +510,11 @@ reason-bearing resume. Notification receipt, issue closure and unrelated restart
 repair. Irretrievable historical evidence stays unknown: L3 records the next supported diagnostic
 action, a justified wait with a finite meaningful observation, or the exact capability/authority
 decision when no supported path can establish recovery. A changed operational contract for bounded
-diagnostic continuation requires that decision before execution; there is no implicit retry.
+diagnostic continuation requires that decision before execution. Within an authorized diagnostic
+scope, the same owner runs, inspects and adjusts relevant diagnostics without per-command approval,
+retaining evidence and reporting findings, uncertainty and a concrete next step at the agreed finite
+stop condition or scope/access boundary. Explicit restrictions, including one-run limits, still bind;
+machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
 The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
 and incident evidence, not a new lifecycle state or perpetual polling.
 Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
