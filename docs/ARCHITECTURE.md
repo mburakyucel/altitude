@@ -1012,7 +1012,23 @@ selected project is browser state under `localStorage`, set by the rail, the swi
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
 rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
 display name the engine seam gives, so the web code names no provider; the same read carries the
-scan roots First run names and the operator's configured name. `POST /api/l3/start` runs the start
+scan roots First run names and the operator's configured name.
+
+Task, decision and project reads refresh through one change stream per browser app. The shell opens
+`GET /api/changes`, a server-sent event stream: once a second altd compares the identity, size and
+modification time of the project registry and, per registered project, its hold, project log,
+archive folder and each open task's `status.json` (which holds its questions) and `events.log`.
+Records written by altd or any `alt` process therefore signal alike, and nothing is stored beyond the
+connection. A `change` event carries `{"projects": [...]}`, the projects whose records moved (every
+registered project when the registry did); the page refetches the mounted overview and monitor plus those projects'
+project and task queries. The server reads its baseline before the response opens, and every open,
+first or after a reconnect, refetches all of those queries, so a change between a snapshot and the
+subscription is never lost. Events carry no records: repeated events only refetch canonical reads.
+EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
+as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,
+refetching, when shown, so background tabs hold none of the browser's connections to altd. Ordinary 20-second polling, the 2-second
+reads of running tasks and active conversations, and the conversation's own history reads continue
+independently, and a comment line every 15 seconds keeps an idle stream open. `POST /api/l3/start` runs the start
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card

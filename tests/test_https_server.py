@@ -1,4 +1,5 @@
 """HTTPS startup, identity probes and renewal use isolated sockets and certificates."""
+import http.client
 import json
 import os
 import ssl
@@ -7,7 +8,7 @@ import urllib.request
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, server, tls
+from altitude import config, server, tasks as T, tls
 
 
 class TestHTTPSServer(AltitudeCase):
@@ -74,6 +75,49 @@ class TestHTTPSServer(AltitudeCase):
         self.assertEqual(observed, [{"version": "trial.1", "commit": "a" * 40, "pid": os.getpid()},
                                     {"version": None, "commit": None, "pid": os.getpid()}])
         stop.assert_called_once()
+
+    def test_https_change_stream_reports_a_task_and_ends_when_the_client_leaves(self):
+        server.tls_init()
+        self.patch(server, "CHANGE_SECONDS", 0.05)
+        factory, changes, ended, observed = server.ThreadingHTTPServer, server.Handler._changes, threading.Event(), []
+
+        def stream(handler):
+            try:
+                changes(handler)
+            finally:
+                ended.set()
+
+        def create(address, handler):
+            httpd = factory(address, handler)
+            serve = httpd.serve_forever
+
+            def probe():
+                thread = threading.Thread(target=serve, daemon=True)
+                thread.start()
+                try:
+                    context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt"))
+                    conn = http.client.HTTPSConnection("127.0.0.1", httpd.server_port, context=context, timeout=5)
+                    conn.request("GET", "/api/changes")
+                    res = conn.getresponse()
+                    res.fp.readline(), res.fp.readline()  # the retry field
+                    T.new(self.project, "Keep pagination", "Fictional request.")
+                    observed.extend(res.fp.readline() for _ in range(2))
+                    res.close()
+                    conn.close()
+                    observed.append(ended.wait(3))
+                finally:
+                    httpd.shutdown()
+                    thread.join(5)
+
+            httpd.serve_forever = probe
+            return httpd
+
+        with mock.patch.object(server, "ThreadingHTTPServer", side_effect=create), \
+             mock.patch.object(server.Handler, "_changes", stream), \
+             mock.patch.object(server, "ensure_l3_verb_broker"), \
+             mock.patch.object(server, "stop_l3_verb_brokers"):
+            server.main()
+        self.assertEqual(observed, [b"event: change\n", f'data: {{"projects": ["{self.project}"]}}\n'.encode(), True])
 
     def test_explicit_development_http_does_not_require_certificates(self):
         with mock.patch.object(config, "TLS", False), \

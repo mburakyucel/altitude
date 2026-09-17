@@ -51,7 +51,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
     // Wait for initial data too: a shell/heading above a pending query is not a rendered route.
     const pending = new Set<import("@playwright/test").Request>();
     page.on("request", (request) => {
-      if (new URL(request.url()).pathname.startsWith("/api/")) pending.add(request);
+      const path = new URL(request.url()).pathname;
+      // The change stream stays open by design; it is not an initial read.
+      if (path.startsWith("/api/") && path !== "/api/changes") pending.add(request);
     });
     page.on("requestfinished", (request) => pending.delete(request));
     page.on("requestfailed", (request) => {
