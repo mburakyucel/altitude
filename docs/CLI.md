@@ -920,7 +920,10 @@ explains the owner CLI and coordinator MCP/broker paths.
 For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
 `escalate`. Use `--questions-file -` with JSON on stdin when calling through the L3 broker; the
 broker never reads a server file supplied by the caller. The single `--reason` / `--question`
-flags remain available for one question. A grouped payload has this form:
+flags ask one question with at most one recommended action; the operator can select only that
+action or answer freely, so their text never enumerates alternatives. Offer several choices as
+grouped options instead, keeping question text and selectable options in agreement. A grouped
+payload has this form:
 
 ```json
 {"questions":[
