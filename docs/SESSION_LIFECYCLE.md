@@ -260,6 +260,10 @@ restores 8 even if the machine cap is lower. Changes need no task slot or servic
 For projects that deploy from their checkout, the daemon tick and delivery path separately advance
 clean main and report deployment failures. Backend, launch-source or tracked web input changes mark
 activation pending; ordinary dispatch and resume do not move the deployment checkout.
+Fresh dispatch and deployment repeat a base fetch once when its only error is the requested
+remote-tracking ref changing between Git's read and update. A successful fresh fetch supplies the
+base; unrelated errors or a failed repeat retain their existing failure paths. Resume does not
+fetch, and this operation does not retry faulted tasks or request a service restart.
 
 L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them with
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`; commas tie
