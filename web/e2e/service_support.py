@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import signal
 import sys
+import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -29,10 +30,14 @@ def configure(*, expected_error=lambda _message: False):
 def serve(handler=server.Handler, *, release=lambda: None):
     httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = False
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    stopping = threading.Event()
+    httpd.timeout = 0.5
+    signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True}), flush=True)
     try:
-        httpd.serve_forever()
+        # Finish registering an accepted request before cleanup joins its thread.
+        while not stopping.is_set():
+            httpd.handle_request()
     finally:
         release()
         httpd.server_close()

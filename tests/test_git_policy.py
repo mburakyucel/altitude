@@ -124,8 +124,10 @@ class TestGitPolicy(unittest.TestCase):
         self.git("repack", "-a")
         self.assertEqual(len(list((self.repo / ".git/objects/pack").glob("*.pack"))), 2)
         # Exceed the loose-ref threshold used by newer Git's GC pack-refs --auto.
-        for index in range(32):
-            self.git("branch", f"packing-{index}", "main")
+        # One setup transaction avoids per-branch hook startup competing with parallel suites.
+        subprocess.run(["git", "-C", str(self.repo), "update-ref", "--stdin"],
+                       input="".join(f"create refs/heads/packing-{index} {tip}\n" for index in range(32)),
+                       text=True, capture_output=True, check=True)
         # Select GC explicitly: newer Git defaults automatic maintenance to geometric repacking.
         self.git("config", "maintenance.strategy", "gc")
         self.git("config", "gc.autoPackLimit", "1")

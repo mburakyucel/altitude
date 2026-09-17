@@ -154,6 +154,7 @@ test("a failed first conversation exposes Retry and completes the existing setup
   const overview = await (await request.get(`${service}/api/overview`)).json();
   const folder = overview.projects.find((row: { name: string }) => row.name === "new-project");
   expect((await request.post(`${service}/api/project/add`, { data: { name: folder.name, path: folder.path } })).ok()).toBe(true);
+  expect((await request.post(`${service}/fixture/wait-intro`)).ok()).toBe(true);
   await walk.open(`${service}/projects/new-project?setup=1`);
   const panel = setupPanel(page);
   const coordinator = step(panel, "Coordinator");

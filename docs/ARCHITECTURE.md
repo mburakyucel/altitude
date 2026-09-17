@@ -949,6 +949,13 @@ helpers yields an observed empty set with partial coverage. No spawn-completenes
 
 The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make check`
 runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2e/*.pw.ts` suite.
+Python modules run in fresh interpreter shards concurrently with the ordered web phases. The
+stdlib runner streams shard output and totals unittest outcomes; either branch failing fails the
+gate. The full gate uses Node's process-available CPU count for both language budgets, including
+container quotas: Python gets half (at least one), and CI browsers get one worker per CPU.
+Both phases overlap fixture waits without changing resource quotas. Local browsers use two
+workers. CI schedules individual browser tests across workers; local runs schedule by spec file.
+Per-test temporary homes, ports and artifacts isolate concurrent checks without retries.
 Python fixtures isolate runtime/provider homes and replace external engine execution and GitHub
 responses. Core integration tests retain real routing, dispatch, task transitions, HTTP handlers,
 file storage, locks and temporary Git repositories. Unexpected real provider/service execution

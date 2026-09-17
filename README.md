@@ -542,6 +542,8 @@ are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
 
 Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop browser flows
 against isolated fictional state, with external engines replaced by deterministic fixtures.
+Python module processes run alongside the ordered web phases; CI browser workers scale with
+available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 Hosted CI is suspended. Local landing retains a self-contained HTML report with named walkthrough
 screenshots and failure traces, plus check logs; raw attachments are not copied again.
 See [local delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).

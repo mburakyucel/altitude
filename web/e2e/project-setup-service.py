@@ -81,6 +81,14 @@ def main():
                 fail_intro = True
                 gate.set()
                 return self._json({"ok": True})
+            if self.path == "/fixture/wait-intro":
+                # Observe the scripted outcome after both real workflows persist their results.
+                for key in ("setup:new-project", "start:new-project"):
+                    with server._bg_guard:
+                        worker = server._bg[key]
+                    worker.join(10)
+                    assert not worker.is_alive(), f"The fixture workflow did not finish: {key}"
+                return self._json({"ok": True})
             if self.path == "/fixture/retry-intro":
                 fail_intro = False
                 return self._json({"ok": True})

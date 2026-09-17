@@ -694,6 +694,8 @@ outside Git, accessible until review is complete under the [project UI rule](../
 This repository's temporary local policy runs `make check` on the current merge candidate through
 `alt land`, including PR preparation without merging. Logs, the self-contained browser report and
 candidate-bound results stay in the task's `local-checks/` folder, without duplicate raw attachments.
+Landing uses the same concurrent Python/web phases and aggregate unittest results as `make check`;
+its `CI=true` environment also selects CPU-scaled browser workers. Every required phase must pass.
 Suite timeouts preserve captured stdout and stderr in `check.log` and leave validation failed.
 Only passing current evidence supplies the PR test
 line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
