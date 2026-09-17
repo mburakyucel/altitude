@@ -110,11 +110,13 @@ export function useAlertState(): AlertState {
   );
 }
 
-/** One key per ask: the members of a grouped question share one card and one alert. */
+/**
+ * One key per waiting ask: the members of a grouped question share one card and one alert, and a
+ * republished question keeps its key. A block and the escalation that follows it are two
+ * publications of the same waiting decision, and keying on the revision alerted twice for one card.
+ */
 export function alertKey(decision: Decision): string {
-  const identity = decision.group_id || decision.id;
-  const revision = decision.group_revision ?? decision.revision;
-  return `${decision.project}:${decision.slug}:${identity}:${revision ?? ""}`;
+  return `${decision.project}:${decision.slug}:${decision.group_id || decision.id}`;
 }
 
 /** Needs you shows every decision; a task or decision page shows its own. */
