@@ -336,6 +336,9 @@ reported -> done | running | blocked | rejected
 
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
+Archival posts a task-linked FYI with the digest to the project conversation, the coordinator's
+handoff; findings stay in the task conversation. The project view's archive lists the twenty most
+recently finished done or rejected tasks, whatever their slugs.
 
 Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is one short wait and
 `after` optionally names one existing task in this project. `alt task new --wait` or `--after`

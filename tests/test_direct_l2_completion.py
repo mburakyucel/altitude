@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import engines, server, state as S, tasks as T
+from altitude import engines, l3, server, state as S, tasks as T
 
 
 class TestDirectL2Completion(AltitudeCase):
@@ -28,6 +28,31 @@ class TestDirectL2Completion(AltitudeCase):
         result = T.finalize_completion("p", task["slug"])
         self.assertEqual(result["state"], "done")
         self.assertFalse((S.task_dir("p", task["slug"]) / "report.json").exists())
+
+    def test_completed_no_code_tasks_stay_in_work_with_findings_and_a_coordinator_handoff(self):
+        # #296: many later-named archived tasks must not hide the newest no-code completions from Work.
+        for n in range(25):
+            S.write_json(S.archive_dir("p") / f"zz-earlier-{n:02}" / "status.json",
+                         {"slug": f"zz-earlier-{n:02}", "state": "done", "title": f"Earlier {n}",
+                          "updated": "2026-01-01T00:00:00+00:00", "prs": [n + 1]})
+        for title, engine in (("Architecture proposal", "claude"), ("Backlog review", "codex")):
+            task, _ = self.task(title)
+            task["l2_engine"] = engine
+            S.save_task("p", task)
+            T.message("p", task["slug"], "l2", f"{title} findings: keep the queue.", expected_attempt=1)
+            T.done("p", task["slug"], actor="l2", digest=f"{title} findings are ready.", expected_attempt=1)
+            server.on_l2_finished("p", {"task": S.load_task("p", task["slug"]), "died": True,
+                                        "agent": {"id": "worker", "state": "done"}})
+            self.assertEqual(S.load_task("p", task["slug"])["state"], "done")
+            archive = server.project_view("p")["archive"]
+            self.assertEqual(archive[-1]["slug"], task["slug"])
+            self.assertEqual(len(archive), 20)
+            self.assertIn(f"{title} findings: keep the queue.",
+                          [row["text"] for row in T.task_messages("p", task["slug"])])
+            fyi = l3.chat_history("p")[-1]
+            self.assertEqual((fyi["role"], fyi["trigger"], fyi["slug"]), ("system", "fyi", task["slug"]))
+            self.assertIn(f"{title} completed without code changes", fyi["text"])
+            self.assertIn(f"{title} findings are ready.", fyi["text"])
 
     def test_changed_branch_cannot_bypass_code_verification(self):
         task, worktree = self.task("Code task")

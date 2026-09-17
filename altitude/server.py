@@ -2272,7 +2272,9 @@ def project_view(name: str) -> dict:
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
-            "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
+            # #296: the most recently finished tasks, not the last slugs alphabetically.
+            "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
+                               if t["state"] in ("done", "rejected")), key=lambda t: t["updated"] or "")[-20:],
             "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
