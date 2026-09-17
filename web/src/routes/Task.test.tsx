@@ -796,12 +796,13 @@ describe("L2 activity and steering", () => {
     await update({ ...active, activity: next });
     expect(within(preview).queryByText(activity.commentary.text)).toBeNull();
     expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
-    expect(within(preview).getByText("Time unavailable")).toBeInTheDocument();
+    expect(within(preview).getByText("time unavailable")).toBeInTheDocument();
     expect(within(preview).getByText(/No new activity for [45] min/)).toBeInTheDocument();
     expect(document.querySelectorAll('[data-role="l2"]').length).toBe(replies);
     await update({ ...active, activity: { ...next, state: "unavailable", commentary: null, observation: null } });
     expect(within(preview).getByText("Activity unavailable")).toBeInTheDocument();
-    expect(within(preview).getByText("Last known update.")).toBeInTheDocument();
+    expect(within(preview).getByText(/Last known update ·/)).toBeInTheDocument();
+    expect(within(preview).getByRole("button", { name: "Retry activity" })).toBeInTheDocument();
     expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
     await update({ ...active, activity: { ...activity, generation: "worker-2", state: "empty", commentary: null, observation: null } });
     expect(within(preview).getByText("No public update yet.")).toBeInTheDocument();

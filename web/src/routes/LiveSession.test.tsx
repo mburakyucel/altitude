@@ -26,6 +26,7 @@ const task = {
   files: {},
   events: [],
   messages: [],
+  activity: { generation: "w1", state: "available", commentary: null, observation: { at: new Date().toISOString(), label: "Recorded output changed" } },
 };
 
 const at = (second: number) => `2026-08-29T12:00:${String(second).padStart(2, "0")}+00:00`;
@@ -105,15 +106,37 @@ describe("LiveSession", () => {
 
     const read = within(view).getByText("altitude/timer.py", { selector: "code" }).closest("details");
     expect(read?.querySelector(".session-tool-name")).toHaveTextContent("Read");
-    expect(read).toHaveTextContent("running…");
+    expect(read?.querySelector(".session-hint")).toHaveTextContent(/^running · \d+ d$/);
 
     const codex = within(view).getByText("make test", { selector: "code" }).closest("details");
     expect(codex?.querySelector("[data-output]")).toHaveTextContent("ok");
+    expect(codex?.querySelector(".session-time")).toHaveTextContent("time unavailable");
 
     expect(view.textContent).not.toContain("attachment");
     expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("title", transcript.redaction);
     expect(within(panel).getByText("Following live · new steps appear at the bottom").closest("[role=separator]")).toHaveAttribute("data-tone", "live");
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "live");
+    expect(within(panel).getByRole("status")).toHaveTextContent(/^Working · output \d+ sec ago$/);
+    expect(within(panel).getByRole("status").querySelector(".dot")).toHaveAttribute("data-pulse", "true");
+  });
+
+  it("stops the pulse and names the quiet time when a running worker records no output", async () => {
+    const quiet = new Date(Date.now() - 4 * 60_000).toISOString();
+    stub({ task: { ...task, activity: { ...task.activity, observation: { at: quiet, label: "Recorded output changed" } } } });
+    renderApp({ route });
+    const panel = await openPanel();
+    const status = await within(panel).findByRole("status");
+    expect(status).toHaveTextContent("No new activity for 4 min");
+    expect(status.querySelector(".dot")).not.toHaveAttribute("data-pulse");
+    expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
+  });
+
+  it("claims no activity when the activity record is unavailable", async () => {
+    stub({ task: { ...task, activity: { ...task.activity, state: "unavailable" } } });
+    renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByRole("status")).toHaveTextContent("Activity unavailable");
+    expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
   });
 
   it("keeps Raw events behind its toggle and pauses following", async () => {

@@ -1017,10 +1017,13 @@ messages and no generic Resume. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
 
-Conversation shows a replacing two-line preview of the current worker's public words above its
-composer. Expand reveals the full update after existing redaction. Prose uses its native source time
-only when identifiable; untimed words say Time unavailable. Recorded output has a separate observed
-age. No new output for 60 seconds reads as quiet, without inferring useful progress or failure.
+Conversation shows one activity line above its composer, over a replacing two-line preview of the
+current worker's public words. The line reads the recorded output time: output within 60 seconds shows
+"Working · output 12 sec ago" with a softly pulsing dot; no new output for 60 seconds reads "No new
+activity for …" with a still dot, without inferring useful progress or failure. Expand reveals the
+full update after existing redaction. Prose shows its native source time only when identifiable;
+untimed words say time unavailable. Live session shows the same activity line under its footer, and its header dot pulses only while output is recent. Reduced
+motion keeps every dot steady. Unavailable activity never pulses.
 Missing commentary, an empty source and an unavailable source are distinct. Resume clears the old
 direction until the new worker emits public output. Questions, decisions and explicit results stay
 durable in Conversation; older worker output remains only in Live session under existing retention.
@@ -1037,8 +1040,10 @@ tab on a phone) reads like a Claude Code window: the engine's local session reco
 in time order, and the page renders it as a conversation. Prompts (the brief, a resume, a task message the
 worker read at its checkpoint) appear as prompt blocks; the worker's replies as prose with code blocks; each
 tool call as one compact row (`$ git status`, `Read altitude/tasks.py`, a Codex command or file change) with
-its output folded under it; task boundaries (queued → running, stopped, resume held) as thin separators with
-subtle timestamps. Every row carries its role (user, assistant, tool, system), and a tool result carries the
+its output folded under it; task boundaries (queued → running, stopped, resume held) as thin separators.
+Every prompt, reply, tool row and boundary shows its recorded time ("14:05", dated when not today, exact on
+hover) or **time unavailable**; a call without a result while the worker runs shows how long it has waited
+("running · 4 min"). Every row carries its role (user, assistant, tool, system), and a tool result carries the
 id of the call it answers, so the page nests output under the command that produced it. Codex does not echo
 its prompt into the thread, so the projection shows the task's own record of it: the brief for the first
 turn, the delivered task messages for a resumed one. Hidden model reasoning (Claude thinking blocks, Codex

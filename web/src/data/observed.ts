@@ -83,3 +83,13 @@ export function exactTime(value: unknown): string {
   const then = when(value);
   return then == null ? "" : new Date(then).toLocaleString();
 }
+
+/** A recorded time as the activity views show it (SPEC.md §3.10): "14:05", dated when not today. */
+export function stampText(value: unknown): string {
+  const then = when(value);
+  if (then == null) return "";
+  const date = new Date(then);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}

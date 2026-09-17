@@ -4,6 +4,8 @@ import { Prose } from "../components/Prose";
 import { ApiError, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
 import { SteeringControls } from "../components/TaskSteering";
+import { Stamp } from "../components/Stamp";
+import { CueLine, activityCue, duration, elapsed, useNow } from "../components/TaskActivity";
 import type { Steering } from "../components/TaskSteering";
 
 function str(value: unknown): string {
@@ -43,16 +45,10 @@ function conversation(events: TranscriptEvent[]): Item[] {
   return items;
 }
 
-/** A subtle timestamp (SPEC.md §3.10): the time of day, the exact instant on hover. */
-function Time({ at }: { at: string | null | undefined }) {
-  if (!at) return null;
-  const date = new Date(at);
-  if (Number.isNaN(date.valueOf())) return null;
-  return (
-    <time className="session-time" dateTime={at} title={date.toLocaleString()}>
-      {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-    </time>
-  );
+/** How long a call has waited for its result, moving while nothing new is recorded. */
+function Running({ at }: { at: string | null | undefined }) {
+  const seconds = elapsed(at, useNow());
+  return <>{seconds == null ? "running…" : `running · ${duration(seconds)}`}</>;
 }
 
 /** `code` and **bold** spans. Everything else stays text: nothing in a transcript is ever parsed as HTML. */
@@ -79,7 +75,7 @@ function Message({ event, engineLabel }: { event: TranscriptEvent; engineLabel: 
       <article className="session-prompt" data-role="user">
         <header className="session-head">
           <span>Prompt</span>
-          <Time at={event.at} />
+          <Stamp className="session-time" at={event.at} />
         </header>
         <Clamped text={event.text} />
       </article>
@@ -96,7 +92,7 @@ function Message({ event, engineLabel }: { event: TranscriptEvent; engineLabel: 
     <article className="session-reply" data-role="assistant">
       <header className="session-head">
         <span>{engineLabel}</span>
-        <Time at={event.at} />
+        <Stamp className="session-time" at={event.at} />
       </header>
       <Prose text={event.text} />
     </article>
@@ -115,14 +111,14 @@ function ToolRow({ item, running }: { item: Item; running: boolean }) {
   const detail = e.text.trim() && e.text.trim() !== summary ? e.text : "";
   const done = item.results.length > 0 || e.status === "completed" || output !== "";
   const pending = !done && running;
-  const hint = error ? "error" : output ? `${output.split("\n").filter(Boolean).length} lines` : pending ? "running…" : "no output";
+  const hint = error ? "error" : output ? `${output.split("\n").filter(Boolean).length} lines` : pending ? <Running at={e.at} /> : "no output";
   return (
     <details className="session-tool" data-kind={e.kind} data-error={error || undefined}>
       <summary>
         <b className="session-tool-name">{name}</b>
         <code className="session-call">{summary}</code>
         <span className="session-hint">{hint}</span>
-        <Time at={e.at} />
+        <Stamp className="session-time" at={e.at} />
       </summary>
       {detail ? <pre className="session-out">{detail}</pre> : null}
       {output ? (
@@ -136,11 +132,27 @@ function ToolRow({ item, running }: { item: Item; running: boolean }) {
   );
 }
 
+/** The shared activity cue under the footer (SPEC.md §3.10); its own clock keeps the transcript still. */
+function LiveCue({ activity }: { activity: TaskView["activity"] }) {
+  const cue = activityCue(activity, useNow());
+  return (
+    <p className="live-activity text-meta text-muted" role="status">
+      <CueLine cue={cue} />
+    </p>
+  );
+}
+
+/** The header dot pulses only while a live session's cue shows recent output. */
+function LivePulse({ tone, activity }: { tone: "live" | "muted" | "off"; activity: TaskView["activity"] }) {
+  const working = activityCue(activity, useNow()).state === "working";
+  return <span className="live-pulse" data-tone={tone === "live" && !working ? "muted" : tone} aria-hidden />;
+}
+
 function Separator({ text, at, tone }: { text: string; at?: string | null; tone?: "live" }) {
   return (
     <div className="session-boundary" role="separator" data-tone={tone}>
       <span>{text}</span>
-      {at ? <Time at={at} /> : null}
+      {at !== undefined ? <Stamp className="session-time" at={at} /> : null}
     </div>
   );
 }
@@ -289,6 +301,7 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
           <Conversation items={items} engineLabel={engineLabel} running={running} />
         )}
         <Separator text={footer} tone={running && !paused ? "live" : undefined} />
+        {running ? <LiveCue activity={task.activity} /> : null}
       </>
     );
   }
@@ -297,7 +310,7 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
     <section className="live-panel" aria-label="Live session">
       <header className="live-head">
         <h2 className="live-title">
-          <span className="live-pulse" data-tone={tone} aria-hidden />
+          <LivePulse tone={tone} activity={task.activity} />
           Live session
         </h2>
         {hasSession ? (

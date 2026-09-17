@@ -57,7 +57,10 @@ def main():
     engines.session_context_source = lambda _task: None
     engines.transcript_rows = lambda engine, record, _worktree: [
         {"source": engine, "kind": "message", "role": "assistant", "type": "public", "at": record.get("at"), "text": record["fixture_text"]}
-    ] if "fixture_text" in record else []
+    ] if "fixture_text" in record else [
+        {"source": engine, "kind": "command", "role": "assistant", "type": "tool_use", "at": record.get("at"), "text": record["fixture_tool"],
+         "tool": "command", "summary": record["fixture_tool"], "tool_use_id": "fixture-long-call"}
+    ] if "fixture_tool" in record else []
 
     for index, engine in enumerate(config.ENGINES):
         row = T.new(project, f"Keep pagination working {index + 1}", "Fictional progress and steering acceptance.")
@@ -109,6 +112,12 @@ def main():
                 stamp = datetime.now(timezone.utc) - timedelta(minutes=5) if mode == "quiet" else datetime.now(timezone.utc)
                 with path.open("a") as stream:
                     stream.write(json.dumps({"fixture_text": body.get("text", "I am checking the message race."), "at": None if mode == "unknown-time" else stamp.isoformat()}) + "\n")
+                os.utime(path, (stamp.timestamp(), stamp.timestamp()))
+            elif mode == "long-call":
+                # A call that started four minutes ago and has written nothing since.
+                stamp = datetime.now(timezone.utc) - timedelta(minutes=4)
+                with path.open("a") as stream:
+                    stream.write(json.dumps({"fixture_tool": "pnpm test --run", "at": stamp.isoformat()}) + "\n")
                 os.utime(path, (stamp.timestamp(), stamp.timestamp()))
             elif mode == "unavailable":
                 with path.open("a") as stream:
