@@ -123,6 +123,8 @@ Question-response and failed-setup checkpoints join their owned workflows before
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot
 erase them from the count before the response reaches the browser assertion.
+The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
+so the intended queued request is the only send it interrupts.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
