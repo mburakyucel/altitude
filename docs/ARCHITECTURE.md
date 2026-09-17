@@ -598,6 +598,15 @@ of clean main. Dirty, diverged, ahead or off-main deployment remains untouched a
 failure; otherwise valid isolated tasks continue. Publication retains its current-candidate checks,
 ownership boundaries and review holds.
 
+Base fetching tolerates one competing update of the same remote-tracking ref across linked
+worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses
+Git's C-locale diagnostics to recognize the exact stale-old-value compare-and-swap error for its
+requested ref, only when no other error or fatal diagnostic accompanies it. It performs one fresh
+fetch and requires success before returning a commit SHA. Other fetch failures and any second
+failure propagate normally; no task-fault retry or cached-ref success inference is involved.
+This handles fetch-time contention without introducing a second Git lock protocol or changing
+checkout guards, landing's current-candidate checks, or activation boundaries.
+
 The reference-transaction hook allows writes that retain a protected ref's current logical tip,
 including `pack-refs` writes whose old object ID is zero. Loose-ref pruning is allowed only when
 its nonzero old tip matches both the current ref and its committed entry in the common

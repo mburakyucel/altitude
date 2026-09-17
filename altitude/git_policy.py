@@ -13,6 +13,7 @@ import os
 import hashlib
 import json
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -175,7 +176,16 @@ def capture_origin_sha(repo: str | Path, base: str = DEFAULT_BASE) -> str:
 def fetch_origin(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch one remote base and return its new immutable commit id."""
     root = Path(repo).resolve()
-    result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300)
+    env = dict(os.environ, LC_ALL="C")
+    result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
+    # #404: another worktree's fetch can win the remote ref's compare-and-swap.
+    # Require a fresh successful fetch, never infer success from the cached ref.
+    diagnostics = [line for line in (result.stderr or "").splitlines()
+                   if re.search(r"\b(?:error|fatal):", line)]
+    oid = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"
+    collision = rf"error: cannot lock ref '{re.escape(f'refs/remotes/origin/{base}')}': is at {oid} but expected {oid}"
+    if result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]):
+        result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
     _output(result, f"git fetch origin {base}")
     return capture_origin_sha(root, base)
 

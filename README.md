@@ -457,6 +457,9 @@ fetched `origin/main`; resume validates the owner's existing worktree without fe
 deployment. Staged, working and untracked deployment edits stay untouched. Task launch uses the
 activated installation's committed CLI, personas, hooks, templates and schemas; deployment and
 activation failures remain separately visible while otherwise valid tasks continue.
+When another worktree's fetch changes the same remote base during a fetch, dispatch and
+self-deployment fetch once more after the specific stale-reference error. Progress requires that
+fresh fetch to succeed; unrelated errors and a failed second fetch remain visible.
 
 To preserve deployment edits for an authorized reconciliation, L3 or the operator can use
 [`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
