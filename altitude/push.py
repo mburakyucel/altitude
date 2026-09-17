@@ -32,6 +32,7 @@ DEVICES = 5  # the operator's own devices; a bounded list keeps replaced phones 
 TTL_SECONDS = 12 * 60 * 60  # a decision older than half a day is read in Altitude, not from a banner
 TIMEOUT = 10
 _LOCK = threading.Lock()  # the daemon alone writes the record: its timer thread and its request threads
+_KEY_LOCK = threading.Lock()  # two first readers must not each generate a key and hand out the loser
 
 
 class PushFailure(RuntimeError):
@@ -56,13 +57,15 @@ def _openssl(*args, stdin: bytes | None = None) -> bytes:
 def _key() -> Path:
     """The signing key stays on this machine; the push service only ever sees its public half."""
     path = KEY_DIR / "vapid.key"
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.parent.chmod(0o700)
-        staging = path.parent / f".{uuid.uuid4().hex}.key"
-        _openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", staging)
-        staging.chmod(0o600)
-        staging.replace(path)
+    with _KEY_LOCK:
+        # A browser binds the key it subscribed with for good, so a second key must never replace it.
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.chmod(0o700)  # the directory closes the window before the key file is chmodded
+            staging = path.parent / f".{uuid.uuid4().hex}.key"
+            _openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", staging)
+            staging.chmod(0o600)
+            staging.replace(path)
     return path
 
 
@@ -136,8 +139,10 @@ def subscribe(endpoint: str) -> dict:
     with _LOCK:
         record = _record()
         kept = [known for known in record["subscriptions"] if known != endpoint]
-        # Already waiting decisions are not news to a device that just subscribed.
-        _save({"subscriptions": [*kept[-(DEVICES - 1):], endpoint], "seen": _waiting()})
+        # Already waiting decisions are not news to the first device; a later one must not silence
+        # what the devices already subscribed are still owed.
+        seen = _waiting() if not record["subscriptions"] else record["seen"]
+        _save({"subscriptions": [*kept[-(DEVICES - 1):], endpoint], "seen": seen})
     return {"push": True}
 
 
@@ -150,25 +155,35 @@ def forget(endpoint: str) -> dict:
 
 
 def notify(log=lambda message: None) -> None:
-    """Called each tick: a newly waiting decision wakes every subscribed device, once."""
+    """Called each tick: a newly waiting decision wakes every subscribed device, once.
+
+    A decision counts as announced only once a device has taken it. A machine that was asleep or off
+    its network when the decision arrived therefore still wakes on the next tick that gets through."""
     with _LOCK:
         record = _record()
         if not record["subscriptions"]:
             return
         keys = _waiting()
         fresh = [key for key in keys if key not in record["seen"]]
-        record["seen"] = keys
-        _save(record)
+        if not fresh:  # answered decisions drop out; the record stays the size of the queue
+            record["seen"] = keys
+            _save(record)
+            return
         endpoints = list(record["subscriptions"])
-    if not fresh:
-        return
+    taken = False
     for endpoint in endpoints:  # sent outside the lock: a slow push service must not stall a subscription
         try:
             status = _send(endpoint)
-        except (PushFailure, OSError) as exc:  # unreachable service or no signing tool: again next time
+        except (PushFailure, OSError) as exc:  # unreachable service or no signing tool: again next tick
             log(f"push to {urlparse(endpoint).netloc} deferred: {exc}")
+            continue
+        if status in (404, 410):  # gone for good; the device subscribes again when it next alerts
+            forget(endpoint)
+        elif status >= 300:
+            log(f"push to {urlparse(endpoint).netloc} refused with {status}")
         else:
-            if status in (404, 410):  # gone for good; the device subscribes again when it next alerts
-                forget(endpoint)
-            elif status >= 300:
-                log(f"push to {urlparse(endpoint).netloc} refused with {status}")
+            taken = True
+    with _LOCK:
+        record = _record()
+        record["seen"] = keys if taken else [key for key in keys if key not in fresh]
+        _save(record)

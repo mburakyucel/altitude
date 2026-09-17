@@ -33,11 +33,14 @@ function overview(queue: unknown[]) {
 const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /** The fixture queue the next overview read returns; tests grow it like altd would. */
-function mockFetch(initial: unknown[], key: string | null = PUSH_KEY) {
+function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false) {
   let queue = initial;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/alerts/subscription")) return jsonResponse({ push: true });
+    if (url.includes("/api/alerts/subscription")) {
+      if (unreachable) throw new TypeError("Failed to fetch");
+      return jsonResponse({ push: true });
+    }
     if (url.includes("/api/alerts")) return jsonResponse({ key });
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
@@ -50,13 +53,34 @@ function mockFetch(initial: unknown[], key: string | null = PUSH_KEY) {
 
 const ENDPOINT = "https://push.example/wake/device-1";
 
+/** The bytes a browser stores with a subscription, as it decodes the key altd handed the page. */
+function keyBytes(key: string): Uint8Array {
+  const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(key.length / 4) * 4, "="));
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
+}
+
+type FakeSubscription = {
+  endpoint: string;
+  options: { applicationServerKey: Uint8Array };
+  unsubscribe: () => Promise<boolean>;
+};
+
 class FakeRegistration {
+  /** A freshly registered worker is still installing: a real one rejects a subscription until active. */
+  constructor(public active = true) {}
+  subscribed: FakeSubscription | null = null;
+  subscription: FakeSubscription = {
+    endpoint: ENDPOINT, options: { applicationServerKey: keyBytes(PUSH_KEY) },
+    unsubscribe: vi.fn(async () => true),
+  };
   pushManager = {
-    subscribe: vi.fn(async (_options: PushSubscriptionOptionsInit) => this.subscription),
+    subscribe: vi.fn(async (_options: PushSubscriptionOptionsInit) => {
+      if (!this.active) throw new DOMException("no active worker", "InvalidStateError");
+      this.subscribed = this.subscription;
+      return this.subscription;
+    }),
     getSubscription: vi.fn(async () => this.subscribed),
   };
-  subscribed: { endpoint: string; unsubscribe: () => Promise<boolean> } | null = null;
-  subscription = { endpoint: ENDPOINT, unsubscribe: vi.fn(async () => true) };
   async showNotification(_title: string, _options?: NotificationOptions) {}
 }
 
@@ -64,7 +88,8 @@ class FakeRegistration {
 function alertingBrowser(permission: NotificationPermission = "default", answer: NotificationPermission = "granted") {
   const shown = vi.spyOn(FakeRegistration.prototype, "showNotification").mockResolvedValue(undefined);
   const registration = new FakeRegistration();
-  const register = vi.fn(async () => registration);
+  const installing = new FakeRegistration(false); // what register() resolves with the first time
+  const register = vi.fn(async () => installing);
   const listeners = new Set<(event: MessageEvent) => void>();
   const worker = {
     register,
@@ -85,7 +110,7 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
   };
   vi.stubGlobal("Notification", notification);
   return {
-    shown, register, registration, request: notification.requestPermission,
+    shown, register, registration, installing, request: notification.requestPermission,
     click: (url: string) => act(() => {
       listeners.forEach((listener) => listener(new MessageEvent("message", { data: { type: "alert-open", url } })));
     }),
@@ -129,6 +154,26 @@ describe("decision alerts", () => {
     }));
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
     expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
+    // The subscription waits for the active worker; the registration just returned is still installing.
+    expect(browser.installing.pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("replaces a subscription made with a key this machine no longer signs with", async () => {
+    const browser = alertingBrowser("default", "granted");
+    const stale = {
+      endpoint: "https://push.example/wake/old", options: { applicationServerKey: new Uint8Array(65).fill(9) },
+      unsubscribe: vi.fn(async () => true),
+    };
+    browser.registration.subscribed = stale;
+    mockFetch([question]);
+    const { user } = renderApp({ route: "/" });
+
+    await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
+    await waitFor(() => expect(stale.unsubscribe).toHaveBeenCalled());
+    expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT }),
+    }));
   });
 
   it("keeps alerting while Altitude is open, and says so, when this device cannot be woken", async () => {
@@ -231,5 +276,18 @@ describe("decision alerts", () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     await screen.findByRole("article", { name: "Choose backup retention" });
     expect(browser.shown).not.toHaveBeenCalled();
+  });
+
+  it("gives up the push subscription even while altd cannot be told", async () => {
+    const browser = alreadyOn([]);
+    browser.registration.subscribed = browser.registration.subscription;
+    mockFetch([], PUSH_KEY, true);
+    const { user } = renderApp({ route: "/" });
+
+    await user.click(await screen.findByRole("button", { name: "Alerts on" }));
+    // The push service is told first, so nothing wakes this device again; altd drops the endpoint
+    // the next time its push service answers that it is gone.
+    await waitFor(() => expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled());
+    expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
   });
 });

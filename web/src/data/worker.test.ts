@@ -71,19 +71,30 @@ describe("the service worker's push", () => {
     // The question itself stays in Altitude, and a fault is not a decision.
     expect(JSON.stringify(running.shown)).not.toContain("Which drill first?");
 
+    // A push always shows something, so a decision already announced is shown again under its own
+    // tag: the phone keeps one banner for it, not two.
     await running.push();
-    expect(running.shown).toHaveLength(1);
+    expect(running.shown).toHaveLength(2);
+    expect(running.shown[1]).toEqual(running.shown[0]);
 
-    // The same decision at a later revision is the same decision.
+    // The same decision at a later revision is the same decision, and the same banner.
     running.fetched.mockImplementation(queue([{ ...question, revision: 3 }]));
     await running.push();
-    expect(running.shown).toHaveLength(1);
+    expect(running.shown[2]!.options.tag).toBe("atlas:run-restore-drill:q-drill");
 
     running.fetched.mockImplementation(queue([question, { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" }]));
     await running.push();
-    expect(running.shown).toHaveLength(2);
-    expect(running.shown[1]!.title).toBe("atlas needs a decision");
-    expect(running.shown[1]!.options.body).toBe("Rotate the signing key");
+    expect(running.shown).toHaveLength(4);
+    expect(running.shown[3]!.title).toBe("atlas needs a decision");
+    expect(running.shown[3]!.options.body).toBe("Rotate the signing key");
+    expect(running.shown[3]!.options.tag).toBe("atlas:rotate-the-signing-key:q-key");
+  });
+
+  it("invents no decision when the queue is empty, because it was answered in the meantime", async () => {
+    const running = worker();
+    running.fetched.mockImplementation(queue([]));
+    await running.push();
+    expect(running.shown).toEqual([]);
   });
 
   it("says a decision is waiting, and nothing more, when it cannot reach Altitude", async () => {

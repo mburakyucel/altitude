@@ -154,6 +154,21 @@ class TestPush(AltitudeCase):
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [self.endpoint])
         self.assertIn("refused with 503", notes[0])
 
+        # A decision no device took is still owed, and the next tick that gets through carries it.
+        self.service.status = 201
+        push.notify()
+        self.assertEqual(len(self.service.requests), 3)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 3)
+
+    def test_a_second_device_does_not_silence_a_decision_the_first_is_still_owed(self):
+        push.subscribe(self.endpoint)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.subscribe(self.endpoint.replace("device-1", "device-2"))  # a phone joins before the tick
+        push.notify()
+        self.assertEqual(sorted(sent["path"] for sent in self.service.requests),
+                         ["/wake/device-1", "/wake/device-2"])
+
     def test_an_unreachable_push_service_leaves_the_subscription_and_says_so(self):
         push.subscribe(self.endpoint)
         self.service.shutdown()
@@ -229,6 +244,34 @@ class TestAlertsAPI(AltitudeCase):
         status, out = self.call("GET", "/api/alerts")
         self.assertEqual((status, out["key"]), (200, None))
         self.assertIn("OpenSSL", out["why"])
+
+
+class TestTheTick(AltitudeCase):
+    """Waking devices is a background errand of the tick, not a step dispatch waits behind."""
+
+    def test_a_push_service_that_never_answers_holds_up_nothing(self):
+        self.setenv("ALTITUDE_TIMERS", "0")
+        reached, release = threading.Event(), threading.Event()
+
+        def hang(log=None):
+            reached.set()
+            release.wait(10)
+
+        self.patch(push, "notify", hang)
+        for name in ("drain_hook_faults", "auto_restart", "tick_project"):
+            self.patch(server, name, lambda *a, **k: None)
+        self.patch(server.dispatch, "run_settings", lambda *a, **k: None)
+        self.patch(server.quota_codex, "refresh_if_due", lambda *a, **k: None)
+        self.patch(server, "log", new=lambda *a, **k: None)
+        digested = []
+        self.patch(server, "morning_digest", lambda: digested.append(True))
+        self.addCleanup(release.set)
+
+        server.tick()
+        self.assertTrue(reached.wait(10))  # the push is under way
+        self.assertEqual(digested, [True])  # and the tick reached its end without waiting for it
+        release.set()
+        server._bg["push"].join(10)
 
 
 if __name__ == "__main__":

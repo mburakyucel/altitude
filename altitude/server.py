@@ -1080,10 +1080,8 @@ def tick() -> None:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
-    try:
-        push.notify(log)
-    except (OSError, RuntimeError) as e:  # a push service is outside this machine: never a fault of Altitude
-        log(f"push: {e}")
+    # Off the timer thread: five unreachable devices must not delay dispatch, resumes or the digest.
+    spawn("push", push.notify, log)
     morning_digest()
 
 

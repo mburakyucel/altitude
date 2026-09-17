@@ -43,7 +43,11 @@ async function alertWaiting() {
   }
   const announced = await remembered();
   await remember(waiting.map((decision) => decision.tag));
-  for (const decision of waiting.filter((decision) => !announced.includes(decision.tag))) {
+  const fresh = waiting.filter((decision) => !announced.includes(decision.tag));
+  // A push must show something. When this device has heard about every waiting decision already, the
+  // newest one is shown under its own tag, which replaces that banner rather than adding a second.
+  // An empty queue means the decision was answered in the meantime, and inventing one would be a lie.
+  for (const decision of fresh.length ? fresh : waiting.slice(-1)) {
     await self.registration.showNotification(`${decision.project} needs a decision`, {
       body: decision.title, tag: decision.tag, data: { url: decision.url },
     });

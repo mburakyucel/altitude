@@ -80,19 +80,34 @@ async function tell(endpoint: string, remove = false): Promise<boolean> {
   return response.ok;
 }
 
+/** A subscription carries the key it was made with; a key regenerated on the machine cannot wake it. */
+function madeWith(subscription: PushSubscription, key: Uint8Array): boolean {
+  const applied = subscription.options?.applicationServerKey;
+  if (!applied) return false;
+  const bytes = new Uint8Array(applied);
+  return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
+}
+
 /**
  * Ask the push service to wake this device for Altitude. It returns false whenever the device cannot
  * be woken — no key on the machine, no push service reachable, or an iPhone not added to the Home
  * Screen — and alerts then arrive only while Altitude is open, which the note says.
  */
-async function subscribePush(registration: ServiceWorkerRegistration): Promise<boolean> {
+async function subscribePush(): Promise<boolean> {
   try {
-    if (!registration.pushManager) return false;
     const { key } = (await (await fetch("/api/alerts")).json()) as { key?: string | null };
     if (!key) return false;
-    const existing = await registration.pushManager.getSubscription();
-    const subscription = existing ?? await registration.pushManager.subscribe(
-      { userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+    // A subscription attaches to an active worker: a freshly registered one is still installing.
+    const registration = await navigator.serviceWorker.ready;
+    if (!registration.pushManager) return false;
+    const wanted = keyBytes(key);
+    let subscription = await registration.pushManager.getSubscription();
+    if (subscription && !madeWith(subscription, wanted)) {
+      await subscription.unsubscribe(); // this endpoint is deaf to the key Altitude now signs with
+      subscription = null;
+    }
+    subscription ??= await registration.pushManager.subscribe(
+      { userVisibleOnly: true, applicationServerKey: wanted });
     return await tell(subscription.endpoint);
   } catch {
     return false;
@@ -104,8 +119,9 @@ async function unsubscribePush(): Promise<void> {
     const registration = await navigator.serviceWorker.getRegistration("/sw.js");
     const subscription = await registration?.pushManager?.getSubscription();
     if (!subscription) return;
-    await tell(subscription.endpoint, true);
+    // The push service first: an endpoint Altitude fails to drop is then gone, and 410 clears it.
     await subscription.unsubscribe();
+    await tell(subscription.endpoint, true);
   } catch {
     // this device stops alerting either way, and altd drops an endpoint its push service rejects
   }
@@ -138,11 +154,11 @@ export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
     announce();
     return readAlertState();
   }
-  const registration = await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.register("/sw.js");
   writeSeen(pending.filter((decision) => decision.id).map(alertKey));
   store(ALERTS_KEY, "on");
   announce();
-  store(ALERTS_PUSH_KEY, await subscribePush(registration) ? "on" : null);
+  store(ALERTS_PUSH_KEY, await subscribePush() ? "on" : null);
   announce();
   return "on";
 }
