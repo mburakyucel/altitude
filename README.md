@@ -183,8 +183,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   releasing the task or replacing the original brief's authority. Issues remain the long-term backlog.
   Compact status rows open the owning conversation at its question when one needs you;
   questions and quick answers live in Needs you
-  and that chat. Recent completed tasks stay under **Done this week**. Only global Needs you has
-  an attention badge: unanswered questions plus operational attention items, labelled separately
+  and that chat. Recent completed tasks, with or without a PR, stay under **Done this week** and
+  open their findings. Only global Needs you has an attention badge: unanswered questions plus
+  operational attention items, labelled separately
   in summaries. Answering changes attention immediately; execution status changes when observed.
   Unknown or stale reads are explicit, and Back returns to the originating Work or Needs you view.
 - **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and

@@ -1271,7 +1271,9 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
             S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
         _archive(project, slug)
         S.regen_state_md(project)
-        return task
+    fyi(project, slug, " ".join(filter(None, (f"{task['title']} completed without code changes.", digest.strip(),
+                                              "Its findings stay in the task conversation."))), actor=actor)
+    return task
 
 
 def _archive(project: str, slug: str) -> None:

@@ -429,7 +429,8 @@ each unfinished task once in **Current**, with compact question and execution st
 row opens the owning question. A wake or capacity wait alone changes no question.
 Answers and withdrawals reduce the question count without removing the task; closing the last removes
 its attention label while the row shows the observed running or waiting state. Only completion
-or rejection moves it to recent **Done this week** history. The global attention badge counts
+or rejection moves it to recent **Done this week** history, ordered by finish time, including
+no-code tasks whose findings live in their conversation. The global attention badge counts
 operator questions awaiting responses and operational items, named separately in summaries; project navigation
 keeps state dots without another numeric attention badge. Unknown and stale reads stay explicit.
 
