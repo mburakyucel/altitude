@@ -20,6 +20,8 @@ export default defineConfig({
     channel: "chromium",
     launchOptions: {
       chromiumSandbox: false,
+      // Capture stays inside Chromium; walkthroughs never request a physical microphone.
+      args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
       // Crashpad also needs a writable directory even with Playwright's temporary browser profile.
       env: { ...process.env, XDG_CONFIG_HOME: resolve("ui-artifacts/browser-config") },
     },

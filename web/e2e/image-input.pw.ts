@@ -9,18 +9,15 @@ type Scope = "project" | "task";
 const path = (scope: Scope, project = "alpha") => `/projects/${project}${scope === "task" ? "/tasks/image-task" : ""}`;
 const endpoint = (scope: Scope) => scope === "task" ? "/api/l2/message" : "/api/chat";
 const caption = "The timer covers the result count.";
-const FAKE_MIC = `
-  const context = new AudioContext();
-  const oscillator = context.createOscillator(); oscillator.frequency.value = 220; oscillator.start();
-  Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
-    await context.resume(); const destination = context.createMediaStreamDestination(); oscillator.connect(destination); return destination.stream;
-  }});
-`;
+// A playback error stranded the oscillator-based microphone in resume (#396).
+// Synthetic capture must record without awaiting a Web Audio resume promise.
+const STALLED_PLAYBACK = `AudioContext.prototype.resume = () => new Promise(() => {});`;
 
 function controls(page: Page, scope: Scope) {
   const composer = page.locator(".composer");
   return {
     composer,
+    listening: page.locator('.composer[data-phase="listening"]'),
     field: page.getByRole("textbox", { name: scope === "project" ? "Message L3 about alpha" : "Message the L2" }),
     picker: page.getByLabel("Choose images"),
     add: page.getByRole("button", { name: "Add images", exact: true }),
@@ -188,7 +185,7 @@ for (const scope of ["project", "task"] as const) {
   });
 
   test(`${scope}: image selection survives voice cancel, transcription and send`, async ({ page }, info) => {
-    await page.addInitScript(FAKE_MIC);
+    await page.addInitScript(STALLED_PLAYBACK);
     const walk = walkthrough(page, info);
     await open(page, scope, info);
     const v = controls(page, scope);
@@ -196,7 +193,7 @@ for (const scope of ["project", "task"] as const) {
     const start = page.getByRole("button", { name: "Start voice input", exact: true });
     const stop = page.getByRole("button", { name: "Stop voice input", exact: true });
     await v.field.fill(`${caption} Keep this edit.`);
-    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.strip, v.field], hidden: [v.add] });
+    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.listening, v.strip, v.field], hidden: [v.add] });
     await expect(v.field).not.toBeEditable();
     await v.field.press("End");
     await page.keyboard.type("unwanted recording edit");
@@ -208,7 +205,7 @@ for (const scope of ["project", "task"] as const) {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let transcript = "Please fix the overlap.";
     await page.route("**/api/transcribe", async (route) => { await gate; return route.fulfill({ json: { text: transcript } }); });
-    await start.click(); await expect(stop).toBeVisible();
+    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible();
     // Chromium needs an actual recorded interval before it can encode audio data.
     await page.waitForTimeout(700);
     await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByText("Transcribing…", { exact: true })], hidden: [v.add, stop] });
@@ -218,11 +215,11 @@ for (const scope of ["project", "task"] as const) {
     await expect(v.field).toHaveValue(`${caption} Keep this edit. Please fix the overlap.`);
     await walk.state("04-transcript-in-draft-only", { visible: [v.strip, v.add, start], hidden: [page.getByText("Transcribing…", { exact: true }), page.getByText("Please fix the overlap.", { exact: true })] });
     transcript = "  ";
-    await start.click(); await expect(stop).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
+    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
     await expect(start).toBeEnabled(); await expect(v.strip).toBeVisible();
     await expect(v.preview).toHaveCount(0);
     transcript = "And keep search working.";
-    await start.click(); await expect(stop).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
+    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
     await walk.state("05-voice-send-clears-image-and-draft", { visible: [v.preview, start], hidden: [v.strip, page.getByText("Transcribing…", { exact: true })] });
     await expect(v.field).toHaveValue("");
     await page.evaluate(() => { Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
@@ -243,7 +240,7 @@ for (const scope of ["project", "task"] as const) {
   });
 
   test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, async ({ page, request }, info) => {
-    await page.addInitScript(FAKE_MIC);
+    await page.addInitScript(STALLED_PLAYBACK);
     const walk = walkthrough(page, info);
     await open(page, scope, info);
     const v = controls(page, scope);
@@ -281,6 +278,7 @@ for (const scope of ["project", "task"] as const) {
     };
     await v.composer.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.composer.getByRole("button", { name: "Stop voice input" })).toBeVisible();
+    await expect(v.listening).toBeVisible();
     await page.waitForTimeout(500);
     await v.send.click();
     await upload;

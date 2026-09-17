@@ -154,6 +154,13 @@ interception stays on for each test's browser context, so an overlay that expire
 while the app sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts`
 guards this.
 
+Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
+no test requests a physical microphone. Image-input voice journeys retain real capture and
+MediaRecorder while holding `AudioContext.resume()` pending: an output-device/renderer
+failure cannot strand their microphone fixture in `AudioContext.resume()`. They assert the
+listening phase before the recorded interval; the Stop control also exists during startup.
+The cancel, transcription, image send, navigation and denied states run at both viewports.
+
 `walkthrough.ts` drives actions, asserts text/roles appearing and disappearing, and saves named
 screenshots. Route smoke checks real route discovery, content, assets, console/API failures and
 horizontal overflow. Assertions validate behavior; no model browser agent or repeated AI image
