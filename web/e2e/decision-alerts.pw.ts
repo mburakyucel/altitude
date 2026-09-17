@@ -28,9 +28,10 @@ const alerts = (page: Page) => page.evaluate(() => (window as unknown as { __ale
 test("the switch walks its states and alerts once for each new decision", async ({ page, context, request }, info) => {
   test.setTimeout(90_000);
   const walk = walkthrough(page, info);
-  const decision = async (project: string, title: string, question: string) => {
-    const response = await request.post("/fixture/decision", { data: { project, title, question } });
+  const decision = async (project: string, title: string, question: string, escalated = true) => {
+    const response = await request.post("/fixture/decision", { data: { project, title, question, escalated } });
     expect(response.ok()).toBe(true);
+    return (await response.json()).slug as string;
   };
   const card = (title: string) => page.getByRole("article", { name: title });
   const offer = page.getByRole("button", { name: "Alert me about new decisions" });
@@ -68,9 +69,14 @@ test("the switch walks its states and alerts once for each new decision", async 
     document.dispatchEvent(new Event("visibilitychange"));
   }, hidden);
   await visibility(true);
-  await decision("atlas", "Archive the old drill logs", "Archive or keep them?");
+  const archiving = await decision("atlas", "Archive the old drill logs", "Archive or keep them?", false);
   await expect.poll(() => alerts(page), { timeout: 30_000 }).toHaveLength(2);
   expect((await alerts(page))[1]).toMatchObject({ title: "atlas needs a decision", body: "Archive the old drill logs" });
+
+  // Escalation republishes the decision that is already waiting: one decision, one alert.
+  expect((await request.post("/fixture/escalate", { data: { project: "atlas", slug: archiving } })).ok()).toBe(true);
+  await page.waitForTimeout(1_000);
+  expect(await alerts(page)).toHaveLength(2);
   await visibility(false);
 
   // A refresh re-reads the same queue: the recorder starts empty again and stays empty.

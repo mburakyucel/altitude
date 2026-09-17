@@ -86,7 +86,7 @@ function alreadyOn(seen: string[]) {
   return browser;
 }
 
-const KEY = "altitude:choose-retention:q-retention:1";
+const KEY = "altitude:choose-retention:q-retention";
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, "serviceWorker");
@@ -118,7 +118,7 @@ describe("decision alerts", () => {
     await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
     expect(browser.shown).toHaveBeenCalledWith("altitude needs a decision", expect.objectContaining({
       body: "Run a restore drill",
-      tag: "altitude:run-restore-drill:q-drill:1",
+      tag: "altitude:run-restore-drill:q-drill",
       data: { url: "/projects/altitude/tasks/run-restore-drill?question=q-drill&revision=1" },
     }));
     // The question text never leaves the page, and a stopped task is not a question.
@@ -127,6 +127,11 @@ describe("decision alerts", () => {
 
     // A refetch of the same queue, as reconnection and polling produce, repeats nothing.
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(browser.shown).toHaveBeenCalledTimes(1);
+
+    // The same decision republished — a block that L3 then escalates — is one decision, alerted once.
+    setQueue([question, { ...second, revision: 2 }, stopped]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     expect(browser.shown).toHaveBeenCalledTimes(1);
 

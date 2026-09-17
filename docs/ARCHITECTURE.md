@@ -1039,7 +1039,9 @@ question is shown through `web/public/sw.js`, the one service worker, whose regi
 requires for a notification and whose click handler focuses the open app and routes it to the
 decision. Content is the project and task name only. A decision visible in Needs you or its owning
 task is recorded without an alert, and the recorded keys make refresh, reconnection and polling
-repeat none. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
+repeat none. A key names the waiting decision, not its revision, so a block and the escalation that
+republishes it alert once; a decision that is answered leaves the queue, and an ask that returns
+alerts again. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
 closes it. The reach is the open page: a closed tab, and a phone that has stopped the page, receive
 nothing.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
