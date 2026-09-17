@@ -42,4 +42,12 @@ export const test = base.extend<{ service: string; scenario: string; single: boo
     }
   },
   baseURL: async ({ service }, use) => { await use(service); },
+  // Chromium strands a request issued while Playwright disables request interception after a page's
+  // last route expires or is removed (the voice Send with image lost its POST under parallel runs).
+  // This never-matching route keeps interception on for the whole test; Playwright continues
+  // unmatched requests itself, without calling a test handler.
+  context: async ({ context }, use) => {
+    await context.route("altitude-e2e:keep-interception", () => undefined);
+    await use(context);
+  },
 });
