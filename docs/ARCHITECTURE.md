@@ -1360,7 +1360,8 @@ capacity or fault-recovery state. Report handoff, rejection and completion close
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
 The shared question component appears on Needs you and at its conversation anchor. Choices and custom
-text remain staged until **Send N answers**, including a single member. **Other…** opens that member's
+text remain staged until **Send N answers**, including a single member. The send row follows the
+questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
 **Use recommendations** is available when no manual picks exist and stages only explicit recommendations.
 Edits to independent members survive another member's response; changed revisions discard their own

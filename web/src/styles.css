@@ -1180,7 +1180,7 @@
 .question-history[open] summary { margin-bottom: 12px; }
 .question-set { display: flex; flex-direction: column; gap: 16px; }
 .question-set > .question-body + .question-body { border-top: 1px solid var(--hairline); padding-top: 16px; }
-.question-batch { position: sticky; bottom: 0; z-index: 1; border-top: 1px solid var(--hairline); padding: 12px 0; background: var(--card); }
+.question-batch { border-top: 1px solid var(--hairline); padding: 12px 0; background: var(--card); }
 .question-batch > .btn + .btn { margin-left: 8px; }
 .question-batch p { margin: 8px 0 0; }
 .question-answer { width: 100%; min-height: 72px; max-height: 180px; resize: vertical; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-input); background: var(--surface); color: var(--text-primary); font: inherit; }

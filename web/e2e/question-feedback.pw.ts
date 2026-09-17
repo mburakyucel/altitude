@@ -14,6 +14,15 @@ test("mixed custom, preset and plain answers remain conversational until the own
   await walk.open("/");
   const card = page.getByRole("article", { name: "Choose rollout settings", exact: true });
   const own = card.locator(`[data-question-id="${recipient.id}"]`);
+  const footer = card.locator(".question-batch");
+  const expectFooterAfterQuestions = async () => {
+    const last = await own.boundingBox();
+    const send = await footer.boundingBox();
+    expect(last).not.toBeNull();
+    expect(send).not.toBeNull();
+    expect(send!.y).toBeGreaterThanOrEqual(last!.y + last!.height);
+  };
+  await expectFooterAfterQuestions();
   await walk.state("01-plain-question-and-preset-choices", {
     visible: [card.getByRole("button", { name: "7 days", exact: true }), own.getByRole("textbox")],
     hidden: [card.locator(`[data-question-id="${retention.id}"] textarea`), card.getByRole("button", { name: /microphone|voice/i })],
@@ -23,6 +32,18 @@ test("mixed custom, preset and plain answers remain conversational until the own
   await retentionCard.getByRole("button", { name: "Other…", exact: true }).click();
   await expect(retentionCard.getByRole("textbox")).toBeFocused();
   await retentionCard.getByRole("textbox").fill("21 days");
+  await footer.scrollIntoViewIfNeeded();
+  await expect(footer).toBeInViewport();
+  await expectFooterAfterQuestions();
+  const beforeScroll = await footer.boundingBox();
+  const scrolled = await page.locator(".needs-page").evaluate((node) => {
+    const before = node.scrollTop;
+    node.scrollTop = Math.max(0, before - 150);
+    return before - node.scrollTop;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+  await expect.poll(async () => (await footer.boundingBox())!.y - beforeScroll!.y).toBeCloseTo(scrolled, 0);
+  await expectFooterAfterQuestions();
   await walk.state("02-custom-and-preset-staged-together", {
     visible: [retentionCard.getByRole("textbox"), card.getByRole("button", { name: "Send 2 answers", exact: true })],
     hidden: [card.getByText("Sent to L2", { exact: true })],
@@ -34,14 +55,20 @@ test("mixed custom, preset and plain answers remain conversational until the own
     await field.evaluate((node) => node.scrollIntoView({ block: "center" }));
     await expect.poll(async () => {
       const input = await field.boundingBox();
-      const footer = await card.locator(".question-batch").boundingBox();
       const viewport = await page.getByRole("main").boundingBox();
-      return Boolean(input && footer && viewport && input.y >= viewport.y && input.y + input.height <= footer.y);
-    }, { message: "The complete focused answer must remain above the sticky Send footer" }).toBe(true);
+      return Boolean(input && viewport && input.y >= viewport.y && input.y + input.height <= viewport.y + viewport.height);
+    }, { message: "The complete focused answer must remain visible with the keyboard open" }).toBe(true);
+    await expectFooterAfterQuestions();
     await expect(field).toHaveValue("21 days");
     await expect(field).toBeFocused();
+    await expect(footer).not.toBeInViewport();
+    await walk.state("02b-simulated-keyboard-answer-unobscured", {
+      visible: [field], hidden: [page.getByRole("navigation", { name: "Primary", exact: true })],
+    });
+    await footer.scrollIntoViewIfNeeded();
     await expect(card.getByRole("button", { name: "Send 2 answers", exact: true })).toBeInViewport();
-    await walk.state("02b-simulated-keyboard-keeps-send-reachable", {
+    await expectFooterAfterQuestions();
+    await walk.state("02c-simulated-keyboard-scroll-to-send", {
       visible: [retentionCard.getByRole("textbox"), card.getByRole("button", { name: "Send 2 answers", exact: true })],
       hidden: [page.getByRole("navigation", { name: "Primary", exact: true })],
     });

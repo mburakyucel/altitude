@@ -154,7 +154,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   stay accessible in the owning conversation. The model can ask a plain question, offer one
   recommended quick action, or offer two to three choices with a recommendation. **Other…** opens a
   small field beside that question; plain questions show it directly. **Send N answers** submits any
-  mix of choices, custom answers and follow-up questions, with nothing preselected. Sent members show
+  mix of choices, custom answers and follow-up questions, with nothing preselected. The send row
+  follows the questions and scrolls with them on phone and desktop. Sent members show
   **Sent to L2** in the conversation and leave the attention count; remaining members stay answerable.
   The L2 interprets every response: “21 days” supplies a direction, while “Why seven?” invites discussion.
   Sending saves the response; its meaning determines what is agreed. Ordinary chat retains voice input;
