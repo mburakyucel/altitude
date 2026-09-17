@@ -123,7 +123,10 @@ tasks/history for route and component walkthroughs. Project-isolation and projec
 services exercise real streaming/queue/history and removal/reattachment; task-lifecycle specs
 exercise real message/decision effects. Fixture providers replace external calls at the engine
 boundary. HTTP overlays are reserved for named loading, transport failure and presentation states;
-an intercepted success response alone is not evidence of a backend transition.
+an intercepted success response alone is not evidence of a backend transition. Request
+interception stays on for each test's browser context, so an overlay that expires or is removed
+while the app sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts`
+guards this.
 
 `walkthrough.ts` drives actions, asserts text/roles appearing and disappearing, and saves named
 screenshots. Route smoke checks real route discovery, content, assets, console/API failures and
