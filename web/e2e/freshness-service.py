@@ -20,8 +20,8 @@ def main():
 
     engines.claude_print = held_turn
     repos = {}
-    for project in ("atlas", "beacon"):
-        repos[project] = make_repo(config.PROJECT_ROOTS[0] / project)
+    for project, folder in (("atlas", "atlas"), ("beacon", "second-project/beacon")):  # one origin.git per parent
+        repos[project] = make_repo(config.PROJECT_ROOTS[0] / folder)
         with config.add_project(project, path=repos[project]):
             pass
     l3.save_info("atlas", {"session_id": "fixture-project-session", "engine_last": config.ENGINES[0],
