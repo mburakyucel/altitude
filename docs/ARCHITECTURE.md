@@ -325,6 +325,13 @@ boundaries. Execution strategy stays adaptable because a fixed sequence of stage
 roles can outlive the model/tool assumptions behind it. Customization belongs in repository
 instructions and the engines' native skills, hooks and agent facilities where appropriate.
 
+Required background results belong to the active owner session. The existing native Stop hook
+combines queued steering with an instruction to wait for in-flight tasks, using the engine's
+background-task payload. It acts only while the task is running; explicit blocks and operator Stop
+retain their exit paths. It creates no job registry, automatic retry or alternative completion path.
+Report freshness and delivery verification remain authoritative; native coverage limits are explicit
+in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
+
 ## Task lifecycle
 
 ```text

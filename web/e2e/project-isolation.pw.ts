@@ -567,7 +567,7 @@ test("lost L3 queue receipt survives navigation and reload without automatic res
   await walk.open(`${service}/projects/alpha`);
   await v.field("alpha").fill("Alpha running request");
   await v.send.click();
-  await expect(v.queue).toBeVisible();
+  await expect(v.text("Alpha partial reply.")).toBeVisible();
   const saved = deferred();
   const gate = deferred();
   const failed = deferred();

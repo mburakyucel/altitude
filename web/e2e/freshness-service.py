@@ -69,9 +69,10 @@ def main():
                 return self._json(T.done("atlas", migration, digest="Fictional completed migration."))
             if self.path == "/fixture/outage":
                 refused.set()
-                for stream in list(streams):
+                dropped = list(streams)
+                for stream in dropped:
                     stream.connection.shutdown(socket.SHUT_RDWR)
-                return self._json({"dropped": len(streams)})
+                return self._json({"dropped": len(dropped)})
             if self.path == "/fixture/recover":
                 refused.clear()
                 return self._json({"ok": True})

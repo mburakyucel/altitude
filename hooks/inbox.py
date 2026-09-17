@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""PostToolUse and Stop hook in a Claude L2 session: hand Burak's queued messages to the worker at its checkpoint.
+"""Deliver queued messages and keep an active owner with native background work in its session.
 
 After a tool call the messages arrive as extra context; when the worker is about to stop they keep it going, with
 the messages as the reason. Only a running task's inbox is delivered: a task the worker just blocked keeps its
-messages for the resume that answers them."""
+messages for the resume that answers them. Native Stop evidence prevents premature clean completion
+while registered background work is still in flight; explicit blocks retain their normal exit."""
 import json
 import os
 import sys
@@ -29,6 +30,15 @@ try:
         dispatch.l2_engine(task), [resolved[image["id"]] for image in row.get("images") or []]) for row in rows}
     taken = T.take_inbox(project, slug, ids=set(prepared), running_only=True)
     text = "\n\n".join(prepared[row["id"]] for row in taken)
+    # #369 recurrence: a final promise of a watcher lets session cleanup kill required work.
+    if inp.get("hook_event_name") == "Stop":
+        pending = [row["id"] for row in inp.get("background_tasks", [])
+                   if row.get("status") in ("running", "pending")]
+        if pending:
+            text += ("\n\nBackground work is still in flight: " + ", ".join(pending) + ". "
+                     "Use native wait/result tools to consume required output and exit status before "
+                     "ending this turn. Cancel only work no longer needed. If required results cannot "
+                     "be obtained, checkpoint unfinished work and record an explicit supported task block.")
 except Exception as exc:  # noqa: BLE001 — leave a line the server raises as a system fault
     config.MONITOR_DIR.mkdir(parents=True, exist_ok=True)
     with open(config.MONITOR_DIR / "hook-faults.log", "a") as f:

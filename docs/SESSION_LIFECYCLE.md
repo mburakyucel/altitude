@@ -971,6 +971,20 @@ session alive and consumes command output and exit status before a final respons
 if results cannot be obtained, it checkpoints unfinished work and records an explicit supported block.
 Promising a later notification is not a durable wait: session exit can terminate the background work.
 
+The existing inbox Stop hook rejects a running owner's clean completion while the native
+`background_tasks` payload lists running or pending work, even when a report exists. It names task
+IDs and directs the owner to consume required results, cancel only unneeded work, or record a
+supported block when results cannot be obtained. Queued steering arrives in the same response.
+An earlier Stop correction (`stop_hook_active`) does not waive the guard. Explicit task blocks
+bypass it, and operator interruption retains the native Stop behavior.
+
+This correction to the #369 recurrence uses the [native Stop contract](https://code.claude.com/docs/en/hooks#stop-input),
+not a second background-job registry. That integration bounds consecutive Stop refusals; ordinary
+tool execution resets its refusal counter. Missing native task evidence, unmanaged shell jobs and
+completed-but-unconsumed results remain outside the guard. Other engines retain the shared owner
+contract and completion verification. Deterministic fixtures exercise in-flight validation, result
+consumption, steering, resume and explicit exits; they do not establish live-provider compliance.
+
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
