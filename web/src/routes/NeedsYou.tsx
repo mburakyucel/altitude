@@ -1,6 +1,7 @@
 import { useOverview } from "../data/api";
 import type { Decision } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
+import { DecisionAlertToggle } from "../data/alerts";
 import { attentionSummary, decisionGroups } from "../data/decisions";
 
 /** The subtitle: how much waits, across how many projects. */
@@ -21,6 +22,8 @@ export default function NeedsYou() {
         {overview.isSuccess && overview.data.queue.length > 0 ? (
           <p className="needs-sub text-muted">{needsSummary(overview.data.queue)}</p>
         ) : null}
+        {/* The switch waits for the queue: enabling it records what is waiting, not a backlog to announce. */}
+        {overview.data ? <DecisionAlertToggle pending={overview.data.queue} /> : null}
       </div>
       {overview.isError && overview.data ? <p className="text-danger" role="alert">Showing saved questions. Refresh before deciding. <button className="link" onClick={() => overview.refetch()}>Refresh</button></p> : null}
       {overview.isPending ? (

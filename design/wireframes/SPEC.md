@@ -524,6 +524,22 @@ Question fields have no voice controls; ordinary chat keeps its existing voice s
 Withdrawal likewise removes only affected controls and updates counts; stale submissions fail.
 Re-asking supplies fresh controls, retaining earlier history without carrying approval forward.
 
+#### 3.8.1 Decision alerts
+
+Under the Needs you heading, one switch offers **Alert me about new decisions** and reads **Alerts on**
+once permission is granted. It is set per device, because each browser grants its own permission, and
+its line below states the reach honestly: alerts arrive only while Altitude is open, which on a phone
+means while it is on screen. A browser that cannot show notifications disables the switch and says so;
+refused permission says the browser's settings block alerts and how to allow them again. Every state
+leaves Needs you, its cards and all typing untouched.
+
+Each newly published operator question alerts once, titled with the project and carrying the task name
+only — never question, conversation or incident text. Activating it opens that decision in the running
+app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
+ask alerts once. A decision already on screen, in Needs you or its owning task, is recorded without
+alerting. Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the
+switch on never announces what is already waiting.
+
 ### 3.9 Open the owning L2 question
 
 `/projects/:name/tasks/:slug?question=<id>&revision=<n>` opens the owning human conversation at
@@ -969,7 +985,8 @@ retain phone/desktop state verification and accessible review evidence.
 | Monitor | `GET /api/monitor` | none |
 
 The shell's one `GET /api/changes` stream refetches the mounted overview, monitor, project and task reads
-when records change and on every (re)connect; polling continues underneath.
+when records change and on every (re)connect; polling continues underneath. A tab with decision alerts
+on (§3.8.1) keeps that stream while it is out of sight, which is how a new decision reaches an alert.
 
 ### 5.2 Backend changes the design requires
 

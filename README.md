@@ -410,6 +410,10 @@ available across in-app navigation and the composer asks you to keep the tab ope
 Needs you, the rail and the Work panel refresh within about a second of a task or decision change,
 including while a reply streams, through the shell's one change stream; after a lost connection or
 a restart the page reconnects and rereads current records.
+Needs you offers an alert for each new decision, granted per device and kept while an Altitude page is
+open: a background desktop tab still alerts, and a phone alerts while Altitude is on screen. The alert
+names the project and task only, opens that decision, and repeats for none of refresh, reconnection or
+other tasks' activity. Without permission or notification support, Needs you is unchanged.
 Conversation polling continues while replies stream,
 and a queued message moves into history as part of the server's guarded turn admission.
 

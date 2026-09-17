@@ -87,6 +87,17 @@ pending until observed. Remove this CA in the same browser/OS certificate manage
 the installation; on iOS remove its profile under General → VPN & Device Management. Do not
 clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 
+### Alerts for new decisions
+
+Needs you offers an alert for each new decision. Turn it on once per device and grant the browser's
+notification permission there; trusted HTTPS is a prerequisite, so finish the step above first. An
+iPhone shows the switch only for Altitude added to the Home Screen and opened from there.
+
+Alerts reach a page that is open: a desktop tab alerts in the background, and a phone alerts while
+Altitude is on screen. A closed tab, and a phone that has put the page to sleep, receive nothing.
+Each alert names the project and the task and opens that decision; it carries no conversation text.
+Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
+
 ## Register a project and start a conversation
 
 Use a clean primary checkout of a small GitHub project you are comfortable giving the agent
