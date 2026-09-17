@@ -472,8 +472,10 @@ and merge holds still apply.
 L3 keeps unfinished work actionable with an owned next step, a meaningful finite observation or a
 genuine decision. Legitimate waits name their dependency and follow-through; they need no continuously
 running worker. Irretrievable historical evidence stays unknown. When supported diagnosis cannot
-establish recovery, L3 exposes the narrow capability or authority gap before any diagnostic continuation;
-missing evidence grants no retry or bypass. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
+establish recovery, L3 exposes the actual capability or authority gap. Within an authorized diagnostic
+scope, the same L2 runs, inspects and adjusts diagnostics without per-command approval, retaining
+evidence and a concrete next step at the agreed stop or scope boundary. Explicit restrictions, access
+requirements, fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
 
 Recovery and recurrence prevention are separate responsibilities. L3 promptly reports/reuses a
 sanitized issue for actionable system or role defects and records
