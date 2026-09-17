@@ -236,6 +236,10 @@ supplies execution tools, context management and native subagents; repository in
 skills and hooks shape how it works. Execution strategy stays with the owner rather than a
 prescribed sequence of specialist stages.
 
+Required background work stays within the owner's active session until its results are consumed.
+The native Stop hook returns an owner with in-flight background tasks to its wait/result tools;
+explicit task blocks and operator Stop remain available. See [coverage and limits](docs/SESSION_LIFECYCLE.md#polling-and-cleanup).
+
 Repository rules stay with each project. Altitude's authoritative rules are in [AGENTS.md](AGENTS.md);
 `CLAUDE.md` imports that file. Both engines receive an explicit instruction-file path on fresh and
 resumed L2/L3 turns, including L3's scratch directory outside the checkout. Projects with only
