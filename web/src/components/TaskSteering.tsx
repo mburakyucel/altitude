@@ -28,7 +28,6 @@ export function useTaskSteering(project: string, task: TaskView, refresh: () => 
         ...(action === "stop" ? { generation: task.steering?.generation ?? null } : { stop_id: task.steering?.stop_id ?? null }) });
       if (currentGeneration.current !== generation || pending.current !== request) return;
       await refresh();
-      void client.invalidateQueries({ queryKey: ["overview"] });
     } catch (cause) {
       if (currentGeneration.current !== generation || pending.current !== request) return;
       setLocal({ generation, state: action === "stop" ? "stop_unconfirmed" : null,

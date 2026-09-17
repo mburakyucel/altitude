@@ -120,5 +120,77 @@ class TestStartL3(AltitudeCase):
         self.spawned.assert_called_once()
 
 
+class TestChanges(AltitudeCase):
+    """The web shell's change stream: task, decision and hold records written by any process name their project."""
+
+    def setUp(self):
+        super().setUp()
+        self.setenv("ALTITUDE_TIMERS", "0")
+        self.patch(server, "log", new=lambda *a, **k: None)
+        self.patch(server, "CHANGE_SECONDS", new=0.05)
+        server.Handler._seen_clients.clear()
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.httpd.daemon_threads = False  # server_close joins the stream: a closed client must end it
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+
+    def changed(self, before):
+        after = server.change_marks()
+        return sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+
+    def test_task_decision_hold_and_archive_writes_name_their_project(self):
+        other = "other-project"
+        self.register(other)
+        before = server.change_marks()
+        self.assertEqual(self.changed(before), [])
+        slug = T.new(self.project, "Keep pagination", "Fictional request.")["slug"]
+        self.assertEqual(self.changed(before), [self.project])
+        before = server.change_marks()
+        T.block(self.project, slug, "Which page size?", actor="l2", questions={"questions": [{"question": "Which page size?"}]})
+        self.assertEqual(self.changed(before), [self.project])
+        before = server.change_marks()
+        S.write_json(config.project_dir(other) / "hold.json", {"at": S.now(), "reason": "fixture"})
+        self.assertEqual(self.changed(before), [other])
+        before = server.change_marks()
+        T.reject(self.project, slug, "Fixture no longer needed.")
+        self.assertEqual(self.changed(before), [self.project])
+        before = server.change_marks()
+        self.register("third-project")
+        self.assertEqual(self.changed(before), ["", "third-project"])
+
+    def test_stream_reports_changes_after_its_baseline_and_ends_when_the_client_leaves(self):
+        host, port = self.httpd.server_address
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/changes")
+        res = conn.getresponse()
+        self.assertEqual((res.status, res.getheader("Content-Type")), (200, "text/event-stream; charset=utf-8"))
+        self.assertEqual(res.fp.readline(), f"retry: {server.CHANGE_RETRY_MS}\n".encode())
+        self.assertEqual(res.fp.readline(), b"\n")
+        T.new(self.project, "Keep pagination", "Fictional request.")
+        self.assertEqual(res.fp.readline(), b"event: change\n")
+        self.assertEqual(json.loads(res.fp.readline().removeprefix(b"data: ")), {"projects": [self.project]})
+        self.assertEqual(res.fp.readline(), b"\n")
+        self.register("other-project")
+        self.assertEqual(res.fp.readline(), b"event: change\n")
+        self.assertEqual(json.loads(res.fp.readline().removeprefix(b"data: ")), {"projects": ["other-project", self.project]})
+        self.assertEqual(res.fp.readline(), b"\n")
+        conn.close()
+        res.close()
+        self.httpd.shutdown()
+        closing = threading.Thread(target=self.httpd.server_close)  # joins every request thread
+        closing.start()
+        closing.join(3)
+        self.assertFalse(closing.is_alive())
+
+    def test_head_answers_without_streaming(self):
+        host, port = self.httpd.server_address
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request("HEAD", "/api/changes")
+        res = conn.getresponse()
+        self.assertEqual((res.status, res.read()), (200, b""))
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

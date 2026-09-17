@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { z } from "zod";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
@@ -6,8 +7,9 @@ import { useOptimisticMutation } from "./useOptimisticMutation";
  * The one place the UI talks to altd. One fetch wrapper, one zod schema per endpoint
  * (lenient at the edges: unknown keys pass through, optional fields are nullish, enum-like
  * strings stay plain strings so a new server value never breaks the page), one query hook
- * per GET endpoint (20s polling, faster for active conversations), and mutation hooks
- * over useOptimisticMutation for every POST.
+ * per GET endpoint (20s polling, faster for active conversations), one change stream that refreshes
+ * task, decision and project queries as their records move, and mutation hooks over
+ * useOptimisticMutation for every POST.
  *
  * Paths are interpolated raw (no encodeURIComponent): the server matches path parts without
  * percent-decoding, and project/task names are slugs.
@@ -51,9 +53,59 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-// ---- polling ---------------------------------------------------------------------------
+// ---- polling and the change stream -----------------------------------------------------
 
 const pollInterval = () => 20_000;
+const CHANGE_RECONNECT_MS = 5_000;
+
+/**
+ * The app's one subscription to `GET /api/changes`, mounted by the shell. A `change` event names the
+ * projects whose task, decision or hold records moved; their mounted project and task queries refetch
+ * with the overview and monitor. Every open, first or after a dropped connection or daemon activation,
+ * refetches all of them: the server reads its baseline before the stream opens, so nothing changed
+ * between a snapshot and the subscription is lost. The chat conversation keeps its own reads.
+ * EventSource retries network failures itself; a refused stream closes it and this reconnects. A hidden
+ * tab closes its stream, so background tabs hold none of the browser's few connections per host, and
+ * reopens it when shown. Polling stays the floor while the stream is down.
+ */
+export function useChangeStream() {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    let source: EventSource | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const refresh = (projects?: string[]) => {
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["monitor"] });
+      for (const kind of ["project", "task"]) {
+        for (const project of projects ?? [undefined]) {
+          void queryClient.invalidateQueries({ queryKey: project === undefined ? [kind] : [kind, project] });
+        }
+      }
+    };
+    const disconnect = () => {
+      clearTimeout(retry);
+      source?.close();
+      source = undefined;
+    };
+    const connect = () => {
+      disconnect();
+      const stream = new EventSource("/api/changes");
+      stream.onopen = () => refresh();
+      stream.addEventListener("change", (event) => refresh((JSON.parse(event.data) as { projects: string[] }).projects));
+      stream.onerror = () => {
+        if (stream.readyState === EventSource.CLOSED) retry = setTimeout(connect, CHANGE_RECONNECT_MS);
+      };
+      source = stream;
+    };
+    const visibility = () => (document.hidden ? disconnect() : connect());
+    if (!document.hidden) connect();
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      disconnect();
+    };
+  }, [queryClient]);
+}
 
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
@@ -564,7 +616,7 @@ export function useTask(project: string, slug: string) {
   return useQuery({
     queryKey: ["task", project, slug],
     queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
-    refetchInterval: (query) => query.state.data?.state === "running" || ["stopping", "stop_unconfirmed", "resuming"].includes(query.state.data?.steering?.state ?? "") || query.state.data?.question?.status === "open" || query.state.data?.question_group?.questions.some((q) => q.status === "open") ? 2_000 : pollInterval(),
+    refetchInterval: (query) => query.state.data?.state === "running" || ["stopping", "stop_unconfirmed", "resuming"].includes(query.state.data?.steering?.state ?? "") ? 2_000 : pollInterval(),
     enabled: Boolean(project && slug),
   });
 }
@@ -695,15 +747,8 @@ export interface TaskActionInput {
 }
 
 export function useTaskAction(project: string) {
-  const queryClient = useQueryClient();
   return useOptimisticMutation<TaskActionInput, unknown, ProjectView>({
-    // Every action moves a task's state, which the rail's badges and dots read from ["overview"];
-    // invalidate it too or they sit stale for a full 20s poll.
-    mutationFn: async (input) => {
-      const out = await post("/api/task/action", input);
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
-      return out;
-    },
+    mutationFn: (input) => post("/api/task/action", input),
     queryKey: ["project", project],
     update: () => undefined,
     failureMessage: "Task action failed.",

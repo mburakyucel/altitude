@@ -956,6 +956,9 @@ retain phone/desktop state verification and accessible review evidence.
 | Composer voice | `POST /api/transcribe` | none; audio is deleted after transcription |
 | Monitor | `GET /api/monitor` | none |
 
+The shell's one `GET /api/changes` stream refetches the mounted overview, monitor, project and task reads
+when records change and on every (re)connect; polling continues underneath.
+
 ### 5.2 Backend changes the design requires
 
 Each is small, named here so the slices can lease it, and each is a decision-mandated change under

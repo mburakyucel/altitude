@@ -285,7 +285,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
         );
         void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
-        void queryClient.invalidateQueries({ queryKey: ["overview"] });
         if (images && submission.current?.request_id === images.request_id) submission.current = null;
         if (mounted.current) setPending((current) => current === preview ? null : current);
       } catch (error) {
@@ -419,7 +418,6 @@ function useTaskActions(project: string, slug: string) {
       setReason("");
       void queryClient.invalidateQueries({ queryKey: ["task", project, slug] });
       void queryClient.invalidateQueries({ queryKey: ["project", project] });
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
     },
   });
   const open = useCallback(

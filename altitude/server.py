@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import re
+import select
 import socket
 import socketserver
 import ssl
@@ -1446,6 +1447,41 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
 
+    def _changes(self) -> None:
+        """The web shell's change stream: a `change` event names the projects whose records moved.
+
+        The baseline is read before the response opens, so a client that refreshes once its stream
+        opens cannot miss a change made between that refresh and the subscription."""
+        marks = change_marks()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        self.wfile.write(f"retry: {CHANGE_RETRY_MS}\n\n".encode())
+        self.wfile.flush()
+        quiet = 0.0
+        while True:
+            # The wait doubles as disconnect detection: a closed tab reads as end of stream.
+            if select.select([self.connection], [], [], CHANGE_SECONDS)[0] and not self.connection.recv(1):
+                return
+            current = change_marks()
+            changed = sorted(name for name in marks.keys() | current.keys() if marks.get(name) != current.get(name))
+            if "" in changed:  # a registry edit (engine pin, WIP cap) can change any project's view
+                changed = sorted(current)
+            marks, quiet = current, quiet + CHANGE_SECONDS
+            if changed:
+                projects = json.dumps({"projects": [name for name in changed if name]})
+                self.wfile.write(f"event: change\ndata: {projects}\n\n".encode())
+            elif quiet >= CHANGE_KEEPALIVE_SECONDS:
+                self.wfile.write(b": keepalive\n\n")
+            else:
+                continue
+            self.wfile.flush()
+            quiet = 0.0
+
     def do_GET(self) -> None:
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
@@ -1483,6 +1519,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._images(parts, q)
             if api == "overview":
                 return self._json(overview())
+            if api == "changes":
+                return self._changes()
             if api == "setup" and len(parts) == 3:
                 try:
                     return self._json(project_setup.observe(parts[2]))
@@ -1866,6 +1904,32 @@ def _request_restart_unit() -> dict:
         raise RuntimeError(f"systemd-run refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
     log(f"guarded activation requested → unit {unit}; follow it with: journalctl --user -u {unit}")
     return {"ok": True, "unit": unit}
+
+
+CHANGE_SECONDS = 1.0
+CHANGE_KEEPALIVE_SECONDS = 15.0
+CHANGE_RETRY_MS = 3000
+
+
+def change_marks() -> dict[str, tuple]:
+    """What `/api/changes` compares each second: identity, size and modification time of the registry ("") and,
+    per registered project, its hold, project log, archive folder and every open task's status (which
+    holds its questions) and event log. Writers are the daemon and `alt` processes alike, so the files
+    are the signal."""
+    def mark(path: Path):
+        try:
+            st = path.stat()
+        except OSError:  # absent, or archived between listing and reading
+            return None
+        return st.st_ino, st.st_mtime_ns, st.st_size  # atomic replacement always changes the inode
+
+    marks: dict[str, tuple] = {"": (mark(config.PROJECTS_FILE),)}
+    for project in config.load_projects():
+        d = config.project_dir(project)
+        rows = [mark(d / "hold.json"), mark(d / "events.log"), mark(S.archive_dir(project))]
+        rows += [(td.name, mark(td / "status.json"), mark(td / "events.log")) for td in sorted(S.tasks_dir(project).glob("*"))]
+        marks[project] = tuple(rows)
+    return marks
 
 
 def overview() -> dict:

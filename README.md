@@ -401,6 +401,9 @@ Recovery never resends automatically or infers delivery from matching text. If t
 save a recovery copy, the message remains in the composer and is not submitted. Ordinary unsent
 project text stays client-side until reload; unsent image selection is released on leaving. If a later recovery update fails, the latest text stays
 available across in-app navigation and the composer asks you to keep the tab open until it can save.
+Needs you, the rail and the Work panel refresh within about a second of a task or decision change,
+including while a reply streams, through the shell's one change stream; after a lost connection or
+a restart the page reconnects and rereads current records.
 Conversation polling continues while replies stream,
 and a queued message moves into history as part of the server's guarded turn admission.
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useMatch, useParams } from "react-router";
 import { ToastViewport } from "../data/Toast";
-import { useOverview } from "../data/api";
+import { useChangeStream, useOverview } from "../data/api";
 import FirstRun from "../routes/FirstRun";
 import { LAYOUT_SIZES, useViewport } from "./breakpoints";
 import { Overlay } from "./Overlay";
@@ -16,6 +16,7 @@ import { TabBar } from "./TabBar";
 export default function AppShell() {
   // Shared with every page through the ["overview"] query cache: one read, one poll.
   const overview = useOverview();
+  useChangeStream();
   const { phone } = useViewport();
   const params = useParams();
   const [addingFolder, setAddingFolder] = useState(false);
