@@ -11,6 +11,7 @@ import { questionPath } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
+import { Stamp } from "../components/Stamp";
 import { SteeringControls, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
 import type { ImageSubmission } from "../components/ImageDraft";
@@ -376,7 +377,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           {(task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
-            {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
+            {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
           </details> : null}
         </div>
       </div>

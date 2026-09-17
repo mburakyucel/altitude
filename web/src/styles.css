@@ -1783,7 +1783,6 @@
 }
 .sys-line[data-progress] .sys-dot {
   background: var(--accent);
-  animation: voice-pulse 1.6s ease-in-out infinite;
 }
 .sys-text {
   min-width: 0;
@@ -2321,4 +2320,29 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Activity cues and record times (SPEC.md §3.4, §3.10): the dot pulses only while output is recent. */
+.dot[data-pulse],
+.sys-line[data-progress] .sys-dot {
+  animation: voice-pulse 1.6s ease-in-out infinite;
+}
+.sys-time,
+.event-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.live-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot[data-pulse],
+  .sys-line[data-progress] .sys-dot,
+  .live-pulse[data-tone="live"] {
+    animation: none;
+  }
 }

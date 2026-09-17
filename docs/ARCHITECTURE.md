@@ -1503,7 +1503,7 @@ session panel is closed when entering a question. When opened, it is 480px inlin
 wider and an overlay from the header's panel button below that; it reads the worker's native session
 and task-owned turn records together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
-as thin separators with subtle timestamps, hidden reasoning never shown, and Raw events behind a
+as thin separators, each row with its recorded time or "time unavailable", hidden reasoning never shown, and Raw events behind a
 toggle for the complete redacted records, the task's other operational events among them. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
 missing session file says so. On a phone one header carries Back, title, L2 state and independent
@@ -1518,7 +1518,9 @@ details never resolves a question or releases a merge hold. A done or rejected t
 read-only with the composer and activity preview gone. View switches preserve draft text and selection.
 The read-only activity projection uses only the selected worker generation, existing redaction and
 public output. Provider parsing stays in the engine seam; no summarizer, extra model instructions,
-new archive or copied conversation replies supply the preview.
+new archive or copied conversation replies supply the preview. Conversation and Live session derive one
+activity cue from its recorded output time: a pulsing dot within 60 seconds of output, a still dot and
+"No new activity for …" after that, and no pulse when activity is unavailable or the task is not running.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks

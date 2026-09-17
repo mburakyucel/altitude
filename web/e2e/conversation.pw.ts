@@ -146,7 +146,7 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
   });
   await expect(groups).toHaveCount(groupCount - 1);
   expect(await list.locator(".sys-line[data-turn]").count()).toBeGreaterThanOrEqual(2);
-  await expect(list.locator(".sys-line[data-turn] .sys-text").first()).toContainText(/^\d{1,2}:\d\d( [AP]M)? · /);
+  await expect(list.locator(".sys-line[data-turn] .sys-time").first()).toHaveText(/(^|, )\d{1,2}:\d\d( [AP]M)?$/);
 
   const article = v.convo.getByRole("article");
   await walk.state("04-card-expanded", {
@@ -251,7 +251,7 @@ test("a turn in progress, a failed turn, an FYI, and an empty conversation (over
     queued: [],
   }));
   await walk.open(project.path);
-  const failed = v.lines.filter({ hasText: /^L3 could not handle a recovery/ });
+  const failed = v.lines.filter({ has: page.locator(".sys-text", { hasText: /^L3 could not handle a recovery/ }) });
   const fyi = v.lines.filter({ hasText: "The nightly build is green again." });
   await walk.state("02-failed-turn-and-fyi-overlay", {
     visible: [failed, fyi, fyi.getByRole("button", { name: "Show", exact: true })],

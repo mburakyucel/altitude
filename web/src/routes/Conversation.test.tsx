@@ -417,6 +417,7 @@ describe("Conversation", () => {
     expect(within(region).getByText("Created one task for it.")).toBeVisible();
     expect(within(region).getByRole("link", { name: /Fix the timer/ })).toBeVisible();
     const active = within(region).getByText("L3 is handling the restart").parentElement!;
+    expect(active.closest(".sys-line")?.querySelector(".sys-time")).toHaveTextContent("time unavailable");
     expect(within(active).queryByRole("button", { name: "Show" })).toBeNull();
     for (const row of quiet) expect(within(region).queryByText(row.text)).toBeNull();
     const before = within(region).getByText("L3 handled 2 system events between your messages");
@@ -474,6 +475,13 @@ describe("Conversation", () => {
     expect(within(list).getByText(/Closed Persist paths as done\.$/)).toBeInTheDocument();
     expect(within(list).getByText(/Resumed nothing; the running task continues\.$/)).toBeInTheDocument();
     expect(within(list).getAllByRole("button", { name: "Show" })).toHaveLength(2);
+    // Each system event carries its recorded time, readable in the line and exact on hover.
+    const times = [...list.querySelectorAll(".sys-line[data-turn] .sys-time")];
+    expect(times).toHaveLength(2);
+    for (const time of times) {
+      expect(time.tagName).toBe("TIME");
+      expect(time.getAttribute("title")).not.toBe("");
+    }
   });
 
   it("expands one turn to the card: label/value rows, the reply, and the links", async () => {

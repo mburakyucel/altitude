@@ -2,13 +2,13 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { useTask } from "../data/api";
 import type { ChatMessage } from "../data/api";
-import { when } from "../data/observed";
-import { clock } from "./Bubbles";
+import { stampText } from "../data/observed";
 import { InlineProse, Prose, lastParagraph } from "./Prose";
+import { Stamp } from "./Stamp";
 
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
- * folded to one centred line with a dot, the reply's last paragraph, and Show. A run of them folds to
+ * folded to one centred line with a dot, its recorded time, the reply's last paragraph, and Show. A run of them folds to
  * one line naming the count; selected heads-ups stay separate. Expanded cards keep full text and links.
  */
 
@@ -148,7 +148,7 @@ function SystemCard({
   // The task's record names it and says whether a digest exists; read only while the card is open.
   const task = useTask(project, turn.slug ?? "");
   const name = task.data?.title || title || turn.slug;
-  const at = when(turn.at);
+  const at = stampText(turn.at) || "time unavailable";
   const fields = turn.fyi ? null : fieldsOf(turn.prompt);
   const digest = Boolean(task.data?.files?.digest);
   const label = kindLabel(turn.trigger);
@@ -159,7 +159,7 @@ function SystemCard({
           <Dot trigger={turn.trigger} />
           {label}
           {name ? ` · ${name}` : ""}
-          {at != null ? ` · ${clock(at)}` : ""}
+          {` · ${at}`}
         </span>
         <button type="button" className="link" onClick={onHide}>
           Hide
@@ -212,31 +212,25 @@ function SystemCard({
   );
 }
 
-/**
- * One system turn: the folded line, or the card. `withTime` prefixes the time, as a line inside an
- * expanded group does. An in-progress turn has no Show yet.
- */
+/** One system turn: the folded line, or the card. An in-progress turn has no Show yet. */
 export function SystemLine({
   turn,
   project,
   titles,
-  withTime = false,
 }: {
   turn: SystemTurn;
   project: string;
   titles: Map<string, string>;
-  withTime?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const title = turn.slug ? (titles.get(turn.slug) ?? null) : null;
-  const at = when(turn.at);
   if (open) return <SystemCard turn={turn} project={project} title={title} onHide={() => setOpen(false)} />;
   const text = lineText(turn, title ?? turn.slug);
   return (
     <div className="sys-line" data-turn={turn.id} data-progress={turn.inProgress || undefined}>
       <Dot trigger={turn.trigger} />
+      <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
-        {withTime && at != null ? `${clock(at)} · ` : ""}
         <InlineProse text={text} />
       </span>
       {turn.inProgress ? null : (
@@ -264,6 +258,7 @@ export function SystemGroup({
     return (
       <div className="sys-line" data-group={turns.length}>
         <span className="sys-dot" data-tone={danger ? "danger" : undefined} aria-hidden />
+        <Stamp at={turns.at(-1)?.at} className="sys-time" />
         <span className="sys-text">L3 handled {turns.length} system events between your messages</span>
         <button type="button" className="link" onClick={() => setOpen(true)}>
           Show
@@ -274,7 +269,7 @@ export function SystemGroup({
   return (
     <div className="sys-group" role="group" aria-label={`${turns.length} system events`}>
       {turns.map((turn) => (
-        <SystemLine key={turn.id} turn={turn} project={project} titles={titles} withTime />
+        <SystemLine key={turn.id} turn={turn} project={project} titles={titles} />
       ))}
       <div className="sys-line">
         <span className="sys-text" />

@@ -281,7 +281,9 @@ file-backed service; delayed refusals and microphone results are controlled brow
 
 ### 3.4 System line
 
-One line, centred, 13px `--text-muted`: a dot, the text, and **Show**. It stands for one system turn
+One line, centred, 13px `--text-muted`: a dot, the turn's recorded time, the text, and **Show**. The
+time reads "14:05", dated ("Sep 16, 14:05") when not today, exact on hover; a turn without one reads
+**time unavailable**. A group line shows its latest turn's time. It stands for one system turn
 or a run of them (§4.1). The dot is `--text-muted` for reports, restarts, and FYIs and `--danger`
 for `incident`, `system-recovery`, and fault triggers. A failed turn of another trigger keeps the
 muted dot; its line carries the failure.
@@ -663,7 +665,8 @@ One compact **Latest from L2** area above the composer shows the current worker'
 after redaction, clamped to two lines. **Expand** reveals it; **Collapse** folds it. Each newer update
 replaces the preview without moving or duplicating Conversation. Prose has its source age or **Time
 unavailable**; a separate row shows recorded output and its age. After 60 seconds without output it
-reads **Last update** and **No new activity for …**, with a neutral dot. Activity never proves useful
+reads **Last update** and **No new activity for …**, with a still neutral dot; within 60 seconds of
+output the accent dot pulses softly. Reduced motion keeps it steady. Activity never proves useful
 progress. **No public update yet.** covers empty commentary; **Activity unavailable** labels a retained
 last known update and offers **Retry activity**. Generation changes clear previous words. Short
 viewports fold the words and age until expanded, keeping activity and controls reachable. **View live
@@ -727,13 +730,18 @@ Delivery does not claim understanding or action. Finished conversations remain
 readable with the activity area, composer and Stop gone.
 
 The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded
-output, subtle timestamps, and the lifecycle boundaries the record supplies (state transitions,
-stops, holds). A shell command's tool label is "$"; other rows use the recorded tool name, including
-Edit for a file change. The hint reads "N lines", "running…", "error", or "no output"; write rows
+output, and the lifecycle boundaries the record supplies (state transitions, stops, holds). Every
+row shows its recorded time in the §3.4 format, or **time unavailable**. The **Activity & evidence**
+list prefixes each task event with its time the same way. A shell command's tool label is "$"; other rows use the recorded tool name, including
+Edit for a file change. The hint reads "N lines", "running · 4 min" (time since the call while the
+worker runs; "running…" when the call is untimed), "error", or "no output"; write rows
 carry no diff counts. **Raw events** toggles the transcript to the raw list; its hover title states
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
-resumes", or "Session ended"; Pause and Follow control following while the worker runs.
+resumes", or "Session ended"; Pause and Follow control following while the worker runs. While
+running, a line under the footer repeats the Conversation activity cue (dot and text), and the header
+dot pulses only while that cue shows recent output; quiet, unavailable, waiting and ended sessions
+keep it still.
 
 Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 `GET /api/overview` (engine labels, decision card and queue), `GET /api/project/<project>`
@@ -752,7 +760,8 @@ recorded lifecycle boundaries stay visible), streaming, paused, ended, or unavai
 file for this attempt").
 
 `web/e2e/l2-progress.pw.ts` walks phone and desktop with deterministic fixtures for both engines:
-loading; replacing/expanded/quiet/untimed/unavailable activity; queued/unconfirmed/delivered steering;
+loading; replacing/expanded/quiet/untimed/unavailable activity; the shared cue and record times in both
+views, a long call without output, reduced motion, an untimed row, unavailable activity and an ended session; queued/unconfirmed/delivered steering;
 direct Live session Stop; stopping with editable draft and racing messages held; stopped; correction
 and capacity wait; continued session with preserved work; blocked question; finished; denied Stop;
 short viewport; voice listening/cancel/dictation/denial/unavailable; input and overlay Escape ownership.
