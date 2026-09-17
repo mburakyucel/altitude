@@ -121,6 +121,8 @@ poll returns ordinary 404, a subsequent archived read succeeds, and corrupt stat
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 Question-response and failed-setup checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
+The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot
+erase them from the count before the response reaches the browser assertion.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
