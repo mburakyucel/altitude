@@ -23,10 +23,12 @@ class TestCIRecheckDelivery(AltitudeCase):
                     l2_engine=config.ENGINES[0], hold_merge="operator review",
                     questions=[{"id": "decision", "status": "open", "question": "Keep the hold?",
                                 "revision": 1, "audience": "operator"}])
+        observation = {"conclusion": "failure", "artifact_upload": "unverified"}
         task["ci_recheck"] = {"id": "recheck-" + task["slug"], "status": "notifying", "reason": "Verify recovery.",
+                              "baseline": observation, "observation": observation, "due_at": None,
                               "identity": T.ci_recheck_identity(task), "evidence": {
                                   "run": "https://github.com/example/product/actions/runs/42",
-                                  "attempt": 2, "artifact_upload": "available", "artifact_ids": [73]}}
+                                  "attempt": 2, **observation, "artifact_ids": []}}
         S.save_task(self.project, task)
         self.slug = task["slug"]
         self.original = deepcopy(task)

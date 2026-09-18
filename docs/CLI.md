@@ -175,8 +175,8 @@ three failures, twenty-four rounds or two hours after the scheduled time. Missin
 unverified, including on a green run with a tolerated upload error. Fresh nonexpired, nonempty
 artifacts from the observed execution establish successful upload, not another owner's candidate readiness.
 
-Unchanged results finish silently with evidence in status. Changed results or exhausted probes reach
-the originating L3 through a retained queue row, with at most two handling attempts and a one-hour
+Every terminal result, including unchanged evidence or an exhausted probe, reaches the originating
+L3 through one retained queue row, with at most two handling attempts and a one-hour
 delivery deadline; queue/history IO also has two attempts. Terminal chat evidence repairs a
 crash after handling. If provider execution began but no terminal evidence survives, delivery ends
 uncertain without replay. Its execution timeout survives daemon exit and stops the process tree
@@ -185,6 +185,8 @@ Ordinary task controls remain available and invalidate stale probe actions. Ques
 merge holds retain their meaning. L3 verifies actual repair before separately resuming affected owners.
 Promise follow-through only after status shows a saved next action and time; a terminal record with
 no next action is not scheduled monitoring.
+L3 reconciles a concrete next step and gives a concise evidenced heads-up when significant work
+remains blocked. Repeated observations of the same completed probe stay quiet.
 
 ### Historical evidence search
 

@@ -158,9 +158,7 @@ def _ci_run(project: str, repository: str, run_id: int) -> dict:
 
 
 def _ci_finish(project: str, task: dict, record: dict, evidence: dict, *, observation: dict | None = None) -> None:
-    record.update(evidence=evidence, observation=observation, due_at=None, finished_at=S.now())
-    baseline = record.get("previous_observation") or record.get("baseline")
-    record["status"] = "unchanged" if observation and observation == baseline else "notifying"
+    record.update(status="notifying", evidence=evidence, observation=observation, due_at=None, finished_at=S.now())
     S.save_task(project, task)
     S.append_event(project, task["slug"], "ci-recheck-result", request_id=record["id"],
                    status=record["status"], evidence=evidence)

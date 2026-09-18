@@ -111,7 +111,7 @@ class TestCIRecheck(AltitudeCase):
             {"id": 3, "created_at": "2026-09-09T10:03:00Z", "size_in_bytes": 0, "expired": False}]
         self.tick(5)
         self.assertEqual(self.record()["evidence"]["artifact_upload"], "unverified")
-        self.assertEqual(self.record()["status"], "unchanged")
+        self.assertEqual(self.record()["status"], "notifying")
         calls = self.api.call_count
         self.tick(10)
         self.assertEqual(self.api.call_count, calls)
@@ -129,7 +129,7 @@ class TestCIRecheck(AltitudeCase):
         self.tick(5)
         self.assertEqual(self.record()["evidence"]["url"], "https://github.com/team/project/actions/runs/72")
 
-    def test_fresh_completed_gate_change_is_compared_to_original_failure(self):
+    def test_fresh_completed_gate_change_reaches_coordinator(self):
         self.candidates = [{**self.run, "id": 72, "conclusion": "success", "created_at": self.now,
                             "updated_at": self.now, "run_started_at": self.now}]
         self.schedule()
@@ -250,6 +250,46 @@ class TestCIRecheck(AltitudeCase):
             l3.deliver_queued(self.project)
         self.assertEqual(self.record()["status"], "done")
         self.assertEqual(l3.queued(self.project), [])
+        self.assert_owner_preserved()
+
+    def test_unchanged_failure_survives_restart_and_delivers_once_without_owner_resume(self):
+        self.queue.side_effect = self.delivery
+        self.schedule()
+        self.tick()
+        self.complete_rerun(upload=False, conclusion="failure")
+        with mock.patch.object(l3, "_write_queue", side_effect=SystemExit("Before queue write")):
+            with self.assertRaises(SystemExit):
+                self.tick(5)
+        record = self.record()
+        self.assertEqual(record["observation"], record["baseline"])
+        self.assertEqual(record["observation"], {"conclusion": "failure", "artifact_upload": "unverified"})
+        self.assertIsNone(record["due_at"])
+        self.assertEqual(record["status"], "notifying")
+        calls = self.api.call_count
+        # A fresh invocation reconstructs the saved delivery without another CI read or rerun.
+        self.tick()
+        self.tick(5)
+        self.assertEqual([row["id"] for row in l3.queued(self.project)], [self.record()["id"]])
+        self.assertIn("No further CI check is scheduled", l3.queued(self.project)[0]["text"])
+        result = {"text": "Upload remains unverified; reconcile the next step. No check is scheduled.", "session_id": "coordinator",
+                  "reported_session_id": "coordinator", "usage": {}, "context_tokens": 10,
+                  "cost": 0.0, "tools": []}
+        with mock.patch.object(l3, "_select", return_value={"engine": "claude", "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", return_value=result) as provider:
+            l3.deliver_queued(self.project)
+            self.tick(5)
+            self.assertIsNone(l3.deliver_queued(self.project))
+        provider.assert_called_once()
+        self.assertEqual(self.record()["status"], "done")
+        self.assertEqual(self.record()["delivery"]["status"], "delivered")
+        self.assertIsNone(self.record()["delivery"]["next_at"])
+        self.assertIsNone(status.status(self.project, self.slug)["ci_recheck"]["due_at"])
+        self.assertEqual(l3.queued(self.project), [])
+        self.assertEqual(self.schedule(at=record["at"]), self.record())
+        self.assertEqual(self.api.call_count, calls)
+        self.assertEqual(self.posts, ["runs/71/rerun"])
+        terminal = [row for row in l3.chat_history(self.project) if row.get("completed") is True]
+        self.assertEqual(len(terminal), 1)
         self.assert_owner_preserved()
 
     def test_same_project_broker_registers_without_external_io(self):

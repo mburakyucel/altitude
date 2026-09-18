@@ -537,7 +537,9 @@ resubmission. Reads, polling and coordinator handling are finite. The queue row 
 remain durable until successful terminal chat evidence or visible exhausted delivery. Provider
 execution without terminal evidence after a restart ends uncertain without replay;
 the engine's transient execution timeout survives daemon exit and stops its process tree.
-Changed evidence reaches only the originating L3; unchanged observations remain silent. A changed block,
+Every terminal result reaches only the originating L3, including unchanged failures. L3 reconciles
+a concrete next step and gives a concise heads-up for significant stalled work. Repeated observations
+stay quiet; a finished probe schedules no further CI check. A changed block,
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
 stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
 

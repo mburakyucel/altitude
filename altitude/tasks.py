@@ -327,8 +327,6 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
         record = {"id": uuid.uuid4().hex, "actor": actor, "requested_at": S.now(), "identity": identity,
                   "run": int(run), "at": due.isoformat(), "due_at": due.isoformat(), "reason": reason.strip(),
                   "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat()}
-        if ci_recheck_current(task, previous) and previous.get("observation"):
-            record["previous_observation"] = previous["observation"]
         task["ci_recheck"] = record
         S.save_task(project, task)
         S.append_event(project, slug, "ci-recheck", request_id=record["id"], by=actor,
