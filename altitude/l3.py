@@ -646,7 +646,9 @@ def queue_ci_recheck(project: str, slug: str) -> dict | None:
                 row = {"id": record["id"], "at": now, "trigger": "ci-recheck", "role": "server", "slug": slug,
                        "text": f"CI recheck evidence for {slug}:\n{json.dumps(record.get('evidence'), sort_keys=True)}\n\n"
                        f"Reason: {record.get('reason', '')}\n"
-                       "Inspect the task status and this fresh evidence. Reconcile affected work under its recorded authority; "
+                       "This finite recovery probe has ended. No further CI check is scheduled. "
+                       "Inspect task status and reconcile a concrete next step even if the evidence is unchanged, "
+                       "under the task's recorded authority; "
                        "this probe did not resume its owner or release any question or merge hold. "
                        "A passing run with tolerated upload failure does not establish artifact capacity recovery."}
                 remaining.append(row)

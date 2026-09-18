@@ -505,8 +505,10 @@ under its own authority, on any installation. See [incident follow-through](docs
 
 For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
 existing fault-blocked task. Status names its next action and time. The daemon follows relevant fresh
-CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers changed
-results durably to that project's L3. Artifact capacity needs fresh uploaded artifacts; a passing run
+CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers terminal
+results durably to that project's L3, including unchanged failures. L3 reconciles the next step and
+gives a concise heads-up when significant work remains blocked; repeated observations stay quiet.
+Artifact capacity needs fresh uploaded artifacts; a passing run
 with a tolerated upload error does not prove recovery. The probe leaves owner resumption to L3.
 
 A project's L3 reports an upstream Altitude defect with

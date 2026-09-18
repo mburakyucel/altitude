@@ -798,8 +798,8 @@ persisting its baseline attempt and submission intent. Restart and uncertain sub
 attempt metadata without repeating the write. Reads stop after three failures, twenty-four rounds
 or two hours after the due time. Fresh nonexpired, nonempty artifacts created during the observed
 execution and at or after the scheduled check time establish an upload; step conclusions alone do not. Old-run reruns
-retain their original workflow. Unchanged conclusions without upload evidence finish silently.
-Changed evidence uses one `ci-recheck` row in the existing L3 queue, retained through handling.
+retain their original workflow. Every terminal probe result, including unchanged conclusions without
+upload evidence, uses one `ci-recheck` row in the existing L3 queue, retained through handling.
 Its task receipt stores the turn identity before execution; explicit successful terminal chat
 evidence repairs an interrupted receipt after restart. Delivery has two attempts and a one-hour
 deadline, including unavailable engines, with a visible terminal failure on exhaustion. Retry waits
@@ -808,6 +808,8 @@ storage budget. Each engine's existing transient execution boundary enforces the
 independently of altd, with five seconds to stop its process tree. A restart after provider execution
 begins without terminal evidence ends visibly uncertain instead of launching overlapping handling.
 No probe resumes a worker, resolves a question, or releases a merge hold.
+L3 reconciles the next step when a finite probe ends and gives an evidenced heads-up for significant
+stalled work. Repeated observations stay quiet; terminal evidence promises no further scheduled check.
 Project-local repairs remain owned by the affected project. Its L3 reports Altitude implementation
 defects with [`alt issue upstream`](CLI.md#upstream-altitude-defects), a create-only exception to the
 project-local issue verbs. The daemon owns the product target seam: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`
