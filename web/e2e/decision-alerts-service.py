@@ -1,11 +1,16 @@
 """Real storage and change stream with a fixture escalation the walkthrough can publish on demand."""
+import tempfile
+from pathlib import Path
+
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
-from altitude import config, server, tasks as T
+from altitude import config, push, server, tasks as T
 
 
 def main():
     configure()
+    private = Path(tempfile.mkdtemp(prefix="push-"))  # this walkthrough's own device record
+    push.KEY_DIR, push.RECORD = private, private / "push.json"
     repos = {}
     for project, folder in (("atlas", "atlas"), ("beacon", "second-project/beacon")):  # one origin.git per parent
         repos[project] = make_repo(config.PROJECT_ROOTS[0] / folder)
@@ -25,6 +30,11 @@ def main():
     asking("atlas", "Choose backup retention", "How long should backups stay?")
 
     class Handler(server.Handler):
+        def do_GET(self):
+            if self.path == "/fixture/push":  # what altd would wake for a decision
+                return self._json({"subscriptions": push._record()["subscriptions"]})
+            return super().do_GET()
+
         def do_POST(self):
             if self.path == "/fixture/decision":
                 body = self._body()
@@ -33,8 +43,9 @@ def main():
             if self.path == "/fixture/escalate":
                 body = self._body()
                 [row] = [d for d in T.decisions(body["project"]) if d["slug"] == body["slug"]]
-                T.escalate(body["project"], body["slug"], row["question"],
-                           questions={"questions": [{"question": row["question"]}]})
+                question = row["question"]
+                T.escalate(body["project"], body["slug"], question,
+                           questions={"questions": [{"question": question}]})
                 return self._json({"ok": True})
             return super().do_POST()
 

@@ -93,9 +93,14 @@ Needs you offers an alert for each new decision. Turn it on once per device and 
 notification permission there; trusted HTTPS is a prerequisite, so finish the step above first. An
 iPhone shows the switch only for Altitude added to the Home Screen and opened from there.
 
-Alerts reach a page that is open: a desktop tab alerts in the background, and a phone alerts while
-Altitude is on screen. A closed tab, and a phone that has put the page to sleep, receive nothing.
-Each alert names the project and the task and opens that decision; it carries no conversation text.
+Turning the switch on also subscribes that device to its browser's push service, so a decision
+reaches a closed phone. Altitude signs each push with a key it generates in `~/.altitude/push/` and
+sends no payload, so the push service learns only that this device should wake; the device then asks
+Altitude what is waiting. On your own network the alert names the project and task, and away from it
+the alert says a decision is waiting and nothing more. It needs outbound internet from altd; where a
+push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
+phone means while it is on screen. Each alert opens that decision and carries no conversation text.
+A push service that refuses Altitude's default sender address takes one from `ALTITUDE_PUSH_CONTACT`.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
 ## Register a project and start a conversation
@@ -212,6 +217,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
+| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming

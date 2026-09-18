@@ -6,7 +6,8 @@ import { walkthrough } from "./walkthrough";
  * Decision alerts (issue #221) at both widths: the switch's states, one alert for a new decision,
  * none for a decision already on screen, and none repeated after a refresh. A headless browser has
  * no notification platform, so the walkthrough records the page's own calls into the service
- * worker's registration — the last step before the operating system shows the alert.
+ * worker's registration — the last step before the operating system shows the alert. It has no push
+ * service either, so the subscription the page hands altd is a fixture one; altd stores the real record.
  */
 test.use({ serviceScript: "decision-alerts-service.py" });
 
@@ -25,6 +26,14 @@ const recordAlerts = (page: Page) =>
 
 const alerts = (page: Page) => page.evaluate(() => (window as unknown as { __alerts: Alert[] }).__alerts);
 
+/** A push service this browser can subscribe to; without one no device could be woken here. */
+const fakePushService = (page: Page) =>
+  page.addInitScript(() => {
+    const subscription = { endpoint: "https://push.example/wake/walkthrough", unsubscribe: () => Promise.resolve(true) };
+    PushManager.prototype.subscribe = () => Promise.resolve(subscription as unknown as PushSubscription);
+    PushManager.prototype.getSubscription = () => Promise.resolve(subscription as unknown as PushSubscription);
+  });
+
 test("the switch walks its states and alerts once for each new decision", async ({ page, context, request }, info) => {
   test.setTimeout(90_000);
   const walk = walkthrough(page, info);
@@ -38,12 +47,19 @@ test("the switch walks its states and alerts once for each new decision", async 
   const on = page.getByRole("button", { name: "Alerts on" });
 
   await recordAlerts(page);
+  await fakePushService(page);
   await context.grantPermissions(["notifications"]);
   await walk.open("/");
   await walk.state("01-alerts-off", { visible: [offer, card("Choose backup retention")], hidden: [on] });
 
-  await walk.state("02-alerts-on", { action: () => offer.click(), visible: [on], hidden: [offer] });
+  await walk.state("02-alerts-on", {
+    action: () => offer.click(),
+    visible: [on, page.getByText(/even when Altitude is closed/)], hidden: [offer],
+  });
   expect(await alerts(page)).toEqual([]); // the waiting decision is not announced as news
+  // altd holds what waking this device takes, and nothing else about it.
+  expect(await (await request.get("/fixture/push")).json())
+    .toEqual({ subscriptions: ["https://push.example/wake/walkthrough"] });
 
   // On screen in Needs you: the new card appears, and nothing pops up over it.
   await decision("beacon", "Run a restore drill", "Which drill first?");
@@ -108,4 +124,18 @@ test("a browser without notifications keeps every decision usable", async ({ pag
     hidden: [page.getByRole("button", { name: "Alerts on" })],
   });
   await expect(offer).toBeDisabled();
+});
+
+test("a device that cannot be woken keeps alerting while Altitude is open, and says so", async ({ page, context }, info) => {
+  const walk = walkthrough(page, info);
+  await recordAlerts(page);
+  await context.grantPermissions(["notifications"]);
+  // No key on the machine: nothing can wake this device, and the switch says what alerts it does give.
+  await page.route("**/api/alerts", (route) => route.fulfill({ json: { key: null } }));
+  await walk.open("/");
+  await page.getByRole("button", { name: "Alert me about new decisions" }).click();
+  await walk.state("08-alerts-on-without-push", {
+    visible: [page.getByRole("button", { name: "Alerts on" }), page.getByText(/only while Altitude is open/)],
+    hidden: [page.getByRole("button", { name: "Alert me about new decisions" })],
+  });
 });

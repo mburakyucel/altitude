@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, quota_codex, route, state as S, tasks as T, tls, transcript, verify
+from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, quota_codex, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1080,6 +1080,8 @@ def tick() -> None:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
+    # Off the timer thread: five unreachable devices must not delay dispatch, resumes or the digest.
+    spawn("push", push.notify, log)
     morning_digest()
 
 
@@ -1521,6 +1523,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(overview())
             if api == "changes":
                 return self._changes()
+            if api == "alerts":
+                try:  # without a key the page keeps alerting while it is open, and says so
+                    return self._json({"key": push.public_key()})
+                except push.PushFailure as exc:
+                    return self._json({"key": None, "why": str(exc)})
             if api == "setup" and len(parts) == 3:
                 try:
                     return self._json(project_setup.observe(parts[2]))
@@ -1701,6 +1708,12 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"[{project}/{slug}] message wake deferred: {exc}")
                 message["delivery"] = {"state": "queued", "at": None, "removable": False}
                 return self._json({"ok": True, "message": message})
+            if parts == ["api", "alerts", "subscription"]:
+                try:
+                    endpoint = str(o.get("endpoint") or "")
+                    return self._json(push.forget(endpoint) if o.get("remove") else push.subscribe(endpoint))
+                except push.PushFailure as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
             if api == "l3" and len(parts) > 2 and parts[2] == "start":
