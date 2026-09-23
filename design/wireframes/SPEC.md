@@ -146,6 +146,7 @@ hard-codes one, and one configured engine means one row.
 
 Desktop anatomy: project name (18px, 600); status line; actions: work-panel toggle (tinted when the panel is
 open, hidden at ≥ 1280 where the panel is inline), permanent **Setup** status (§3.12), overflow menu.
+Vertical padding is 6px; text and control sizes retain their normal dimensions.
 
 Status line, composed left to right and separated by "·": "L3 answered N min ago on <engine>"
 (from the last assistant chat row's `at` and `engine`); "N tasks in flight" (running + queued);
@@ -620,7 +621,7 @@ The [L2 activity and steering agreement](l2-progress/PROPOSAL.md), with its
 [maintained task states](TaskStates.html), is approved for #302 on 2026-09-09.
 Its directly accessible Stop supersedes hiding Stop in the mobile header disclosure.
 
-The task header includes **Observed tokens** in phone task details and directly on desktop,
+Task details includes **Observed tokens** on phone and desktop,
 also present in the report view. The folded token row shows the cumulative observed total (unknown when
 unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
 session rows, or say **Provider total · helpers unsplit**, with inclusive input/output and available
@@ -644,17 +645,21 @@ collector errors retain prior numbers with unavailable/partial coverage; finaliz
 counts and its timestamp. Expand reveals rows and limitations; collapse removes them. Task read
 failure keeps the existing error and Retry behavior. The disclosure is read-only, so listening and
 permission prompts do not apply; unreadable local logs use the unavailable state. Expanded details
-scroll within task details on phone. `web/e2e/task-usage.pw.ts` walks these states at both viewports.
+scroll within task details at both viewports. `web/e2e/task-usage.pw.ts` walks these states.
 
-Desktop anatomy: header rows (crumb and actions; title with state dot; a muted line; state chips:
-state, engine and model, PR with checks state, Merge held when applicable); left the operator's conversation with
+Desktop anatomy: one row with crumb, wrapping 18px title/state dot and direct actions, then a
+wrapping chip row (state, engine and model, PR with checks state, Merge held when applicable).
+Header vertical padding is 8px; controls keep their existing sizes. Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
-the header button). The muted line reads "attempt 1 · started 32 min ago · 18% of its context used"
+the header button). Task details contains the muted line "attempt 1 · started 32 min ago · 18% of its context used"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
 and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
+`web/e2e/header-density.pw.ts` measures long-title reading space at 1440×900, 1366×768 and
+1024×768, plus the unchanged 390×844 phone layout. Details, navigation, scrolling and draft
+restoration remain covered alongside the task state and composer walkthroughs.
 
 **Stop** is directly accessible beside the composer and in Live session, on phone and desktop.
 One click requests termination immediately. **Reject** is in phone task details and the desktop header,

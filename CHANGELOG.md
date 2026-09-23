@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Desktop chats use compact headers, with wrapping task titles and directly accessible actions.
+  Task metadata and token usage open in Task details on phone and desktop.
+
 - L3 keeps stalled authorized work actionable with an owned next step, a justified finite observation
   or a concrete decision when missing historical evidence prevents verified recovery (#386).
 

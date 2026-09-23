@@ -232,7 +232,7 @@ describe("Task on desktop", () => {
     expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
-    expect(screen.getByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeInTheDocument();
+    expect(screen.queryByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeNull();
 
     const convo = screen.getByRole("region", { name: "Task conversation" });
     const mine = convo.querySelector("[data-mine]");
@@ -470,18 +470,19 @@ describe("Task on desktop", () => {
   it("reads a done task read-only with its PR in the header", async () => {
     setViewport(1440);
     stub(done);
-    renderApp({ route });
+    const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(screen.getByText("PR #202 merged · main checks passed")).toHaveAttribute("data-tone", "ok");
-    expect(screen.getByText("attempt 1 · done 1 min ago")).toBeInTheDocument();
     expect(screen.queryByLabelText("Message the L2")).toBeNull();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
     expect(screen.getByText("No messages on this task.")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Task details" }));
+    expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("attempt 1 · done 1 min ago")).toBeInTheDocument();
   });
 
   it("reads a rejected task the same way", async () => {

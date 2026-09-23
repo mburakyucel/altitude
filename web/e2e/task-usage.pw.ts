@@ -29,7 +29,7 @@ test("task consumption: unknown, live, expanded, updated, stale, missing source,
   const details = region.locator(".token-details");
 
   await walk.open(path);
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
+  await page.getByRole("button", { name: "Task details", exact: true }).click();
   await walk.state("01-unknown", { visible: [region.getByText("Token usage unknown"), region.getByText("Unknown coverage"), region.getByText("Freshness unknown")], hidden: [details] });
   observation = usage();
   await page.clock.fastForward(20_001);
@@ -73,7 +73,7 @@ test("final consumption remains in task and report with multiple engines and uns
   const region = page.getByRole("region", { name: "Task token usage", exact: true });
   const details = region.locator(".token-details");
   await walk.open(path);
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
+  await page.getByRole("button", { name: "Task details", exact: true }).click();
   await walk.state("01-final-task", { visible: [region.getByText("1,800 observed tokens", { exact: true }), region.getByText(/Finalized/)], hidden: [region.getByText(/Stale/), details] });
   await walk.state("02-final-engine-details", {
     action: () => region.getByRole("button").click(),
@@ -117,7 +117,7 @@ test("task usage waits for loading and recovers with the task read", async ({ pa
   await walk.state("01-loading", { visible: [page.getByRole("main").getByLabel("Loading", { exact: true })], hidden: [region] });
   release();
   await walk.state("02-loaded", {
-    action: async () => { if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click(); },
+    action: () => page.getByRole("button", { name: "Task details", exact: true }).click(),
     visible: [region], hidden: [page.getByRole("main").getByLabel("Loading", { exact: true })],
   });
   fail = true;
@@ -127,6 +127,6 @@ test("task usage waits for loading and recovers with the task read", async ({ pa
   fail = false;
   await walk.state("04-retry-restores-usage", { action: async () => {
     await page.getByRole("button", { name: "Retry", exact: true }).click();
-    if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
+    await page.getByRole("button", { name: "Task details", exact: true }).click();
   }, visible: [region, region.getByText("1,200 observed tokens", { exact: true })], hidden: [error] });
 });

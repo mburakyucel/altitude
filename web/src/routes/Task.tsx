@@ -63,7 +63,7 @@ interface Facts {
   dot: "running" | "waiting" | "danger" | "idle";
   /** Compact state, engine/model and PR with its checks state; full reasons are disclosed. */
   chips: Chip[];
-  /** The muted line under the title: attempt, when it started or finished, context used. */
+  /** Task details: attempt, when it started or finished, context used. */
   sub: string;
   /** What a queued task waits for; shown where the live panel would be. */
   waiting: string | null;
@@ -567,11 +567,9 @@ function TaskPage({
     <div className="task-details">
       <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
       <p className="task-details-title">{title}</p>
-      {phone ? <>
-        {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
-        <Chips chips={facts.chips} />
-        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
-      </> : null}
+      {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
+      <Chips chips={facts.chips} />
+      <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       {decision ? <Link className="btn btn-ghost" to={questionPath(decision)} state={location.state} replace onClick={closeDetails}>View question</Link> : null}
@@ -627,6 +625,10 @@ function TaskPage({
           <button type="button" className="task-crumb" aria-label="Back" onClick={back}>
             ‹ {project}
           </button>
+          <h1 className="task-title">
+            <span className="dot" data-state={facts.dot} aria-hidden />
+            <span>{title}</span>
+          </h1>
           <div className="task-actions">
             <ActionButtons facts={facts} actions={actions} />
             {detailsButton}
@@ -641,13 +643,7 @@ function TaskPage({
             </button>
           </div>
         </div>
-        <h1 className="task-title">
-          <span className="dot" data-state={facts.dot} aria-hidden />
-          <span>{title}</span>
-        </h1>
-        {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
         <Chips chips={facts.chips} />
-        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
         <ConfirmRow actions={actions} />
         {resumeError}
         {faultNotice}
