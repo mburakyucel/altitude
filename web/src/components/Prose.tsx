@@ -201,6 +201,11 @@ export function Prose({ text, document = false }: { text: string; document?: boo
   return <div className="session-prose">{blocks}</div>;
 }
 
+/** A question or review card (SPEC.md §3.8): one line stays a compact paragraph; line breaks bring paragraphs, lists and code blocks. */
+export function QuestionProse({ text, className }: { text: string; className: string }) {
+  return text.includes("\n") ? <div className={className}><Prose text={text} /></div> : <p className={className}><InlineProse text={text} /></p>;
+}
+
 /** The last paragraph of a reply, as one line: what a folded system line shows (SPEC.md §4.1). */
 export function lastParagraph(text: string): string {
   const paragraphs = codeBlocks(text).filter((block) => !block.code).map((block) => block.text).join("\n\n")

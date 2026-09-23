@@ -29,6 +29,15 @@ REVIEW = {
     "options": [{"key": "merge", "label": "Merge rollout", "text": "Merge the reviewed rollout."}],
     "recommended_key": "merge", "why": "The presented rollout has passed its checks and review.",
 }
+INSTALLER = {
+    "question": ("Approve the report root on this host?\n\n"
+                 "Ordinary workers cannot read the private CI home, so completed reports move to a separate root. "
+                 "Run this once as yourself:\n\n"
+                 "```sh\nsudo install -d -o altitude /srv/altitude-reports\nalt ci reports --root /srv/altitude-reports\n```\n\n"
+                 "Afterwards `alt task recheck-ci` reads the copy; nothing else changes."),
+    "options": [{"key": "apply", "label": "Install report root", "text": "Install the separate report root."}],
+    "recommended_key": "apply", "why": "One report copy keeps the CI home private.",
+}
 WITHDRAWAL = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful."
 
 
@@ -190,6 +199,9 @@ def main():
                 T.escalate("atlas", slug, detail, recommendation="Keep the old index for fourteen days.",
                            recommendation_label="Keep 14 days", recommendation_why="Longer instant rollback uses twice the temporary storage.")
                 return self._json({"slug": slug, "detail": detail})
+            if self.path == "/fixture/fenced-question":
+                slug = task("Gate merges on CI", INSTALLER["question"], questions={"questions": [INSTALLER]})
+                return self._json({"slug": slug})
             if self.path == "/fixture/second-project":
                 other_repo = make_repo(config.PROJECT_ROOTS[0] / "second-project" / "beacon")
                 assert git("remote", "get-url", "origin", cwd=other_repo) != git("remote", "get-url", "origin", cwd=repo)

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { InlineProse, Prose, ProseRepository, ProseScope, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseRepository, ProseScope, QuestionProse, lastParagraph } from "./Prose";
 
 const repository = "https://github.com/example/project";
 function prose(text: string, repo: string | null = repository) {
@@ -129,5 +129,22 @@ describe("project-aware GitHub references", () => {
   it("omits code from folded system summaries using the same fence boundaries", () => {
     expect(lastParagraph("Merged PR #250.\n\n````\n```\nissue #247\n````")).toBe("Merged PR #250.");
     expect(lastParagraph("Merged PR #250.\n\n~~~\nissue #247")).toBe("Merged PR #250.");
+  });
+});
+
+describe("question prose", () => {
+  it("keeps a single line as one compact paragraph with inline code and links", () => {
+    const { container } = render(<ProseRepository value={repository}><QuestionProse className="decision-question" text="Merge `main` after PR #9?" /></ProseRepository>);
+    expect(container.innerHTML).toBe(`<p class="decision-question">Merge <code>main</code> after <a class="prose-link" href="${repository}/pull/9" target="_blank" rel="noopener noreferrer">PR #9</a>?</p>`);
+  });
+  it("renders line breaks as paragraphs, lists and code blocks inside the card's element", () => {
+    const text = "Install it?\n\n- keeps `alt` on PATH\n- one copy\n\n```sh\nsudo make install\n```\nSee [docs](https://example.org/install).";
+    const { container } = render(<ProseRepository value={repository}><QuestionProse className="decision-why" text={text} /></ProseRepository>);
+    const root = container.firstElementChild!;
+    expect([root.tagName, root.className]).toEqual(["DIV", "decision-why"]);
+    expect([...root.querySelectorAll(".session-prose > *")].map((node) => node.tagName)).toEqual(["P", "UL", "PRE", "P"]);
+    expect(root.querySelector("ul")?.textContent).toBe("keeps alt on PATHone copy");
+    expect(root.querySelector("pre.session-code")?.textContent).toBe("sudo make install");
+    expect(destinations()).toEqual([["docs", "https://example.org/install"]]);
   });
 });

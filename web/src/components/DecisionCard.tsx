@@ -7,7 +7,7 @@ import { useToast } from "../data/Toast";
 import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { InlineProse, Prose, ProseScope } from "./Prose";
+import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
 
 type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
@@ -115,7 +115,7 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
         </>;
         const content = <>
-          <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
+          <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />
           {resolved ? <div className="decision-receipt" role="status">
             {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
             {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
@@ -185,8 +185,8 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   });
   const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
   return <div className="question-set" data-review-pr={decision.pr ?? undefined}>
-    <p className="decision-question"><InlineProse text={decision.question || `Review PR #${decision.pr} before merge`} /></p>
-    {decision.detail ? <p className="decision-why"><InlineProse text={decision.detail} /></p> : null}
+    <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
+    {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
     {approve.isSuccess ? <p className="text-meta text-muted" role="status">Approval sent · the L2 merges after a final check of the same PR.</p> : <>
       <div className="decision-options" role="group" aria-label="Merge review">
         <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Sending…" : "Approve merge"}</button>
