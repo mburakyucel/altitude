@@ -400,8 +400,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
               <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
             </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
-          </div> : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>
-          : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
+          </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
+          : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
           {facts.review ? <div className="conversation-question" data-turn="operator">
             <p className="conversation-turn">Your turn · review before merge</p>
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
