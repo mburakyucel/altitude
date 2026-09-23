@@ -193,7 +193,8 @@ def prompt(project: str, evidence: dict) -> str:
 def findings(text: str, evidence: dict) -> list[dict]:
     if len(text.encode()) > 8192:
         raise ValueError("audit response exceeds 8 KiB")
-    value = json.loads(text.removeprefix("```json\n").removesuffix("\n```"))
+    framed = re.fullmatch(r"```json\n(.*?)\n```(?:\s.*)?", text.strip(), re.DOTALL)
+    value = json.loads(framed[1] if framed else text)
     rows = value.get("findings") if isinstance(value, dict) else None
     if not isinstance(rows, list) or len(rows) > 3:
         raise ValueError("audit response requires at most three findings")

@@ -244,6 +244,22 @@ class TestConversationAudit(AltitudeCase):
         audit.run(self.project)
         self.reviewer.assert_not_called()
 
+    def test_completed_review_accepts_fenced_json_followed_by_source_disclosure(self):
+        self.start()
+        self.batch()
+        evidence = audit.packet(self.project, [], self.now)
+        source = evidence["selected"][0]["messages"][0]["source"]
+        finding = self.finding(source, "corrected")
+        self.reviewer.return_value["text"] = ("```json\n" + json.dumps({"findings": [finding]}) +
+                                               "\n```\n\nI used only the supplied sources.")
+        audit.run(self.project)
+        self.assertEqual(audit.status(self.project)["attempts"][0]["findings"], [finding])
+        self.assertEqual(audit.take_findings(self.project, "next-turn"), "")
+        finding["sources"] = ["invented-reference"]
+        invalid = "```json\n" + json.dumps({"findings": [finding]}) + "\n```\nSource disclosure."
+        with self.assertRaises(ValueError):
+            audit.findings(invalid, evidence)
+
     def test_unavailable_pinned_engine_keeps_attempt_budget_and_never_falls_back(self):
         self.start()
         self.batch()
