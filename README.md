@@ -333,6 +333,12 @@ does not depend on the caller closing its input stream.
 
 ## Project conversations
 
+The compact update notice has **Details** and **Close** on phone and desktop. Closing it stays
+remembered in this browser across navigation and refresh for the same update; a new update or
+new activation failure can appear again. **Monitor → Altitude update** retains status, details
+and the available **Restart** action. Dismissal never changes activation or fault handling.
+Every toast also has Close; inline errors and task questions retain their own recovery controls.
+
 Desktop task chat has a compact navigation/title/actions row and visible state, model, PR and merge-hold
 chips. Long titles wrap; attempt, context and token usage open in Task details. Project headers use
 compact spacing, keeping their status and controls visible.

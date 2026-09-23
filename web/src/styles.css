@@ -1206,14 +1206,14 @@
 .conversation-activity summary { cursor: pointer; padding: 8px 0; }
 .conversation-activity p { overflow-wrap: anywhere; }
 
-/* The restart banner (§3.13): a strip above the header on every route, in the accent tint. */
+/* The restart notice (§3.13): a compact strip above page headers, with details in Monitor. */
 .restart-banner {
   display: flex;
   flex: none;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 16px;
-  padding: 10px 24px;
+  padding: 2px 24px;
   border-bottom: 1px solid var(--accent-tint-border);
   background: var(--accent-tint);
   font-size: var(--text-meta);
@@ -1223,7 +1223,7 @@
   padding: 2px 12px;
 }
 .restart-banner-summary { flex: 1; }
-.sheet .restart-banner-text { flex: none; }
+.restart-details { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .restart-banner-text {
   display: flex;
   min-width: 0;
@@ -1231,7 +1231,7 @@
   flex-direction: column;
   gap: 2px;
 }
-.restart-banner p {
+.restart-banner p, .restart-details p {
   margin: 0;
   overflow-wrap: anywhere;
 }

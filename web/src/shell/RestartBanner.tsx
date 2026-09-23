@@ -1,9 +1,8 @@
 import { useState } from "react";
+import { Link, useLocation } from "react-router";
 import { useRestart } from "../data/api";
 import type { Restart } from "../data/api";
 import { agoText, exactTime } from "../data/observed";
-import { useViewport } from "./breakpoints";
-import { Overlay } from "./Overlay";
 
 /** What the pending files touch, in words: the loaded backend paths, the web build inputs, or both. */
 export function changedText(files: string[]): string {
@@ -15,19 +14,31 @@ export function changedText(files: string[]): string {
   return "Altitude";
 }
 
-/**
- * The restart banner (SPEC.md §3.13): above the header on every route while a merged change awaits
- * activation. It says what changed in words and that Altitude restarts at the next quiet moment. The
- * Restart button appears when dispatch, L3 and verification are quiet (`waiting_for` is empty), even
- * with workers running, and disappears once the
- * restart is under way; the banner leaves when the new process answers with no pending restart.
- * `restart` is `GET /api/overview`'s `restart` field, the one data source.
- */
+const DISMISSED = "altitude.restart.dismissed";
+
+/** Presentation only: a new update or failure can notify again; ordinary status changes cannot. */
 export function RestartBanner({ restart }: { restart: Restart | null | undefined }) {
+  const location = useLocation();
+  const [dismissed, setDismissed] = useState<{ update: string; failure: Restart["failed"] } | null>(() => {
+    try { return JSON.parse(localStorage.getItem(DISMISSED) ?? "null"); } catch { return null; }
+  });
+  const update = JSON.stringify([restart?.head, restart?.since]);
+  if (!restart || location.pathname === "/monitor" ||
+    (dismissed?.update === update && (!restart.failed || dismissed.failure === restart.failed))) return null;
+  return <div className="restart-banner" role="status" aria-label="Restart pending">
+    <p className="restart-banner-summary">{restart.failed ? "Activation failed" : restart.requested_at ? "Altitude is restarting…" : "Update ready"}</p>
+    <Link className="btn btn-ghost" to="/monitor" aria-label="Update details in Monitor">Details</Link>
+    <button type="button" className="btn btn-ghost" aria-label="Dismiss update notice" onClick={() => {
+      const next = { update, failure: restart.failed };
+      setDismissed(next);
+      try { localStorage.setItem(DISMISSED, JSON.stringify(next)); } catch { /* Dismiss for this page when browser storage is unavailable. */ }
+    }}>×</button>
+  </div>;
+}
+
+/** Monitor retains the authoritative overview status and quiet-point action after dismissal. */
+export function RestartDetails({ restart }: { restart: Restart }) {
   const act = useRestart();
-  const { phone } = useViewport();
-  const [expanded, setExpanded] = useState(false);
-  if (!restart) return null;
   const files = restart.files ?? [];
   const waiting = restart.waiting_for;
   // A hand-pressed Restart is under way from the click; an automatic one from the time altd requested it.
@@ -35,7 +46,8 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
   const count = `${files.length} file${files.length === 1 ? "" : "s"}`;
   const landed = restart.since ? agoText(restart.since) : "";
 
-  const details = <div className="restart-banner-text">
+  return <div className="card monitor-card restart-details" role="status" aria-label="Update status">
+      <div className="restart-banner-text">
         <p className="restart-banner-what">
           Merged changes to {changedText(files)} are waiting to activate.
           <span className="restart-banner-meta" title={exactTime(restart.since)}>
@@ -52,23 +64,12 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
               : "Altitude restarts at the next quiet moment."}
           {!underWay && waiting.length > 0 ? ` Waiting for ${waiting.join(", ")}.` : null}
         </p>
-      </div>;
-  return <>
-    <div className="restart-banner" role="status" aria-label="Restart pending">
-      {phone ? <p className="restart-banner-summary">{underWay ? "Altitude is restarting…" : restart.failed ? "Activation failed. L3 has the fault." : "Update ready"}</p> : details}
-      {phone ? <button type="button" className="btn btn-ghost" aria-haspopup="dialog" aria-expanded={expanded} onClick={() => setExpanded(true)}>Details</button> : null}
+      </div>
       {!underWay && waiting.length === 0 ? (
         <button type="button" className="btn btn-primary restart-banner-button" onClick={() => act.mutate()}>
           Restart
         </button>
       ) : null}
       {act.isError ? <p className="text-danger text-meta" role="alert">{act.error.message}</p> : null}
-    </div>
-    {phone && expanded ? <Overlay label="Update details" side="bottom" onClose={() => setExpanded(false)}>
-      <div className="sheet project-details">
-        <div className="sheet-heading"><h2>Update ready</h2><button type="button" className="btn btn-ghost" onClick={() => setExpanded(false)}>Close details</button></div>
-        {details}
-      </div>
-    </Overlay> : null}
-  </>;
+    </div>;
 }
