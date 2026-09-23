@@ -706,9 +706,13 @@ Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
-Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs
-updating runs `git rebase origin/main` in the worktree; a conflict they cannot resolve goes to L3
-through an ordinary `alt task block`, without `--fault`.
+Merging landings wait up to one hour for a repository turn, keeping the owner session alive.
+The admitted command rereads task authority and holds, fetches the base, incorporates it into the
+task branch and validates the fresh PR base/head pair through merge. Task messages and Stop use
+their ordinary lifecycle while it waits. Failure, timeout or process exit releases the turn;
+resuming an owner requires a new command and fresh checks, never a saved green result.
+An owner whose branch needs manual conflict reconciliation updates it in the worktree; a conflict
+they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
 This repository's temporary local policy runs `make check` on the current merge candidate through
@@ -745,7 +749,7 @@ renewed hold changes it and requires approval of that renewed requirement.
 Landing and resume preserve the original head's ancestry. Commit messages, including historical
 labels naming other tasks, carry no ownership authority; landing excludes other active tasks' PRs and branches.
 The local task branch stays unchanged in identity while fast-forward pushes update the original
-PR branch. Merge main when necessary to preserve the adopted
+PR branch. Merging landings incorporate main while preserving the adopted
 commits. No adopted push uses force, and adoption never expands to a later external head.
 Checks bind to the current authoritative base/head and candidate, tolerating stale `baseRefOid`
 metadata while refusing actual movement. Missing or skipped required checks remain blocked;

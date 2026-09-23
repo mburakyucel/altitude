@@ -558,6 +558,7 @@ class TestLand(AltitudeCase):
         self.assertIn(reason, message)
         self.assertIn("--merge --approval <message-id>", message)
         self.assertEqual(commands, [
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             ["git", "rev-parse", "--show-toplevel"],
             ["git", "rev-parse", "--git-dir"],
             ["git", "symbolic-ref", "-q", "HEAD"],
@@ -1234,9 +1235,9 @@ class TestLand(AltitudeCase):
 
     def test_candidate_cleanup_does_not_mask_the_original_merge_error(self):
         self.staged_change("src/collision.py")
+        self.git("commit", "-m", "candidate conflict")
         self.advance_base("src/collision.py", "incompatible base\n")
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        self.git("fetch", "origin", "main")
 
         def fail_remove(args):
             if args[:4] == ["git", "worktree", "remove", "--force"] and "alt-land-candidate-" in args[-1]:
@@ -1244,10 +1245,12 @@ class TestLand(AltitudeCase):
             return None
 
         self.record_commands(fail_remove)
-        result = land.land("fix: conflict cleanup", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertIn("does not merge cleanly", result["local_tests"]["error"])
-        self.assertNotIn("cleanup failed", result["local_tests"]["error"])
+        with self.assertRaisesRegex(land.LandError, "does not merge cleanly") as caught:
+            with land._candidate(self.repo, self.git("rev-parse", "origin/main").strip(),
+                                 self.git("rev-parse", "HEAD").strip()):
+                self.fail("conflicting candidate must not be yielded")
+        self.assertNotIn("cleanup failed", str(caught.exception))
+        self.assertNotIn("alt-land-candidate-", self.git("worktree", "list"))
 
     def test_no_ci_red_local_suite_blocks_the_merge(self):
         self.staged_change()
