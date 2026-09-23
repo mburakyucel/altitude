@@ -501,8 +501,9 @@ walks empty, loading, saved/read errors, sending, sent, failed and denied states
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
-Each explicitly recommended choice carries a small **Recommended** tag and accent border; it is never
-preselected, and the operator's pick keeps the separate pressed style. **Send N answers** submits picks.
+Each explicitly recommended choice has an accent border and text with a small star badge on its
+top-right corner (announced and titled "Recommended"), so the cue never narrows the label. It is never
+preselected; the operator's pick adds the tinted fill and ring. **Send N answers** submits picks.
 The task title and card background open the same chat destination. Reference links remain ordinary
 external links. Plain questions accept a typed answer in place; no inferred default exists. Operational stops and faults open the task's
 ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
@@ -727,7 +728,9 @@ and no generic Resume while the question is open. A held review-ready PR whose o
 **Approve merge** sends the operator's own message "Approved: merge PR #N at <head>." and the L2 merges
 with it after a final check of that same head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review; an open operator question that links or names the PR
-is that review, so the separate card stays away until the question closes. A fault retains a visible short cause and **L3 has been told**. Operational
+is that review, so the separate card stays away until the question closes. After **Approve merge** for the
+current head, a later park on another dependency shows that wait with "PR #N approved" and no card; a new
+head, a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. Phone tab

@@ -218,12 +218,12 @@ class TestAmendIndex(AltitudeCase):
         from pathlib import Path
         incidents.amend_incident(PROJECT, self.inc["id"], evidence="x" * 1000, reason="Long evidence")
         summary = S.regen_state_md(PROJECT)
-        self.assertIn("x" * 600 + " [truncated]", summary)
-        self.assertNotIn("x" * 601, summary)
+        self.assertIn("x" * 300 + " [truncated]", summary)
+        self.assertNotIn("x" * 301, summary)
         Path(self.inc["path"]).unlink()
         row = incidents.index(PROJECT)[0]
         self.assertEqual(row["status"], "unavailable")
-        self.assertIn("Incident evidence unavailable", S.regen_state_md(PROJECT))
+        self.assertIn("evidence unavailable, inspect the local record", S.regen_state_md(PROJECT))
 
 
 class TestAmendCLI(AltitudeCase):

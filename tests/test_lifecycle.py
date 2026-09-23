@@ -19,7 +19,7 @@ class TestLifecycle(AltitudeCase):
 
         parked = T.block(self.project, t["slug"], "Landing window pending")
         self.assertEqual(T.decisions(self.project), [], "a daemon park has no operator question")
-        self.assertEqual(T.block_status(parked), ("paused", "paused"))
+        self.assertEqual(T.block_status(self.project, parked), ("paused", "paused"))
 
         T.resume(self.project, t["slug"])
         T.report(self.project, t["slug"], {"verdict": "ok", "prs": [140]})

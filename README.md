@@ -187,7 +187,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   on your turn, running, planned, queued, waiting on L3 or paused by their owner. **Your turn ·
   N questions** or **Your turn · review PR #N** marks what waits for you; replying hands the task
   back to its L2 (**L2 replying to you**) until it asks again. A held review-ready PR asks for
-  review itself, with **Approve merge**, unless the owner's open question already links it. An unassigned pause reads **Paused** with a neutral dot;
+  review itself, with **Approve merge**, unless the owner's open question already links it. Once you
+approve the current head, a later wait on something else reads, for example, **Waiting on L3 · PR #N approved**
+instead of asking again; a new head, a new hold or a later message about the PR asks again. An unassigned pause reads **Paused** with a neutral dot;
   **Stopped by you** identifies an operator stop.
   **Planned · waits for …**
   keeps decided short-term work visible with one reason, without a worker or WIP slot.
@@ -557,8 +559,8 @@ Installations without that matching project remain issue-only. Altitude's operat
 any implementation separately; reporting never creates, reuses, or resumes a receiving-project task.
 
 For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
-failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
-and restart summaries expose the gaps. Reporting belongs to the incident named in its receipt;
+failed, or uncertain delivery with an actionable reason. `alt incident list` holds the full history;
+coordinator state lists only open incidents with their link or gap. Reporting belongs to the incident named in its receipt;
 L3 judges whether a separate incident shares a cause and links a matching issue or creates one
 through the existing command. A broad failure label does not select an issue. Known links survive
 repeated calls and restarts; an uncertain attempt blocks another creation until the operator checks

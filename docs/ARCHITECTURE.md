@@ -435,14 +435,13 @@ reports restored conversation history so First run waits for successful registra
 that history without interpreting its old replies or errors as a fresh startup result. Reset
 remains a separate session rotation within a managed project.
 
-`STATE.md` is regenerated from active task records and a bounded incident-reporting summary relevant
-to the next L3 turn. Incident reads project current status, evidence and cause from the existing
-Markdown record, excluding amendment history; unreadable records explicitly remain unavailable.
-The summary counts incidents not closed and shows the latest five with up to 600 characters of
-current evidence each, marking truncation and pointing to the full list. This includes role-only
-incidents and confirmed reports whose prevention remains pending. Separately it counts missing,
-failed, uncertain and confirmed incident reports and shows five outcomes with gaps first.
-No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
+`STATE.md` is regenerated from active task records and the project's incidents that are not closed.
+Incident reads project current status, evidence and cause from the existing Markdown record,
+excluding amendment history. Each open incident gets one line, newest first and at most ten: its
+status and title with its report link, **no report linked**, or the report's failed/uncertain status,
+followed by up to 300 characters of current evidence; an unreadable record reads **evidence unavailable** instead. This includes role-only incidents and
+confirmed reports whose prevention remains pending. Closed incidents, full evidence and report
+reasons stay available through `alt incident list`. No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
 ## Isolation and landing
@@ -884,7 +883,7 @@ upstream target with a GitHub read and attaches it; it can resolve uncertainty o
 known matching report across kinds. Failed verification retains the prior outcome. Finalization
 compares the saved receipt so a late result cannot overwrite a concurrently verified link.
 Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
-`STATE.md`, and fault/restart coordinator messages expose status and gaps without granting reporting
+and `STATE.md` (open incidents only) expose status and gaps without granting reporting
 authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
 Publication is confirmed before notification is attempted. Its separate `notification` outcome records
 `queued`, `received`, `unavailable`, or `failed` in the existing incident outcome and source project event
@@ -1453,7 +1452,7 @@ The shared question component appears on Needs you and at its conversation ancho
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
-An explicitly recommended choice carries a **Recommended** tag, distinct from the pressed selection, and is never preselected.
+An explicitly recommended choice has an accent border and a corner star (announced as "Recommended"), distinct from the pressed selection, and is never preselected.
 Edits to independent members survive another member's response; changed revisions discard their own
 stale choices without retargeting them. Explicitly republishing a responded member gives it a new revision
 and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.
@@ -1580,7 +1579,8 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits and no open question links its PR, and the composer
+at their recorded message anchor), a held review card when one waits, no open question links its PR and the current head is not already
+approved, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with

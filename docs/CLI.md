@@ -471,8 +471,8 @@ upstream repository for ambiguous historical text.
 With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`, `failed`, and
 `uncertain` carry an actionable reason. `alt incident list` and project API incident rows include an
 `upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded
-outcomes. Coordinator state and fault/restart messages summarize incident reporting counts and up to five
-outcomes, showing gaps first. Inspect the full list for the remaining rows.
+outcomes. Coordinator state lists open incidents with their link or gap; fault and restart messages
+carry no incident history. Inspect the full list for closed incidents and reasons.
 
 The separate `upstream.notification` object reports `queued` (accepted by the local queue), `received`
 (claimed by its consumer), `unavailable` (no matching registered development project), or `failed`

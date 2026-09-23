@@ -135,9 +135,9 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
               // The recommendation is marked on its own choice; only the operator's pick is pressed.
               const recommended = option.key === recommendedKey(question);
               return <button key={option.key} className="btn btn-ghost" type="button" data-recommended={recommended || undefined}
-                aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} disabled={inputDisabled}
+                aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} title={recommended ? "Recommended" : undefined} disabled={inputDisabled}
                 onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
-                {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">Recommended</span> : null}
+                {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">★</span> : null}
               </button>;
             })}
             <button className="btn btn-ghost" type="button" aria-pressed={custom} disabled={inputDisabled}

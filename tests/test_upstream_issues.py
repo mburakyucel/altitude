@@ -89,7 +89,6 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(len(S.list_tasks("altitude")), 1)
         self.assertEqual(self.delivery(incident)["status"], "confirmed")
         self.assertEqual(self.delivery(incident)["notification"]["status"], "queued")
-        self.assertIn("Local notification: queued", S.regen_state_md(self.project))
         for private in (self.project, incident, "source-private-kind", "Private", REPORT["reproduction"], receiving["slug"]):
             self.assertNotIn(private, json.dumps(rows))
 
@@ -209,7 +208,6 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(outcome["status"], "confirmed")
         self.assertEqual(outcome["notification"]["status"], "failed")
         self.assertNotIn("Private queue diagnostic", json.dumps(outcome))
-        self.assertIn("Local notification: failed", S.regen_state_md(self.project))
         self.tracked(incident)
         self.assertEqual(len(self.writes), 1)
         self.assertEqual(len(l3.queued("altitude")), 1)
@@ -243,13 +241,13 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(self.delivery(second)["status"], "missing")
         self.assertIn("Check existing upstream issues", self.delivery(second)["reason"])
         summary = S.regen_state_md(self.project)
-        self.assertIn("missing=1", summary); self.assertIn("confirmed=1", summary)
-        self.assertIn(TARGET + "/issues/42", summary)
-        self.assertIn(second, summary)
+        self.assertIn(f"- {first}: watch — system fault: resume; report {TARGET}/issues/42", summary)
+        self.assertIn(f"- {second}: watch — system fault: dispatch; no report linked", summary)
+        self.assertIn(prevention, summary, "an open incident keeps its current follow-through visible")
         with mock.patch.object(server, "log"):
             server.restart_notice()
         restarted = [row for row in l3.queued(self.project) if row["trigger"] == "restart"][-1]["text"]
-        self.assertIn("missing=1", restarted); self.assertIn(TARGET + "/issues/42", restarted)
+        self.assertNotIn(second, restarted, "incident history is not replayed into restart context")
         # A new Python process sees the persisted receipt without a live daemon/session cache.
         result = subprocess.run(["python3", "-c", "from pathlib import Path; import json, sys; "
             "from altitude import incidents; incidents.FAULTS=Path(sys.argv[1]); "
@@ -259,11 +257,12 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(json.loads(result.stdout)[0]["upstream"], self.delivery(first))
         self.assertEqual(json.loads(result.stdout)[0]["evidence"], prevention)
         self.assertEqual(json.loads(result.stdout)[0]["status"], "watch")
-        self.assertIn(prevention, restarted)
+
         self.tracked(first)
         repeat = self.fault("resume")
         self.assertEqual(repeat, first)
-        self.assertIn(TARGET + "/issues/42", l3.queued(self.project)[-1]["text"])
+        self.assertNotIn(TARGET, l3.queued(self.project)[-1]["text"], "the fault message points at the incident only")
+        self.assertIn(f"- {first}: watch — system fault: resume; report {TARGET}/issues/42", S.regen_state_md(self.project))
         faults = S.read_json(incidents.FAULTS)
         faults[json.dumps([self.project, "resume"])]["last"] = "2000-01-01T00:00:00+00:00"
         S.write_json(incidents.FAULTS, faults)
@@ -279,6 +278,12 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(self.delivery(second)["status"], "missing")
         self.assertNotIn("Private fictional diagnostic", self.writes[0][1]["input"])
         self.assertNotIn(first, self.writes[0][1]["input"])
+        incidents.amend_incident(self.project, second, evidence="No defect; no report needed.", status="closed",
+                                 reason="Closed without a report")
+        self.assertNotIn(second, S.regen_state_md(self.project), "a closed incident is not advertised as missing")
+        (config.project_dir(self.project) / "incidents" / f"{first}.md").unlink()
+        self.assertIn(f"- {first}: evidence unavailable, inspect the local record", S.regen_state_md(self.project))
+        self.assertIn(second, [row["id"] for row in incidents.index(self.project)], "history stays on demand")
         self.assertNotIn(prevention, self.writes[0][1]["input"])
 
     def test_prepublication_failure_is_actionable_and_can_be_explicitly_retried(self):
@@ -374,7 +379,7 @@ class TestUpstreamIssues(AltitudeCase):
                 self.tracked(incident)
             self.assertEqual(self.delivery(incident), outcome)
         self.assertEqual(self.writes, [])
-        self.assertIn("uncertain=6", S.regen_state_md(self.project))
+        self.assertEqual(S.regen_state_md(self.project).count("; report uncertain\n"), 6)
 
     def test_interrupted_request_and_concurrent_repeat_retain_uncertainty(self):
         incident = self.fault("interrupted")
