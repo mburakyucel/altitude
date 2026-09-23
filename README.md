@@ -63,7 +63,9 @@ Owners and helpers run relevant tests during development. This repository's self
 `check` runs the full suite; `alt land` requires it to pass for the current merge content.
 The branch includes current main, and each new head needs fresh PR checks. Altitude serializes
 final validation and merges. Runner outages pause merges. Review and merge holds still apply,
-and merges outside Altitude remain unprotected. Other projects keep their own gates. See
+and merges outside Altitude remain unprotected. CI reports stay on the runner host with bounded
+retention and cleanup; GitHub supplies checks and logs without artifact uploads. Owners verify
+local failure reports and preserve needed evidence through review. Other projects keep their own gates. See
 [CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
 Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
@@ -587,9 +589,10 @@ Every PR runs `make check` in CI: Python, web tests, typecheck/build and phone/d
 against isolated fictional state, with external engines replaced by deterministic fixtures.
 Python module processes run alongside the ordered web phases; CI browser workers scale with
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
-CI retains one three-day artifact with the self-contained HTML report, named walkthrough
-screenshots, failure traces, logs and tested commit identity. Owners download needed evidence
-before expiry and retain it through review. Uploads require verified zero-paid-usage enforcement.
+CI retains small logs and tested commit identity on the runner host; failed runs also retain the
+self-contained HTML report, screenshots and traces. Owners verify local retrieval and keep needed
+evidence through review, cleaning up unneeded completed exports after three days or when disk
+capacity is tight. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).

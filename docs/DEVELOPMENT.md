@@ -282,39 +282,45 @@ block, and at least one hosted check must actually pass. Requiredness and candid
 must be established. Projects without CI retain the full local candidate suite and `--test-cmd`;
 neither provides an outage bypass for this repository.
 
-CI uploads one artifact per run with three-day retention: the self-contained browser HTML report,
-its named screenshots and failure-only traces, suite logs and candidate identity. Duplicate raw
-results and caches are excluded. Early failures retain the logs available before a report exists.
-Owners download needed evidence into the task folder before expiry and keep it through review.
-Open the downloaded report with `pnpm --dir web exec playwright show-report /path/to/report`;
-verify its attachments and failure traces open. Failed upload prevents complete evidence and green
-readiness, even if the suite itself passed.
+CI retains evidence on the runner host without GitHub artifact uploads. The workflow writes
+`ci-check.log` and `ci-result.json` directly in `RUNNER_TEMP`; the runner's completion hook copies
+those receipts before clearing temporary files. Its existing bounded exporter retains them before
+removing the disposable container. Failed runs also retain the self-contained browser HTML report
+with its screenshots and failure traces. Passing runs keep only small logs and identity receipts.
+Duplicate raw results and caches are excluded; early failures keep available diagnostics.
 
-Uploads keep only essential evidence, with three-day retention and no additional paid usage.
-Verify the no-paid-usage boundary before enabling them. GitHub blocks usage at
-the included quota when the account has no valid payment method. An account with a payment method
-needs a zero-paid-usage Actions budget with **Stop usage when budget limit is reached** enabled.
-The operator applies that maintainer setting if needed, scoped to this repository where supported;
-do not change unrelated budgets. Short retention alone does not prevent billing. Verify actual
-upload success and remove older artifacts if storage approaches its limit, preserving evidence
-still needed for review in the task folder first. An unverifiable spending boundary or exhausted
-storage blocks uploads and readiness; L3 receives the concrete blocker. No paid runner or generic
-bypass is authorized.
+Before delivery, owners retrieve the completed export into their task folder, match its run URL,
+attempt, head and tree to the checked candidate, and verify required evidence survived container
+removal. Open a failed report with `pnpm --dir web exec playwright show-report /path/to/report`
+and verify attachments and traces open. A green GitHub job alone does not prove successful local
+export; unavailable evidence blocks delivery and goes to L3 for recovery.
+
+The runner limits evidence to 256 MiB per job and 4 GiB for this repository. Owners remove
+unneeded completed exports older than three days, and clean up earlier when capacity is tight,
+after copying anything still needed for review into its owning task. Never remove active jobs
+or the only copy of evidence awaiting review. A budget refusal requires bounded cleanup and
+verification, not a quota increase. Task evidence stays accessible through review. No new paid
+storage, public report server or host mount into Altitude runtime is required. Runner credentials
+and other projects' evidence remain outside the report access path. GitHub still supplies checks
+and console logs; browser reports are read locally instead of downloaded from GitHub.
 
 An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
 it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
 [`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger/runner recovery, not an invented
-run ID. Runner or storage outages pause merges until verified recovery and fresh CI. A probe
+run ID. Runner or local evidence outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.
+The existing GitHub artifact-capacity probe remains for projects using hosted artifacts; it cannot
+verify this repository's local exports. L3 verifies local retrieval through the runner evidence path.
 
 ### Gate activation
 
 The transition PR uses trusted landing's existing full local candidate gate as well as a fresh PR
-run. Before publication enables uploads, verify the zero-paid-usage boundary. Actions is already
-enabled; no plan upgrade or branch protection change is required. Verify the runner admits PR
-events and that a fresh PR run executes Python, web, build and both browser viewports. A bounded
-failing PR revision demonstrates downloadable browser reports and failure traces; restore a
-passing revision before review. Runner configuration changes require scoped machine authority.
+run. Verify the installed local exporter and owner access before relying on report retention.
+Actions is already enabled; no plan upgrade or branch protection change is required. Verify the
+runner admits PR events and a fresh PR run executes Python, web, build and both browser viewports.
+A bounded failing PR revision demonstrates retrieval of browser reports and traces after container
+removal; a passing revision demonstrates the small receipt/log export. Restore a passing revision
+before review. Runner configuration changes require scoped machine authority.
 Known browser/setup flakes require verified correction before activation; fewer duplicate full
 runs do not establish a fix. L3 owns prerequisite coordination.
 

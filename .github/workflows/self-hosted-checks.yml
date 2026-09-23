@@ -54,8 +54,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p "$RUNNER_TEMP/altitude-ci-evidence"
-          make check 2>&1 | tee "$RUNNER_TEMP/altitude-ci-evidence/check.log"
+          make check 2>&1 | tee "$RUNNER_TEMP/ci-check.log"
 
       - name: Retain report and candidate identity
         if: always()
@@ -63,7 +62,7 @@ jobs:
           CHECK_OUTCOME: ${{ steps.check.outcome }}
         run: |
           python3 - <<'PY'
-          import json, os, pathlib, shutil, subprocess
+          import json, os, pathlib, subprocess
           def revision(ref):
               result = subprocess.run(['git', 'rev-parse', ref], capture_output=True, text=True)
               return result.stdout.strip() if result.returncode == 0 else None
@@ -74,19 +73,8 @@ jobs:
                     'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                     'command': 'make check', 'passed': os.environ['CHECK_OUTCOME'] == 'success' and sha == os.environ['GITHUB_SHA'],
                     'run_url': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID']}
-          evidence = pathlib.Path(os.environ['RUNNER_TEMP'], 'altitude-ci-evidence')
-          evidence.mkdir(exist_ok=True)
+          # The runner completion hook retains top-level ci-* receipts before
+          # clearing RUNNER_TEMP; its exporter retains failed browser reports.
+          evidence = pathlib.Path(os.environ['RUNNER_TEMP'])
           (evidence / 'ci-result.json').write_text(json.dumps(record, indent=2) + '\n')
-          report = pathlib.Path('web/ui-artifacts/report')
-          if report.is_dir():
-              shutil.copytree(report, evidence / 'report')
           PY
-
-      - name: Upload review evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/altitude-ci-evidence
-          retention-days: 3
-          if-no-files-found: error

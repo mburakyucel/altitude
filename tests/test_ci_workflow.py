@@ -42,12 +42,12 @@ class TestPrWorkflow(AltitudeCase):
                               env=self.env, capture_output=True, text=True)
 
     def package(self):
-        step = self.workflow.split('- name: Retain report')[1].split('- name: Upload')[0]
+        step = self.workflow.split('- name: Retain report')[1]
         script = textwrap.dedent(step.split("python3 - <<'PY'\n")[1].rsplit('          PY', 1)[0])
         result = subprocess.run([sys.executable, '-c', script], cwd=self.repo, env=self.env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        return self.tmp / 'altitude-ci-evidence'
+        return self.tmp
 
     def test_current_merge_tree_passes_and_records_identity(self):
         result = self.verify()
@@ -56,6 +56,25 @@ class TestPrWorkflow(AltitudeCase):
         self.assertTrue(record['passed'])
         self.assertEqual((record['base'], record['head'], record['sha'], record['tree'], record['run_attempt']),
                          (self.base, self.head, self.sha, self.tree, '2'))
+
+    def test_suite_writes_hook_selected_log_and_preserves_exit_status(self):
+        commands = self.tmp / 'commands'
+        commands.mkdir()
+        make = commands / 'make'
+        make.write_text('#!/bin/sh\necho "fixture suite output"\nexit "$FIXTURE_EXIT"\n')
+        make.chmod(0o755)
+        step = self.workflow.split('- name: Full deterministic checks')[1].split('- name: Retain report')[0]
+        script = textwrap.dedent(step.split('run: |\n')[1])
+        for code in (0, 2):
+            with self.subTest(exit=code):
+                env = dict(self.env, PATH=str(commands) + os.pathsep + os.environ['PATH'],
+                           FIXTURE_EXIT=str(code))
+                result = subprocess.run(['bash', '-c', script], cwd=self.repo, env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                # The installed completion hook selects top-level ci-*.log files.
+                self.assertEqual([p.name for p in self.tmp.glob('ci-*.log')], ['ci-check.log'])
+                self.assertEqual((self.tmp / 'ci-check.log').read_text(), 'fixture suite output\n')
 
     def test_wrong_sha_parent_order_or_tree_refuses(self):
         self.env['GITHUB_SHA'] = self.head
@@ -88,9 +107,12 @@ class TestPrWorkflow(AltitudeCase):
         (raw / 'trace.zip').write_bytes(b'fictional trace')
         evidence = self.package()
         self.assertFalse(json.loads((evidence / 'ci-result.json').read_text())['passed'])
-        self.assertEqual((evidence / 'report/index.html').read_text(), (report / 'index.html').read_text())
-        self.assertEqual((evidence / 'report/data/trace.zip').read_bytes(), b'fictional trace')
-        self.assertEqual(sorted(path.name for path in evidence.iterdir()), ['ci-result.json', 'report'])
+        # The runner exports this existing report; the workflow creates no second copy.
+        self.assertIn('data/trace.zip', (report / 'index.html').read_text())
+        self.assertEqual((report / 'data/trace.zip').read_bytes(), b'fictional trace')
+        self.assertFalse((evidence / 'report').exists())
+        self.assertFalse((evidence / 'altitude-ci-evidence').exists())
+        self.assertEqual([p.name for p in evidence.glob('ci-*.json')], ['ci-result.json'])
 
     def test_precheck_failure_and_main_run_keep_available_identity(self):
         self.env.update(CHECK_OUTCOME='skipped', GITHUB_EVENT_NAME='push')
