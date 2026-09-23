@@ -256,9 +256,8 @@ def regen_state_md(project: str) -> str:
                 extra.append(f"turns {sp['turns']}")
             lines.append(f"- **{t['slug']}** {t['title']} — {age(t['updated'])}" + (" — " + "; ".join(extra) if extra else ""))
         lines.append("")
-    summary = incidents.upstream_summary(project)
-    if summary:
-        lines += ["## Incident reporting", "", summary, ""]
+    if summary := incidents.open_summary(project):
+        lines += ["## Open incidents", "", summary, ""]
     text = "\n".join(lines) + "\n"
     atomic_write(config.project_dir(project) / "STATE.md", text)
     return text

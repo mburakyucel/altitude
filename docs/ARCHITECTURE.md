@@ -435,14 +435,13 @@ reports restored conversation history so First run waits for successful registra
 that history without interpreting its old replies or errors as a fresh startup result. Reset
 remains a separate session rotation within a managed project.
 
-`STATE.md` is regenerated from active task records and a bounded incident-reporting summary relevant
-to the next L3 turn. Incident reads project current status, evidence and cause from the existing
-Markdown record, excluding amendment history; unreadable records explicitly remain unavailable.
-The summary counts incidents not closed and shows the latest five with up to 600 characters of
-current evidence each, marking truncation and pointing to the full list. This includes role-only
-incidents and confirmed reports whose prevention remains pending. Separately it counts missing,
-failed, uncertain and confirmed incident reports and shows five outcomes with gaps first.
-No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
+`STATE.md` is regenerated from active task records and the project's incidents that are not closed.
+Incident reads project current status, evidence and cause from the existing Markdown record,
+excluding amendment history. Each open incident gets one line, newest first and at most ten: its
+status and title with its report link, **no report linked**, or the report's failed/uncertain status,
+followed by up to 300 characters of current evidence; an unreadable record reads **evidence unavailable** instead. This includes role-only incidents and
+confirmed reports whose prevention remains pending. Closed incidents, full evidence and report
+reasons stay available through `alt incident list`. No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
 ## Isolation and landing
@@ -884,7 +883,7 @@ upstream target with a GitHub read and attaches it; it can resolve uncertainty o
 known matching report across kinds. Failed verification retains the prior outcome. Finalization
 compares the saved receipt so a late result cannot overwrite a concurrently verified link.
 Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
-`STATE.md`, and fault/restart coordinator messages expose status and gaps without granting reporting
+and `STATE.md` (open incidents only) expose status and gaps without granting reporting
 authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
 Publication is confirmed before notification is attempted. Its separate `notification` outcome records
 `queued`, `received`, `unavailable`, or `failed` in the existing incident outcome and source project event

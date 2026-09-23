@@ -556,8 +556,8 @@ Installations without that matching project remain issue-only. Altitude's operat
 any implementation separately; reporting never creates, reuses, or resumes a receiving-project task.
 
 For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
-failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
-and restart summaries expose the gaps. Reporting belongs to the incident named in its receipt;
+failed, or uncertain delivery with an actionable reason. `alt incident list` holds the full history;
+coordinator state lists only open incidents with their link or gap. Reporting belongs to the incident named in its receipt;
 L3 judges whether a separate incident shares a cause and links a matching issue or creates one
 through the existing command. A broad failure label does not select an issue. Known links survive
 repeated calls and restarts; an uncertain attempt blocks another creation until the operator checks
