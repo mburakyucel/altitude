@@ -19,7 +19,8 @@
               "number": {"type": "integer"},
               "title": {"type": ["string", "null"]},
               "merged": {"type": "boolean"},
-              "merge_sha": {"type": ["string", "null"]}
+              "merge_sha": {"type": ["string", "null"],
+                            "description": "GitHub merge commit, in full or an unambiguous prefix of at least seven characters"}
             }
           }
         },
