@@ -929,6 +929,9 @@ provider as ordinary agent input. Original uploads and conversion intermediates 
 JSON response writes handle client disconnects across headers and body, including GET and POST
 image error replies. Connected clients receive the same error status and JSON body; unrelated
 server failures remain visible. A disconnected response closes the connection without another write.
+Image capability reads take the existing project-removal lock and recheck registration inside it.
+Removal that wins the lock yields the ordinary 403 image-access denial; a lookup holding the lock
+finishes before removal. The lock is released before writing the response.
 
 Image POSTs use the existing chat/message endpoints with `images: [{name, data}]` (base64) and a
 UUID `request_id`. Saved-ID retries use `image_ids` instead of new uploads. The project lock fences

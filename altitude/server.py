@@ -1394,7 +1394,11 @@ class Handler(BaseHTTPRequestHandler):
         if not config.is_managed(project):
             raise images.ImageError("Image access denied.", 403)
         if len(parts) == 3:
-            return self._json(image_capability(project, query.get("task", [None])[0]))
+            with S.project_lock(project):
+                if not config.is_managed(project):
+                    raise images.ImageError("Image access denied.", 403)
+                capability = image_capability(project, query.get("task", [None])[0])
+            return self._json(capability)
         if len(parts) != 4:
             raise images.ImageError("Image unavailable.", 404)
         with S.project_lock(project):
