@@ -313,7 +313,7 @@ class TestDispatchDeploymentIndependence(AltitudeCase):
         task.update(state="running", agent_id="detached", session_id="same-session")
         S.save_task("altitude", task)
         merged = self.merged_on_origin("altitude/x.py", "# merged while worker runs\n")
-        with mock.patch.object(server.quota_codex, "refresh_if_due"), \
+        with mock.patch.object(server.engines, "refresh_quotas"), \
              mock.patch.object(server, "morning_digest"), \
              mock.patch.object(server, "spawn"), \
              mock.patch.object(dispatch, "poll", return_value=[]), \

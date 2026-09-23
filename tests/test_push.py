@@ -261,7 +261,7 @@ class TestTheTick(AltitudeCase):
         for name in ("drain_hook_faults", "auto_restart", "tick_project"):
             self.patch(server, name, lambda *a, **k: None)
         self.patch(server.dispatch, "run_settings", lambda *a, **k: None)
-        self.patch(server.quota_codex, "refresh_if_due", lambda *a, **k: None)
+        self.patch(server.engines, "refresh_quotas", lambda *a, **k: None)
         self.patch(server, "log", new=lambda *a, **k: None)
         digested = []
         self.patch(server, "morning_digest", lambda: digested.append(True))

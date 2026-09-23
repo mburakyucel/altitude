@@ -62,6 +62,11 @@ class TestQuotaAge(AltitudeCase):
         row = next(s for s in monitor.sessions() if s["kind"] == "statusline")
         self.assertEqual(row["at"], at)
 
+    def test_even_a_fresh_interactive_snapshot_cannot_replace_missing_native_account_evidence(self):
+        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", int(time.time()))
+        self.assertFalse(monitor.quota()["known"])
+        self.assertNotIn("seven_day", monitor.quota())
+
     def test_model_observation_reaches_live_session_rows_and_old_tasks_are_readable(self):
         task = T.new(self.project, "Known model", "request")
         task.update(state="running", l2_engine="codex", engine_model="actual-model", engine_reasoning_effort="high")
