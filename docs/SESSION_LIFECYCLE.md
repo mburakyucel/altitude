@@ -1,5 +1,28 @@
 # Engine and session lifecycle
 
+## Conversation-audit pilot
+
+The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable
+conversation. Its engine/model stays pinned, using ordinary Altitude permissions and tools with a
+review assignment. L3/L2 retain action ownership. Each session has a ninety-second process-tree
+deadline; restart cannot automatically replay a reserved attempt. Failure/uncertainty pauses the
+pilot, retaining its original seven-day expiry and fourteen-attempt budget.
+
+Reviews wait twelve hours and four new exchanges older than thirty minutes. Failed/unanswered
+exchanges remain eligible with uncertainty. The rolling forty-eight-hour sample starts no earlier
+than September 22, 2026 07:00 UTC. Starting prompts contain at most twenty exchanges, four directly
+related task records and 64 KiB including instructions. Native tool reads/reasoning add usage;
+billing and quota are not inferred from these bounds.
+
+Private results preserve sources, later evidence and ownership. New unresolved candidates accompany
+the next project chat turn once; no dedicated coordinator session or periodic notification runs.
+No later chat means delayed triage. Supply receipts do not prove handling. Corrected, already-owned,
+legitimate-wait and uncertain cases stay private. L3 verifies current evidence before action. Stop
+prevents new attempts while a claimed session may finish; audit errors never pause ordinary work.
+Deterministic tests use fictional state and scripted engines. Authorized live samples measure only
+their stated model-quality cases, not general provider compatibility or accuracy. See
+[pilot controls](CLI.md#conversation-audit-pilot).
+
 The persistent L3 conversation coordinates the project across task lifetimes. Each L2 owns one
 task's investigation, approach and relevant system implications within its authorized outcome,
 with its own durable conversation, isolated worktree and PR delivery. Questions go to L3

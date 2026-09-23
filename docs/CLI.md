@@ -15,6 +15,36 @@ guard installation or refresh. [Operations](OPERATIONS.md) covers project settin
 
 ## Inspection
 
+### Conversation-audit pilot
+
+After rollout approval, the operator explicitly starts the seven-day pilot:
+
+```sh
+alt --project altitude audit start --reason 'Approved conversation-review rollout'
+alt --project altitude audit status
+alt --project altitude audit stop --reason 'End the pilot early'
+```
+
+Start/Stop are operator-only; L3 and task owners can read their project's status.
+`start --engine <engine> --model <model>` pins a reviewer independently of ordinary routing; both
+overrides are required together. Defaults live in the engine configuration seam. Missing reviewer
+access never selects another model. Start does not approve a held PR, grant evaluation permission
+or change billing. An existing pilot cannot renew/reset through Start. Failed/uncertain runs remain
+paused for coordinator assessment. Stop prevents new sessions while a claimed one retains its timeout.
+
+Status includes expiry, reviewer, attempts, native usage/cost when available, failures/unavailability
+and supplied-to-L3 turn identities. Native cost is API-equivalent telemetry, not cash charged or
+subscription quota. Private `<project>/audits/<id>/` retains packets/responses; `audit.json` holds the
+bounded pilot record. Chat byte-offset references identify original JSONL rows with turn ID/date;
+task references name canonical message IDs. None of this evidence belongs in public issues.
+
+Sessions run at most twice daily, twelve hours apart, after four new eligible exchanges. Each has
+ninety seconds, a starting prompt of at most 64 KiB and at most three findings. The forty-eight-hour
+sample starts no earlier than September 22, 2026 07:00 UTC, includes twenty exchanges/four directly
+related tasks, and records omitted/incomplete coverage. No new activity means no call. Seven days or
+fourteen attempts ends the pilot. Only new unresolved candidates reach L3 on its next project chat
+turn; unchanged/owned/corrected findings create no additional notifications. Ordinary work continues.
+
 `alt task status <slug>` and `alt task report <slug> --json` include `token_usage`: the daemon's
 persisted local token observation, independent of the report's agent-authored spend. It contains
 inclusive input/output and their observed total, optional cache/reasoning subsets, session rows with

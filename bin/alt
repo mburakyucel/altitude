@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
-READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("incident", "list"),
+READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
                                ("task", "machine"), ("task", "run")}
@@ -220,6 +220,14 @@ def main(argv=None) -> None:
     ap = ExactArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    audit_parser = sub.add_parser("audit", help="inspect or explicitly start/stop the finite conversation audit pilot")
+    audit_commands = audit_parser.add_subparsers(dest="acmd", required=True)
+    audit_commands.add_parser("status")
+    audit_start = audit_commands.add_parser("start")
+    audit_start.add_argument("--reason", required=True)
+    audit_start.add_argument("--engine", choices=config.ENGINES)
+    audit_start.add_argument("--model")
+    audit_commands.add_parser("stop").add_argument("--reason", required=True)
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default")
     a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
@@ -359,6 +367,7 @@ def main(argv=None) -> None:
     c = args.cmd
     closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
+                     getattr(args, "acmd", None) if c == "audit" else
                      getattr(args, "icmd", None) if c == "incident" else
                      getattr(args, "pcmd", None) if c == "project" else
                      getattr(args, "l3cmd", None) if c == "l3" else None)
@@ -368,7 +377,7 @@ def main(argv=None) -> None:
     if ACTOR == "l2":
         if actor_command not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
             sys.exit(f"alt {c}: not available to an L2 worker; use project inspection or owned-task verbs")
-        if c in ("repo", "pr", "l3") and _project(args) != os.environ.get("ALTITUDE_PROJECT"):
+        if c in ("repo", "pr", "l3", "audit") and _project(args) != os.environ.get("ALTITUDE_PROJECT"):
             sys.exit("alt: owner inspection is bound to the launch project")
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
@@ -434,6 +443,14 @@ def main(argv=None) -> None:
             out(result)
         except (ValueError, RuntimeError, OSError) as exc:
             sys.exit(f"alt {c}: {exc}")
+        return
+    if c == "audit":
+        from altitude import audit
+        if args.acmd == "status":
+            out(audit.status(_project(args)))
+        else:
+            out(audit.configure(_project(args), args.acmd, actor=ACTOR, reason=args.reason,
+                                engine=getattr(args, "engine", None), model=getattr(args, "model", None)))
         return
     if c == "machine":
         from altitude import dispatch
