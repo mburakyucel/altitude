@@ -1011,12 +1011,10 @@ resolution remains an operation of the running or blocked owning L2.
 
 ### Concurrent landings
 
-`alt land` takes the repository turn when it merges or when the repository's local-check policy
-runs `make check` on the candidate, with or without `--merge`. It waits for the other holder before
-fetching, publishing or testing, prints when waiting and when its turn starts with the seconds
-waited, and returns them as `waited` (zero when no wait occurred). One required suite runs on the
-machine at a time, so sibling candidates cannot time out each other's browser walkthroughs by load
-(I-20260923-062538).
+`alt land` takes the repository turn when it merges or targets this repository's required PR
+check, with or without `--merge`. It waits before fetching, publishing or checking CI, prints
+when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
+wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Admission waits at most 3600 seconds, independently of `--wait`, which still bounds hosted-check
 polling. A timeout refuses without selecting a candidate or publishing changes; retry explicitly
@@ -1029,8 +1027,8 @@ not stashed. Required checks, review and original approval sources still govern 
 Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
-The turn is a process-owned repository lock, not a durable or FIFO queue. Nonmerging preparation
-under hosted checks, dry runs and other repositories do not wait for it. The containerized
+The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
+in other repositories do not wait for it. The containerized
 self-hosted runner and a `make check` run by hand outside `alt land` do not share it; a hand run
 without `CI` set uses two browser workers. External writers and older landing versions
 can still change refs: stale base/head evidence refuses merge and is never reused or retried

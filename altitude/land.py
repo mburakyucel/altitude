@@ -652,11 +652,8 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
     if fetched_head != head_sha:
         raise LandError(f"PR #{number} refs moved while the merge candidate was being pinned "
                         f"(GitHub head {head_sha}, origin head {fetched_head})")
-    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
-    repository = github_intake._REMOTE.fullmatch(origin)
     return {"base": base, "branch": branch, "base_sha": base_sha, "head_sha": head_sha, "number": number,
-            "required_pr_check": bool(repository and
-                f"{repository['owner']}/{repository['repo']}".lower() == config.PR_CHECK_REPOSITORY)}
+            "required_pr_check": _required_pr_check(root)}
 
 
 def _assert_pair_current(root: Path, pair: dict) -> None:
@@ -878,21 +875,21 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     return merged, main_run, tests
 
 
-def _local_checks(root: Path) -> bool:
-    """Whether this repository validates every landing with the full local suite on the merge candidate."""
+def _required_pr_check(root: Path) -> bool:
+    """Whether this repository requires the named current-head PR check."""
     origin = (_git(root, "config", "--get", "remote.origin.url").stdout or "").strip()
     repository = github_intake._REMOTE.fullmatch(origin)
-    return bool(repository and f"{repository['owner']}/{repository['repo']}".lower() == config.LOCAL_CHECK_REPOSITORY)
+    return bool(repository and f"{repository['owner']}/{repository['repo']}".lower() == config.PR_CHECK_REPOSITORY)
 
 
 def _repository_turn(function):
     """#433: siblings must not advance the base while a landing validates its candidate.
-    I-20260923-062538: one required candidate check at a time per repository on this machine, merging or not,
-    so sibling suites cannot time each other out by load."""
+    I-20260923-062538: serialize required-check publication and waiting, merging or not.
+    External runner executions do not share this process-owned turn."""
     @functools.wraps(function)
     def run(message, **kwargs):
         root = Path(kwargs.get("cwd") or Path.cwd())
-        if kwargs.get("dry_run") or not (kwargs.get("merge") or _local_checks(root)):
+        if kwargs.get("dry_run") or not (kwargs.get("merge") or _required_pr_check(root)):
             return {**function(message, **kwargs), "waited": 0}
         common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
         with open(Path(common) / "altitude-land.lock", "a") as lock:

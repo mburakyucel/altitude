@@ -266,7 +266,8 @@ No unrun or failed phase is green; live-provider validation stays deferred.
 CI records its event base, head, candidate SHA and tree, verifying that the head includes that base
 and that the tested merge tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
-final validation and merge across Altitude owners. Any base or head movement during landing
+publication, CI waiting and merge across Altitude owners, including nonmerging invocations.
+Runner executions outside the command do not share its turn. Any base or head movement during landing
 refuses the merge. A later invocation can reuse the successful head when main is already an
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
 commits outside the head and require reconciliation, a push and fresh checks on the new head.

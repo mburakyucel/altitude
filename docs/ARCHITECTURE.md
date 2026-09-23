@@ -455,18 +455,17 @@ owned by other active tasks. Protected branches require the guarded landing path
 fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for operator review.
-Invocations that merge or run the repository's required candidate suite hold a separate `flock`
+Invocations that merge or target this repository’s required PR check hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
-fetch through checks and merge. All its worktrees share the lock, so one landing `make check`
-runs on the machine at a time and sibling candidates cannot fail each other by load; task-state
-locks remain short, so messages and Stop stay available. Admission waits at most one hour, reports
+fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
+so messages and Stop stay available. Admission waits at most one hour, reports
 the seconds waited, and refreshes ownership and holds before publication. Current main is merged
 into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Nonmerging preparation and dry runs do not take
-the turn; other repositories remain independent. External Git/GitHub writers and older installed
-landing code do not participate, so exact base/head refusals remain necessary.
+There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
+the turn. External Git/GitHub writers, older landing code, self-hosted runner executions and
+hand-run suites do not share it, so exact base/head refusals remain necessary.
 This repository requires its self-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR

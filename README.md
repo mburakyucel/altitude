@@ -52,8 +52,8 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
-Concurrent `alt land` calls in one repository that merge or run its required candidate check wait
-their turn through validation and merge, so one landing suite runs on the machine at a time. Each
+Concurrent `alt land` calls in this repository wait their turn through publication, CI waiting
+and merge; other repositories serialize merging invocations. Each
 turn incorporates current main and validates a fresh candidate. Waiting is visible with its
 duration and bounded to one hour; failure or process exit releases the turn. Owners keep the
 command running without asking L3 for a landing window. Conflicts, external ref changes, failed

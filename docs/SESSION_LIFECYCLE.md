@@ -707,9 +707,9 @@ Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
-Landings that merge or run the required candidate suite wait up to one hour for a repository
-turn, keeping the owner session alive; the turn runs one landing suite per machine at a time and
-reports the seconds waited. The admitted command rereads task authority and holds, fetches the
+Landings that merge or target this repository’s required PR check wait up to one hour for a
+repository turn, keeping the owner session alive and reporting seconds waited. The turn serializes
+publication and check waiting; external runner executions do not share it. The admitted command rereads task authority and holds, fetches the
 base, incorporates it into the task branch and validates the fresh PR base/head pair through
 merge. Task messages and Stop use their ordinary lifecycle while it waits. Failure, timeout or
 process exit releases the turn; resuming an owner requires a new command and fresh checks, never a
