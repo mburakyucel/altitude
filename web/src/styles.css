@@ -1681,11 +1681,13 @@
 }
 .msg-row[data-mine] {
   align-items: flex-end;
+  transition: opacity 240ms ease-out;
 }
 .msg-row[data-pending] {
   opacity: 0.6;
 }
 .bubble {
+  position: relative;
   max-width: 76%;
   padding: 10px 16px;
   border-radius: var(--radius-bubble);
@@ -1700,6 +1702,21 @@
   max-width: 82%;
   padding: 10px 14px;
   font-size: 16px;
+}
+/* The progress cue beside a pending bubble (§3.6 Sending): a ring in the gutter, outside the flow. */
+.bubble-sending {
+  position: absolute;
+  top: calc(50% - 7px);
+  left: -22px;
+  color: var(--text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-row[data-mine] {
+    transition: none;
+  }
+  .bubble-sending {
+    animation: none;
+  }
 }
 .reply {
   display: flex;

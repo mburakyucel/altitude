@@ -314,7 +314,7 @@ test("loading, then a failed read with Retry and the cached rows", async ({ page
   });
 });
 
-test("send: the bubble at 60%, the streamed reply, one conversation after the poll; a refused send; a failed reply's Retry", async ({ page, request }, info) => {
+test("send: the pending bubble with its cue, the settled bubble and streamed reply, one conversation after the poll; a refused send; a failed reply's Retry", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -362,18 +362,22 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
 
   mode = "stream";
   const pending = v.convo.locator(".msg-row[data-pending]");
-  await walk.state("03-sending-bubble-at-60", {
+  const row = v.convo.locator(".msg-row").filter({ hasText: text });
+  const cue = row.getByRole("status", { name: "Sending", exact: true });
+  // The held stream is the slow link: the bubble is already in the conversation, muted, with its ring.
+  await walk.state("03-sending-pending-bubble-with-cue", {
     action: () => alert.getByRole("button", { name: "Retry", exact: true }).click(),
-    visible: [pending, v.bubble(text)],
+    visible: [pending, v.bubble(text), cue],
     hidden: [alert],
   });
   await expect(v.field).toHaveValue("");
   await expect(pending).toHaveCSS("opacity", "0.6");
   releaseStream();
-  await walk.state("04-reply-streamed", {
-    visible: [v.convo.locator(".reply", { hasText: "Nothing to do for that." })],
-    hidden: [pending],
+  await walk.state("04-settled-in-place-reply-streamed", {
+    visible: [v.bubble(text), v.convo.locator(".reply", { hasText: "Nothing to do for that." })],
+    hidden: [pending, cue],
   });
+  await expect(row).toHaveCSS("opacity", "1");
   // The poll after the stream carries the server's rows for the turn: still one bubble, one reply.
   await expect(v.bubble(text)).toHaveCount(1);
   await expect(v.convo.locator(".reply", { hasText: "Nothing to do for that." })).toHaveCount(1);

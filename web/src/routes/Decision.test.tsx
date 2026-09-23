@@ -35,7 +35,7 @@ function setup({ archived = false, denied = false, missing = false } = {}) {
     }
     if (path === "/api/l2/message") {
       const body = JSON.parse(String(init?.body));
-      const message = { id: "followup", role: operator, text: body.text, at };
+      const message = { id: body.request_id, role: operator, text: body.text, at };
       task = { ...task, state: "running", handed_back: handed, messages: [...task.messages!, message] };
       return json({ message });
     }
@@ -78,7 +78,7 @@ function setupGroup() {
     if (route === "/api/l2/message") {
       const body = JSON.parse(String(init?.body));
       handedBack = handed;
-      return json({ message: { id: "group-reply", role: operator, text: body.text, at } });
+      return json({ message: { id: body.request_id, role: operator, text: body.text, at } });
     }
     return json({}, 404);
   });

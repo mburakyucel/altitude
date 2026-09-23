@@ -618,8 +618,11 @@ describe("Task on desktop", () => {
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
   });
 
-  it("shows the bubble at once and keeps the stored row once the server accepts it", async () => {
-    const fetchMock = stub(running);
+  it("shows the bubble at once with a sending cue and settles the same bubble in place once the server accepts it", async () => {
+    let accept!: (response: Response) => void;
+    const held = new Promise<Response>((resolve) => { accept = resolve; });
+    let record = running;
+    const fetchMock = stub(running, { message: () => held, task: () => jsonResponse(record) });
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
@@ -628,10 +631,25 @@ describe("Task on desktop", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "prefer the smaller diff", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
-    const row = await screen.findByText("prefer the smaller diff");
-    await waitFor(() => expect(row.closest(".msg-row")).not.toHaveAttribute("data-pending"));
+    const input = JSON.parse(String(call?.[1]?.body));
+    expect(input).toEqual({ project: "altitude", slug: "fix-timer", text: "prefer the smaller diff", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
+    const row = screen.getByText("prefer the smaller diff").closest<HTMLElement>(".msg-row")!;
+    expect(row).toHaveAttribute("data-pending");
+    expect(within(row).getByRole("status", { name: "Sending" })).toBeInTheDocument();
+    expect(within(row).getByText("Sending…")).toBeInTheDocument();
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+
+    const message = { id: input.request_id, at: new Date().toISOString(), role: "burak", text: "prefer the smaller diff", delivery: { state: "queued", at: null, removable: true } };
+    record = { ...running, messages: [...running.messages, message] };
+    await act(async () => accept(jsonResponse({ ok: true, message })));
+    await waitFor(() => expect(row).not.toHaveAttribute("data-pending"));
+    // The stored row settles the pending bubble in place: the same node, one copy, its receipt swapped in.
+    expect(screen.getByText("prefer the smaller diff").closest<HTMLElement>(".msg-row")).toBe(row);
+    expect(screen.getAllByText("prefer the smaller diff")).toHaveLength(1);
+    expect(within(row).queryByRole("status", { name: "Sending" })).toBeNull();
+    expect(within(row).queryByText("Sending…")).toBeNull();
+    expect(within(row).getByText("Queued · waiting for a checkpoint")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Remove" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -1034,8 +1052,9 @@ describe("L2 activity and steering", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.type(field, "Next draft");
     failRead = true;
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
     await act(async () => { accept(jsonResponse({ ok: true, message: {
-      id: "saved-correction", role: running.messages[0]?.role, at: new Date().toISOString(), text: "Saved correction",
+      id: JSON.parse(String(call?.[1]?.body)).request_id, role: running.messages[0]?.role, at: new Date().toISOString(), text: "Saved correction",
       delivery: { state: "queued", at: null },
     } })); });
     await screen.findByText(/Showing saved conversation/);

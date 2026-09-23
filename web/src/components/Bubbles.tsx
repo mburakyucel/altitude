@@ -52,7 +52,7 @@ export function DayDivider({ label }: { label: string }) {
 
 /**
  * One row with its time in the gutter. `mine` right-aligns it (the operator's bubble); `pending` shows
- * it at 60% until the server accepts the message (SPEC.md §3.6 Sending).
+ * it at 60% until the server accepts the message, then it settles in place (SPEC.md §3.6 Sending).
  */
 export function MessageRow({
   at,
@@ -89,11 +89,12 @@ export function MessageRow({
   );
 }
 
-/** The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px). */
+/** The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px); a small ring
+ * beside a pending one is the progress cue until the server acknowledges it. */
 export function Bubble({ text, at, pending = false, receipt, images, children }: { text: string; at?: string | null; pending?: boolean; receipt?: string; images?: ReactNode; children?: ReactNode }) {
   return (
     <MessageRow at={at} mine pending={pending}>
-      <div className="bubble">{text}{images}</div>
+      <div className="bubble">{pending ? <span className="spinner bubble-sending" role="status" aria-label="Sending" /> : null}{text}{images}</div>
       {receipt || children ? <div className="message-delivery text-meta text-muted">
         {receipt ? <span>{receipt}</span> : null}{children}
       </div> : null}
