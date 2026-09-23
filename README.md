@@ -383,9 +383,10 @@ The [model-to-UI flow](docs/ARCHITECTURE.md#from-model-judgment-to-a-task-questi
 explains how owners invoke the CLI, how coordinator transports differ, and where questions,
 previews and decisions persist.
 
-Above the task composer, the latest public L2 words appear in an expandable two-line preview with
-their own timestamp. Recorded activity has a separate age; quiet, missing and unavailable evidence
-are explicit. Older output stays in Live session under existing retention, without duplicate replies
+At the end of the task conversation, fresh public L2 words appear in an expandable two-line preview
+that scrolls with chat. The preview disappears after 60 seconds without fresh public words or recorded
+activity; missing, untimed and unavailable output leaves no box. Live session keeps the separate
+recorded-activity status and older output under existing retention, without duplicate replies
 or model-generated summaries. Stop is directly accessible in both views on phone and desktop.
 Desktop Escape stops only when no input, dialog, recording, menu or overlay owns the key. Stopping
 keeps the draft editable; only confirmed termination enables correction or Continue. Continue keeps

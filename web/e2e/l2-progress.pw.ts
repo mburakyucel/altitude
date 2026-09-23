@@ -4,6 +4,58 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "l2-progress-service.py" });
 
+test("fresh previews expire and scroll with chat without moving an older-message reader", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const { slug } = (await (await request.get("/fixture/status")).json()).tasks[0];
+  const control = async (mode: string, text?: string) => {
+    expect((await request.post("/fixture/control", { data: { slug, mode, text } })).ok()).toBe(true);
+  };
+  await control("history");
+  await page.clock.install();
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  const convo = page.getByRole("region", { name: "Task conversation", exact: true });
+  const preview = convo.getByRole("region", { name: "L2 activity" });
+  const scroller = convo.locator(".convo-scroll");
+  const field = convo.getByRole("textbox", { name: "Message the L2" });
+  await expect(preview).toBeInViewport();
+  await field.fill("Keep this draft while I read.");
+  await walk.state("01-fresh-preview-at-latest", { visible: [preview, field], hidden: [] });
+  await page.clock.fastForward(65_000);
+  await walk.state("02-no-update-expires-without-new-record", { visible: [field], hidden: [preview] });
+  await page.clock.setSystemTime(new Date());
+  await control("output", "A fresh pagination update.");
+  await page.clock.runFor(5000);
+  await expect(preview.getByText("A fresh pagination update.")).toBeInViewport();
+  await scroller.evaluate((node) => { node.scrollTop = 200; });
+  await expect(convo.getByRole("button", { name: "Latest messages" })).toBeVisible();
+  await expect(preview).not.toBeInViewport();
+  const position = await scroller.evaluate((node) => node.scrollTop);
+  const expectReadingPosition = async () => {
+    expect(await scroller.evaluate((node) => node.scrollTop)).toBeCloseTo(position, 0);
+    await expect(field).toHaveValue("Keep this draft while I read.");
+  };
+  await walk.state("03-preview-scrolls-away", { visible: [field, convo.getByRole("button", { name: "Latest messages" })], hidden: [] });
+  await control("quiet", "An old pagination update.");
+  await expect(preview).toHaveCount(0);
+  await expectReadingPosition();
+  await control("tool-output");
+  // Fresh tool output cannot keep old public words on screen.
+  await expect.poll(async () => (await (await request.get(`/api/task/atlas/${slug}`)).json()).activity.observation.label).toBe("Recorded output changed");
+  await page.clock.runFor(2500);
+  await walk.state("04-tool-output-does-not-revive-stale-prose", { visible: [field], hidden: [preview] });
+  await expectReadingPosition();
+  await control("output", "Later output arrives while reading history.");
+  await expect(preview.getByText("Later output arrives while reading history.")).toHaveCount(1);
+  await expect(preview).not.toBeInViewport();
+  await expectReadingPosition();
+  await convo.getByRole("button", { name: "Latest messages" }).click();
+  await expect(preview).toBeInViewport();
+  await walk.state("05-later-update-at-latest", { visible: [preview, field], hidden: [] });
+  await control("empty");
+  await walk.state("06-empty-output-leaves-no-box", { visible: [field], hidden: [preview] });
+  await expect(field).toHaveValue("Keep this draft while I read.");
+});
+
 for (const index of [0, 1]) {
   test(`public activity and stopped-session steering with configured engine ${index + 1}`, async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
@@ -34,11 +86,11 @@ for (const index of [0, 1]) {
     await walk.state("03-new-direction-replaces-preview", { visible: [preview.getByText(next, { exact: true })], hidden: [preview.getByText(/I am checking where pagination/)] });
     expect(await convo.locator('[data-role="l2"]').count()).toBe(1);
     await control("quiet", next);
-    await walk.state("04-quiet-is-not-progress", { visible: [preview.getByText(/No new activity for/)], hidden: [preview.getByText(/^Working · output/)] });
+    await walk.state("04-quiet-removes-preview", { visible: [field, stop], hidden: [preview] });
     await control("unknown-time", next);
-    await walk.state("05-prose-time-unavailable", { visible: [preview.getByText("time unavailable", { exact: true })], hidden: [preview.getByText(/No new activity for/)] });
+    await walk.state("05-untimed-prose-removes-preview", { visible: [field, stop], hidden: [preview] });
     await control("unavailable");
-    await walk.state("06-unavailable-retains-labeled-last-update", { visible: [preview.getByText("Activity unavailable"), preview.getByText(/Last known update ·/), preview.getByRole("button", { name: "Retry activity" })], hidden: [] });
+    await walk.state("06-unavailable-removes-preview", { visible: [field, stop], hidden: [preview] });
     await field.fill("Keep the original page size.");
     await convo.getByRole("button", { name: "Send", exact: true }).click();
     await walk.state("07-steering-is-queued", { visible: [convo.getByText("Queued · waiting for a checkpoint", { exact: true })], hidden: [convo.getByText("Delivered to session", { exact: true })] });
@@ -70,7 +122,7 @@ for (const index of [0, 1]) {
       await expect(field).toHaveValue("");
     } finally { await control("release-resume"); }
     await expect.poll(async () => (await task()).state).toBe("running");
-    await walk.state("12-resumed-awaits-new-output", { visible: [stop, preview.getByText("No public update yet."), convo.getByText("Delivered to session", { exact: true }).first()], hidden: [preview.getByText(next), convo.getByText("Waiting to resume", { exact: true })] });
+    await walk.state("12-resumed-awaits-new-output", { visible: [stop, convo.getByText("Delivered to session", { exact: true }).first()], hidden: [preview, convo.getByText("Waiting to resume", { exact: true })] });
     const resumed = await task();
     expect(resumed.session_id).toBe(before.session_id);
     expect(resumed.attempt).toBe(before.attempt);
@@ -166,7 +218,7 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   await expect(field).toBeVisible();
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: viewport.width, height: 620 });
-  await walk.state("02-short-viewport-folds-public-words", { visible: [preview.getByText(/^Working · output/), stop, field], hidden: [preview.locator(".task-activity-words"), preview.locator(".task-activity-age")] });
+  await walk.state("02-short-viewport-shows-fresh-public-words", { visible: [preview.getByText(/^Working · output/), preview.locator(".task-activity-words"), preview.locator(".task-activity-age"), stop, field], hidden: [] });
   await preview.getByRole("button", { name: "Expand" }).click();
   await walk.state("03-short-viewport-expands-public-words", { visible: [preview.locator(".task-activity-words"), stop], hidden: [] });
   await page.setViewportSize(viewport);
@@ -238,8 +290,7 @@ for (const index of [0, 1]) {
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "muted");
     await expect(liveCue.locator(".dot")).not.toHaveAttribute("data-pulse");
     await toConversation();
-    await walk.state("05-conversation-quiet-matches-live", { visible: [preview.getByText("No new activity for 4 min"), preview.locator("time.activity-time")], hidden: [preview.getByText(/^Working · output/)] });
-    await expect(cueDot).not.toHaveAttribute("data-pulse");
+    await walk.state("05-conversation-quiet-hides-preview", { visible: [convo.getByRole("textbox", { name: "Message the L2" })], hidden: [preview] });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await control("output", "The suite is still running.");
     await walk.state("06-reduced-motion-steady-working-dot", { visible: [preview.getByText(/^Working · output \d+ sec ago$/)], hidden: [preview.getByText(/No new activity/)] });

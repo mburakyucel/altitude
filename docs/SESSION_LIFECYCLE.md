@@ -1040,14 +1040,15 @@ messages and no generic Resume. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
 
-Conversation shows one activity line above its composer, over a replacing two-line preview of the
-current worker's public words. The line reads the recorded output time: output within 60 seconds shows
-"Working · output 12 sec ago" with a softly pulsing dot; no new output for 60 seconds reads "No new
-activity for …" with a still dot, without inferring useful progress or failure. Expand reveals the
-full update after existing redaction. Prose shows its native source time only when identifiable;
-untimed words say time unavailable. Live session shows the same activity line under its footer, and its header dot pulses only while output is recent. Reduced
-motion keeps every dot steady. Unavailable activity never pulses.
-Missing commentary, an empty source and an unavailable source are distinct. Resume clears the old
+Conversation ends with a replacing two-line preview of the current worker's public words inside its
+scrolling column. Both the words' native source time and recorded activity must be less than 60 seconds
+old; stale, missing, untimed or unavailable output leaves no box. New tool output cannot revive stale
+prose. Updates and expiry preserve an older-message reader's position. Expand reveals the full update
+after existing redaction. The activity line reads "Working · output 12 sec ago" with a softly pulsing
+dot. Live session keeps the recorded-activity line under its footer, including "No new activity for …"
+after 60 seconds, and its header dot pulses only while output is recent. Reduced motion keeps every
+dot steady. Unavailable activity never pulses and remains explicit in Live session.
+Resume clears the old
 direction until the new worker emits public output. Questions, decisions and explicit results stay
 durable in Conversation; older worker output remains only in Live session under existing retention.
 No summarizer or duplicate reply is generated. View changes preserve the draft and selection;

@@ -1532,10 +1532,11 @@ prose under day dividers, the question component at its recorded message anchor,
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with
-"L3 has been told". One replacing two-line public update sits above the composer, expands on
-request, and separates prose age from
-recorded activity. After 60 seconds without observed output it says no new activity; unavailable or
-untimed evidence never becomes apparent progress. Stop is one click beside the composer and in
+"L3 has been told". One replacing two-line public update sits at the end of the conversation's
+scrolling column and expands on request. It appears only while both its public words and recorded
+activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
+Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
+reader's position. Stop is one click beside the composer and in
 Live session at both viewports. It remains Stopping until termination is evidenced; failed or unknown
 termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
 Continue preserves the unsent draft; sending a correction explicitly resumes the saved session.
@@ -1560,8 +1561,9 @@ read-only with the composer and activity preview gone. View switches preserve dr
 The read-only activity projection uses only the selected worker generation, existing redaction and
 public output. Provider parsing stays in the engine seam; no summarizer, extra model instructions,
 new archive or copied conversation replies supply the preview. Conversation and Live session derive one
-activity cue from its recorded output time: a pulsing dot within 60 seconds of output, a still dot and
-"No new activity for …" after that, and no pulse when activity is unavailable or the task is not running.
+activity cue from its recorded output time: a pulsing dot within 60 seconds of output. Live session
+keeps a still dot and "No new activity for …" after that, and no pulse when activity is unavailable
+or the task is not running; Conversation hides the preview instead.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks

@@ -108,6 +108,14 @@ def main():
                 denied = True
             elif mode == "allow":
                 denied = False
+            elif mode == "history":
+                for index in range(30):
+                    T.message(project, row["slug"], "l2", f"Pagination check {index + 1}: the saved page and retry behavior remain readable in the conversation.")
+            elif mode == "empty":
+                path.write_text("")
+            elif mode == "tool-output":
+                with path.open("a") as stream:
+                    stream.write(json.dumps({"fixture_tool": "Checking pagination", "at": S.now()}) + "\n")
             elif mode in ("output", "unknown-time", "quiet"):
                 stamp = datetime.now(timezone.utc) - timedelta(minutes=5) if mode == "quiet" else datetime.now(timezone.utc)
                 with path.open("a") as stream:

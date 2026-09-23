@@ -783,7 +783,7 @@ describe("L2 activity and steering", () => {
   };
   const steering = { state: "running", stop_id: null as string | null, generation: "worker-1", error: null };
   const active = { ...running, steering, activity };
-  it.each([390, 1440])("replaces public words without adding replies, marks stale and missing evidence at %i", async (width) => {
+  it.each([390, 1440])("replaces fresh public words without adding replies and hides stale or missing evidence at %i", async (width) => {
     setViewport(width);
     stub(active);
     const { queryClient, user } = renderApp({ route });
@@ -793,21 +793,28 @@ describe("L2 activity and steering", () => {
     const replies = document.querySelectorAll('[data-role="l2"]').length;
     await user.click(within(preview).getByRole("button", { name: "Expand" }));
     expect(preview).toHaveAttribute("data-expanded");
-    const next = { ...activity, commentary: { ...activity.commentary, id: "words-2", text: "Now checking the message race.", at: null, time_kind: "unknown" }, observation: { ...activity.observation, at: ago(5) } };
+    const next = { ...activity, commentary: { ...activity.commentary, id: "words-2", text: "Now checking the message race." } };
     await update({ ...active, activity: next });
     expect(within(preview).queryByText(activity.commentary.text)).toBeNull();
     expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
-    expect(within(preview).getByText("time unavailable")).toBeInTheDocument();
-    expect(within(preview).getByText(/No new activity for [45] min/)).toBeInTheDocument();
     expect(document.querySelectorAll('[data-role="l2"]').length).toBe(replies);
-    await update({ ...active, activity: { ...next, state: "unavailable", commentary: null, observation: null } });
-    expect(within(preview).getByText("Activity unavailable")).toBeInTheDocument();
-    expect(within(preview).getByText(/Last known update ·/)).toBeInTheDocument();
-    expect(within(preview).getByRole("button", { name: "Retry activity" })).toBeInTheDocument();
-    expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
-    await update({ ...active, activity: { ...activity, generation: "worker-2", state: "empty", commentary: null, observation: null } });
-    expect(within(preview).getByText("No public update yet.")).toBeInTheDocument();
-    expect(within(preview).queryByText("Now checking the message race.")).toBeNull();
+    for (const hidden of [
+      undefined,
+      { ...next, observation: { ...next.observation, at: ago(5) } },
+      { ...next, commentary: { ...next.commentary, at: ago(5) } },
+      { ...next, commentary: { ...next.commentary, at: null, time_kind: "unknown" } },
+      { ...next, commentary: { ...next.commentary, text: " " } },
+      { ...next, state: "unavailable" },
+      { ...next, observation: null },
+      { ...next, generation: "worker-2", state: "empty", commentary: null, observation: null },
+    ]) {
+      await update({ ...active, activity: hidden });
+      expect(screen.queryByRole("region", { name: "L2 activity" })).toBeNull();
+    }
+    await update({ ...active, activity: { ...next, generation: "worker-2" } });
+    const resumed = screen.getByRole("region", { name: "L2 activity" });
+    expect(within(resumed).getByText(next.commentary.text)).toBeInTheDocument();
+    expect(within(resumed).getByRole("button", { name: "Expand" })).toBeInTheDocument();
   });
 
   it.each([390, 1440])("preserves draft/selection through views and Stop, then sends an explicit correction at %i", async (width) => {
