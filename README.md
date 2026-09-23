@@ -52,11 +52,12 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
-Concurrent `alt land --merge` calls in one repository wait their turn through validation and merge.
-Each turn incorporates current main and validates a fresh candidate. Waiting is visible and bounded
-to one hour; failure or process exit releases the turn. Owners keep the command running without
-asking L3 for a landing window. Conflicts, external ref changes, failed checks and holds still stop
-delivery. See [landing contention](docs/CLI.md#concurrent-landings).
+Concurrent `alt land` calls in one repository that merge or run its required candidate check wait
+their turn through validation and merge, so one landing suite runs on the machine at a time. Each
+turn incorporates current main and validates a fresh candidate. Waiting is visible with its
+duration and bounded to one hour; failure or process exit releases the turn. Owners keep the
+command running without asking L3 for a landing window. Conflicts, external ref changes, failed
+checks and holds still stop delivery. See [landing contention](docs/CLI.md#concurrent-landings).
 
 This repository temporarily uses verified local `make check` runs for PR delivery under the
 operator's 2026-09-09 Pacific decision. Landing tests the current merge candidate, retains its

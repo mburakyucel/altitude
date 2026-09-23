@@ -44,6 +44,8 @@ def run_owner(project, slug, worktree, fixture, output, options):
             stream.write(message + '\n')
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
+    if options.pop('required_check', False):
+        land.config.LOCAL_CHECK_REPOSITORY = 'team/demo'
     invoke = land.land.__wrapped__ if options.pop('without_lock', False) else land.land
     try:
         result = invoke('Independent fix ' + slug, cwd=worktree, wait=0,
@@ -84,9 +86,19 @@ if args[:2] == ['api', 'graphql'] and read('hosted-barrier') is not None:
             fail('fixture hosted barrier timed out')
         time.sleep(.01)
 cmd = tuple(args[:2])'''))
-        runner = self.tmp / 'bin/fixture-candidate-check'
-        runner.write_text(RUNNER)
-        runner.chmod(0o755)
+        for name in ('fixture-candidate-check', 'make'):
+            runner = self.tmp / 'bin' / name
+            runner.write_text(RUNNER)
+            runner.chmod(0o755)
+        install = self.tmp / 'bin/pnpm'
+        install.write_text('#!/bin/sh\necho fixture frozen install\n')
+        install.chmod(0o755)
+        # The local-check policy installs the candidate's web dependencies before `make check`.
+        (self.repo / 'web').mkdir()
+        (self.repo / 'web/package.json').write_text('{}\n')
+        git('add', 'web/package.json', cwd=self.repo)
+        git('commit', '-q', '-m', 'web placeholder', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
         self.owners = {}
         self.processes = []
         self.addCleanup(self.stop_processes)
@@ -107,7 +119,7 @@ cmd = tuple(args[:2])'''))
         (fixture / 'pr.json').write_text(json.dumps({
             'number': number, 'state': 'OPEN', 'url': f'https://example.invalid/pr/{number}',
             'headRefName': 'worktree-' + slug, 'baseRefName': 'main',
-            'isCrossRepository': False, 'isDraft': False,
+            'isCrossRepository': False, 'isDraft': False, 'body': 'Independent fix ' + slug,
         }))
         self.owners[slug] = (worktree, fixture)
 
@@ -370,6 +382,29 @@ cmd = tuple(args[:2])'''))
         self.merged('first', self.finish(first))
         self.assertIn('task is not running', self.finish(second)['error'])
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+
+    def test_required_checks_started_together_run_one_after_the_other(self):
+        # I-20260923-062538: two candidate `make check` runs on one machine timed out each other's walkthroughs.
+        first = self.start('first', merge=False, required_check=True)
+        self.checked('first')
+        second = self.start('second', merge=False, required_check=True)
+        self.waiting(second)
+        self.assertFalse((self.owners['second'][1] / 'tested.json').exists())
+        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.release('first')
+        first_result = self.finish(first)['result']
+        self.assertEqual((first_result['checks'], first_result['merged'], first_result['waited']), ('local-pass', False, 0))
+        self.checked('second')
+        self.release('second')
+        result = self.finish(second)['result']
+        self.assertEqual((result['checks'], result['merged']), ('local-pass', False))
+        self.assertGreaterEqual(result['waited'], 0)
+        for slug, number in (('first', 101), ('second', 102)):
+            tested = json.loads((self.owners[slug][1] / 'tested.json').read_text())
+            evidence = S.task_dir(self.project, slug) / 'local-checks' / tested['candidate'] / 'result.json'
+            self.assertEqual(json.loads(evidence.read_text())['tree'], tested['tree'])
+            self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
+        self.assertIn('landing turn acquired after', (second[1] / 'notes').read_text())
 
     def test_nonmerge_publication_does_not_wait_for_another_candidate(self):
         first = self.start('first')

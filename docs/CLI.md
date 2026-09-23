@@ -1011,11 +1011,16 @@ resolution remains an operation of the running or blocked owning L2.
 
 ### Concurrent landings
 
-`alt land --merge` waits for other merging invocations in the same repository before fetching,
-publishing or testing. It prints when waiting and when its turn starts. Keep the command and owner
-session alive; ordinary contention needs no L3 landing-window request. Admission waits at most
-3600 seconds, independently of `--wait`, which still bounds hosted-check polling. A timeout
-refuses without selecting a candidate or publishing changes; retry explicitly when ready.
+`alt land` takes the repository turn when it merges or when the repository's local-check policy
+runs `make check` on the candidate, with or without `--merge`. It waits for the other holder before
+fetching, publishing or testing, prints when waiting and when its turn starts with the seconds
+waited, and returns them as `waited` (zero when no wait occurred). One required suite runs on the
+machine at a time, so sibling candidates cannot time out each other's browser walkthroughs by load
+(I-20260923-062538).
+Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
+Admission waits at most 3600 seconds, independently of `--wait`, which still bounds hosted-check
+polling. A timeout refuses without selecting a candidate or publishing changes; retry explicitly
+when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
@@ -1024,8 +1029,10 @@ not stashed. Required checks, review and original approval sources still govern 
 Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
-The turn is a process-owned repository lock, not a durable or FIFO queue. Nonmerging preparation,
-dry runs and other repositories do not wait for it. External writers and older landing versions
+The turn is a process-owned repository lock, not a durable or FIFO queue. Nonmerging preparation
+under hosted checks, dry runs and other repositories do not wait for it. The containerized
+self-hosted runner and a `make check` run by hand outside `alt land` do not share it; a hand run
+without `CI` set uses two browser workers. External writers and older landing versions
 can still change refs: stale base/head evidence refuses merge and is never reused or retried
 automatically. Only invocations using this installed version share serialization.
 

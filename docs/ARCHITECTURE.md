@@ -454,16 +454,19 @@ owned by other active tasks. Protected branches require the guarded landing path
 fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for operator review.
-Merging invocations hold a separate `flock` on `altitude-land.lock` in the repository's common
-Git directory, from before ownership reads and fetch through checks and merge. All its worktrees
-share the lock; task-state locks remain short, so messages and Stop stay available. Admission waits
-at most one hour and refreshes ownership and holds before publication. Current main is merged into
-the task branch before pushing when needed, preserving adopted ancestry and triggering fresh head
-checks. A conflicting integration is aborted with local work retained for owner reconciliation.
+Invocations that merge or run the repository's required candidate suite hold a separate `flock`
+on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
+fetch through checks and merge. All its worktrees share the lock, so one landing `make check`
+runs on the machine at a time and sibling candidates cannot fail each other by load; task-state
+locks remain short, so messages and Stop stay available. Admission waits at most one hour, reports
+the seconds waited, and refreshes ownership and holds before publication. Current main is merged
+into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
+head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Nonmerging preparation and dry runs do not take
-the turn; other repositories remain independent. External Git/GitHub writers and older installed
-landing code do not participate, so exact base/head refusals remain necessary.
+There is no persistent queue or FIFO guarantee. Nonmerging preparation under hosted checks and
+dry runs do not take the turn; other repositories remain independent. External Git/GitHub writers,
+older installed landing code, the containerized self-hosted runner and hand-run suites do not
+participate, so exact base/head refusals remain necessary.
 The temporary local-check repository in `config.py` selects this project's operator-authorized
 exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
