@@ -163,14 +163,17 @@ class TestParallelChecks(AltitudeCase):
         (bindir / "node").chmod(0o755)
         for command in ("python3", "pnpm"):
             path = bindir / command
+            # The handler is installed before `.started` appears: under sibling load the interrupt arrived in
+            # the gap between touching the marker and entering a try block, losing one green candidate.
             path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f'''
-                import pathlib, time
+                import pathlib, signal, sys, time
                 root = pathlib.Path({str(self.tmp)!r})
-                (root / "{command}.started").touch()
-                try:
-                    time.sleep(30)
-                except KeyboardInterrupt:
+                def stopped(*_):
                     (root / "{command}.stopped").touch()
+                    sys.exit(130)
+                signal.signal(signal.SIGINT, stopped)
+                (root / "{command}.started").touch()
+                time.sleep(30)
             '''))
             path.chmod(0o755)
         process = subprocess.Popen(
