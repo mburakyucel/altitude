@@ -75,7 +75,7 @@ Saved task-worktree overrides are checked too. Routine guard repair also runs be
 operator explicitly chooses supported integration.
 
 **Retry** repeats the supported programmatic operation. L3 receives configuration faults and can
-investigate or request repair through `alt project setup <name> --repair --reason "…"` even when
+investigate or request repair through `alt project setup <name> --repair --reason '…'` even when
 no task can start. **Discuss with L3** opens the existing conversation; it sends no message and
 starts no extra repair agent. Source fixes follow the ordinary task and PR path. Programmatic
 checks verify every repair before the checklist reports completion.
@@ -182,7 +182,7 @@ queued task
 The flags are mutually exclusive; a named dependency belongs to the same project and releases
 the wait only when archived done, including if already satisfied at creation. A PR merge alone,
 rejection, failure or missing dependency does not release it. Planned tasks create no worker or
-worktree and consume no WIP slot. L3 or the operator can use `alt task release <slug> --reason "…"`
+worktree and consume no WIP slot. L3 or the operator can use `alt task release <slug> --reason '…'`
 to release either wait explicitly, including an early named-dependency override with a recorded
 reason. The task then passes the ordinary dispatch gates; release leaves merge holds intact.
 Work and task conversations show **Planned · waits for …**, and the state digest retains the reason.
@@ -233,7 +233,7 @@ source preparation is a separate operator action from archive installation and c
 Verification retains the live PID, invocation and main-start timestamp across unit reloads,
 independently of resettable command-history metadata; actual identity changes still refuse success.
 
-L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
+L3 or the operator can request `alt task preserve-checkout <slug> --reason '…'` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
 unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records
 `checkout_archive` and a `checkout-preserved` event with its branch and immutable snapshot SHA
@@ -249,8 +249,8 @@ reviews the changes and delivers a PR. See [the recovery procedure](CLI.md#dirty
 
 Stored project WIP overrides impose no limit, and project registration and settings expose no cap.
 The operator sets the machine cap with
-`alt machine set --wip N --reason "…"` or resets it to 80 with
-`alt machine set --unset-wip --reason "…"`. Any positive integer is supported for the machine,
+`alt machine set --wip N --reason '…'` or resets it to 80 with
+`alt machine set --unset-wip --reason '…'`. Any positive integer is supported for the machine,
 including values above 80. The daemon settings implementation stores machine overrides and
 receipts persistently and drains them before project ticks. Machine changes and project add/remove
 are operator-only; an L2 cannot change scheduling limits. `alt machine show` displays active/default
@@ -270,7 +270,7 @@ base; unrelated errors or a failed repeat retain their existing failure paths. R
 fetch, and this operation does not retry faulted tasks or request a service restart.
 
 L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them with
-`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`; commas tie
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`; commas tie
 options, and `>` starts a lower-priority tier. The operator and project's L3 can change or unset this
 operational setting; altd applies it on the next tick and records the reason without a restart.
 The default ties Codex's default model and Claude Fable, with Opus as a lower-tier fallback;
@@ -541,9 +541,10 @@ resume. Operator discussion retains its ordinary wake behavior. Explicit resume 
 workerless `main-unpushed` task independently of deployment recovery. Fresh dispatch validates its
 fetched base and isolated worktree; a restart does not repair deployment edits.
 
-For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason "…"`.
+For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason '…'`.
 The task-local record survives daemon restart and exposes the due probe or coordinator delivery in
-task status. One selected same-project rerun is permitted when relevant fresh CI is unavailable;
+task status. For a fault-blocked task, one selected same-project rerun is permitted when relevant fresh
+CI is unavailable; a question-blocked owner waiting on a queued or running check gets observation only;
 submission intent precedes IO, and uncertain writes are reconciled through run attempts without
 resubmission. Reads, polling and coordinator handling are finite. The queue row and turn identity
 remain durable until successful terminal chat evidence or visible exhausted delivery. Provider
@@ -747,7 +748,7 @@ The shared CLI test fixture likewise supplies explicit empty input; the same ope
 checks issue-close CLI/API validation without changing the production command's input handling.
 
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
-then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
+then uses [`alt land --adopt-pr N --expected-head SHA --reason '…'`](CLI.md#adopt-an-existing-pr).
 Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
 After a verified history-preserving merge on main, the same task can explicitly select its next
 assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
@@ -820,7 +821,7 @@ describe retained worker termination; absent or collected units, unsupported fie
 stay unknown. Signal 9, exit 137, memory snapshots and cumulative OOM counters do not establish a
 historical kill or cleared pressure. No host consumers or collected history are reconstructed, and
 the read changes neither worker retention nor L3's verified-resume responsibility.
-`alt issue upstream --title "…" -` uses that same broker/MCP boundary on either engine, with a
+`alt issue upstream --title '…' -` uses that same broker/MCP boundary on either engine, with a
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
 an issue URL or an actionable failure; the successful receipt stays in the calling project's log.

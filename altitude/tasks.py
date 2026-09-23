@@ -291,12 +291,15 @@ def ci_recheck_identity(task: dict) -> dict:
 
 
 def ci_recheck_current(task: dict, record: dict) -> bool:
-    return (task.get("state") == "blocked" and bool(task.get("fault"))
-            and record.get("identity") == ci_recheck_identity(task))
+    return task.get("state") == "blocked" and record.get("identity") == ci_recheck_identity(task)
 
 
 def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor: str) -> dict:
-    """The stalled CI recovery owner (2026-09-09): one finite coordinator probe, never a resume."""
+    """One finite coordinator probe of a blocked owner's CI run, never a resume.
+
+    A fault-blocked owner (2026-09-09 stalled recovery) may get one rerun of an old failed run; a question-blocked
+    owner waiting on a queued or running check (#420) only observes it until it is terminal.
+    """
     if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not str(reason or "").strip():
         raise TransitionError("CI recheck requires L3 or the operator and a reason")
     try:
@@ -314,8 +317,8 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
             identity, int(run), due.isoformat(), reason.strip())
         if same:
             return previous
-        if task["state"] != "blocked" or not task.get("fault"):
-            raise TransitionError("CI recheck requires an existing fault-blocked task")
+        if task["state"] != "blocked":
+            raise TransitionError("CI recheck requires a blocked task")
         if (task.get("resume_after") or task.get("resume_claim") or task.get("dispatching")
                 or (task.get("daemon_request") or {}).get("status") in ("pending", "executing")):
             raise TransitionError("CI recheck cannot target a pending task lifecycle change")
@@ -326,7 +329,8 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
             raise TransitionError("CI recheck time must be within the next seven days")
         record = {"id": uuid.uuid4().hex, "actor": actor, "requested_at": S.now(), "identity": identity,
                   "run": int(run), "at": due.isoformat(), "due_at": due.isoformat(), "reason": reason.strip(),
-                  "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat()}
+                  "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat(),
+                  "wait": not task.get("fault")}
         task["ci_recheck"] = record
         S.save_task(project, task)
         S.append_event(project, slug, "ci-recheck", request_id=record["id"], by=actor,

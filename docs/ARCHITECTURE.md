@@ -86,7 +86,7 @@ Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI afte
 state and worker/session identity, refuses a stale target, and treats a retry of the same completed
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
-`alt task handoff <slug> --engine <engine> --attempt <N> --reason "…"` uses this same coordinator
+`alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for an exited owner blocked by worker death or a recognized usage
 limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
 and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
@@ -362,7 +362,7 @@ Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is o
 `after` optionally names one existing task in this project. `alt task new --wait` or `--after`
 creates the existing task record and written brief without a worker, worktree or WIP slot.
 Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
-the wait with `alt task release <slug> --reason "…"`. An already archived-done dependency is satisfied at
+the wait with `alt task release <slug> --reason '…'`. An already archived-done dependency is satisfied at
 creation; a merged PR alone, rejection, failure or a missing dependency does not release it.
 Explicit release can override a named dependency early and records its reason. Messages remain
 in the task inbox for launch and do not release it or replace the original brief's source authority.
@@ -395,7 +395,7 @@ Stored project `wip` overrides impose no limit, and project registration and set
 Resume readiness probes the existing setup lock without waiting; setup contention in one project
 does not hold fresh work in another project, regardless of their daemon tick order.
 
-`alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the settings request
+`alt machine set --wip N --reason '…'` and `--unset-wip --reason '…'` use the settings request
 and receipt implementation, with operator-only authority and a positive integer machine cap;
 80 is a default, not a fixed ceiling. The machine override lives in `$ALTITUDE_HOME/settings.json`;
 its `wip-request.json` and `events.jsonl` live alongside it. The machine event kind is `machine-set`.
@@ -411,8 +411,8 @@ machine override and restores its default. `alt machine show` inspects the activ
 override and request receipt; see [inspect/set/reset examples](CLI.md#concurrency-limits).
 
 Auto preference tiers use the same reason-bearing operational path:
-`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`, or
-`--unset-routing --reason "…"` to restore defaults. The operator and that project's L3 can change
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`, or
+`--unset-routing --reason '…'` to restore defaults. The operator and that project's L3 can change
 them without a PR, restart or free task slot. Altd applies the request on its next tick and records
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. [CLI examples](CLI.md#automatic-routing-preferences) cover
@@ -549,7 +549,7 @@ follow-ups. Task archival alone does not close issues. Partial scope, design-onl
 operator acceptance and unrelated mentions do not warrant closing keywords or `--closes-issue`;
 L3 records remaining scope on the open issue. Holds still gate merge.
 
-For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
+For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason '…'`
 records the active immutable receipt in `adopted_pr` and a `pr-adopted` event under the project lock.
 The current owner or operator can adopt; another active task cannot own that PR or branch.
 Adoption requires the registered isolated worktree, a same-repository open PR targeting main,
@@ -641,7 +641,7 @@ The automatic-GC fixture creates its two packs with `repack -a`, which owns its 
 the regression also runs with an open caller stdin and captured output as in local landing,
 alongside real issue-close CLI/API validation. The shared CLI fixture supplies explicit empty input.
 
-Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
+Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason '…'`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the
 publication and project locks, altd requires dirty main exactly at fetched `origin/main`, then
 copies the index for capture without changing main. A local `archive/checkout-<request-id>` branch
@@ -721,7 +721,7 @@ Git log/diff/show reads include full patches and historical files, disable exter
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
-`alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
+`alt issue new --title '…' [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
 `alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
 or verified completion of an authorized delivery missing its closing link. L2 supplies the issue,
 merged PR and complete-scope evidence through its reply and report follow-ups; L3 verifies and closes
@@ -809,14 +809,15 @@ Coordinator messages to faulted tasks use the existing non-waking inbox marker; 
 conversation and reach the worker on a later supported resume. Operator discussion still uses its
 ordinary wake path. The original attempt, provider session, launch model, worktree and merge holds
 remain under the existing dispatch and landing rules.
-`alt task recheck-ci` registers one finite CI probe on an existing fault-blocked task through the
+`alt task recheck-ci` registers one finite CI probe on a blocked task through the
 same project-bound coordinator transport. The task's `ci_recheck` record binds its block, attempt,
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
-the latest twenty runs. Otherwise it submits one rerun of the selected project-origin run after
-persisting its baseline attempt and submission intent. Restart and uncertain submission reconcile
+the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
+project-origin run after persisting its baseline attempt and submission intent; a probe on a task
+blocked on a question (`wait`) only observes the run until it is terminal. Restart and uncertain submission reconcile
 attempt metadata without repeating the write. Reads stop after three failures, twenty-four rounds
 or two hours after the due time. Fresh nonexpired, nonempty artifacts created during the observed
 execution and at or after the scheduled check time establish an upload; step conclusions alone do not. Old-run reruns
