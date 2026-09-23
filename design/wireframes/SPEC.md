@@ -9,6 +9,9 @@ The operator approved answer-in-place question responses on 2026-09-14 Pacific: 
 a small text field, plain questions show the field directly, and preset/custom responses share
 one conversational handoff. Question fields omit microphones; ordinary chat retains voice input.
 
+The operator approved the compact task header and phone swipes (§3.10) on 2026-09-23: uniform
+header actions, a title dropdown for details, and conditional floating question/latest jumps.
+
 The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
 
@@ -200,7 +203,7 @@ The conversation scrolls inside the fixed shell, shrinks above the keyboard, and
 row while the operator is at the bottom; scrolling up leaves the reading position in place.
 Keyboard transitions, draft growth and streaming preserve bottom-follow or, when reading older
 messages, the same visible message and offset. Sending resumes following. Opening details keeps
-the reading position; the **Your turn** pill deliberately returns to the open question at the end.
+the reading position; the question jump deliberately returns to the open question at the end.
 
 Shared prose links apply to L3/L2 conversations, live session prose, folded/expanded system replies,
 decision questions, recommendations and follow-ups, and report notes, digest and prose fields.
@@ -599,18 +602,17 @@ Opening from Needs you or Work pushes one task entry and retains the origin tab.
 history entry and falls back to the project for a direct link. Conversation/Live session switches
 replace that entry and preserve the same-task draft. Leaving the task clears its draft; a late send
 stays bound to its original task. A new reply does not pull the reader away from the question:
-**Latest messages** follows the bottom, and the **Your turn · N questions ↓** pill returns to an
-offscreen open question.
+**Latest ↓** follows the bottom, and the **N questions ↓** button returns to an offscreen open
+question. These conditional buttons float above the composer (§3.10).
 Pending-question reads poll every two seconds. Stale navigation refreshes before acceptance, and
 every write names its exact question revision. Archived tasks retain history without a composer.
 
 #### 3.9.1 Pending design preview
 
 A question with saved design content has a **View preview · vN** link in Needs you and its owning
-task conversation. When the open question is offscreen, the conversation's jump row
-also exposes its preview, including on direct chat entry at the latest messages and after partial
-answers. Question navigation follows an open group member with an attachment before another open
-member. Work's task row opens the exact owning question.
+question. When the open question is offscreen, use its floating question jump, then View preview.
+Question navigation follows an open group member with an attachment before another open member,
+including after partial answers. Work's task row opens the exact owning question.
 Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
 in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
 The page shows the captured title (identifying proposal or implementation review) and version,
@@ -635,9 +637,8 @@ decision states are reused; the viewer has no microphone, composer or empty publ
 
 ### 3.10 Task page
 
-The [L2 activity and steering agreement](l2-progress/PROPOSAL.md), with its
-[maintained task states](TaskStates.html), is approved for #302 on 2026-09-09.
-Its directly accessible Stop supersedes hiding Stop in the mobile header disclosure.
+The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
+directly accessible in the compact header, with one consistent button treatment.
 
 Task details includes **Observed tokens** on phone and desktop,
 also present in the report view. The folded token row shows the cumulative observed total (unknown when
@@ -667,7 +668,11 @@ scroll within task details at both viewports. `web/e2e/task-usage.pw.ts` walks t
 
 Desktop anatomy: one row with crumb, wrapping 18px title/state dot and direct actions, then a
 wrapping chip row (state, engine and model, PR with checks state, Merge held when applicable).
-Header vertical padding is 8px; controls keep their existing sizes. Left is the operator's conversation with
+Header vertical padding is 8px. Task-header commands, live-toolbar commands and floating jumps
+share a visible border, subtle fill, corner radius and typography, with at least 44px touch targets.
+Stop, Continue and Check status share one 104px-wide header button; its position and treatment stay
+fixed across state changes. Tabs retain an active underline to identify navigation.
+Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
 the header button). Task details contains the muted line "attempt 1 · started 32 min ago · 18% of its context used"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
@@ -676,10 +681,10 @@ and check states, in danger tone when main checks failed. It links to the PR whe
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
 `web/e2e/header-density.pw.ts` measures long-title reading space at 1440×900, 1366×768 and
-1024×768, plus the unchanged 390×844 phone layout. Details, navigation, scrolling and draft
+1024×768, plus the 390×844 phone layout. Details, navigation, scrolling and draft
 restoration remain covered alongside the task state and composer walkthroughs.
 
-**Stop** is directly accessible beside the composer and in Live session, on phone and desktop.
+**Stop** is directly accessible in the task header on phone and desktop, serving both views.
 One click requests termination immediately. **Reject** is in phone task details and the desktop header,
 with inline confirmation:
 "Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
@@ -688,7 +693,7 @@ An operationally blocked task without an open question also offers **Resume**, u
 daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
 A failed request leaves Resume available and places its error on a separate line under the actions,
 including on the phone. Resuming an operational pause records no decision. A confirmed Stop instead
-offers **Continue session** in the same place as Stop. It resumes without sending the unsent draft.
+offers **Continue** in the same place as Stop. It resumes without sending the unsent draft.
 Sending a correction from this stopped view appends it after earlier held messages and resumes the
 same saved session. A stale running view can only queue a message. Both continuation actions preserve
 existing file edits, the session, attempt and model; capacity waits say **Waiting to resume**.
@@ -710,26 +715,35 @@ motion), with **Expand** on the right. The current worker's public text appears 
 redaction, clamped to two lines, with its source time in the §3.4 format, including on short viewports.
 **Expand** reveals it; **Collapse** folds it. Each newer update replaces the preview without
 duplicating Conversation. Activity never proves useful progress. Generation changes clear previous
-words. Live session retains quiet, missing, untimed and unavailable activity status. **View live
-session** opens older output under existing retention. Questions, decisions and results stay durable;
+words. Live session retains quiet, missing, untimed and unavailable activity status. Phone tabs and
+the desktop panel toggle open older output under existing retention; Activity & evidence also keeps
+its contextual live link. Conversation has no separate live-session/action row above the composer.
+Questions, decisions and results stay durable;
 there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
 
 Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
-too. Phone anatomy: one 54px header with Back, title, concise L2 state and independent **Merge held**
-status; a two-tab row **Conversation | Live session** (the `live` route selects the second); content;
-scrolling fresh activity, Stop and the shared compact composer on Conversation. Live session has the same
-Stop/Continue controls. The title and details button open a scrollable sheet
+too. Its header carries Stop/Continue/Check status while the scrim blocks the task header.
+Phone anatomy: one compact header with Back, a bordered title dropdown with down-chevron,
+Stop/Continue/Check status, concise L2 state and independent **Merge held** status; a full-width
+two-tab row **Conversation | Live session** (the `live` route selects the second); content;
+scrolling fresh activity and the shared compact composer on Conversation. The header action remains
+visible in either view and while typing. The title dropdown opens a scrollable sheet
 with full title, attempt/context/tokens, PR/checks, complete block/hold reasons, and existing
-Reject confirmation and operational Resume. Desktop retains its direct operational actions and
+View question, Reject confirmation and operational Resume. A long phone title opens in full in
+details. Desktop retains its direct operational actions and
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
 selection and reading position. A failure remains visible, not only inside details.
 
 Compact task states use the §3.5 labels (**L2 working**, **Waits for L3**, **Your turn · …**,
 **L2 replying to you**, **Paused · fault**, **Paused**, **Stopped by you**); **Merge held** can
 accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
-An operator question sits at the end of the chat with its pill and Latest messages when applicable,
-and no generic Resume while the question is open. A held review-ready PR whose owner has stopped
+An operator question sits at the end of the chat with no generic Resume while the question is open.
+When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears
+when newer messages are below the reader. If both lead to the bottom, show only the question jump.
+Each hides when its destination is visible. These labeled, keyboard-accessible 44px buttons occupy
+the conversation's lower corner without reducing its viewport. View preview stays in the question
+and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N at <head>." and the L2 merges
 with it after a final check of that same head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
@@ -739,17 +753,26 @@ current head, a later park on another dependency shows that wait with "PR #N app
 head, a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
-Navigation states: Conversation and Live session are local views of the same task. Phone tab
-switches replace its current history entry, keep the originating shell tab, and update the URL;
+Navigation states: Conversation and Live session are local views of the same task. A deliberate
+phone swipe left opens Live session; right returns to Conversation, with no wrapping past either end.
+Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
+controls, and leave browser-edge Back, text selection, recording, dialogs and horizontally scrollable
+session content alone. Vertical scrolling stays native. Desktop keeps simultaneous panes.
+Phone tab and swipe switches replace its current history entry, keep the originating shell tab, and update the URL;
 the desktop panel button adds no history. A `/live` deep link and reload select Live session on
 phone and open the desktop panel. Back in the phone header and the desktop crumb both return to
 the actual preceding in-app page, including its query string. With no in-app predecessor they
 replace the task entry with the owning project's L3 conversation. Browser/system Back remains
 native; Forward restores the task's latest URL, and other pages/tasks keep ordinary history.
-On phone, Live session removes the conversation and composer; their draft and selection remain
-when returning. A refused or uncertain send arriving while Live session is open restores its text
-alongside newer draft edits; an accepted send remains sent. Conversation removes the live
-panel. On desktop, closing the panel leaves the conversation visible. Navigation itself has no
+On phone, the inactive view is hidden. Draft text, selection, images, conversation reading position
+and live transcript reading state survive switches. Returning does not open the keyboard automatically;
+touch fields retain their 16px sizing and ordinary use never changes page scale (§2.2).
+Switching to Live session cancels unsent dictation and releases the microphone. Explicit voice Send
+continues transcription and submission for its original task while hidden, without refocusing its
+composer; Escape in Live session does not cancel that submitted message.
+A refused or uncertain send arriving while Live session is open restores its text
+alongside newer draft edits; an accepted send remains sent. On desktop, closing the panel leaves
+the conversation visible. Navigation itself has no
 loading, listening, denied or error state; destination reads and composers retain their states
 specified here and in §3.6. `web/e2e/task-navigation.pw.ts` walks entry from L3 and Work, repeated
 toggles, reload, Back, Forward and direct-live fallback on phone and desktop.
@@ -786,7 +809,9 @@ worker runs; "running…" when the call is untimed), "error", or "no output"; wr
 carry no diff counts. **Raw events** toggles the transcript to the raw list; its hover title states
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
-resumes", or "Session ended"; Pause and Follow control following while the worker runs. While
+resumes", or "Session ended"; scrolling up pauses following, and Follow returns to the newest output.
+Pause also stops following while the worker runs. Paused position and expanded tool output survive
+phone view switches. While
 running, the same activity line sits under the footer without the words, and the header
 dot pulses only while that cue shows recent output; quiet, unavailable, waiting and ended sessions
 keep it still.
@@ -1115,7 +1140,7 @@ for the operator when they come up. Project removal (L3 detachment) uses the ove
 ## 8. Compact mobile chat
 
 The rules in §2.2/3.2/3.3/3.6/3.10/3.13/4.2 combine the phone's identity and status in a
-54px header, use one 70px composer dock with integrated 44px mic/send controls, disclose routine
+compact header, use one 70px composer dock with integrated 44px mic/send controls, disclose routine
 metadata and engine selection, and remove routine hints on phone. Hide the 84px bottom navigation
 only during detected software-keyboard use; restore it on dismissal, retaining draft and selection.
 Task Conversation/Live session tabs remain visible. A long draft grows to 120px or 25% of the
@@ -1125,13 +1150,13 @@ anchoring survive changes in available height. Browser-managed safe areas remain
 Activity and nonzero decision counts remain reachable; actionable failures, question controls,
 queue removal, voice guidance and available Restart remain explicit. A compact update summary
 discloses detail. Task metadata, Reject with confirmation and operational Resume open in task
-details. Stop and Continue stay directly accessible beside the composer and in Live session,
+details. Stop and Continue stay directly accessible in the task header from either view,
 as specified in §3.10. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics remain authoritative.
 
 Task states include running+held, waits-for-L3, waits-for-L3+held, operator-question+held,
 fault+held and operational pause. One compact status names waiting and merge state
 separately; the complete reasons open in scrollable task details. The open question remains
-at the end of the chat with its pill and Latest messages when applicable. Faults retain a visible cause and
+at the end of the chat with floating question/latest jumps when applicable. Faults retain a visible cause and
 L3 notification. Open questions do not acquire a generic Resume, and merge restrictions never
 acquire a release action. Desktop keeps directly available operational actions while disclosing
 long reasons. Phone sheets fit above the keyboard; closing them preserves draft and reading

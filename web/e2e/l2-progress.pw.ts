@@ -72,13 +72,21 @@ for (const index of [0, 1]) {
     const convo = page.getByRole("region", { name: "Task conversation", exact: true });
     const preview = convo.getByRole("region", { name: "L2 activity" });
     const field = convo.getByRole("textbox", { name: "Message the L2" });
-    const stop = convo.getByRole("button", { name: "Stop", exact: true });
+    const stop = page.getByRole("button", { name: "Stop", exact: true });
     const next = "I am checking the message race.";
     await walk.open(path);
     await walk.state("01-running-public-direction", {
       visible: [preview.getByText(/^Working · output/), preview.getByText(/I am checking where pagination/), stop, field],
       hidden: [page.getByRole("group", { name: "Stop this task?" })],
     });
+    const actionBox = (await stop.boundingBox())!;
+    expect(actionBox.width).toBeGreaterThanOrEqual(104);
+    expect(actionBox.height).toBeGreaterThanOrEqual(44);
+    const header = page.locator(info.project.name === "phone" ? ".phone-header" : ".task-header");
+    await expect(header.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    const reading = (await convo.locator(".convo-scroll").boundingBox())!;
+    expect(reading.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 591 : 663);
+    await info.attach("compact-layout-measurements", { body: JSON.stringify({ viewport: page.viewportSize(), reading, actionBox }), contentType: "application/json" });
     expect(await convo.locator('[data-role="l2"]').count()).toBe(1);
     await preview.getByRole("button", { name: "Expand" }).click();
     await walk.state("02-expanded-public-words", { visible: [preview.getByRole("button", { name: "Collapse" })], hidden: [preview.getByRole("button", { name: "Expand" })] });
@@ -97,32 +105,36 @@ for (const index of [0, 1]) {
     const before = await task();
     await field.fill("Use the existing retry rule.");
     await field.evaluate((element: HTMLTextAreaElement) => { element.setSelectionRange(4, 12); element.dispatchEvent(new Event("select", { bubbles: true })); });
-    await convo.getByRole("button", { name: "View live session" }).click();
+    if (info.project.name === "phone") await page.getByRole("link", { name: "Live session", exact: true }).click();
     const live = page.getByRole("region", { name: "Live session", exact: true });
-    await walk.state("08-live-has-the-same-stop", { visible: [live, live.getByRole("button", { name: "Stop", exact: true })], hidden: info.project.name === "phone" ? [field] : [] });
+    await walk.state("08-live-has-the-same-stop", { visible: [live, page.getByRole("button", { name: "Stop", exact: true })], hidden: info.project.name === "phone" ? [field] : [] });
     if (info.project.name === "phone") await page.getByRole("link", { name: "Conversation", exact: true }).click();
     await expect(field).toHaveValue("Use the existing retry rule.");
     expect(await field.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd])).toEqual([4, 12]);
     await control("hold-stop");
     try {
       await stop.click();
-      await walk.state("09-stopping-keeps-editable-draft", { visible: [convo.getByText("Stopping…", { exact: true }), field], hidden: [stop, convo.getByRole("button", { name: "Continue session" })] });
+      await walk.state("09-stopping-keeps-editable-draft", { visible: [page.getByRole("button", { name: "Stopping…", exact: true }), field], hidden: [stop, page.getByRole("button", { name: "Continue" })] });
+      await expect(page.getByRole("button", { name: "Stopping…", exact: true })).toBeDisabled();
       await expect(convo.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
       await expect(field).toBeEnabled();
       // Another tab still thinks it is running: this message cannot release the Stop boundary.
       expect((await request.post("/api/l2/message", { data: { project: "atlas", slug, text: "Racing message stays held." } })).ok()).toBe(true);
     } finally { await control("release-stop"); }
     await expect.poll(async () => (await task()).steering.state).toBe("stopped");
-    await walk.state("10-stopped-and-queued-messages-held", { visible: [convo.getByRole("button", { name: "Continue session" }), convo.getByText("Send a correction to continue this session."), convo.getByText("Queued · held until you continue").first()], hidden: [stop, preview] });
+    await walk.state("10-stopped-and-queued-messages-held", { visible: [page.getByRole("button", { name: "Continue" }), convo.getByText("Send a correction to continue this session."), convo.getByText("Queued · held until you continue").first()], hidden: [stop, preview] });
+    const continueBox = (await page.getByRole("button", { name: "Continue", exact: true }).boundingBox())!;
+    expect([continueBox.x, continueBox.y, continueBox.width, continueBox.height]).toEqual([actionBox.x, actionBox.y, actionBox.width, actionBox.height]);
     expect((await status()).tasks.find((row: { slug: string }) => row.slug === slug).pending).toHaveLength(2);
     await control("hold-resume");
     try {
       await convo.getByRole("button", { name: "Send", exact: true }).click();
-      await walk.state("11-correction-saved-waiting-for-resume", { visible: [convo.getByText("Waiting to resume", { exact: true })], hidden: [stop, convo.getByRole("button", { name: "Continue session" }), preview] });
+      await walk.state("11-correction-saved-waiting-for-resume", { visible: [page.getByRole("button", { name: "Resuming…", exact: true })], hidden: [stop, page.getByRole("button", { name: "Continue" }), preview] });
+      await expect(page.getByRole("button", { name: "Resuming…", exact: true })).toBeDisabled();
       await expect(field).toHaveValue("");
     } finally { await control("release-resume"); }
     await expect.poll(async () => (await task()).state).toBe("running");
-    await walk.state("12-resumed-awaits-new-output", { visible: [stop, convo.getByText("Delivered to session", { exact: true }).first()], hidden: [preview, convo.getByText("Waiting to resume", { exact: true })] });
+    await walk.state("12-resumed-awaits-new-output", { visible: [stop, convo.getByText("Delivered to session", { exact: true }).first()], hidden: [preview, page.getByRole("button", { name: "Resuming…", exact: true })] });
     const resumed = await task();
     expect(resumed.session_id).toBe(before.session_id);
     expect(resumed.attempt).toBe(before.attempt);
@@ -154,15 +166,15 @@ test("Continue preserves an unsent draft; denied Stop and scoped Escape remain h
   await walk.open(`/projects/atlas/tasks/${slug}`);
   const convo = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = convo.getByRole("textbox", { name: "Message the L2" });
-  const stop = convo.getByRole("button", { name: "Stop", exact: true });
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
   await field.fill("An unsent thought.");
   await control("deny");
   await stop.click();
-  await walk.state("01-stop-denied", { visible: [convo.getByRole("alert").filter({ hasText: "You do not have permission to stop" }), convo.getByRole("button", { name: "Check status" }), field], hidden: [convo.getByRole("button", { name: "Continue session" })] });
+  await walk.state("01-stop-denied", { visible: [page.getByRole("alert").filter({ hasText: "You do not have permission to stop" }), page.getByRole("button", { name: "Check status" }), field], hidden: [page.getByRole("button", { name: "Continue" })] });
   await expect(field).toHaveValue("An unsent thought.");
   await expect(convo.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
   await control("allow");
-  await convo.getByRole("button", { name: "Check status" }).click();
+  await page.getByRole("button", { name: "Check status" }).click();
   await expect(stop).toBeVisible();
   await field.focus(); await page.keyboard.press("Escape");
   expect((await task()).steering.state).toBe("running");
@@ -176,11 +188,11 @@ test("Continue preserves an unsent draft; denied Stop and scoped Escape remain h
     await page.locator("h1").click(); await page.keyboard.press("Escape");
   } else { await stop.click(); }
   await expect.poll(async () => (await task()).steering.state).toBe("stopped");
-  await walk.state("03-stopped-draft-retained", { visible: [convo.getByRole("button", { name: "Continue session" })], hidden: [stop] });
+  await walk.state("03-stopped-draft-retained", { visible: [page.getByRole("button", { name: "Continue" })], hidden: [stop] });
   const saved = await task();
-  await convo.getByRole("button", { name: "Continue session" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect.poll(async () => (await task()).state).toBe("running");
-  await walk.state("04-continue-keeps-unsent-draft", { visible: [stop, field], hidden: [convo.getByRole("button", { name: "Continue session" })] });
+  await walk.state("04-continue-keeps-unsent-draft", { visible: [stop, field], hidden: [page.getByRole("button", { name: "Continue" })] });
   await expect(field).toHaveValue("An unsent thought.");
   expect((await task()).messages).toEqual(saved.messages);
   expect((await task()).session_id).toBe(saved.session_id);
@@ -214,7 +226,7 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   const convo = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = convo.getByRole("textbox", { name: "Message the L2" });
   const preview = convo.getByRole("region", { name: "L2 activity" });
-  const stop = convo.getByRole("button", { name: "Stop", exact: true });
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
   await expect(field).toBeVisible();
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: viewport.width, height: 620 });
@@ -265,7 +277,7 @@ for (const index of [0, 1]) {
     const cueDot = preview.locator(".cue-line .dot");
     const live = page.getByRole("region", { name: "Live session", exact: true });
     const liveCue = live.getByRole("status");
-    const toLive = async () => { if (phone) await convo.getByRole("button", { name: "View live session" }).click(); };
+    const toLive = async () => { if (phone) await page.getByRole("link", { name: "Live session", exact: true }).click(); };
     const toConversation = async () => { if (phone) await page.getByRole("link", { name: "Conversation", exact: true }).click(); };
     const animation = (locator: typeof cueDot) => locator.evaluate((node) => getComputedStyle(node).animationName);
     await walk.open(`/projects/atlas/tasks/${slug}`);
@@ -310,6 +322,52 @@ for (const index of [0, 1]) {
   });
 }
 
+test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", async ({ page, request }, info) => {
+  const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
+  const walk = walkthrough(page, info);
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  const field = conversation.getByRole("textbox", { name: "Message the L2", exact: true });
+  const tabs = page.getByRole("navigation", { name: "Task views" });
+  await field.fill("Typed correction.");
+  await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
+  await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeVisible();
+  await tabs.getByRole("link", { name: "Live session", exact: true }).click();
+  await walk.state("01-tab-cancels-unsubmitted-recording", { visible: [live], hidden: [conversation] });
+  await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+  await expect(conversation.getByRole("button", { name: "Start voice input", exact: true })).toBeVisible();
+  await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeHidden();
+  await expect(field).toHaveValue("Typed correction.");
+  await expect(field).not.toBeFocused();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/transcribe", async (route) => { await gate; await route.continue(); }, { times: 1 });
+  await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
+  await expect(conversation.getByLabel("Recording time")).toHaveText(/0:0[1-9]/);
+  const submitted = page.waitForRequest("**/api/transcribe");
+  await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  await submitted;
+  try {
+    await tabs.getByRole("link", { name: "Live session", exact: true }).click();
+    await expect(live).toBeVisible();
+    await expect(field).toBeHidden();
+    await page.keyboard.press("Escape");
+    await walk.state("02-submitted-transcription-remains-owned-by-conversation", { visible: [live], hidden: [field] });
+  } finally {
+    const finished = page.waitForResponse("**/api/transcribe");
+    release();
+    await (await finished).finished();
+  }
+  await expect(live).toBeVisible();
+  await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+  await walk.state("03-committed-voice-message-saved", { visible: [field, conversation.getByText("Typed correction. spoken correction", { exact: true }), conversation.getByRole("button", { name: "Start voice input", exact: true })], hidden: [live, conversation.getByRole("button", { name: "Stop voice input", exact: true })] });
+  await expect(field).toHaveValue("");
+  await expect(field).not.toBeFocused();
+  const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
+  expect(task.messages.filter((message: { text: string }) => message.text === "Typed correction. spoken correction")).toHaveLength(1);
+});
+
 for (const status of [409, 500, 200]) {
   test(`@phone-only send outcome ${status} survives switching to Live session`, async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
@@ -331,7 +389,7 @@ for (const status of [409, 500, 200]) {
     await convo.getByRole("button", { name: "Send", exact: true }).click();
     await posted;
     await field.fill("A newer unsent draft.");
-    await convo.getByRole("button", { name: "View live session" }).click();
+    await page.getByRole("link", { name: "Live session", exact: true }).click();
     try {
       await walk.state("01-send-pending-in-live-view", { visible: [page.getByRole("region", { name: "Live session", exact: true })], hidden: [field] });
     } finally {

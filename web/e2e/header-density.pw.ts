@@ -43,7 +43,7 @@ test("chat headers leave room for reading with long task titles", async ({ page,
     const details = page.getByRole("dialog", { name: "Task details", exact: true });
     const usage = page.getByRole("region", { name: "Task token usage", exact: true });
     await walk.state(`${viewport.width}-details`, {
-      action: () => page.getByRole("button", { name: "Task details", exact: true }).click(),
+      action: () => page.getByRole("button", { name: /Task details$/ }).click(),
       visible: [details, details.getByText(title, { exact: true }), usage, details.getByText("Review the completed migration before merging.")], hidden: [],
     });
     await walk.state(`${viewport.width}-restored`, {

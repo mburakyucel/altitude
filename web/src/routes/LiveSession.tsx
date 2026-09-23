@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Prose } from "../components/Prose";
 import { ApiError, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
-import { SteeringControls } from "../components/TaskSteering";
+import { SteeringControls, SteeringNotice } from "../components/TaskSteering";
 import { Stamp } from "../components/Stamp";
 import { CueLine, activityCue, duration, elapsed, useNow } from "../components/TaskActivity";
 import type { Steering } from "../components/TaskSteering";
@@ -223,6 +223,7 @@ export interface LiveSessionProps {
   waiting?: string | null;
   steering?: Steering;
   readOnly?: boolean;
+  active?: boolean;
 }
 
 /**
@@ -232,16 +233,17 @@ export interface LiveSessionProps {
  * timestamps, Raw events behind a toggle. States: waiting (queued), connecting, streaming, ended,
  * unavailable. The server derives the files from the task record; the page sends no paths.
  */
-export default function LiveSession({ project, task, engineLabel, waiting, steering, readOnly }: LiveSessionProps) {
+export default function LiveSession({ project, task, engineLabel, waiting, steering, readOnly, active = true }: LiveSessionProps) {
   const [raw, setRaw] = useState(false);
   const [paused, setPaused] = useState(false);
   const body = useRef<HTMLDivElement>(null);
+  const reading = useRef(0);
   const engine = str(task["l2_engine"]);
   const sessionId = str(task["session_id"]);
   const state = task.state ?? "";
   const running = state === "running";
   const hasSession = !waiting && Boolean(sessionId);
-  const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running);
+  const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running, active);
   const events = useMemo(() => transcript.data?.events ?? [], [transcript.data]);
   const items = useMemo(() => conversation(events), [events]);
   const fromEngine = events.some((event) => event.source !== "platform");
@@ -249,8 +251,8 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
 
   useEffect(() => {
     const node = body.current;
-    if (node && !paused) node.scrollTop = node.scrollHeight;
-  }, [count, paused, raw]);
+    if (node && active) node.scrollTop = paused ? reading.current : node.scrollHeight;
+  }, [active, count, paused, raw]);
 
   const unavailable = <p className="live-line text-muted">No session file for this attempt</p>;
   let content: ReactNode;
@@ -313,14 +315,15 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
           <LivePulse tone={tone} activity={task.activity} />
           Live session
         </h2>
-        {hasSession ? (
+        {hasSession || steering ? (
           <div className="live-tools">
-            {running ? (
+            {steering ? <SteeringControls steering={steering} disabled={readOnly} /> : null}
+            {hasSession && running ? (
               <button type="button" className="btn btn-ghost live-tool" onClick={() => setPaused((v) => !v)}>
                 {paused ? "Follow" : "Pause"}
               </button>
             ) : null}
-            <button
+            {hasSession ? <button
               type="button"
               className="btn btn-ghost live-tool"
               aria-pressed={raw}
@@ -328,12 +331,17 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
               onClick={() => setRaw((v) => !v)}
             >
               Raw events
-            </button>
+            </button> : null}
           </div>
         ) : null}
       </header>
-      {steering && steering.state !== "idle" ? <div className="live-steering"><SteeringControls steering={steering} disabled={readOnly} /></div> : null}
-      <div className="live-body" ref={body}>
+      {steering ? <SteeringNotice steering={steering} /> : null}
+      <div className="live-body" ref={body} onScroll={(event) => {
+        if (!active) return;
+        const node = event.currentTarget;
+        reading.current = node.scrollTop;
+        if (node.scrollHeight - node.scrollTop - node.clientHeight > 48) setPaused(true);
+      }}>
         {content}
       </div>
     </section>

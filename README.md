@@ -403,13 +403,24 @@ Generated replies, briefs and summaries preserve upstream references as full URL
 assigned a guessed upstream repository.
 
 Within an L2 task, Conversation and Live session are local views. Switching between them adds no
-browser history entries. Browser Back and the task's Back control return to the preceding page;
+browser history entries. On phone, swipe left to Live session and right to Conversation, or use the
+labeled tabs. Vertical scrolling, text selection, form controls and horizontally scrollable session
+content keep their gestures. View switches preserve the draft, selection, images and reading position
+without reopening the keyboard. Browser Back and the task's Back control return to the preceding page;
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
 opens the live session, including after reload.
+Scrolling up in Live session pauses following; Follow returns to the newest output.
+
+Stop, Continue and Check status share one consistently styled button in the task header, visible
+from both views. The phone title dropdown opens task details, including View question. Desktop
+keeps its split view and panel toggle; an overlay puts the task action in its own header. Conditional
+question and Latest jumps float above the composer, appear only while their destinations are
+offscreen, and share one question jump when both lead to the bottom. The tabs and panel toggle
+provide live-session navigation without a separate row beside the composer.
 
 An L2 question with attached evidence shows **View preview · vN** in Needs you and its owning
-conversation. When the open question scrolls out of view, the chat's question navigation keeps
-its preview reachable. Work opens that same question from the task row. The preview opens saved
+question. When the open question scrolls out of view, use its question jump, then View preview.
+Work opens that same question from the task row. The preview opens saved
 screenshots and text in another browser tab, leaving the original view and draft in place;
 closing that tab returns there. **Back to question** opens the exact discussion and decision controls.
 The captured title identifies a design proposal or implementation review without relabelling old evidence.
@@ -436,8 +447,9 @@ client session across project switches and route changes; a turn already sent fi
 to that project shows its saved history and any active turn. Retry sends to the displayed project.
 An image already shown in history stays there when its admission receipt arrives; it does not
 reappear in the waiting queue.
-Leaving cancels voice input that has not been sent and releases the microphone. Once you press Send,
-transcription finishes and sends to the original project or task even after navigation. Returning while
+Leaving, including switching to Live session, cancels voice input that has not been sent and releases
+the microphone. Once you press Send, transcription finishes and sends to the original project or task
+even after navigation or view switches. Returning while
 it is pending shows its status; a failure preserves the original text for recovery there. Another
 conversation's draft stays independent. While the microphone opens, records or transcribes, the text stays readable
 and read-only, with its activity indicator inside the composer. Stop adds the transcript for editing;

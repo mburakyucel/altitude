@@ -165,18 +165,22 @@ test("the current implementation preview is discoverable from Needs you, Work an
   await walk.open(taskPath);
   const jumps = page.locator(".conversation-jumps");
   const currentPreview = jumps.getByRole("link", { name: previewName, exact: true });
-  const pill = jumps.getByRole("button", { name: "Your turn · 1 question ↓", exact: true });
+  const pill = jumps.getByRole("button", { name: "Your turn · 1 question", exact: true });
   // The open question ends the chat, so the latest view already shows it.
   await expect(card(page, review)).toBeInViewport();
   await walk.state("review-05-latest-chat-ends-with-question", { visible: [card(page, review).getByRole("link", { name: previewName, exact: true })], hidden: [currentPreview, pill] });
   await conversation.locator(".convo-scroll").evaluate((node) => { node.scrollTop = 0; });
-  await walk.state("review-05b-reading-back-keeps-preview-and-turn", { visible: [currentPreview, pill], hidden: [] });
+  await walk.state("review-05b-reading-back-keeps-question-jump", { visible: [pill], hidden: [currentPreview] });
+  const jumpBox = (await pill.boundingBox())!;
+  expect(jumpBox.height).toBeGreaterThanOrEqual(44);
+  expect(jumpBox.width).toBeGreaterThanOrEqual(44);
+  await expect(jumps.getByRole("button", { name: "Latest messages", exact: true })).toBeHidden();
   await expect(card(page, review)).not.toBeInViewport();
   await draft.fill("Does the implementation preserve my place when I return?");
-  await inspectCurrent(currentPreview, "review-06-from-latest-chat");
-  await expect(draft).toHaveValue("Does the implementation preserve my place when I return?");
   await pill.click();
   await expect(card(page, review)).toBeInViewport();
+  await inspectCurrent(card(page, review).getByRole("link", { name: previewName, exact: true }), "review-06-from-question-jump");
+  await expect(draft).toHaveValue("Does the implementation preserve my place when I return?");
   await expect(currentPreview).toBeHidden();
   await expect(pill).toBeHidden();
 
@@ -221,25 +225,23 @@ test("a grouped review keeps its current preview reachable after another member 
     hidden: [preview, jumps.getByRole("button", { name: /^Your turn/ })],
   });
   await readBack();
-  await walk.state("group-review-01b-reading-back-shows-shortcuts", { visible: [preview, jumps.getByRole("button", { name: "Your turn · 2 questions ↓", exact: true })], hidden: [] });
-  await expect(preview).toBeInViewport();
-  await expect(preview).toHaveAttribute("href", review.design_url);
+  await walk.state("group-review-01b-reading-back-shows-question-jump", { visible: [jumps.getByRole("button", { name: "Your turn · 2 questions", exact: true })], hidden: [preview] });
   expect((await request.post("/fixture/resolve-question", { data: { id: date.id } })).ok()).toBe(true);
   await expect.poll(async () => (await task(request)).question.status).toBe("resolved");
   // Answering one member in chat hands the turn back; the owner asks the review again.
   await park(request);
   await page.reload();
   await readBack();
-  const viewQuestion = jumps.getByRole("button", { name: "Your turn · 1 question ↓", exact: true });
-  await walk.state("group-review-02-preview-survives-partial-answer", { visible: [preview, viewQuestion], hidden: [] });
-  await expect(preview).toBeInViewport();
+  const viewQuestion = jumps.getByRole("button", { name: "Your turn · 1 question", exact: true });
+  await walk.state("group-review-02-question-survives-partial-answer", { visible: [viewQuestion], hidden: [preview] });
+  await viewQuestion.click();
+  await expect(card(page, review)).toBeInViewport();
   const opened = page.waitForEvent("popup");
-  await preview.click();
+  await card(page, review).getByRole("link", { name: "View preview · v1", exact: true }).click();
   const saved = await opened;
   await expect(saved).toHaveURL(new RegExp(`${review.design_url}$`));
   await expect(saved.getByRole("heading", { name: "Conversation layout — implementation review", exact: true })).toBeVisible();
   await saved.close();
-  await viewQuestion.click();
   await expect(card(page, review)).toBeInViewport();
   await expect(card(page, date).getByText("Decision recorded", { exact: true })).toBeVisible();
   expect((await request.post("/fixture/resolve-question", { data: { id: review.id } })).ok()).toBe(true);
