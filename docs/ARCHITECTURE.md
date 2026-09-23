@@ -788,10 +788,10 @@ a meaningful finite observation during a justified wait, or an explicit capabili
 Existing task conversations and incident evidence carry this responsibility; no new timer or task
 state enforces it. Irretrievable history remains unknown. L3 uses retained evidence and supported
 reads for remaining questions, then exposes the narrow gap if they cannot establish recovery.
-A diagnostic continuation requiring a changed operational contract waits for that decision. Within
-an authorized scope, the same owner iterates diagnostics without per-command approval, retaining
-evidence and a concrete next step at the agreed finite stop or scope boundary. Explicit restrictions,
-machine grants, fix scope and holds bind; no new privilege or automatic fault retry is introduced.
+The owner investigates as part of its task, iterating non-invasive diagnosis without approval rounds;
+a changed operational contract, missing access, material machine change, unapproved spend or explicit
+restriction waits for its decision. Machine grants, fix scope and holds bind; no new privilege or
+automatic fault retry is introduced.
 Missing evidence and unrelated delivery establish no recovery. For newly investigated
 actionable system or role/procedure defects it promptly creates/reuses a sanitized issue, records
 the prevention disposition and owner/next action (or concrete reporting failure) in incident evidence,
