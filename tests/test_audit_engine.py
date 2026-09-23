@@ -24,7 +24,7 @@ class TestConversationReview(AltitudeCase):
             self.assertIn(str(self.repo / "AGENTS.md"), prompt)
             self.assertIn("Review only", prompt)
             self.assertIsNone(kw["resume"])
-            self.assertEqual(kw["timeout"], 90)
+            self.assertEqual(kw["timeout"], engines.session_timeout(engine))
             self.assertTrue(kw["durable_timeout"])
             self.assertEqual(kw["model"], "configured-review-model")
             self.assertEqual(kw["extra_env"]["ALTITUDE_ACTOR"], "l3")
@@ -85,7 +85,7 @@ class TestConversationReview(AltitudeCase):
                 self.assertIn("intercepted", result["error"])
                 command = popen.call_args.args[0]
                 self.assertEqual(command[0], engines.SYSTEMD_RUN_BIN)
-                for option in ("--property=RuntimeMaxSec=90", "--property=KillMode=control-group",
+                for option in (f"--property=RuntimeMaxSec={engines.session_timeout(engine)}", "--property=KillMode=control-group",
                                "--property=TimeoutStopSec=5", "--property=SendSIGKILL=yes"):
                     self.assertIn(option, command)
 

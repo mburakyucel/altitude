@@ -145,7 +145,11 @@ def installation(engine: str) -> dict:
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
 
-def conversation_review(project: str, prompt: str, *, engine: str, model: str, timeout: int = 90) -> dict:
+def session_timeout(engine: str) -> int:
+    return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
+
+
+def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
     """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
 
     The caller supplies the review assignment; this never resumes or publishes an L3 turn.
@@ -163,7 +167,7 @@ def conversation_review(project: str, prompt: str, *, engine: str, model: str, t
     started = time.monotonic()
     try:
         body = repository_rule_prompt(config.project_path(project)) + prompt
-        common = {"cwd": runtime, "model": model, "timeout": timeout, "durable_timeout": True,
+        common = {"cwd": runtime, "model": model, "timeout": session_timeout(engine), "durable_timeout": True,
                   "resume": None, "extra_env": l3._l3_env(project, runtime)}
         if engine == "claude":
             native = claude_print(body, **common, allowed_tools=L3_ALLOWED_TOOLS, tools=l3.L3_TOOLS,

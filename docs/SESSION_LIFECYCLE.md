@@ -4,8 +4,8 @@
 
 The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable
 conversation. Its engine/model stays pinned, using ordinary Altitude permissions and tools with a
-review assignment. L3/L2 retain action ownership. Each session has a ninety-second process-tree
-deadline; restart cannot automatically replay a reserved attempt. Failure/uncertainty pauses the
+review assignment. L3/L2 retain action ownership. Each session uses its engine's ordinary timeout,
+enforced for the process tree; restart cannot automatically replay a reserved attempt. Failure/uncertainty pauses the
 pilot, retaining its original seven-day expiry and fourteen-attempt budget.
 
 Reviews wait twelve hours and four new exchanges older than thirty minutes. Failed/unanswered

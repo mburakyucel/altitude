@@ -233,9 +233,12 @@ class TestConversationAudit(AltitudeCase):
     def test_uncertain_interrupted_attempt_is_paused_without_replay(self):
         record = self.start()
         record["attempts"] = [{"id": "interrupted", "at": (self.now - timedelta(minutes=3)).isoformat(),
-                               "status": "running"}]
+                               "status": "running", "timeout": 900}]
         S.write_json(audit.path(self.project), record)
         self.batch()
+        audit.run(self.project)
+        self.assertEqual(audit.status(self.project)["status"], "active")
+        self.now += timedelta(minutes=13)
         audit.run(self.project)
         self.assertEqual(audit.status(self.project)["status"], "paused")
         audit.run(self.project)

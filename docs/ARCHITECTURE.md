@@ -957,7 +957,8 @@ current ownership, decisions and canonical messages, including removal markers. 
 prompt stays within 64 KiB. Sparse/overflowing evidence can expire without review.
 
 `engines.conversation_review` uses a fresh native session, the ordinary coordinator tools/permissions,
-an explicit model and a durable ninety-second process-tree deadline. It does not resume or publish
+an explicit model and the engine's ordinary session timeout, enforced for the process tree. The
+attempt records that timeout so interrupted-run detection respects it. It does not resume or publish
 an L3 turn. The review assignment leaves implementation, publication and operational decisions with
 L3/L2. Tool reads and reasoning add usage within that deadline; byte/time bounds are not dollar caps.
 Available native model, usage and API-equivalent cost are recorded; missing values remain unknown.

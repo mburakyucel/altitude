@@ -225,7 +225,7 @@ def _run(project: str) -> None:
     now = _date(S.now())
     attempts = record["attempts"]
     if attempts and attempts[-1]["status"] == "running":
-        if now - _date(attempts[-1]["at"]) > timedelta(seconds=120):
+        if now - _date(attempts[-1]["at"]) > timedelta(seconds=attempts[-1]["timeout"] + 30):
             with S.project_lock(project):
                 current = status(project)
                 if current["attempts"][-1]["status"] == "running":
@@ -248,7 +248,8 @@ def _run(project: str) -> None:
         if len(evidence["selected"]) < 4:
             return
         text = prompt(project, evidence)
-        attempt = {"id": uuid.uuid4().hex, "at": now.isoformat(), "status": "running"}
+        attempt = {"id": uuid.uuid4().hex, "at": now.isoformat(), "status": "running",
+                   "timeout": engines.session_timeout(record["reviewer"]["engine"])}
         with S.project_lock(project):
             current = status(project)
             if current != record:
@@ -264,7 +265,7 @@ def _run(project: str) -> None:
         with config.project_activity(project) as managed:
             if not managed:
                 raise ValueError("audit project is no longer managed")
-            result = engines.conversation_review(project, text, **record["reviewer"], timeout=90)
+            result = engines.conversation_review(project, text, **record["reviewer"])
         S.write_json(directory / "result.json", result)
         attempt.update(seconds=time.monotonic() - started, usage=result.get("usage"), cost=result.get("cost"),
                        model=result.get("engine_model"), session_id=result.get("session_id"))

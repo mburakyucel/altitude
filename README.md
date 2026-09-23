@@ -344,7 +344,7 @@ Every toast also has Close; inline errors and task questions retain their own re
 
 An operator-started, seven-day conversation-audit pilot reviews recent Altitude exchanges at most
 twice daily, after four new exchanges. It uses a configurable reviewer, ordinary inspection tools
-and a 90-second session limit. Private findings accompany L3's next project chat turn; L3 checks
+and the ordinary session timeout. Private findings accompany L3's next project chat turn; L3 checks
 later corrections and existing ownership before deciding action. No new activity means no review,
 and unchanged findings produce no repeated notification. The pilot samples the last 48 hours,
 stops after seven days or fourteen attempts, and records observed usage separately from estimates.

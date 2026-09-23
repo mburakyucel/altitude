@@ -39,7 +39,7 @@ bounded pilot record. Chat byte-offset references identify original JSONL rows w
 task references name canonical message IDs. None of this evidence belongs in public issues.
 
 Sessions run at most twice daily, twelve hours apart, after four new eligible exchanges. Each has
-ninety seconds, a starting prompt of at most 64 KiB and at most three findings. The forty-eight-hour
+the engine's ordinary session timeout, a starting prompt of at most 64 KiB and at most three findings. The forty-eight-hour
 sample starts no earlier than September 22, 2026 07:00 UTC, includes twenty exchanges/four directly
 related tasks, and records omitted/incomplete coverage. No new activity means no call. Seven days or
 fourteen attempts ends the pilot. Only new unresolved candidates reach L3 on its next project chat
