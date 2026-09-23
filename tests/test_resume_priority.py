@@ -153,18 +153,30 @@ class TestResumePriority(AltitudeCase):
         self.launch("Available model", "other")
         self.assertEqual(digest.wip()["machine"], 1)
 
-    def test_setup_contention_releases_capacity_until_the_next_resume_retry(self):
+    def test_setup_contention_does_not_reserve_capacity_in_any_project_tick_order(self):
         original = self.launch("Setup held owner")
+        original["hold_merge"] = "Keep review hold"
+        S.save_task(self.project, original)
         self.pause(original)
+        T.message(self.project, original["slug"], "burak", "Retain this message through setup")
         dispatch.request_task_operation(self.project, original["slug"], "resume", "Continue", actor="l3")
-        with project_setup.operation_lock(self.project), mock.patch.object(config, "SOURCE", self.tmp / "source"):
-            held = dispatch.run_task_operation(self.project, original["slug"])
-        self.assertIn("setup is in progress", held["held"])
-        waiting = S.load_task(self.project, original["slug"])
-        self.assertGreater(waiting["resume_after"], S.now())
-        self.assertFalse(waiting.get("resume_claim"))
-        self.assertEqual(dispatch.pending_task_operations(self.project), [])
-        self.launch("Other project during setup wait", "other")
+        with project_setup.operation_lock(self.project):
+            # The fresh project's tick happens first, with no resume attempt or retry timer.
+            for index in range(2):
+                fresh = self.new(f"Other project during setup {index}", "other")
+                server.dispatch_waiting("other")
+                fresh = S.load_task("other", fresh["slug"])
+                self.assertEqual(fresh["state"], "running")
+                self.pause(fresh, "other")
+            self.assertFalse(S.load_task(self.project, original["slug"]).get("resume_claim"))
+        fresh = self.new("Other project after setup", "other")
+        server.dispatch_waiting("other")
+        self.assertEqual(S.load_task("other", fresh["slug"])["state"], "queued")
+        self.assertEqual(dispatch.run_task_operation(self.project, original["slug"])["state"], "running")
+        resumed = S.load_task(self.project, original["slug"])
+        self.assertEqual((resumed["session_id"], resumed["hold_merge"]),
+                         (original["session_id"], original["hold_merge"]))
+        self.assertIn("Retain this message through setup", self.fake.calls[-1]["prompt"])
         self.assertEqual(digest.wip()["machine"], 1)
 
     def test_simultaneous_resumes_and_fresh_launch_stay_within_machine_cap(self):

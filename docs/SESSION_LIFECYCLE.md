@@ -194,7 +194,8 @@ next checkpoint. Queued tasks before their first dispatch keep their composer av
 All projects share one machine limit, defaulting to 80 running tasks. Blocked tasks consume no
 capacity. Eligible ready resumes across projects receive available capacity before fresh launches;
 operator waits, faults without verified recovery, future due times and unavailable engines reserve
-no slot and do not prevent eligible work. A resumed worker already launched and recorded in its recovery
+no slot and do not prevent eligible work. A busy project setup lock also makes its resume ineligible
+until setup releases it, independent of project tick order. A resumed worker already launched and recorded in its recovery
 claim still consumes capacity while task binding is recovered. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
 landing, and keeps shared-doc edits in that task's own sections. Status shows expected files and

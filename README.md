@@ -214,8 +214,8 @@ total spawned. The same breakdown stays available in task and report details aft
 
 All projects share one persistent concurrency limit, defaulting to **80 running tasks across the
 machine**. Blocked tasks free their capacity. Eligible ready resumes receive available slots before
-fresh tasks across all projects; operator waits, unresolved faults, future resume times and unavailable
-engines reserve no capacity. Inspect the limit and pending requests with `alt machine show`:
+fresh tasks across all projects; operator waits, unresolved faults, future resume times, busy project
+setup and unavailable engines reserve no capacity. Inspect the limit and pending requests with `alt machine show`:
 
 ```sh
 alt machine show

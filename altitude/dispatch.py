@@ -994,10 +994,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
     except project_setup.SetupBusy as exc:
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
-        retry_at = task.get("resume_after") or ""
-        if retry_at <= S.now():
-            retry_at = (datetime.now(timezone.utc) + timedelta(seconds=config.AGENT_POLL_SECONDS)).isoformat()
-        T.mark_resume_held(project, slug, str(exc), retry_at=retry_at, expected_daemon_request=daemon_request_id,
+        T.mark_resume_held(project, slug, str(exc), expected_daemon_request=daemon_request_id,
                            expected_block_id=task.get("block_id"), **daemon_fence)
         return {"held": str(exc)}
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
@@ -1138,7 +1135,10 @@ def resume_ready(project: str, task: dict) -> bool:
         if (task.get("stop_id") or task.get("waiting_on") or task.get("fault") or task.get("resume_failed")
                 or not any(row.get("wake", True) for row in T.pending(project, task["slug"]))):
             return False
-    return (task.get("resume_after") or "") <= S.now() and not resume_engine_hold(task)
+    if (task.get("resume_after") or "") > S.now() or resume_engine_hold(task):
+        return False
+    with project_setup.operation_lock(project) as ready:
+        return ready
 
 
 def resume_due(project: str) -> list[str]:
