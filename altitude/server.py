@@ -1206,13 +1206,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, default=str).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+        except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as exc:
+            # Error replies run inside exception handlers, outside the route's disconnect catcher.
+            self.close_connection = True
+            log(f"{self.command} {self.path}: client went away ({type(exc).__name__}: {exc})")
 
     def _file(self, path: Path, ctype: str | None = None) -> None:
         if not path.exists():
@@ -1389,7 +1394,11 @@ class Handler(BaseHTTPRequestHandler):
         if not config.is_managed(project):
             raise images.ImageError("Image access denied.", 403)
         if len(parts) == 3:
-            return self._json(image_capability(project, query.get("task", [None])[0]))
+            with S.project_lock(project):
+                if not config.is_managed(project):
+                    raise images.ImageError("Image access denied.", 403)
+                capability = image_capability(project, query.get("task", [None])[0])
+            return self._json(capability)
         if len(parts) != 4:
             raise images.ImageError("Image unavailable.", 404)
         with S.project_lock(project):

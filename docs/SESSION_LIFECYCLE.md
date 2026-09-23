@@ -319,6 +319,10 @@ and changed content under that identity is refused. Confirmed refusals restore t
 responses keep its controls frozen and retry the same submission without creating another message.
 Local codec-probe timeouts, OS errors and nonzero exits refuse the current admission as unavailable.
 A later attempt probes the same converter again and can recover without a process restart or cache reset.
+Client disconnects while sending image error replies end the HTTP connection normally; they do not
+produce an uncaught server exception. Connected clients retain the error status and message.
+Image capability lookup and project removal share the project lock. A request for a project removed
+before lookup receives the ordinary image-access denial, without an internal error or changed access policy.
 
 Each image-bearing project message keeps its own turn and caption. Its queue claim remains on disk
 until human history and a terminal response are durable. After interruption, recovery preserves the
