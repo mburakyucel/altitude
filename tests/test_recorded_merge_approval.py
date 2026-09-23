@@ -342,6 +342,21 @@ class TestRecordedMergeApproval(AltitudeCase):
                 receipt = json.loads(self.request()["stdout"])
                 self.assertEqual((receipt["approval"], receipt["actor"]), (self.approval["id"], "l3"))
 
+    def test_instruction_attached_to_a_later_withdrawn_question_still_cites_its_own_authority(self):
+        # A merge instruction typed while an unrelated question was open carries that question's tag;
+        # the owner withdraws the obsolete question, and the instruction remains the operator's own approval.
+        self.at = "2026-09-07T20:06:00+00:00"
+        question = T.escalate(self.project, self.slug, "Wait for the quota reset?")["questions"][-1]
+        self.at = "2026-09-07T20:07:00+00:00"
+        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Report first, then merge it.",
+                                  question_id=question["id"], revision=question["revision"])
+        self.at = "2026-09-07T20:08:00+00:00"
+        T.resolve_question(self.project, self.slug, question["id"], None, None, disposition="withdrawn",
+                           reason="Obsolete once the operator gave the merge instruction.", expected_attempt=1)
+        receipt = json.loads(self.request()["stdout"])
+        self.assertEqual((receipt["approval"], receipt["authorized_by"]), (self.approval["id"], T.OPERATOR_MESSAGE_ROLE))
+        self.assertIsNone(S.load_task(self.project, self.slug)["hold_merge"])
+
     def test_reaffirmation_does_not_refresh_a_renewed_hold(self):
         self.decide()
         self.at = "2026-09-07T20:08:00+00:00"
