@@ -10,6 +10,9 @@ import { walkthrough } from "./walkthrough";
  */
 type Json = Record<string, unknown>;
 
+// Finish overview overlays before teardown disposes their fetched responses (#380).
+test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
+
 async function restartIs(page: Page, restart: Json | null) {
   await page.unroute("**/api/overview*");
   await page.route("**/api/overview*", async (route) => {

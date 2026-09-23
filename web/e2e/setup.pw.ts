@@ -47,7 +47,8 @@ test("existing projects expose new missing requirements and repair stale guards 
   await expect(trigger).toBeFocused();
   await expect(composer).toHaveValue("Keep this draft while I inspect setup");
   await request.post(`${service}/fixture/prepare/missing`);
-  await trigger.click();
+  // Polling may already have replaced Ready with the new observed setup status.
+  await page.getByRole("button", { name: /^Setup:/ }).click();
   const guards = step(panel, "Git guards");
   await walk.state("02-new-missing-requirement", { visible: [guards.getByText("Git guards are not installed."), guards.getByRole("button", { name: "Repair" })], hidden: [] });
   await guards.getByRole("button", { name: "Repair" }).click();
