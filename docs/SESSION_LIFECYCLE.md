@@ -707,9 +707,9 @@ Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
-Landings that merge or run the required candidate suite wait up to one hour for a repository
-turn, keeping the owner session alive; the turn runs one landing suite per machine at a time and
-reports the seconds waited. The admitted command rereads task authority and holds, fetches the
+Landings that merge or target this repository’s required PR check wait up to one hour for a
+repository turn, keeping the owner session alive and reporting seconds waited. The turn serializes
+publication and check waiting; external runner executions do not share it. The admitted command rereads task authority and holds, fetches the
 base, incorporates it into the task branch and validates the fresh PR base/head pair through
 merge. Task messages and Stop use their ordinary lifecycle while it waits. Failure, timeout or
 process exit releases the turn; resuming an owner requires a new command and fresh checks, never a
@@ -718,17 +718,23 @@ An owner whose branch needs manual conflict reconciliation updates it in the wor
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
-This repository's temporary local policy runs `make check` on the current merge candidate through
-`alt land`, including PR preparation without merging. Logs, the self-contained browser report and
-candidate-bound results stay in the task's `local-checks/` folder, without duplicate raw attachments.
-Landing uses the same concurrent Python/web phases and aggregate unittest results as `make check`;
-its `CI=true` environment also selects CPU-scaled browser workers. Every required phase must pass.
-Suite timeouts preserve captured stdout and stderr in `check.log` and leave validation failed.
-Only passing current evidence supplies the PR test
-line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
+Owners and helpers run relevant tests during development. This repository's self-hosted PR
+`check` runs full `make check`, including concurrent Python/web phases and both browser viewports.
+`alt land` requires successful CI for the current head and tested tree, without a duplicate
+local full run. The branch includes current main; a branch missing it needs reconciliation
+and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
+owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
+Owners verify the runner's completed local log/identity export; failed runs also retain browser
+reports and traces. Needed evidence is copied into the task through review; unneeded completed
+exports are cleaned up after three days or when disk capacity is tight. Missing export blocks
+delivery even with green GitHub checks. GitHub artifact storage is unused. A bounded CI wait
+ends in an explicit owner block with run and missing evidence;
+L3 owns the existing finite `recheck-ci` for GitHub execution; local export recovery requires
+verified retrieval from the runner. Missing runs need trigger/runner recovery. Runner or local
+storage outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
-activation does not establish billing/artifact recovery or release an operator hold.
+activation does not establish evidence retrieval or release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;

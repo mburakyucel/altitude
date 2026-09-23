@@ -45,7 +45,10 @@ def run_owner(project, slug, worktree, fixture, output, options):
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
     if options.pop('required_check', False):
-        land.config.LOCAL_CHECK_REPOSITORY = 'team/demo'
+        land.config.PR_CHECK_REPOSITORY = 'team/demo'
+        (fixture / 'required-pr-check').touch()
+        (fixture / 'hosted-barrier').touch()
+        (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
     invoke = land.land.__wrapped__ if options.pop('without_lock', False) else land.land
     try:
         result = invoke('Independent fix ' + slug, cwd=worktree, wait=0,
@@ -85,7 +88,13 @@ if args[:2] == ['api', 'graphql'] and read('hosted-barrier') is not None:
         if time.monotonic() >= deadline:
             fail('fixture hosted barrier timed out')
         time.sleep(.01)
-cmd = tuple(args[:2])'''))
+cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
+        if read('required-pr-check') is not None:
+            for context in contexts:
+                context['name'] = 'check'
+                context['checkSuite'].update(app={'databaseId': 15368},
+                    workflowRun={'event': 'pull_request', 'file': {'path': '.github/workflows/self-hosted-checks.yml'}})
+        tree = subprocess.check_output'''))
         for name in ('fixture-candidate-check', 'make'):
             runner = self.tmp / 'bin' / name
             runner.write_text(RUNNER)
@@ -393,16 +402,16 @@ cmd = tuple(args[:2])'''))
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
         self.release('first')
         first_result = self.finish(first)['result']
-        self.assertEqual((first_result['checks'], first_result['merged'], first_result['waited']), ('local-pass', False, 0))
+        self.assertEqual((first_result['checks'], first_result['merged'], first_result['waited']), ('pass', False, 0))
         self.checked('second')
         self.release('second')
         result = self.finish(second)['result']
-        self.assertEqual((result['checks'], result['merged']), ('local-pass', False))
+        self.assertEqual((result['checks'], result['merged']), ('pass', False))
         self.assertGreaterEqual(result['waited'], 0)
         for slug, number in (('first', 101), ('second', 102)):
             tested = json.loads((self.owners[slug][1] / 'tested.json').read_text())
-            evidence = S.task_dir(self.project, slug) / 'local-checks' / tested['candidate'] / 'result.json'
-            self.assertEqual(json.loads(evidence.read_text())['tree'], tested['tree'])
+            self.assertEqual(tested['tree'], git('rev-parse', tested['candidate'] + '^{tree}', cwd=self.repo).strip())
+            self.assertFalse((S.task_dir(self.project, slug) / 'local-checks').exists())
             self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
         self.assertIn('landing turn acquired after', (second[1] / 'notes').read_text())
 

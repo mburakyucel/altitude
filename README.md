@@ -52,24 +52,26 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
-Concurrent `alt land` calls in one repository that merge or run its required candidate check wait
-their turn through validation and merge, so one landing suite runs on the machine at a time. Each
+Concurrent `alt land` calls in this repository wait their turn through publication, CI waiting
+and merge; other repositories serialize merging invocations. Each
 turn incorporates current main and validates a fresh candidate. Waiting is visible with its
 duration and bounded to one hour; failure or process exit releases the turn. Owners keep the
 command running without asking L3 for a landing window. Conflicts, external ref changes, failed
 checks and holds still stop delivery. See [landing contention](docs/CLI.md#concurrent-landings).
 
-This repository temporarily uses verified local `make check` runs for PR delivery under the
-operator's 2026-09-09 Pacific decision. Landing tests the current merge candidate, retains its
-evidence, including captured output on timeout, and adds the passing candidate SHA to the PR.
-Timed-out validation keeps the gate failed. Hosted CI is suspended; review and merge
-holds still apply. Other projects keep their own gates. See
-[local validation and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
+Owners and helpers run relevant tests during development. This repository's self-hosted PR
+`check` runs the full suite; `alt land` requires it to pass for the current merge content.
+The branch includes current main, and each new head needs fresh PR checks. Altitude serializes
+final validation and merges. Runner outages pause merges. Review and merge holds still apply,
+and merges outside Altitude remain unprotected. CI reports stay on the runner host with bounded
+retention and cleanup; GitHub supplies checks and logs without artifact uploads. Owners verify
+local failure reports and preserve needed evidence through review. Other projects keep their own gates. See
+[CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
 Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
 use the installed nvm default and its package-manager shims without loading shell profiles.
 New archive installations save the discovered tool path for their service.
-Candidate dependency installation runs inside `web` so Corepack reads its pinned pnpm version.
+Run dependency installation inside `web` so Corepack reads its pinned pnpm version.
 See [toolchain setup](docs/DEVELOPMENT.md#noninteractive-toolchain).
 
 One active task can deliver several PRs. When authorized work remains after a merge, the same owner
@@ -583,13 +585,15 @@ versioned updates and recovery. Source deployments use [automatic activation](do
 and the operator's `make restart` command. Browser target and installation instructions
 are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
 
-Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop browser flows
+Every PR runs `make check` in CI: Python, web tests, typecheck/build and phone/desktop browser flows
 against isolated fictional state, with external engines replaced by deterministic fixtures.
 Python module processes run alongside the ordered web phases; CI browser workers scale with
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
-Hosted CI is suspended. Local landing retains a self-contained HTML report with named walkthrough
-screenshots and failure traces, plus check logs; raw attachments are not copied again.
-See [local delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
+CI retains small logs and tested commit identity on the runner host; failed runs also retain the
+self-contained HTML report, screenshots and traces. Owners verify local retrieval and keep needed
+evidence through review, cleaning up unneeded completed exports after three days or when disk
+capacity is tight. No GitHub artifact upload is required.
+See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
 These repeated checks make no model calls. Live-provider validation is deferred; the

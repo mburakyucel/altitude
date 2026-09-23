@@ -69,12 +69,15 @@ development/admin exposure grants no new privilege model, generic flag framework
 
 ## Checks
 
-The operator's 2026-09-09 Pacific decision temporarily suspends hosted CI for this repository.
-Every PR runs `make check` through `alt land` on the exact current merge candidate, recording base, head,
-candidate SHA, tree and local evidence. A passing run adds one truthful test line to the PR;
-failed tests or changed tips block merge. Historical hosted failures do not gate this project's
-delivery. Existing review and UX/operator holds still apply. Other projects keep their existing
-gates. See [local delivery and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
+Owners and helpers run tests relevant to their changes during development. This repository's
+required self-hosted PR `check` runs the full `make check` suite. `alt land` requires a successful
+run for the current head and tested tree, with current main included in that head. A branch missing
+current main needs reconciliation and fresh PR checks on the new head. Final validation and merges
+are serialized across Altitude owners. Missing, pending, failed or stale CI blocks delivery,
+including during runner outages; there is no local
+bypass. Review and UX/operator holds still apply. GitHub merges outside Altitude remain
+unprotected; other projects keep their existing gates. See
+[CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
 The required suite includes Python and web tests, typecheck/build and isolated phone/desktop
 headless browser flows. Changes to dispatch, engines or landing include deterministic integration

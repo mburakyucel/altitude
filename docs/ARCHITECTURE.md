@@ -317,8 +317,8 @@ limits](SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
 landing and restart builds. It preserves Node on PATH, otherwise asks installed nvm for its
 default and prepends the returned executable's directory, including package-manager shims.
 It reads `$NVM_DIR` or `~/.nvm` without shell profiles, provisioning or a version-selection policy.
-Unavailable defaults leave other tools usable and are retried on the next call. Candidate installs
-run inside `web` so Corepack resolves that candidate's `packageManager` pin; the frozen lockfile
+Unavailable defaults leave other tools usable and are retried on the next call. Dependency installs
+run inside `web` so Corepack resolves its `packageManager` pin; the frozen lockfile
 and complete validation gate remain authoritative. See [toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
 
 Current gaps are concrete: engine-specific references remain in session, dispatch, transcript and
@@ -455,28 +455,26 @@ owned by other active tasks. Protected branches require the guarded landing path
 fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for operator review.
-Invocations that merge or run the repository's required candidate suite hold a separate `flock`
+Invocations that merge or target this repository’s required PR check hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
-fetch through checks and merge. All its worktrees share the lock, so one landing `make check`
-runs on the machine at a time and sibling candidates cannot fail each other by load; task-state
-locks remain short, so messages and Stop stay available. Admission waits at most one hour, reports
+fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
+so messages and Stop stay available. Admission waits at most one hour, reports
 the seconds waited, and refreshes ownership and holds before publication. Current main is merged
 into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Nonmerging preparation under hosted checks and
-dry runs do not take the turn; other repositories remain independent. External Git/GitHub writers,
-older installed landing code, the containerized self-hosted runner and hand-run suites do not
-participate, so exact base/head refusals remain necessary.
-The temporary local-check repository in `config.py` selects this project's operator-authorized
-exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
-web dependencies, even when opening a PR without merging. Historical hosted results do not supply
-its verdict. Active required hosted checks must be removed by the operator before this route can
-run; identity, isolation, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
-retains logs, browser artifacts and a result binding command, base, head, candidate and tree.
-Suite timeouts retain captured stdout and stderr with the timeout diagnostic and a failed result. A
-successful current run writes a concise PR test line through the ordinary landing boundary.
-See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
+There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
+the turn. External Git/GitHub writers, older landing code, self-hosted runner executions and
+hand-run suites do not share it, so exact base/head refusals remain necessary.
+This repository requires its self-hosted PR `check` to run the full `make check` suite. Owners
+and helpers run relevant tests during development; landing does not repeat the full suite locally.
+CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
+check on the current head and verifies that the head includes current main. A branch missing
+current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
+validation and merge, rechecks identity and holds, and verifies the merged tree against the
+tested tree. Missing, pending, failed or stale CI blocks; runner outages have no local bypass.
+The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
+See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
 unstaged and untracked work. Before pushing, the owner reviews all outgoing commits and the complete
@@ -585,7 +583,7 @@ skipped checks. Completed skipped checks identified as nonrequired by GitHub are
 interpreting workflow conditions. Failed, cancelled and pending checks still block, including
 nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
 candidate association refuses delivery. At least one check must actually pass under the hosted gate.
-Without CI, or under this repository's temporary local policy, the full local suite runs on a clean merge candidate:
+For other projects without CI, the full local suite runs on a clean merge candidate:
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
@@ -1023,15 +1021,18 @@ The same browser specs run at 390×844 with mobile user agent and touch and at 1
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
 appearing and disappearing, and saves named screenshots on passing and failing walkthroughs.
-Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`; local landing
-copies only the self-contained HTML report with its attachments alongside the candidate logs and
-result record in the task folder. Raw results and browser configuration are not copied again.
-Captures needed for review remain accessible outside Git.
+Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
+workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
+runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
+GitHub artifact uploads, duplicate raw results and caches are excluded. Owners verify retrieval
+after container removal, preserve needed evidence in the task through review, and clean up
+unneeded completed exports after three days or when approaching the existing disk budget.
+Unavailable local evidence blocks delivery even when GitHub checks pass. See the
+[retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
-Hosted CI and its artifact upload are suspended for this repository. Every local test, build and
-candidate-identity step remains required. Bundled
-Chromium runs headlessly with a temporary profile and its browser sandbox disabled inside the
+The required PR job runs every suite phase and preserves candidate identity. Bundled Chromium
+runs headlessly with a temporary profile and its browser sandbox disabled inside the
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 

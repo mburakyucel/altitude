@@ -104,6 +104,8 @@ for (const scope of ["project", "task"] as const) {
     await walk.state("04-sending-images", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
     await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled();
     release();
+    // The sent-viewer journey needs history admission; a queued opener is replaced when the engine finishes.
+    if (scope === "project") await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
     await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip, page.getByText("Sending images…", { exact: true })] });
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
     await walk.state("06-view-image", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
