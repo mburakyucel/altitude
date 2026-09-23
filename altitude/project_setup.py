@@ -172,6 +172,16 @@ def _guard_paths(project: str, slug: str | None = None) -> list[tuple[str, str, 
 def observe(project: str) -> dict:
     config.project(project)
     record = read(project)
+    view = _observe(project, record)
+    with operation_lock(project) as free:
+        current = read(project)
+        # Repair may finish during inspection; refresh its receipts and Git evidence together.
+        if current != record or free and (current.get("operation") or {}).get("state") == "running":
+            return _observe(project, current, interrupted=free)
+    return view
+
+
+def _observe(project: str, record: dict, *, interrupted: bool = False) -> dict:
     repo = config.project_path(project)
     repository, has_git = _repository(project)
     rules = engines.repository_rules(repo)
@@ -205,10 +215,8 @@ def observe(project: str) -> dict:
                            "Requires a Git repository."))
     steps.append(_coordinator(project, record))
     operation = dict(record.get("operation") or {})
-    if operation.get("state") == "running":
-        with operation_lock(project) as free:
-            if free:
-                operation["state"] = "interrupted"
+    if interrupted and operation.get("state") == "running":
+        operation["state"] = "interrupted"
     if operation.get("state") in ("running", "pending", "interrupted", "failed"):
         target = next((s for s in steps if s["id"] == operation.get("step", "guards")), None)
         if target and operation.get("state") == "running":

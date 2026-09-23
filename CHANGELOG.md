@@ -8,6 +8,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Auto refreshes account quota without an interactive session, using native live usage reports.
   Missing or failed readings remain unknown; stale readings never become fresh by being reread.
 
+- Setup reads crossing repair completion refresh the completed operation and verified Git guard
+  receipts together; interrupted repairs remain distinguishable (#429).
+
 - Fresh L2 activity previews scroll with chat and disappear after 60 seconds without fresh public
   output. Missing or unavailable output leaves no box; recorded output remains in Live session.
 
