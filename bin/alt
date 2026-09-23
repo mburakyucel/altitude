@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -15,7 +16,7 @@ ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
-                               ("task", "machine"), ("task", "run")}
+                               ("task", "machine"), ("task", "run"), ("task", "review")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
@@ -69,6 +70,37 @@ def _stdin_or_file(args) -> str:
 
 def out(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
+
+
+def _task_review(args, project: str) -> dict:
+    from altitude import reviews
+    slug = args.slug or os.environ.get("ALTITUDE_TASK")
+    if not slug:
+        sys.exit("alt task review: slug or ALTITUDE_TASK required")
+    if ACTOR == "l2" and (project != os.environ.get("ALTITUDE_PROJECT")
+                          or slug != os.environ.get("ALTITUDE_TASK")):
+        sys.exit("alt task review: an L2 reviews only its own task and project")
+    if args.review_action == "status":
+        return reviews.view(project, slug)
+    attempt = os.environ.get("ALTITUDE_ATTEMPT")
+    if ACTOR == "l2" and not attempt:
+        sys.exit("alt task review: ALTITUDE_ATTEMPT is required for the L2")
+    options = {"actor": ACTOR, **({"expected_attempt": int(attempt)} if ACTOR == "l2" else {})}
+    if args.review_action in ("run", "assess") and ACTOR != "l2":
+        sys.exit("alt task review: only the current L2 runs or assesses a review")
+    if args.review_action == "request":
+        return reviews.request(project, slug, request_id=args.request_id or uuid.uuid4().hex,
+                               focus=args.focus, source_id=args.source_message, previous=args.previous, **options)
+    if args.review_action == "assess":
+        try:
+            payload = json.loads(sys.stdin.read() if args.file == "-" else Path(args.file).read_text())
+            if not isinstance(payload, dict) or set(payload) != {"dispositions", "reason"}:
+                raise ValueError("expected an object with dispositions and reason")
+        except (OSError, ValueError) as exc:
+            sys.exit(f"alt task review: invalid assessment JSON: {exc}")
+        return reviews.assess(project, slug, args.review_id, **payload, **options)
+    action = reviews.cancel if args.review_action == "cancel" else reviews.withdraw
+    return action(project, slug, args.review_id, reason=args.reason, **options)
 
 
 def _one_line(value, limit: int = 240) -> str:
@@ -320,6 +352,24 @@ def main(argv=None) -> None:
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
+    review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
+    review_actions = review.add_subparsers(dest="review_action", required=True)
+    for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
+        rv = review_actions.add_parser(action)
+        rv.add_argument("slug", nargs="?", help="defaults to ALTITUDE_TASK")
+        if action == "request":
+            rv.add_argument("--request-id", help="stable identity for retries of this request")
+            rv.add_argument("--focus", default="")
+            rv.add_argument("--source-message", help="original chat message requesting this review")
+            rv.add_argument("--previous", help="review to retry or rerun")
+        elif action != "status":
+            rv.add_argument("--review-id", required=True)
+            if action == "run":
+                rv.add_argument("--context-message", action="append", help="original task context message; repeat as needed")
+            elif action == "assess":
+                rv.add_argument("--file", default="-", help="JSON with dispositions and reason; defaults to stdin")
+            else:
+                rv.add_argument("--reason", required=True)
     ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
 
     f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
@@ -390,14 +440,21 @@ def main(argv=None) -> None:
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
     machine_run = c == "task" and args.tcmd == "run"
+    review_run = c == "task" and args.tcmd == "review" and args.review_action == "run"
+    if review_run:
+        args.slug = args.slug or os.environ.get("ALTITUDE_TASK")
+        if (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
+                or _project(args) != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")):
+            sys.exit("alt task review run: only the current L2 runs reviews for its own task and project")
     if machine_run and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT")):
         sys.exit("alt task run: only the current L2 runs commands, and only for its own task")
-    if c == "issue" or closing_pr or setup_command or machine_run:
+    if c == "issue" or closing_pr or setup_command or machine_run or review_run:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or machine_run or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
-        payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+        body = "" if setup_command or machine_run or review_run or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
+                   "review_id": args.review_id, "context_ids": args.context_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
@@ -408,12 +465,12 @@ def main(argv=None) -> None:
         tls = config.TLS
         ca = config.TLS_DIR / "ca.crt"
         from urllib.parse import quote
-        endpoint = "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
+        endpoint = "task/review/run" if review_run else "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
-            with urllib.request.urlopen(request, context=context, timeout=config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
+            with urllib.request.urlopen(request, context=context, timeout=660 if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
                 result = json.load(response)
                 if machine_run:
                     sys.stdout.write(result["output"])
@@ -422,7 +479,7 @@ def main(argv=None) -> None:
                           + ("; output truncated, read the log" if result.get("output_truncated") else "")
                           + f"; log {result['log']}")
                     sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
-                out(result if closing_pr or setup_command else result["url"])
+                out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
         except urllib.error.HTTPError as exc:
             sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
         except OSError as exc:
@@ -618,6 +675,8 @@ def main(argv=None) -> None:
                        findings_tracked=args.findings_tracked))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
+        elif tc == "review":
+            out(_task_review(args, p))
         elif tc == "reply":
             if ACTOR != "l2":
                 sys.exit("alt task reply: only the current L2 may use this command")

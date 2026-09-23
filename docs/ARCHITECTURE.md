@@ -352,6 +352,40 @@ retain their exit paths. It creates no job registry, automatic retry or alternat
 Report freshness and delivery verification remain authoritative; native coverage limits are explicit
 in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
 
+### Cross-engine review
+
+`reviews.py` owns the optional task-bound review record; the task remains owned by L2. L2 elects
+review through the CLI, or the operator requests it through the existing task menu. The same receipt
+appears as a compact task-conversation system row. A repeated request or source message reuses it.
+The owner prepares a committed checkpoint and invokes the fixed daemon review endpoint. This is a
+bounded Altitude-managed invocation, separate from engine-native delegation; it adds no helper queue,
+provider handoff, owner session or general command transport.
+
+The engine and routing seams select one configured option different from the owner, respecting
+project choices and known quota exhaustion. Unknown allowance remains eligible and visible. Admission
+uses the existing machine launch lock: one reviewer machine-wide, with an additional machine slot,
+no reservation while waiting for preparation, no automatic retry and a ten-minute execution limit.
+Adapters lacking the captured-input contract are unavailable. A single configured engine remains
+fully usable for ordinary work.
+
+Capture records committed head, fetched base, merge-candidate tree, context identities and input
+hashes. Raw Git blobs preserve exact bytes without export attributes; untracked files, symlinks and
+submodules are excluded by refusal. Captures accept at most 10000 files, 2 MiB per file and 64 MiB in
+total. Context includes the brief, request, original authority messages and corrections, decisions,
+and default-all or selected L2 evidence, bounded to 64 KiB. Image evidence needs a textual account.
+The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
+connectors, network tools, mutation, nested helpers or task identity. CLI-internal authentication uses
+the configured account. Deterministic fixtures verify application behavior and adapter configuration;
+live-provider compatibility remains unverified under the standing testing decision.
+
+Review records retain original findings and separate owner dispositions. Exact source/authority
+freshness and actual selected-input hashes are distinct. L2 assessment records the final candidate
+and evidence for every finding. Changed code, base or conversation invalidates that assessment;
+the UI distinguishes independently reviewed work from later L2-assessed edits. Request admission
+and the final merge share a task lock. Landing checks review completion and current assessment
+after other pre-merge checks; review cannot release an operator hold or replace required checks.
+Only the operator can withdraw an operator request. No automatic rerun occurs after fixes.
+
 ## Task lifecycle
 
 ```text

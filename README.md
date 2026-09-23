@@ -215,7 +215,7 @@ show coverage and freshness: missing records stay unknown or partial, and native
 only when local parentage supports attribution. Provider aggregates that cannot split helper usage
 say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
 
-**L1** means an engine-native helper used by an L2, not a separately managed Altitude role. The L2
+**L1** means a bounded helper used by an L2, not a separate task owner. The L2
 remains accountable; delegation suits bounded independent work and is optional for small tasks.
 Each helper assignment explicitly directs it to read the shared [L1 persona](personas/l1.md)
 from the activated installation. L2 supplies the task-specific context, scope and expected evidence;
@@ -225,6 +225,15 @@ their attributable tokens, and per-helper identity and owner attempt context. Di
 descendants are distinguished when native parentage supports it; otherwise depth stays unknown.
 Counts include observed identities without token counters and remain partial, never a definitive
 total spawned. The same breakdown stays available in task and report details after archival.
+
+L2 can choose a **cross-engine review** when a second opinion is useful. The operator can request
+the same review from the task menu; an existing review opens its status and findings in the task
+conversation. A compact line shows progress, with original findings and L2 dispositions in details.
+One read-only reviewer examines a captured committed revision for at most ten minutes, using an
+additional machine slot and the configured account. It cannot edit, run tests or approve merging.
+Accepted requests wait for L2 assessment or authorized withdrawal before merge. Later edits are
+labelled separately. Single-engine work continues normally when no second engine is available.
+See [requesting and assessing review](docs/CLI.md#cross-engine-review).
 
 ## Configure concurrency
 

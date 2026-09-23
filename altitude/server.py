@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, route, state as S, tasks as T, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1590,6 +1590,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            if parts == ["api", "task", "review", "run"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids"}:
+                        raise ValueError("Unsupported review execution fields.")
+                    if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
+                        raise ValueError("The current L2 attempt is required.")
+                    review = reviews.run(o["project"], o["slug"], o["review_id"], actor="l2",
+                                         expected_attempt=int(o["attempt"]), context_ids=o.get("context_ids"))
+                    return self._json({"ok": True, "review": review})
+                except (T.TransitionError, ValueError, KeyError) as exc:
+                    return self._json({"error": str(exc)}, 409)
+            if parts == ["api", "task", "review"]:
+                try:
+                    if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus"}:
+                        raise ValueError("Unsupported review fields.")
+                    project, slug, action = o["project"], o["slug"], o["action"]
+                    if action in ("request", "retry", "rerun"):
+                        if not isinstance(o.get("request_id"), str) or not o["request_id"].strip():
+                            raise ValueError("A review request identity is required.")
+                        previous = o["review_id"] if action != "request" else None
+                        review = reviews.request(project, slug, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous)
+                    elif action in ("cancel", "withdraw"):
+                        operation = reviews.cancel if action == "cancel" else reviews.withdraw
+                        review = operation(project, slug, o["review_id"], actor=T.OPERATOR_MESSAGE_ROLE,
+                                           reason=o.get("reason", ""))
+                    else:
+                        raise ValueError("Unknown review action.")
+                except (T.TransitionError, ValueError, KeyError) as exc:
+                    return self._json({"error": str(exc)}, 409)
+                try:
+                    if S.load_task(project, slug).get("state") == "blocked":
+                        request_task_resume(project, slug)
+                except Exception as exc:  # #298: a durable request survives an immediate wake failure.
+                    log(f"[{project}/{slug}] review wake deferred: {exc}")
+                return self._json({"ok": True, "review": review})
             if parts == ["api", "task", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command"}:
@@ -2245,7 +2281,8 @@ def task_view(project: str, slug: str) -> dict:
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
             "files": files, "messages": T.message_views(project, slug, activity["delivered"]),
-            "events": events, "activity": activity, "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
+            "events": events, "activity": activity, "review": reviews.view(project, slug),
+            "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 

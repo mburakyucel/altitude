@@ -366,8 +366,9 @@ export const TaskMessageSchema = z
   .object({
     id: z.string(),
     at: z.string().nullish(),
-    role: z.enum(["burak", "l2", "l3"]),
+    role: z.string(),
     text: z.string(),
+    review_id: z.string().nullish(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
   })
@@ -426,6 +427,25 @@ export const TokenUsageSchema = z.object({
   helpers: HelperUsageSchema.nullish(),
 }).passthrough();
 
+const ReviewSnapshotSchema = z.object({ head: z.string(), base: z.string(), tree: z.string(), context_hash: z.string(), context_ids: z.array(z.string()).optional(), captured_at: z.string().optional(), input_hash: z.string().optional(), captured_context_hash: z.string().optional(), selected_owner_evidence: z.boolean().optional(), limitations: z.array(z.string()).nullish() }).passthrough();
+export const ReviewSchema = z.object({
+  id: z.string(), requested_at: z.string(), requested_by: z.string(),
+  state: z.enum(["requested", "running", "completed", "failed", "cancelled", "withdrawn"]),
+  engine_label: z.string().nullish(), model: z.string().nullish(),
+  started_at: z.string().nullish(), finished_at: z.string().nullish(), error: z.string().nullish(), focus: z.string().default(""),
+  result: z.object({ text: z.string(), findings: z.array(z.object({ id: z.string(), severity: z.string(), title: z.string(), body: z.string(), path: z.string().nullish(), line: z.number().nullish() })), limitations: z.array(z.string()).nullish() }).nullish(),
+  dispositions: z.array(z.object({ finding_id: z.string(), disposition: z.enum(["fixed", "dismissed"]), reason: z.string() })).default([]),
+  snapshot: ReviewSnapshotSchema.nullish(),
+  reconciled: ReviewSnapshotSchema.extend({ reason: z.string() }).nullish(),
+  coverage: z.enum(["current", "earlier", "unknown", "assessed"]),
+  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_retry: z.boolean(), can_review_latest: z.boolean(),
+}).passthrough();
+export type Review = z.infer<typeof ReviewSchema>;
+export const TaskReviewSchema = z.object({
+  available: z.boolean(), why: z.string(), engine_label: z.string().nullable(), model: z.string().nullable(),
+  allowance_known: z.boolean(), latest: ReviewSchema.nullable(), history: z.array(ReviewSchema),
+});
+
 export const TaskViewSchema = z
   .object({
     slug: z.string(),
@@ -435,6 +455,7 @@ export const TaskViewSchema = z
     planned_wait: PlannedWaitSchema.nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
+    review: TaskReviewSchema.nullish(),
     question: DecisionSchema.nullish(),
     questions: z.array(DecisionSchema).nullish(),
     question_group: QuestionGroupSchema.nullish(),
@@ -877,6 +898,12 @@ export const removeL2Message = (project: string, slug: string, id: string) => po
 /** Stop or Reject from the task page's inline confirm (SPEC.md §3.10); failure reads inline there. */
 export function taskAction(input: TaskActionInput): Promise<unknown> {
   return post("/api/task/action", input);
+}
+
+export type ReviewAction = "request" | "retry" | "rerun" | "cancel" | "withdraw";
+export async function taskReview(input: { project: string; slug: string; action: ReviewAction; request_id?: string; review_id?: string; reason?: string }): Promise<Review> {
+  const result = await post<{ review: unknown }>("/api/task/review", input);
+  return ReviewSchema.parse(result.review);
 }
 
 export function useL3Reset(project: string) {

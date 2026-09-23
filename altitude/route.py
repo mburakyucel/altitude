@@ -185,6 +185,30 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
                        "effort" in task or project.get("l2_effort") is not None else "native")
 
 
+def pick_review(task: dict, project: dict) -> dict:
+    """Select once from configured options on a different seat, retaining project pins."""
+    from . import engines
+    owner = task.get("l2_engine")
+    empty = {"engine": None, "model": None, "label": None, "allowance_known": False}
+    if owner not in config.ENGINES:
+        return {**empty, "why": "The owner's actual engine is unavailable."}
+    try:
+        pin = config.pinned_option("l2", project)
+        tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
+        excluded = tuple((owner, o.get("model") or config.default_model("l2", owner))
+                         for tier in tiers for o in tier if o["engine"] == owner)
+        choice = pick_engine("l2", project=project, excluded=excluded)
+    except ValueError as exc:
+        return {**empty, "why": str(exc)}
+    if not choice.get("engine"):
+        return {**empty, "why": "No second engine is available. " + choice["why"]}
+    capability = engines.review_capability(choice["engine"])
+    if not capability["available"]:
+        return {**empty, "why": capability["why"]}
+    return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
+            "allowance_known": all(value is not None for value in _usage()[choice["engine"]])}
+
+
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
                 current_model: str | None = None, excluded: tuple = (), effort: str | None = None) -> dict:

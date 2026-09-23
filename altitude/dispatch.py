@@ -574,6 +574,8 @@ def run_task_operation(project: str, slug: str) -> dict:
                           daemon_request_id=request_id, expected_agent_id=request.get("agent_id"),
                           expected_session_id=request.get("session_id"))
         else:
+            from . import reviews
+            reviews.cancel_attached(project, slug, "Owner rejected")
             result = T.reject(
                 project, slug, request["reason"], actor=request["actor"],
                 expected_state=request.get("expected_state"), expected_agent_id=request.get("agent_id"),
@@ -1112,6 +1114,8 @@ def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: st
             T._supersede_resume(task)
             task.update(stop_id=daemon_request_id or uuid.uuid4().hex, blocked_reason=reason, block_actor=by)
             S.save_task(project, task)
+    from . import reviews
+    reviews.cancel_attached(project, slug, "Owner stopped")
     if task.get("agent_id"):
         note = engines.stop_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
     else:
@@ -1326,10 +1330,11 @@ def launch_lock():
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    from . import reviews
     if task and occupies_slot(task):
         return None
     tasks = [(p, t) for p in config.load_projects() for t in S.list_tasks(p)]
-    total = sum(occupies_slot(t) for _, t in tasks)
+    total = sum(occupies_slot(t) for _, t in tasks) + reviews.active_count()
     if total >= config.machine_wip():
         return f"WIP limit: {total} running on this machine"
     if task and task["state"] == "queued" and any(resume_ready(p, t) for p, t in tasks):
@@ -1345,7 +1350,8 @@ def occupies_slot(task: dict) -> bool:
 
 def poll(project: str) -> list[dict]:
     """Return L2 turns that exited, using each task's persisted engine adapter."""
-    from . import usage
+    from . import reviews, usage
+    reviews.poll(project)
     task_rows = S.list_tasks(project)
     finished = []
     for t in task_rows:

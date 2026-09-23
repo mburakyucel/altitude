@@ -342,6 +342,27 @@ FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and t
 Digest links land at its section. States: loading (a title-shaped skeleton); empty ("No report
 yet."); error ("Could not load the report." and Retry).
 
+#### Cross-engine review in the task conversation
+
+The existing task menu offers **Request cross-engine review**, showing the selected engine/model,
+configured allowance (including unknown), ten-minute maximum and merge wait. An existing request
+replaces initiation with **View review** and its status. L2 can initiate the same review itself.
+No permanent review button, card, tab or separate reviewer conversation appears.
+
+A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
+L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
+L2 dispositions, selected context IDs and exact checkpoint evidence. It starts folded; collapsing
+removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
+folded. No findings never means permission to merge. Failure keeps the request unresolved and exposes
+explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
+
+Empty history adds no conversation row. Loading/saving disables repeats. Unavailable explains why in
+the menu; denied/uncertain delivery uses inline feedback and saved-status refresh. Menu dismissal,
+details expansion and request delivery preserve the draft and reading position. Listening and voice
+submission retain the composer journey. `cross-engine-review.pw.ts` walks these states at phone and
+desktop widths; `cross-engine-review-integration.pw.ts` walks real persisted request, alternate-engine
+fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, staleness and dispositions.
+
 ### 3.5 Task card (inline and in the work panel)
 
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click

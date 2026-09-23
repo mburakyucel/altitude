@@ -1,0 +1,15 @@
+.task-review-row { margin: 20px 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.task-review-row:focus { outline: none; }
+.task-review-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.task-review-row p { margin: 0 0 10px; }
+.task-review-status { color: var(--text-muted); }
+.task-review-coverage { color: var(--text-secondary); }
+.task-review-row summary { display: list-item; width: fit-content; padding: 10px 0; min-height: 44px; color: var(--accent-text); cursor: pointer; }
+.task-review-detail { padding: 8px 0; font-size: 14px; }
+.task-review-finding { margin: 18px 0; }
+.task-review-evidence { overflow-wrap: anywhere; color: var(--text-muted); }
+.task-review-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.task-review-actions .link { min-height: 44px; }
+.task-review-menu { display: flex; flex-direction: column; gap: 8px; }
+.task-review-menu .btn { align-self: flex-start; }
+.task-review-feedback { margin: 0; }

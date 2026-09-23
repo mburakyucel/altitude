@@ -682,7 +682,7 @@ Lowering the cap lets running work continue. Fresh and resumed launches wait unt
 running count falls below it. Blocked tasks consume no capacity. Eligible ready resumes take available
 capacity before fresh launches across all projects. Operator waits, faults without verified recovery,
 future due times, busy project setup and unavailable engines reserve no slots and do not hold eligible work. The limit
-counts running tasks, excluding engines' native helpers and L3 turns.
+counts running tasks and active cross-engine reviewers, excluding engines' native helpers and L3 turns.
 `alt task status` reports pending admission waits in `wip_hold`; running tasks have none.
 Its `hold` field stays empty because project queue observations are not individual task holds.
 `blocked_reason`, `waiting_on`, `fault` and `hold_merge` retain the task's actual recorded holds.
@@ -1177,6 +1177,42 @@ name a real tracking record such as the issue coordination filed; the done event
 list every open finding with that reference, so nothing is dropped silently. The flag accepts only
 that one problem on a delivery whose merges and heads verify, refuses a report without open findings,
 and is not available to the owner.
+
+### Cross-engine review
+
+L2 chooses review without a separate operator request. The task menu provides the operator's fallback
+and opens an existing review's conversation evidence. Requests use one alternate configured engine,
+one additional machine slot and a ten-minute limit. No suitable engine or capacity means an explicit
+unavailable response; it does not queue or silently retry. Unknown allowance is shown before requesting.
+
+```sh
+alt task review status
+alt task review request --focus "Check the changed task and landing journeys"
+# For a request made in chat, retain its original authority and deduplicate it:
+alt task review request --source-message <message-id>
+# Commit the intended checkpoint first; uncommitted tracked changes cannot be captured.
+alt task review run --review-id <id>
+alt task review assess --review-id <id> --file /tmp/assessment.json
+alt task review cancel --review-id <id> --reason "The owner needs to stop"
+alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
+alt task review request --previous <id> --focus "Review the later revision"
+```
+
+Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. Commands fence mutations to
+the current owner attempt. Operator requests can only be skipped by the operator's UI action.
+`run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
+IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
+included. Default capture includes all L2 messages. The 64 KiB context limit fails explicitly.
+For image context, supply an L2 textual account and select that message explicitly; the capture
+records that original image bytes are not reviewed. The reviewer cannot run tests.
+The receipt retains selected message IDs, source/candidate identities and captured-input hashes.
+
+Assessment JSON contains `reason` and `dispositions`, one entry per finding:
+`{"finding_id":"F1","disposition":"fixed","reason":"Evidence for the fix"}`; `dismissed` also
+requires evidence. With no findings, use an empty array and an assessment reason. Commit fixes before
+assessing; post the outcome explanation before assessment so it is included in the final context.
+Code, base or subsequent conversation changes require reassessment before merge. Later L2
+assessment is labelled separately from the original review, and never releases other merge holds.
 
 ### Task design previews
 

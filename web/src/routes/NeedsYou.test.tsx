@@ -4,7 +4,7 @@ import { renderApp } from "../test/render";
 import { TaskMessageSchema } from "../data/api";
 import { setSelectedProject } from "../shell/scope";
 
-const OPERATOR = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3") ?? "";
+const OPERATOR = "operator";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });

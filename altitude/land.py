@@ -906,10 +906,9 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
         return False, None, tests
-    if before_merge:
-        before_merge()
-    merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
-                              preserve_history=preserve_history)
+    with before_merge() if before_merge else contextlib.nullcontext():
+        merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
+                                  preserve_history=preserve_history)
     return merged, main_run, tests
 
 
@@ -1119,7 +1118,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         checks = _checks_value(root, number, pair)
     _require_closing_issues(root, number, closes_issues)
     merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
-    def before_merge():
+    def check_before_merge():
         current_pr = _pr_view(root, str(number)) or {}
         if (current_pr.get("isDraft") is True
                 or current_pr.get("reviewDecision") not in (None, "", "APPROVED")):
@@ -1145,6 +1144,23 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                        reason="owner applied the operator's task-chat approval")
             except T.TransitionError as exc:
                 raise LandError(str(exc)) from exc
+    @contextlib.contextmanager
+    def before_merge():
+        from . import reviews
+        with reviews.merge_lock(project, slug):
+            check_before_merge()
+            try:
+                reviews.require_merge(project, slug, pair)
+            except T.TransitionError as exc:
+                raise LandError(str(exc)) from exc
+            yield
+            with S.project_lock(project):
+                current = S.load_task(project, slug)
+                current["review_merged_head"] = pair["head_sha"]
+                if current.get("reviews"):
+                    current["reviews"][-1]["merged_head"] = pair["head_sha"]
+                S.save_task(project, current)
+
     if merge and not merged:
         if checks == "none-configured":
             merged, main_run, local_tests = _merge_on_local_suite(
@@ -1152,10 +1168,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         elif checks == "pass":
             checks = _checks_value(root, number, pair)
             if checks == "pass":
-                before_merge()
                 _assert_pair_current(root, pair)
-                merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
-                                          preserve_history=bool(adoption))
+                with before_merge():
+                    merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
+                                              preserve_history=bool(adoption))
                 if pair["required_pr_check"]:
                     commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
                     if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),

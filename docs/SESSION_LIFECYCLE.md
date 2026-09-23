@@ -195,6 +195,30 @@ duplicating the persona. They do not prove live helper consumption, model compli
 Existing helpers retain their native context; changed instructions reach a new assignment after
 source activation. Live-provider testing remains deferred.
 
+## Cross-engine review
+
+L2 may initiate review by judgment; it is never an always-on stage. The operator's task-menu action
+creates the same attributed request and pending owner inbox entry. Running owners receive it at the
+next message checkpoint; a reported owner with an open delivery uses the existing continuation path.
+Stopped, question-blocked, faulted, undispatched and finished owners explain why review is unavailable.
+Existing requested, running and completed reviews open their conversation evidence instead of
+creating duplicates. A later revision can be deliberately reviewed again.
+
+The owner commits the chosen checkpoint, supplies relevant original context and calls
+`alt task review run`. The service captures immutable inputs and reserves one additional machine
+slot atomically before invoking the alternate engine. The synchronous command returns the complete
+result or explicit failure. Owner work can continue in parallel, but accepted review prevents merge
+until L2 records finding dispositions and assesses the exact final candidate, or the requester is
+authorized to withdraw. L2 replies in normal prose; the original result remains in review details.
+
+Owner Stop/rejection cancels attached execution. Timeout, invalid output and cancellation retain an
+unresolved request; retry is explicit. Restart reconciliation never launches a replacement. Capacity
+is released only after termination is confirmed; uncertain termination follows task-local incident
+recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
+on the task, separate from native-helper usage attribution. Later code/base/context changes show
+staleness; L2 reconciliation does not claim the second engine examined the later revision.
+See [commands and evidence](CLI.md#cross-engine-review).
+
 ## Fresh dispatch
 
 ```text
