@@ -926,6 +926,10 @@ resource policy. This retains the existing private HTTP/network and OS-user boun
 authentication, public hosting or storage infrastructure. Selected content reaches the chosen
 provider as ordinary agent input. Original uploads and conversion intermediates are removed.
 
+JSON response writes handle client disconnects across headers and body, including GET and POST
+image error replies. Connected clients receive the same error status and JSON body; unrelated
+server failures remain visible. A disconnected response closes the connection without another write.
+
 Image POSTs use the existing chat/message endpoints with `images: [{name, data}]` (base64) and a
 UUID `request_id`. Saved-ID retries use `image_ids` instead of new uploads. The project lock fences
 file publication and durable admission; a repeated identity returns its recorded receipt and cannot
