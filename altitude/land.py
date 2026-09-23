@@ -911,16 +911,25 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     return finish(merged, None if pair.get("local_checks") else main_run, tests)
 
 
-def _serialized_merge(function):
-    """#433: siblings must not advance the base while a landing validates its candidate."""
+def _local_checks(root: Path) -> bool:
+    """Whether this repository validates every landing with the full local suite on the merge candidate."""
+    origin = (_git(root, "config", "--get", "remote.origin.url").stdout or "").strip()
+    repository = github_intake._REMOTE.fullmatch(origin)
+    return bool(repository and f"{repository['owner']}/{repository['repo']}".lower() == config.LOCAL_CHECK_REPOSITORY)
+
+
+def _repository_turn(function):
+    """#433: siblings must not advance the base while a landing validates its candidate.
+    I-20260923-062538: one required candidate check at a time per repository on this machine, merging or not,
+    so sibling suites cannot time each other out by load."""
     @functools.wraps(function)
     def run(message, **kwargs):
-        if not kwargs.get("merge") or kwargs.get("dry_run"):
-            return function(message, **kwargs)
         root = Path(kwargs.get("cwd") or Path.cwd())
+        if kwargs.get("dry_run") or not (kwargs.get("merge") or _local_checks(root)):
+            return {**function(message, **kwargs), "waited": 0}
         common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
         with open(Path(common) / "altitude-land.lock", "a") as lock:
-            deadline = time.monotonic() + LAND_WAIT_TIMEOUT
+            started = time.monotonic()
             waiting = False
             while True:
                 try:
@@ -930,16 +939,17 @@ def _serialized_merge(function):
                     if not waiting:
                         _note("waiting for another landing in this repository (up to 3600 seconds)")
                         waiting = True
-                    if time.monotonic() >= deadline:
+                    if time.monotonic() >= started + LAND_WAIT_TIMEOUT:
                         raise LandError("landing wait timed out; no candidate selected — re-run alt land when ready")
                     time.sleep(1)
+            waited = round(time.monotonic() - started) if waiting else 0
             if waiting:
-                _note("landing turn acquired; refreshing ownership, base and candidate checks")
-            return function(message, **kwargs)
+                _note(f"landing turn acquired after {waited} seconds; refreshing ownership, base and candidate checks")
+            return {**function(message, **kwargs), "waited": waited}
     return run
 
 
-@_serialized_merge
+@_repository_turn
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int = 600, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
@@ -1091,10 +1101,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
     hold_merge = task.get("hold_merge")
     pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
-    repository = github_intake._REMOTE.fullmatch(origin)
-    pair["local_checks"] = bool(repository and
-                                f"{repository['owner']}/{repository['repo']}".lower() == config.LOCAL_CHECK_REPOSITORY)
+    pair["local_checks"] = _local_checks(root)
     if pair["local_checks"]:
         test_cmd = "make check"
     checks = _checks_value(root, number, pair)
