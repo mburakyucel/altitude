@@ -1104,7 +1104,10 @@ receipt is recorded before waiting for checks; an unpublished delivery cannot co
 The final `report.json` includes every delivery in `landed.prs` and current validation evidence.
 Reports predating the current delivery, omitting earlier PRs or leaving unpublished work are
 refused. Finish through the verified report path when all agreed work is done; a merge alone
-does not require a new task or complete the current one.
+does not require a new task or complete the current one. `alt task done` verifies a reported
+delivery whose recorded verdict is not ok against GitHub again before completing, so a merged
+delivery whose report only abbreviated the merge SHA completes without resuming its owner; the
+refusal names the remaining problems.
 
 ### Task design previews
 

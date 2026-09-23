@@ -1223,9 +1223,22 @@ def _require_no_code_change(task: dict) -> None:
         raise TransitionError(f"cannot prove the task branch is unchanged: {(diff.stderr or '').strip()[:200]}")
 
 
+def _reverify(project: str, slug: str) -> dict | None:
+    """A reported delivery whose recorded verdict is not ok is checked against GitHub again at completion (#456)."""
+    from . import verify
+    task = S.load_task(project, slug)
+    if task.get("state") != "reported" or not task.get("delivery") or (task.get("verified") or {}).get("verdict") == "ok":
+        return None
+    try:
+        return {**verify._verify(project, slug), "owner": report_owner(task)}
+    except verify.VerifierFault as exc:
+        raise TransitionError(f"{slug}: cannot verify the current delivery: {exc}") from exc
+
+
 def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_state: str | None = None, expected_attempt: int | None = None,
          expected_owner: dict | None = None) -> dict:
+    fresh = _reverify(project, slug) if actor != "l2" else None
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug)
@@ -1245,13 +1258,19 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
             raise TransitionError(f"{slug}: cannot complete a running worker; wait for its report or stop/reject it")
         delivery = task.get("delivery")
         verified = task.get("verified") or {}
+        if fresh and task.get("state") == "reported" and fresh.get("delivery") == delivery \
+                and fresh.get("owner") == report_owner(task):
+            verified = task["verified"] = {**fresh, "attempt": task["attempt"]}
+            S.save_task(project, task)
+            S.append_event(project, slug, "report-reverified", verdict=fresh["verdict"], problems=fresh["problems"], by=actor)
         if ((expected_owner is not None and expected_owner != report_owner(task))
                 or (task.get("report_after") and verified.get("owner") != report_owner(task))
                 or any(row.get("wake", True) for row in pending(project, slug))):
             raise TransitionError(f"{slug}: follow-up work requires a current report before completion")
         if delivery and (not delivery.get("number") or verified.get("delivery") != delivery
                          or verified.get("verdict") != "ok"):
-            raise TransitionError(f"{slug}: current delivery requires a verified report before completion")
+            raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
+                                             *(verified.get("problems") or [])]))
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
         if digest:
