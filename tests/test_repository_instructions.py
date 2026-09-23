@@ -78,6 +78,14 @@ class TestRepositoryInstructions(AltitudeCase):
                         self.assertEqual(result["agent"]["sessionId"], "session")
                         prompt = processes[0].stdin.getvalue().decode()
                         self.assert_rules(prompt, rules)
+                        # #441: every fresh/resumed owner gets the capability limit, even without project rules.
+                        self.assertEqual(prompt.count(engines.BROWSER_VERIFICATION_NOTE), 1)
+                        for requirement in ("Before deployment verification", "chromiumSandbox:true",
+                                            "disposable writable", "clean up afterwards",
+                                            "capability unavailable", "block with --fault",
+                                            "does not establish host ownership", "do not chmod/chown",
+                                            "does not authorize verification outside worker confinement"):
+                            self.assertIn(requirement, prompt)
                         self.assertTrue(prompt.endswith("Continue task." if resume else "Start task."))
             self.assertEqual(before, {p.name: p.read_bytes() for p in self.repo.iterdir() if p.is_file()})
 

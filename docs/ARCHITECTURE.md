@@ -1040,6 +1040,14 @@ runs headlessly with a temporary profile and its browser sandbox disabled inside
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
+That sandbox-disabled launch belongs only to Altitude's fictional local UI harness. The shared worker
+launcher supplies fresh and resumed owners with a browser capability instruction: preflight required
+browser isolation in the intended worker before deployment verification, retaining both protections,
+and fault-block if unavailable. It is instruction delivery, not an automatic browser probe or an OS
+capability guarantee. Namespace-visible SUID helper ownership cannot establish host package ownership;
+host diagnosis follows existing machine authority. No browser broker or new permission path exists.
+See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-recovery).
+
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. They add no runtime lifecycle state and
 do not gate automatic activation of merged changes. The UI and testing rules remain in the

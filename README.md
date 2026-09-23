@@ -260,6 +260,12 @@ AGENTS.md owns this project's policy, and the [CLI reference](docs/CLI.md) descr
 Personas retain essential operating guidance without depending on another project's copy of
 Altitude documentation. See [instruction loading and activation limits](docs/SESSION_LIFECYCLE.md#repository-instructions).
 
+Worker launch does not establish browser-sandbox availability. Before deployment verification that
+requires it, the owner checks the intended browser with its sandbox enabled inside the worker and
+reports an unavailable capability through the existing fault/recovery path when launch fails.
+Altitude's fictional UI harness does not prove this capability or authorize disabling required
+protections. See [browser verification and recovery](docs/DEVELOPMENT.md#browser-verification-and-recovery).
+
 Both project roles can use one installed engine with Auto. Configure project preference tiers with
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`: commas tie options,
 and `>` puts the next tier below them. Auto chooses the highest available tier, compares meaningful
