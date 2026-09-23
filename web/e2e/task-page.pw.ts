@@ -106,7 +106,7 @@ test("a running task: conversation, live session, Raw events, accessible Stop an
 
   await walk.open(taskPath(project.name, task.slug));
   await walk.state("01-running-conversation", {
-    visible: [v.heading(title), v.main.getByText("Running", { exact: true }).first(), v.conversation, v.composer, v.stop, ...(v.phone ? [] : [v.reject])],
+    visible: [v.heading(title), v.main.getByText("L2 working", { exact: true }).first(), v.conversation, v.composer, v.stop, ...(v.phone ? [] : [v.reject])],
     hidden: [v.stopConfirm, v.rejectConfirm, v.main.getByLabel("Loading", { exact: true }), ...(v.phone ? [v.reject] : [])],
   });
   await walk.state("02-live-session-streaming", {
@@ -198,7 +198,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
 });
 
-test("a blocked task: the anchored question, waiting for L3, a fault", async ({ page, request }, info) => {
+test("a blocked task: the question at the end of the chat, waiting for L3, a fault", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -220,15 +220,19 @@ test("a blocked task: the anchored question, waiting for L3, a fault", async ({ 
     page,
     project.name,
     { ...base, state: "blocked", live: null, resume_after: null, blocked_reason: question,
-      question: decision, questions: [decision], messages: [...(base.messages as unknown[]), anchor] },
+      question: decision, questions: [decision], question_group: { id: decision.id, revision: 1, anchor_id: anchor.id, questions: [decision] },
+      messages: [...(base.messages as unknown[]), anchor, { ...anchor, id: "timer-later", text: "I also checked the timer tests." }] },
     { queue: [decision] },
   );
   await walk.open(`${taskPath(project.name, base.slug)}?question=${decision.id}&revision=${decision.revision}`);
   const card = v.conversation.locator(`[data-question-id="${decision.id}"]`);
   await expect(card).toBeInViewport();
-  await expect(page.locator(`.conversation-question:has([data-question-id="${decision.id}"])`)).toBeFocused();
+  const turn = page.locator(`.conversation-question:has([data-question-id="${decision.id}"])`);
+  await expect(turn).toBeFocused();
+  // The open question is the last thing in the chat, after later messages.
+  await expect(page.locator(".msg-row:has-text('I also checked the timer tests.') ~ .conversation-question")).toHaveCount(1);
   await walk.state("01-blocked-on-the-operator", {
-    visible: [v.main.getByText("Needs your answer", { exact: true }).first(), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
+    visible: [v.main.getByText("Your turn · 1 question", { exact: true }).first(), turn.getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
     hidden: [line, v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
@@ -236,11 +240,11 @@ test("a blocked task: the anchored question, waiting for L3, a fault", async ({ 
   const waiting = DecisionSchema.parse({ ...decision, id: "suite-question", anchor_id: "suite-anchor", asked_by: "l2", audience: "l3", question: "which suite covers the timer", recommendation: null });
   const waitingAnchor = TaskMessageSchema.parse({ ...anchor, id: waiting.anchor_id, role: "l2", by: "l2", text: waiting.question });
   await overlay(page, project.name, { ...base, state: "blocked", live: null, resume_after: null, waiting_on: "l3", blocked_reason: waiting.question,
-    question: waiting, questions: [waiting], messages: [...(base.messages as unknown[]), waitingAnchor] }, { queue: [] });
+    question: waiting, questions: [waiting], question_group: { id: waiting.id, revision: 1, anchor_id: waitingAnchor.id, questions: [waiting] }, messages: [...(base.messages as unknown[]), waitingAnchor] }, { queue: [] });
   await walk.open(`${taskPath(project.name, base.slug)}?question=${waiting.id}&revision=1`);
   const l3Question = v.conversation.locator(`[data-question-id="${waiting.id}"]`);
   await walk.state("02-blocked-waiting-for-l3", {
-    visible: [v.main.getByText("Waits for L3", { exact: true }).first(), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
+    visible: [v.main.getByText("Waits for L3", { exact: true }).first(), v.conversation.getByText("L3 is answering", { exact: true }), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
     hidden: [card, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 

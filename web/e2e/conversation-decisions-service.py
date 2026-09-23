@@ -231,6 +231,12 @@ def main():
                 return self._json({"slug": slug})
             if self.path == "/fixture/checkpoint":
                 return self._json(fake.checkpoint(self._body()["slug"]))
+            if self.path == "/fixture/park":
+                # The owner parks its saved group again; still-open questions return as asked again.
+                slug = self._body()["slug"]
+                row = S.load_task("atlas", slug)
+                T.block("atlas", slug, T._groups(row)[-1]["reason"], actor="l2", expected_attempt=row["attempt"])
+                return self._json(T.question_group_view("atlas", S.load_task("atlas", slug)))
             if self.path == "/fixture/revise":
                 slug = self._body()["slug"]
                 T.escalate("atlas", slug, "Should we retain the old index for fourteen days?",

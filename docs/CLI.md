@@ -41,8 +41,11 @@ alt l3 search <literal-text> [--limit N] [--json]
 
 `alt task status <slug> --brief` prints at most ten orientation lines. `alt task status <slug>` and
 its explicit `--json` form return the complete status record. `alt task show <slug>` is an alias for
-that same record. `alt monitor` reports quota and live provider sessions; `alt decisions` reports
-tasks waiting for Burak.
+that same record. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
+turn (open questions or a held review-ready PR), `L2 replying to <operator>` after they wrote,
+`paused · fault …`, `stopped by <operator>`, `waiting on L3` or `paused`. `alt monitor` reports quota
+and live provider sessions; `alt decisions` reports what waits for the operator, including held
+reviews.
 
 `alt l3 tools` groups the shell commands persisted with recent L3 turns. Commands outside the `alt`
 door appear first so recurring inspection pipelines are easy to replace with known verbs.

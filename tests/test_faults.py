@@ -353,7 +353,10 @@ class TestSystemFault(AltitudeCase):
         cases = [({}, "paused"), ({"waiting_on": None}, "paused"),
                  ({"waiting_on": "l3"}, "waiting on L3"),
                  ({"waiting_on": T.OPERATOR_MESSAGE_ROLE}, f"waiting on {config.OPERATOR}"),
-                 ({"stop_id": "operator-stop", "waiting_on": "l3"}, "stopped")]
+                 ({"stop_id": "operator-stop", "waiting_on": "l3"}, f"stopped by {config.OPERATOR}"),
+                 # #419: a held review-ready delivery is the operator's turn, never "paused".
+                 ({"hold_merge": "Operator review", "prs": [7], "delivery": {"number": 7, "at": S.now()}},
+                  f"{config.OPERATOR}'s turn · review PR #7")]
         blocked = []
         for index, (fields, label) in enumerate(cases):
             task = T.new(PROJECT, f"Parked {index}", "request")
@@ -363,7 +366,7 @@ class TestSystemFault(AltitudeCase):
         notice = [row for row in self.queued() if row["trigger"] == "restart"]
         self.assertEqual(len(notice), 1)
         text = notice[0]["text"]
-        self.assertIn(f"{faulty['slug']}: blocked (fault worker:{faulty['slug']})", text)
+        self.assertIn(f"{faulty['slug']}: blocked (paused · fault worker:{faulty['slug']})", text)
         self.assertIn(f"{running['slug']}: running (running)", text)
         self.assertNotIn(done["slug"], text)
         for task, label in blocked:

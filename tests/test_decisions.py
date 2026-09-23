@@ -109,6 +109,63 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(row["revision"], 1)
         self.assertEqual(T.question_views(self.project, task["slug"])[0]["status"], "resolved")
 
+    def test_a_reply_hands_the_turn_back_until_the_owner_parks_again(self):
+        task = self.blocked("Rollback", "How long should the old index stay?")
+        slug, name = task["slug"], config.OPERATOR
+        [row] = T.decisions(self.project)
+        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        T.message(self.project, slug, "burak", "Could we roll back after day seven?")
+        self.assertEqual(T.decisions(self.project), [], "sending anything hands the turn back")
+        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"L2 replying to {name}")
+        self.assertEqual(T.question_views(self.project, slug)[-1]["status"], "open", "the record stays open")
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "How long should the old index stay?", actor="l2")
+        [again] = T.decisions(self.project)
+        self.assertEqual((again["id"], again["revision"], again["asked_again"]), (row["id"], 1, True))
+        T.message(self.project, slug, "burak", "What does fourteen days cost?")
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "Keep it seven or fourteen days? Fourteen costs 2 GB more.", actor="l2")
+        [revised] = T.decisions(self.project)
+        self.assertEqual((revised["id"], revised["revision"]), (row["id"], 2))
+        self.assertNotIn("asked_again", revised, "a revised question is asked for the first time")
+
+    def test_a_fault_park_after_a_reply_keeps_the_turn_with_the_owner(self):
+        # Only the owner's own park or report asks again; a fault is L3's to repair, not the operator's turn.
+        task = self.blocked("Rollback", "How long should the old index stay?")
+        slug = task["slug"]
+        T.message(self.project, slug, "burak", "Could we roll back after day seven?")
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "system fault [worker:x]: died", actor="altd", updates={"fault": "worker:x"})
+        self.assertEqual(T.decisions(self.project), [])
+        self.assertNotIn("asked_again", S.load_task(self.project, slug)["questions"][-1])
+        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), "paused · fault worker:x")
+
+    def test_a_held_review_ready_delivery_asks_for_review_beside_a_later_question(self):
+        # #419: a later, unrelated proposal must not hide the merge decision, and neither reads "paused".
+        task = self.blocked("Checkout fix", "Build the export next?")
+        slug, name = task["slug"], config.OPERATOR
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+        S.save_task(self.project, held)
+        rows = T.decisions(self.project)
+        self.assertEqual([row["kind"] for row in rows], ["asks", "review"])
+        self.assertEqual({k: rows[1][k] for k in ("pr", "head", "question", "detail")},
+                         {"pr": 42, "head": "a" * 40, "question": "Review PR #42 before merge",
+                          "detail": "Operator review before merge"})
+        for blocker in ({"fault": "worker:x"}, {"stop_id": "operator-stop"}):
+            with self.subTest(blocker=blocker):
+                S.save_task(self.project, {**S.load_task(self.project, slug), **blocker})
+                self.assertNotIn("review", [row["kind"] for row in T.decisions(self.project)])
+                S.save_task(self.project, {k: v for k, v in S.load_task(self.project, slug).items() if k not in blocker})
+        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question · review PR #42")
+        T.message(self.project, slug, "burak", "Approved: merge PR #42.")
+        self.assertEqual(T.decisions(self.project), [])
+        T.resume(self.project, slug)
+        self.assertEqual(T.decisions(self.project), [], "a running owner is working, not waiting for review")
+        T.take_inbox(self.project, slug)  # the owner read the approval at its checkpoint
+        T.report(self.project, slug, {"verdict": "ok", "delivery": S.load_task(self.project, slug)["delivery"]})
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+
     def test_daemon_park_never_invents_operator_attention(self):
         for fields in ({}, {"waiting_on": None}):
             with self.subTest(fields=fields):

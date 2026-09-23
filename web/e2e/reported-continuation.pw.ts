@@ -32,7 +32,7 @@ test("reported open PR accepts follow-ups in the same held owner conversation", 
   for (const key of ["attempt", "session_id", "worktree", "branch", "l2_engine", "prs", "paths", "hold_merge"]) expect(resumed[key]).toEqual(before[key]);
   expect(resumed.verified).toBeFalsy();
   expect(resumed.events.filter((row: { kind: string }) => row.kind === "report-superseded")).toHaveLength(1);
-  const running = info.project.name === "phone" ? page.getByRole("status").filter({ hasText: "L2 · Running" }) : page.getByText("Running", { exact: true }).first();
+  const running = info.project.name === "phone" ? page.getByRole("status").filter({ hasText: "L2 replying to you" }) : page.getByText("L2 replying to you", { exact: true }).first();
   await expect(running).toBeVisible({ timeout: 25_000 });
   await walk.state("03-resumed-receipt-with-hold", { visible: [field, running, mergeHeld, conversation.getByText("Resolve the conflicts and retain the review hold.", { exact: true })], hidden: [conversation.locator(".msg-row[data-pending]")] });
   await field.fill("Keep the phone reading-position diagnosis in scope.");

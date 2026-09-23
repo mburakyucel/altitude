@@ -72,6 +72,10 @@ def main():
                 assert not resumed.is_alive(), "The fixture resume did not finish"
                 owner.checkpoint(slug)
                 return self._json({"ok": True})
+            if self.path == "/fixture/park":
+                # The owner parks its saved group again; still-open questions return as asked again.
+                T.block("atlas", slug, "Three choices for the rollout.", actor="l2", expected_attempt=1)
+                return self._json(T.question_group_view("atlas", S.load_task("atlas", slug)))
             if self.path == "/fixture/revise":
                 task = S.load_task("atlas", slug)
                 question = T.question_group_view("atlas", task)["questions"][0]

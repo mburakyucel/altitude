@@ -69,7 +69,7 @@ def text() -> str:
     q = queue()
     lines = ["# Altitude digest", ""]
     if q:
-        lines += [f"{len(q)} task(s) need input:"] + [f"- [{i['project']}] {i['slug']}: {i['question'][:200]}" for i in q]
+        lines += [f"{len(q)} item(s) need input:"] + [f"- [{i['project']}] {i['slug']}: {i['question'][:200]}" for i in q]
     else:
         lines.append("No decisions waiting.")
     w = wip()

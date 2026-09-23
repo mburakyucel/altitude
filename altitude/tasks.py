@@ -335,7 +335,7 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
 
 
 def _conversation_time() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")  # string order is time order
 
 
 def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str | None = None,
@@ -547,7 +547,9 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
                 S.append_event(project, slug, "resume-requested", by=row["by"], reason="task message",
                                message_id=row["id"])
                 S.regen_state_md(project)
-        if row.get("images"):
+        if role == OPERATOR_MESSAGE_ROLE:
+            task["handed_back"] = row["at"]
+        if row.get("images") or role == OPERATOR_MESSAGE_ROLE:
             S.save_task(project, task)
         S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
         return row
@@ -855,6 +857,16 @@ def _clear_block(project: str, task: dict) -> None:
         task.pop(key, None)
 
 
+def _take_turn(task: dict) -> None:
+    """An owner's park or report gives the operator the turn again; what they discussed is asked again."""
+    since = task.pop("handed_back", None)
+    if not since:
+        return
+    for question in task.get("questions", []):
+        if question["status"] == "open" and not question.get("response") and question["asked"] < since:
+            question["asked_again"] = True
+
+
 def _supersede_resume(task: dict) -> None:
     # I-20260908-045037: a new question/block supersedes earlier wake requests and launch claims.
     task["block_id"] = uuid.uuid4().hex
@@ -1078,6 +1090,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
         if any(row.get("wake", True) for row in pending(project, slug)):
             continue_report(project, task, actor="altd", reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before report handoff")
+        _take_turn(task)
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
         _clear_block(project, task)
@@ -1129,6 +1142,8 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         if actor in ("l2", "l3") and not task.get("fault"):
             _publish_block_questions(task, reason, actor, questions, recommendation,
                                      recommendation_label, recommendation_why, design=captured)
+            if not task.get("resume_after"):  # a message queued for the next turn keeps it the L2's
+                _take_turn(task)
         if files:
             _save_design(project, slug, files)
         return _move(project, task, "blocked", actor, reason=reason)
@@ -1894,6 +1909,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         for question, option in chosen:
             question["acceptance_message"] = row
             question["response"] = {"text": option["text"], "at": at, "message_id": message_id}
+        task["handed_back"] = at
         group["revision"] += 1
         row["answers"] = [q["id"] for q, _ in chosen]
         saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}
@@ -1922,16 +1938,50 @@ def _queue_acceptance(project: str, task: dict, question: dict) -> None:
         _append_jsonl(path, message)
 
 
+def operator_questions(task: dict) -> list[dict]:
+    """Open operator questions on the operator's turn; a reply hands the task's earlier questions back to its L2."""
+    since = task.get("handed_back") or ""
+    return [q for q in task.get("questions", []) if q["status"] == "open" and q["audience"] == "operator"
+            and not q.get("response") and q["asked"] > since]
+
+
+def review_pr(task: dict) -> int | None:
+    """#419: a held delivery whose owner has stopped waits for the operator's review, question or not."""
+    number = (task.get("prs") or [None])[-1]
+    if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
+            and task.get("state") in ("blocked", "reported") and not any(
+                task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))):
+        return number
+    return None
+
+
 def block_status(task: dict) -> tuple[str, str]:
-    """Describe a block without inferring an operator wait from its recorder."""
+    """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision."""
+    name = config.OPERATOR
     if task.get("fault"):
-        return "fault", f"fault {task['fault']}"
+        return "fault", f"paused · fault {task['fault']}"
     if task.get("stop_id"):
-        return "stopped", "stopped"
+        return "stopped", f"stopped by {name}"
+    stopped = task.get("state") in ("blocked", "reported")
+    count, number = len(operator_questions(task)) if stopped else 0, review_pr(task)
+    waits = []
+    if count:
+        waits.append(f"{count} question{'s' if count != 1 else ''}")
+    if number:
+        waits.append(f"review PR #{number}")
+    if waits:
+        return f"waiting-{OPERATOR_MESSAGE_ROLE}", f"{name}'s turn · " + " · ".join(waits)
+    if task.get("handed_back") and (task.get("state") == "running" or task.get("resume_after")):
+        return "replying", f"L2 replying to {name}"
     who = task.get("waiting_on")
     if who in (OPERATOR_MESSAGE_ROLE, "l3"):
-        return f"waiting-{who}", f"waiting on {config.OPERATOR if who == OPERATOR_MESSAGE_ROLE else 'L3'}"
+        return f"waiting-{who}", f"waiting on {name if who == OPERATOR_MESSAGE_ROLE else 'L3'}"
     return "paused", "paused"
+
+
+def wait_label(task: dict) -> str | None:
+    kind, label = block_status(task)
+    return label if task.get("state") == "blocked" or kind != "paused" else None
 
 
 def decision_row(project: str, task: dict) -> dict:
@@ -1959,12 +2009,27 @@ def decision_row(project: str, task: dict) -> dict:
             "since": window[0] if window else floor or asked}
 
 
+def review_row(project: str, task: dict) -> dict | None:
+    number = review_pr(task)
+    if not number:
+        return None
+    delivery = task.get("delivery") or {}
+    at = delivery.get("at") or task.get("updated")
+    return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
+            "head": delivery.get("head") if delivery.get("number") == number else None,
+            "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
+            "recommendation": None, "asked": at, "since": at}
+
+
 def decisions(project: str) -> list[dict]:
-    """Operator questions and explicit operator blocks; an unassigned pause needs no answer."""
+    """Questions and held reviews on the operator's turn, and explicit operator blocks; a pause needs no answer."""
     rows = []
     for task in S.list_tasks(project):
         questions = question_views(project, task["slug"])
-        rows.extend(q for q in questions if q["status"] == "open" and q["audience"] == "operator" and not q["response"])
+        turn = {(q["id"], q["revision"]) for q in operator_questions(task)}
+        rows.extend(q for q in questions if (q["id"], q["revision"]) in turn)
+        if review := review_row(project, task):
+            rows.append(review)
         if (not questions and task["state"] == "blocked" and not task.get("resume_after")
                 and (task.get("waiting_on") == OPERATOR_MESSAGE_ROLE or task.get("stop_id"))):
             rows.append(decision_row(project, task))
@@ -2002,6 +2067,7 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
                      "blocked_reason": task.get("blocked_reason") if task.get("fault") else question})
         current = _publish_block_questions(task, question, actor, questions, recommendation,
                                            recommendation_label, recommendation_why)
+        _take_turn(task)
         S.save_task(project, task)
         handoff = {**current[-1]["message"], "wake": False}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", handoff)

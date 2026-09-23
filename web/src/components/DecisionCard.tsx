@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, useDecide, useProject } from "../data/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
 import type { DecideInput, Decision, QuestionAnswer, QuestionGroup } from "../data/api";
 import { useToast } from "../data/Toast";
 import { decisionKind, questionPath } from "../data/decisions";
@@ -172,6 +172,35 @@ export function Question({ decision, ...props }: QuestionProps & { decision: Dec
   return <QuestionSet decisions={[decision]} {...props} />;
 }
 
+/** #419: a held review-ready PR asks for review. Approve sends the operator's own message; the L2 merges with it. */
+export function ReviewDecision({ decision, repository, disabled = false, chat = false }: {
+  decision: Decision; repository?: string | null; disabled?: boolean; chat?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const approve = useMutation({
+    mutationFn: () => sendL2Message({ project: decision.project, slug: decision.slug, text: `Approved: merge PR #${decision.pr}${decision.head ? ` at ${decision.head.slice(0, 7)}` : ""}.` }),
+    onSuccess: () => {
+      for (const queryKey of [["overview"], ["project", decision.project], ["task", decision.project, decision.slug]]) void queryClient.invalidateQueries({ queryKey });
+      if (!chat) toast.show({ message: "Approval sent to L2" });
+    },
+  });
+  const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
+  return <div className="question-set" data-review-pr={decision.pr ?? undefined}>
+    <p className="decision-question"><InlineProse text={decision.question || `Review PR #${decision.pr} before merge`} /></p>
+    {decision.detail ? <p className="decision-why"><InlineProse text={decision.detail} /></p> : null}
+    {approve.isSuccess ? <p className="text-meta text-muted" role="status">Approval sent · the L2 merges after a final check of the same PR.</p> : <>
+      <div className="decision-options" role="group" aria-label="Merge review">
+        <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Sending…" : "Approve merge"}</button>
+        {repository && decision.pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${decision.pr}`} target="_blank" rel="noopener noreferrer">View PR #{decision.pr}</a> : null}
+      </div>
+      <p className="text-meta text-muted">{chat ? "Or ask below. " : ""}Approving sends your message; nothing merges before the L2 checks the same PR again.</p>
+    </>}
+    {approve.isError ? <p className="text-meta text-danger" role="alert">{denied ? "You cannot approve here." : "Not sent."}{" "}
+      {!denied ? <button type="button" className="link" onClick={() => approve.mutate()} disabled={disabled}>Retry</button> : null}</p> : null}
+  </div>;
+}
+
 export function DecisionCard({ decision, decisions = [decision], selected = false, from = "project", disabled = false }: {
   decision: Decision; decisions?: Decision[]; selected?: boolean;
   from?: "needs" | "project"; disabled?: boolean;
@@ -192,7 +221,8 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
         <span className="ml-auto text-muted" title={exactTime(decision.asked)}>{ageText(decision.asked)}</span>
       </div>
       <Link className="decision-task" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
-      <QuestionSet decisions={decisions} disabled={disabled} from={from} />
+      {decision.kind === "review" ? <ReviewDecision decision={decision} repository={project.data?.repository} disabled={disabled} />
+        : <QuestionSet decisions={decisions} disabled={disabled} from={from} />}
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
   </ProseScope>;

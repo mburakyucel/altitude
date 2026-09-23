@@ -326,7 +326,11 @@ test("sending a quick answer persists its context, resumes the same L2 and clear
   expect(workers.calls).toHaveLength(1);
   expect(workers.calls[0].prompt).toContain("Keep the bounded scope.");
   await page.reload();
-  await walk.state("03-answer-durable-awaiting-interpretation", { visible: [inline.getByText("Sent to L2", { exact: true })], hidden: [choice, inline.getByText("Decision recorded", { exact: true })] });
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  await walk.state("03-answer-durable-awaiting-interpretation", {
+    visible: [conversation.getByRole("status").filter({ hasText: "Sent · the L2 has your reply." }), conversation.locator(".bubble").filter({ hasText: "Keep the bounded scope." })],
+    hidden: [inline, choice, conversation.getByText("Decision recorded", { exact: true })],
+  });
   await walk.open("/");
   await walk.state("04-needs-you-cleared", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });
   const overview = await (await request.get("/api/overview")).json();

@@ -4,7 +4,7 @@ import type { Decision, Overview, TaskRow } from "../data/api";
 import { agoText, when } from "../data/observed";
 import { clock } from "./Bubbles";
 import type { DotState } from "../shell/projects";
-import { questionPath } from "../data/decisions";
+import { questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
 
 /*
@@ -66,25 +66,27 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   const engine = l2Label(task, overview);
   const prs = (Array.isArray(task["prs"]) ? task["prs"] : []).filter((n): n is number => typeof n === "number");
   const pr = prs[prs.length - 1];
+  const replying = Boolean(task["handed_back"]) && (state === "running" || held);
 
   if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done" };
   if (state === "rejected") return { dot: "idle", meta: "Rejected" };
-  if (fault) return { dot: "danger", meta: `Blocked: ${oneSentence(reason || `a ${fault} fault stopped the task`)}` };
+  if (fault) return { dot: "danger", meta: `Paused · ${oneSentence(reason || `a ${fault} fault stopped the task`)}` };
+  if (stopped && state === "blocked") return { dot: "danger", meta: "Stopped by you" };
+  if (replying) return { dot: "running", meta: "L2 replying to you" };
   if (state === "queued" && task.planned_wait) return { dot: "idle", meta: `Planned · waits for ${task.planned_wait.reason}` };
   if (state === "queued" || held) {
     return { dot: "idle", meta: `${held ? "Waiting to resume" : "Queued"} · ${holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))}` };
   }
   if (state === "running") {
     const started = agoText(task["dispatched"]);
-    return { dot: "running", meta: ["Running", engine, started ? `started ${started}` : ""].filter(Boolean).join(" · ") };
+    return { dot: "running", meta: ["L2 working", engine, started ? `started ${started}` : ""].filter(Boolean).join(" · ") };
   }
   if (state === "blocked") {
-    if (stopped) return { dot: "danger", meta: "Stopped" };
     // A block waiting on L3 is Altitude's wait: the running dot, not amber (§3.5).
-    if (waitsOnL3) return { dot: "running", meta: "Waits for L3" };
-    return { dot: "idle", meta: decision?.id ? "Waiting for your answer" : "Paused" };
+    if (waitsOnL3 && !decision) return { dot: "running", meta: "Waits for L3" };
+    return { dot: "idle", meta: decision ? "Waiting for you" : "Paused" };
   }
-  if (state === "reported") return { dot: "running", meta: "Report landed · waits for L3" };
+  if (state === "reported") return { dot: "running", meta: decision ? "Report landed · waiting for you" : "Report landed · waits for L3" };
   return { dot: "idle", meta: state ? sentence(state) : "Status unavailable" };
 }
 
@@ -105,7 +107,8 @@ export function TaskCard({
     .filter((d) => d.project === project && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3");
   const questions = decisions.filter((d) => d.id);
   const facts = taskCardFacts(task, overview.data, project, decisions[0]);
-  const attention = questions.length ? `Needs you · ${questions.length} question${questions.length === 1 ? "" : "s"}${overview.isError ? " · saved" : ""}` : null;
+  const turn = turnLabel(decisions);
+  const attention = turn ? `${turn}${overview.isError ? " · saved" : ""}` : null;
   const tab = variant === "row" || new URLSearchParams(location.search).get("tab") === "work" ? "work" : "chat";
   const title = task.title || task.slug;
   return (

@@ -6,11 +6,11 @@ import { walkthrough } from "./walkthrough";
 const hold = "The operator must inspect the phone reading and composing layouts, the complete desktop walkthrough, and the final green pull request before merging. The owner must keep this merge restriction in place through all checks and discussion.";
 const block = "Keep the decision open until its owner can verify the expected behavior against the complete task brief. This longer explanation remains available without taking a permanent paragraph above the conversation, including while the software keyboard is open.";
 const cases = [
-  { key: "running-held", state: "running", label: "Running", held: true },
+  { key: "running-held", state: "running", label: "L2 working", held: true },
   { key: "waiting-l3", state: "blocked", label: "Waits for L3", held: false, audience: "l3" },
   { key: "waiting-l3-held", state: "blocked", label: "Waits for L3", held: true, audience: "l3" },
-  { key: "operator-held", state: "blocked", label: "Needs your answer", held: true, audience: "operator" },
-  { key: "fault-held", state: "blocked", label: "Blocked by a fault", held: true, fault: "browser" },
+  { key: "operator-held", state: "blocked", label: "Your turn · 1 question", held: true, audience: "operator" },
+  { key: "fault-held", state: "blocked", label: "Paused · fault", held: true, fault: "browser" },
   { key: "paused", state: "blocked", label: "Paused", held: false },
 ];
 
@@ -29,7 +29,8 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
     ...task, state: scene.state, hold_merge: scene.held ? hold : "", blocked_reason: scene.state === "blocked" ? reason : "",
     resume_after: null, waiting_on: scene.audience === "l3" ? "l3" : "", fault: scene.fault ?? null,
-    question, questions: question ? [question] : [], question_group: null, messages,
+    question, questions: question ? [question] : [],
+    question_group: question ? { id: "compact-group", revision: 1, anchor_id: question.anchor_id, questions: [question] } : null, messages,
   } }));
   if (question?.audience === "operator") await page.route("**/api/overview", async (route) => {
     const response = await route.fetch();

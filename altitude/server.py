@@ -656,7 +656,7 @@ def restart_notice() -> None:
             continue
         lines = []
         for t in active:
-            tag = T.block_status(t)[1] if t["state"] == "blocked" or t.get("fault") else t["state"]
+            tag = T.wait_label(t) or t["state"]
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
                          + "\n\n" + incidents.upstream_summary(project)

@@ -75,6 +75,8 @@ const decision = {
   recommendation: { text: "Keep the default.", label: "Keep it", why: "" },
 };
 
+const group = { id: "q-timer", revision: 1, anchor_id: "m-2", questions: [decision] };
+
 const askingL3 = { ...stuck, waiting_on: "l3", blocked_reason: "which suite covers the timer" };
 
 const faulted = {
@@ -258,7 +260,7 @@ describe("Task on desktop", () => {
     expect(screen.getByLabelText("Loading")).toBeInTheDocument();
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("L2 working")).toBeInTheDocument();
     expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
     expect(screen.queryByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeNull();
 
@@ -403,7 +405,7 @@ describe("Task on desktop", () => {
 
     task.state = "running";
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
-    await screen.findByText("Running", { exact: true });
+    await screen.findByText("L2 working", { exact: true });
     expect(field).toHaveValue("Preserve this draft");
     expect(within(conversation).getByRole("button", { name: /^Stop/ })).toBeInTheDocument();
     expect(screen.queryByText("Planned", { exact: true })).toBeNull();
@@ -422,19 +424,112 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
   });
 
-  it("puts the question at its durable conversation anchor with preceding context", async () => {
-    stub({ ...stuck, question: decision, questions: [decision] }, { overview: { ...overview, queue: [decision] } });
+  it("puts the open question at the end of the conversation as the operator's turn", async () => {
+    stub({ ...stuck, question: decision, questions: [decision], question_group: group }, { overview: { ...overview, queue: [decision] } });
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(screen.getByText("Needs your answer")).toBeInTheDocument();
     const convo = screen.getByRole("region", { name: "Task conversation" });
     const card = convo.querySelector("[data-question-id=\"q-timer\"]")!;
     expect(card).toHaveTextContent("Should the timer keep the old default?");
     expect(convo.firstElementChild?.firstElementChild).toHaveClass("convo-col");
-    expect(card.closest(".conversation-question")?.previousElementSibling).toHaveTextContent("Keep the change focused.");
+    const turn = card.closest(".conversation-question")!;
+    expect(turn).toHaveAttribute("data-turn", "operator");
+    expect(turn.querySelector(".conversation-turn")).toHaveTextContent("Your turn · 1 question");
+    // Anchored at m-2, shown after the last message.
+    expect(turn.previousElementSibling).toHaveTextContent("Answered from the brief.");
+    expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
+    expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
     expect(document.querySelector(".task-line")).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
+    expect(screen.getByText("Replying hands the turn back to the L2.")).toBeInTheDocument();
+  });
+
+  it("labels a question the L2 asks again after a hand-back", async () => {
+    const again = { ...decision, asked_again: true };
+    stub({ ...stuck, question: again, questions: [again], question_group: { ...group, questions: [again] } }, { overview: { ...overview, queue: [again] } });
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    const convo = screen.getByRole("region", { name: "Task conversation" });
+    expect(convo.querySelector(".conversation-turn")).toHaveTextContent("Your turn · 1 question · asked again");
+    expect(within(convo).getByRole("button", { name: "Keep it" })).toBeEnabled();
+    expect(screen.getByText("Your turn · 1 question")).toBeInTheDocument();
+  });
+
+  it.each([["running", "Sent · the L2 has your reply."], ["queued", "Sent · waiting for the L2 to start."]])(
+    "turns a handed-back question into a quiet line while the task is %s", async (state, line) => {
+      // The reply came after the question was asked; the question record stays open.
+      stub({ ...stuck, state, handed_back: new Date().toISOString(), question: decision, questions: [decision], question_group: group });
+      renderApp({ route });
+
+      await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+      const convo = screen.getByRole("region", { name: "Task conversation" });
+      expect(within(convo).getByRole("status")).toHaveTextContent(line);
+      expect(convo.querySelector(".conversation-question")).toHaveAttribute("data-turn", "l2");
+      expect(convo.querySelector("[data-question-id]")).toBeNull();
+      expect(within(convo).queryByRole("button", { name: "Keep it" })).toBeNull();
+      expect(screen.queryByText(/Your turn/)).toBeNull();
+      expect(screen.queryByText("Replying hands the turn back to the L2.")).toBeNull();
+      if (state === "running") expect(screen.getByText("L2 replying to you")).toBeInTheDocument();
+    });
+
+  describe("review before merge", () => {
+    const hold = "Wait for the operator to review the phone evidence.";
+    const review = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "review", pr: 204, head: "5f0c2e9a41b7d3c8e6f1a2b3c4d5e6f708192a3b", asked_by: "l2",
+      question: "Review PR #204 before merge", detail: hold, asked: ago(2), since: ago(2) };
+    const reported = { ...stuck, state: "reported", blocked_reason: null, hold_merge: hold, delivery: { number: 204 } };
+    const approved = () => jsonResponse({ message: { id: "approval", at: new Date().toISOString(), role: running.messages[0]?.role, text: "Approved: merge PR #204." } });
+    const reviewTurn = () => within(screen.getByRole("region", { name: "Task conversation" })).getByText("Your turn · review before merge").closest(".conversation-question")! as HTMLElement;
+
+    it("approves the reviewed head with the operator's own message and confirms the receipt", async () => {
+      const fetchMock = stub(reported, { repository: "https://github.com/example/altitude", overview: { ...overview, queue: [review] }, message: approved });
+      const { user } = renderApp({ route });
+      await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+      const turn = await waitFor(reviewTurn);
+      expect(turn).toHaveTextContent("Review PR #204 before merge");
+      expect(turn).toHaveTextContent(hold);
+      expect(within(turn).getByRole("link", { name: "View PR #204" })).toHaveAttribute("href", "https://github.com/example/altitude/pull/204");
+      expect(screen.getByText("Your turn · review PR #204")).toBeInTheDocument();
+      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
+      await within(turn).findByText("Approval sent · the L2 merges after a final check of the same PR.");
+      expect(within(turn).queryByRole("button", { name: "Approve merge" })).toBeNull();
+      const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
+      expect(sent).toHaveLength(1);
+      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204 at 5f0c2e9." });
+    });
+
+    it("keeps the review open with Not sent. Retry when the send fails", async () => {
+      let fail = true;
+      const fetchMock = stub(reported, { overview: { ...overview, queue: [{ ...review, head: null }] },
+        message: () => fail ? jsonResponse({ error: "unavailable" }, 500) : approved() });
+      const { user } = renderApp({ route });
+      await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+      const turn = await waitFor(reviewTurn);
+      expect(within(turn).queryByRole("link", { name: /View PR/ })).toBeNull();
+      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
+      expect(await within(turn).findByRole("alert")).toHaveTextContent("Not sent. Retry");
+      expect(within(turn).getByRole("button", { name: "Approve merge" })).toBeEnabled();
+      fail = false;
+      await user.click(within(turn).getByRole("button", { name: "Retry" }));
+      await within(turn).findByText("Approval sent · the L2 merges after a final check of the same PR.");
+      expect(within(turn).queryByRole("alert")).toBeNull();
+      const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
+      expect(sent).toHaveLength(2);
+      // Without a recorded head the approval names only the PR; Retry resends the same message.
+      for (const call of sent) expect(JSON.parse(String(call[1]?.body)).text).toBe("Approved: merge PR #204.");
+    });
+
+    it("says the operator cannot approve here when access is denied", async () => {
+      stub(reported, { overview: { ...overview, queue: [review] }, message: () => jsonResponse({ error: "Access denied" }, 403) });
+      const { user } = renderApp({ route });
+      await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+      const turn = await waitFor(reviewTurn);
+      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
+      expect(await within(turn).findByRole("alert")).toHaveTextContent("You cannot approve here.");
+      expect(within(turn).queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(within(turn).getByRole("button", { name: "Approve merge" })).toBeDisabled();
+    });
   });
 
   it("discloses the full L3 block reason without a permanent paragraph", async () => {
@@ -691,7 +786,7 @@ describe("Task on the phone", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(document.querySelector(".task-state-line")).toHaveTextContent("L2 · Running");
+    expect(document.querySelector(".task-state-line")).toHaveTextContent("L2 working");
     expect(screen.queryByText("Opus on Claude")).toBeNull();
     const tabs = screen.getByRole("navigation", { name: "Task views" });
     expect(within(tabs).getByRole("link", { name: "Conversation" })).toHaveAttribute("aria-current", "page");

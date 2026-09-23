@@ -1,7 +1,7 @@
 """Compact, fault-tolerant, read-only task orientation."""
 from __future__ import annotations
 
-from . import config, dispatch, engines, git_policy, incidents, state as S, verify
+from . import config, dispatch, engines, git_policy, incidents, state as S, tasks as T, verify
 
 
 _TASK_FIELDS = (
@@ -190,7 +190,7 @@ def status(project: str, slug: str) -> dict:
         **{field: None for field in _TASK_FIELDS},
         "counts": None,
         "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
-        "repository": None, "report_json": None, "prs": [], "main_run": None, "errors": errors,
+        "repository": None, "report_json": None, "prs": [], "main_run": None, "waiting": None, "errors": errors,
     }
 
     try:
@@ -210,6 +210,7 @@ def status(project: str, slug: str) -> dict:
         out["slug"] = task.get("slug") or slug
         for field in _TASK_FIELDS:
             out[field] = task.get(field)
+        out["waiting"] = T.wait_label(task)
 
     counts_path = S.counts_path(project, task)
     if counts_path is not None and counts_path.exists():

@@ -1199,6 +1199,8 @@
 .question-set[data-grouped] > .question-body + .question-body { padding-top: 12px; }
 .decision-receipt { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--hairline); }
 .conversation-notice { margin: 0; padding: 10px 16px; background: var(--accent-tint); font-size: var(--text-meta); }
+.conversation-turn { color: var(--accent-text); font-size: var(--text-meta); font-weight: 600; }
+.conversation-pill { min-height: 36px; padding: 6px 14px; border: 1px solid var(--accent-tint-border); border-radius: 999px; background: var(--card); color: var(--accent-text); font: inherit; font-weight: 500; box-shadow: var(--shadow-card); cursor: pointer; }
 .conversation-jumps { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 20px; padding: 6px 12px; font-size: var(--text-meta); }
 .conversation-activity { color: var(--text-secondary); font-size: var(--text-meta); }
 .conversation-activity summary { cursor: pointer; padding: 8px 0; }

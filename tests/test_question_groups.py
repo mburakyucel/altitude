@@ -103,7 +103,7 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 4)
         self.assertNotIn("Which team owns", message["text"])
         self.assertEqual({q["response"]["message_id"] for q in questions[:2]}, {message["id"]})
-        self.assertEqual(len(T.decisions(self.project)), 1)
+        self.assertEqual(T.decisions(self.project), [], "a partial answer hands the whole task back")
         self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
         self.assertEqual(T.accept_questions(self.project, self.slug, group["id"], 1, list(reversed(answers))), result)
         claim = T.claim_resume(self.project, self.slug)
@@ -175,7 +175,7 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(current["questions"][0]["audience"], "operator")
         self.assertEqual(current["questions"][0]["options"], first["options"])
         for old, new in zip(independent, current["questions"][1:]):
-            self.assertEqual(new, {**old, "group_revision": current["revision"], "resume_after": None})
+            self.assertEqual(new, {**old, "asked_again": True, "group_revision": current["revision"], "resume_after": None})
         retry = T.accept_question_result(self.project, self.slug, first["id"], 1, text="Why only these periods?")
         self.assertEqual(retry["question"]["response"], sent["response"])
         self.assertEqual(retry["question_group"], current)
@@ -183,7 +183,7 @@ class QuestionGroups(AltitudeCase):
             T.accept_question(self.project, self.slug, first["id"], 1, text="21 days")
         fresh = T.accept_question(self.project, self.slug, first["id"], 2, text="21 days")
         self.assertNotEqual(fresh["response"]["message_id"], sent["response"]["message_id"])
-        self.assertEqual([q["id"] for q in T.decisions(self.project)], [q["id"] for q in current["questions"][1:]])
+        self.assertEqual(T.decisions(self.project), [], "each answer hands the task back until its owner re-parks")
 
     def test_custom_batch_validation_and_conflict_are_atomic_and_keep_audience(self):
         group = self.ask()
