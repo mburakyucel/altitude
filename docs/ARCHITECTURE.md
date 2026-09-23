@@ -901,13 +901,17 @@ regular thirty-second daemon tick discovers a merge while its worker still runs.
 Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Launch-source changes become available through the activated committed export.
 
-The web app's restart banner sits above the header on every route while activation is pending: it
-uses a compact phone summary with Details and the same available Restart action. Changed area,
-file count, age and quiet-point wait reasons expand on request; activation and request failures
-remain explicit. On desktop it says in words whether the backend, the web app, or both changed,
-how many files landed and when, and
-that Altitude restarts at the next quiet moment; it names any dispatch, L3 turn or report verification
-in flight. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
+The web app shows a compact, dismissible update notice above the phone header and first in the
+desktop main pane, except in Monitor where **Altitude update** owns the full status. **Details**
+opens Monitor. The notice's browser-local dismissal records the pending head/since and failure
+identity in `altitude.restart.dismissed`; polling, navigation, refresh, wait reasons and restart
+progress do not repeat a dismissed notice. A new update or changed nonempty failure appears again;
+clearing a failure does not. Unavailable browser storage limits dismissal to the mounted page.
+The shared overview remains authoritative. Monitor shows the changed area, file count, age,
+quiet-point waits and available Restart action independently of monitor readings, with explicit
+loading, read failure, no-update and request-error states. Dismissal changes no scheduling,
+authority or fault state. Every toast has a dismiss control; inline errors and task questions
+retain their recovery and answer controls. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
 service retain `KillMode=control-group`, so stopping a worker takes all its descendants. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
@@ -917,9 +921,9 @@ while activation is pending. When those short windows are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
-restores the prior bundle. The banner's Restart button runs the same path sooner by hand: it appears
-at that narrow quiet point, even while workers run, disappears once restart is under way (the banner then says so), and
-the banner leaves when the new process answers with nothing pending. A restart that has not happened
+restores the prior bundle. Monitor's Restart button runs the same path sooner by hand: it appears
+at that narrow quiet point, even while workers run, disappears once restart is under way, and
+the notice leaves when the new process answers with nothing pending. A restart that has not happened
 ten minutes after it was requested is a system fault for L3, and the hold lifts. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
 also waits, leaving reports durable for the next tick. A shared activity lock fences these short
@@ -1536,8 +1540,9 @@ replacing the displayed capture. First acceptance also verifies the saved eviden
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.
 
-The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
-work is derived from it. `/api/monitor` answers with `seats`: one row per configured engine, in the
+The Monitor page reads `/api/monitor`; no hold, incident, route or follow-up work is derived from
+those readings. Its separate update section reads the shared overview and offers the existing
+quiet-point Restart action. `/api/monitor` answers with `seats`: one row per configured engine, in the
 seam's order, as `{engine, label, quota}`, where the label is the seam's display name and the quota is
 that seat's reading whole. Only the engine seam knows which reading belongs to which engine, so the
 page ties no reading to an engine key and spells no provider. It sits in the shell's page container

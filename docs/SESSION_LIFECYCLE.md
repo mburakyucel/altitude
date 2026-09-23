@@ -1028,6 +1028,10 @@ tick discovers merged changes independently of worker completion. Dispatch, resu
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
 script itself.
+The web update notice is dismissible per browser for the pending update and failure identity.
+Ordinary polling, navigation, refresh and quiet-point changes preserve dismissal; a new update
+or new activation failure can notify again. Monitor retains the overview's update status and
+permitted Restart action. Closing the notice changes no scheduling, worker lifecycle or fault.
 After an
 `altd` restart, both engines are adopted from their private worker records, provider output and active units;
 existing daemon jobs are observed through their active unit and session transcript until they finish or resume.

@@ -19,7 +19,7 @@ export interface ToastOptions {
   message: string;
   action?: { label: string; onClick: () => void };
   severity?: "failure" | "limit" | "info";
-  /** ms the toast stays; defaults 4000, failures 8000. Toasts >= 6000ms get a dismiss button. */
+  /** ms the toast stays; defaults 4000, failures 8000. Every toast can be dismissed. */
   dwellMs?: number;
 }
 
@@ -101,8 +101,6 @@ function Toast({ toast, onDismiss }: { toast: ActiveToast; onDismiss: () => void
     };
   }, [paused, toast.id, onDismiss]);
 
-  const dismissible = toast.dwellMs >= 6000;
-
   return (
     <div
       role="status"
@@ -130,16 +128,14 @@ function Toast({ toast, onDismiss }: { toast: ActiveToast; onDismiss: () => void
           {toast.action.label}
         </button>
       )}
-      {dismissible && (
         <button
           type="button"
           aria-label="Dismiss"
-          className="shrink-0 rounded-[6px] px-2 py-1 text-meta text-muted hover:bg-hairline"
+          className="min-h-11 min-w-11 shrink-0 rounded-[6px] text-meta text-muted hover:bg-hairline"
           onClick={onDismiss}
         >
           ✕
         </button>
-      )}
       <div
         className="toast-timer"
         style={{ "--dwell": `${toast.dwellMs}ms` } as CSSProperties}
