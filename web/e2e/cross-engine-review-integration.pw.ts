@@ -82,7 +82,7 @@ test("L2 initiates review; failure retry and unavailable second engine use real 
   await walk.state("02-l2-elected-review", { visible: [row.getByText("L2 requested a cross-engine review · waiting for L2")], hidden: [] });
   await action("run");
   await row.locator("summary").click();
-  await walk.state("03-real-failure", { visible: [row.getByText("Review reached its ten-minute limit."), row.getByRole("button", { name: "Retry review" })], hidden: [] });
+  await walk.state("03-real-failure", { visible: [row.getByText("The review engine exited before returning findings."), row.getByRole("button", { name: "Retry review" })], hidden: [] });
   await action("mode", { fail: false });
   const [receipt] = await Promise.all([
     page.waitForResponse((response) => new URL(response.url()).pathname === "/api/task/review"),

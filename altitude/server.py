@@ -1578,6 +1578,39 @@ class Handler(BaseHTTPRequestHandler):
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
             return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else str(e)}, 500)
 
+    def _review_run(self, body):
+        streamed = False
+
+        def heartbeat():
+            nonlocal streamed
+            try:
+                if not streamed:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    streamed = True
+                # JSON whitespace keeps the wait connected without a review-duration deadline.
+                self.wfile.write(b" ")
+                self.wfile.flush()
+                return True
+            except OSError:
+                return False
+
+        try:
+            review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
+                                 expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
+                                 on_wait=heartbeat)
+            result, code = {"ok": True, "review": review}, 200
+        except (T.TransitionError, ValueError, KeyError) as exc:
+            result, code = {"ok": False, "error": str(exc)}, 409
+        if streamed:
+            self.wfile.write(json.dumps(result).encode())
+            return
+        return self._json(result, code)
+
     def do_POST(self) -> None:
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
@@ -1596,9 +1629,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Unsupported review execution fields.")
                     if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
                         raise ValueError("The current L2 attempt is required.")
-                    review = reviews.run(o["project"], o["slug"], o["review_id"], actor="l2",
-                                         expected_attempt=int(o["attempt"]), context_ids=o.get("context_ids"))
-                    return self._json({"ok": True, "review": review})
+                    return self._review_run(o)
                 except (T.TransitionError, ValueError, KeyError) as exc:
                     return self._json({"error": str(exc)}, 409)
             if parts == ["api", "task", "review"]:

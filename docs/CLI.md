@@ -1182,8 +1182,15 @@ and is not available to the owner.
 
 L2 chooses review without a separate operator request. The task menu provides the operator's fallback
 and opens an existing review's conversation evidence. Requests use one alternate configured engine,
-one additional machine slot and a ten-minute limit. No suitable engine or capacity means an explicit
+one additional machine slot. L2 names the acceptance criteria and key risks for a relatively quick,
+focused second opinion. The reviewer reports findings and coverage gaps; no programmatic duration
+limit cuts it off. L2 observes the run and can cancel if it gets stuck or goes off scope. No suitable engine or capacity means an explicit
 unavailable response; it does not queue or silently retry. Unknown allowance is shown before requesting.
+Service inspection must work before launch; failure refuses the invocation without spending a review.
+Use the supported review endpoint so observation and cancellation remain available. An explicitly
+approved one-shot live trial also verifies that path before invoking a provider and retains its unit,
+output and usage evidence. Launcher exit alone does not prove reviewer termination. If inspection
+fails, preserve the receipt and block for recovery; do not retry the trial or bypass the sandbox.
 
 ```sh
 alt task review status

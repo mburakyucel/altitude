@@ -345,7 +345,8 @@ yet."); error ("Could not load the report." and Retry).
 #### Cross-engine review in the task conversation
 
 The existing task menu offers **Request cross-engine review**, showing the selected engine/model,
-configured allowance (including unknown), ten-minute maximum and merge wait. An existing request
+configured allowance (including unknown), “Focused, read-only review” and merge wait. There is no
+duration selector or programmatic review deadline. An existing request
 replaces initiation with **View review** and its status. L2 can initiate the same review itself.
 No permanent review button, card, tab or separate reviewer conversation appears.
 

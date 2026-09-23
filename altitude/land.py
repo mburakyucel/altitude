@@ -1149,6 +1149,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         from . import reviews
         with reviews.merge_lock(project, slug):
             check_before_merge()
+            _assert_pair_current(root, pair)
             try:
                 reviews.require_merge(project, slug, pair)
             except T.TransitionError as exc:
@@ -1168,7 +1169,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         elif checks == "pass":
             checks = _checks_value(root, number, pair)
             if checks == "pass":
-                _assert_pair_current(root, pair)
                 with before_merge():
                     merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
                                               preserve_history=bool(adoption))

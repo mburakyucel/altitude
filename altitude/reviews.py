@@ -14,7 +14,6 @@ from pathlib import Path, PurePosixPath
 
 from . import config, engines, state as S, tasks as T
 
-TIMEOUT = 600
 _inflight: set[tuple[str, str, str]] = set()
 _inflight_lock = threading.Lock()
 
@@ -283,7 +282,22 @@ def _capture(project, task, review, context_ids):
     return identity, snapshot, runtime
 
 
-def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None):
+def review_prompt(snapshot, focus):
+    rules = engines.repository_rules(snapshot / "source")
+    return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
+              "then context.json and changes.patch. Give a relatively quick, focused second opinion on the captured change. "
+              "Start with the brief, decisions, diff and requested focus. Check the main correctness, regression, "
+              "security and acceptance risks; follow affected callers and tests when needed to substantiate a finding. "
+              "Avoid unrelated exploration, cosmetic suggestions and repeated passes without new evidence. "
+              "Once those risks are checked, return concise, actionable findings with evidence, what you examined "
+              "and anything left uncovered. If the scope is too large for a focused review, identify the remaining "
+              "areas and recommend targeted follow-up rather than silently claiming full coverage. "
+              "Read/search only these inputs. Do not run tests, tools with external effects, helpers, publication or task commands. "
+              "Identify concrete material findings with source/evidence references. State missing evidence and limitations. "
+              "No findings is not merge approval. Focus: " + focus)
+
+
+def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, on_wait=None):
     from . import dispatch, route
     if context_ids is not None and (not isinstance(context_ids, list) or any(not isinstance(item, str) for item in context_ids)):
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
@@ -331,19 +345,32 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None):
                         and current.get("state") == "running" and current.get("attempt") == expected_attempt
                         and current.get("agent_id") == review.get("generation"))
 
-        rules = engines.repository_rules(snapshot / "source")
-        prompt = ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
-                  "then context.json and changes.patch. Review the captured source against the brief, decisions and focus. "
-                  "Read/search only these inputs. Do not run tests, tools with external effects, helpers, publication or task commands. "
-                  "Identify concrete material findings with source/evidence references. State missing evidence and limitations. "
-                  "No findings is not merge approval. Focus: " + review["focus"])
+        def waiting():
+            connected = on_wait is None or on_wait()
+            with S.project_lock(project):
+                current = S.load_task(project, slug)
+                live = _find(current, review_id)
+                if not connected:
+                    live.update(cancel_requested=True, cancel_reason="Review caller disconnected")
+                    S.save_task(project, current)
+                return (connected and live["state"] == "running" and not live.get("cancel_requested")
+                        and current.get("state") == "running" and current.get("attempt") == expected_attempt
+                        and current.get("agent_id") == review.get("generation"))
+
+        prompt = review_prompt(snapshot, review["focus"])
         invoked = True
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
-                                model=review["model"], timeout=TIMEOUT, on_start=started)
+                                model=review["model"], on_start=started, on_wait=waiting)
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
         saved = _find(S.load_task(project, slug), review_id)
         worker = saved.get("worker")
         result = {"error": str(exc), "termination_confirmed": engines.review_active(worker) is False if worker else not invoked}
+    except (KeyboardInterrupt, SystemExit):
+        saved = _find(S.load_task(project, slug), review_id)
+        worker = saved.get("worker")
+        result = {"error": "Review execution interrupted.",
+                  "termination_confirmed": engines.review_active(worker) is False if worker else not invoked}
+        raise
     finally:
         with S.project_lock(project):
             current = S.load_task(project, slug)
@@ -477,5 +504,6 @@ def poll(project):
                         S.save_task(project, current)
             elif active is None:
                 _termination_fault(project, task, review["id"])
-            elif task.get("state") != "running" or task.get("agent_id") != review.get("generation"):
-                cancel(project, task["slug"], review["id"], actor=T.OPERATOR_MESSAGE_ROLE, reason="Owner stopped or changed")
+            else:
+                cancel(project, task["slug"], review["id"], actor=T.OPERATOR_MESSAGE_ROLE,
+                       reason="Review invocation interrupted; retry explicitly")

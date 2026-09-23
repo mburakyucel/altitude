@@ -207,12 +207,18 @@ creating duplicates. A later revision can be deliberately reviewed again.
 The owner commits the chosen checkpoint, supplies relevant original context and calls
 `alt task review run`. The service captures immutable inputs and reserves one additional machine
 slot atomically before invoking the alternate engine. The synchronous command returns the complete
-result or explicit failure. Owner work can continue in parallel, but accepted review prevents merge
+result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;
+the reviewer returns material findings and coverage gaps without unrelated exploration. L2 observes
+the run and can cancel if it gets stuck or goes off scope. Owner work can continue in parallel, but accepted review prevents merge
 until L2 records finding dispositions and assesses the exact final candidate, or the requester is
 authorized to withdraw. L2 replies in normal prose; the original result remains in review details.
 
-Owner Stop/rejection cancels attached execution. Timeout, invalid output and cancellation retain an
-unresolved request; retry is explicit. Restart reconciliation never launches a replacement. Capacity
+Owner Stop/rejection, changed owner identity and caller disconnect cancel attached execution.
+Service inspection is checked before launch. Interruption stops the review unit before its launcher
+is reaped; an exited launcher is not evidence that the independent reviewer terminated.
+The waiting command has no review-duration timeout; whitespace heartbeats detect disconnects.
+Failure, invalid output and cancellation retain an unresolved request; retry is explicit. Restart
+reconciliation cancels orphaned invocations and never launches a replacement. Capacity
 is released only after termination is confirmed; uncertain termination follows task-local incident
 recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
 on the task, separate from native-helper usage attribution. Later code/base/context changes show

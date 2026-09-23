@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 from altitude import config, engines, route
@@ -96,17 +97,17 @@ class ReviewEngineTests(AltitudeCase):
         service = self.patch(engines, "_codex_service_command", return_value=[sys.executable, "-I", "-c", program])
         return service
 
-    def test_result_process_lifecycle_and_resource_bound(self):
+    def test_result_process_lifecycle_without_duration_deadline(self):
         service = self.fixture()
         workers = []
         result = engines.review("Review checkpoint", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
-                                timeout=900, on_start=lambda worker: workers.append(worker))
+                                on_start=lambda worker: workers.append(worker))
         self.assertIsNone(result["error"])
         self.assertEqual(result["findings"][0]["id"], "F1")
         self.assertEqual(result["usage"], {"input_tokens": 20})
         self.assertEqual(workers, [{"unit": result["worker"]["unit"], "pid": None, "started_ticks": None}, result["worker"]])
         self.assertTrue(result["termination_confirmed"])
-        self.assertEqual(service.call_args.kwargs["runtime_max"], 600)
+        self.assertNotIn("runtime_max", service.call_args.kwargs)
 
     def test_failure_and_malformed_findings_never_become_clean_review(self):
         self.fixture(result={"text": "Malformed", "findings": [{"title": "No body"}]})
@@ -139,23 +140,117 @@ class ReviewEngineTests(AltitudeCase):
         self.assertIn("failed", result["error"])
         self.assertNotIn("private callback", result["error"])
 
-    def test_timeout_stops_unit_and_cannot_return_success(self):
+    def test_unavailable_inspection_refuses_before_launch_or_prompt(self):
+        self.fixture()
+        self.patch(engines, "_unit_active", side_effect=RuntimeError("user bus unavailable"))
+        spawn = self.patch(engines.subprocess, "Popen")
+        started = self.patch(engines, "review_stop")
+        result = engines.review("No model call", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertTrue(result["unavailable"])
+        self.assertTrue(result["termination_confirmed"])
+        self.assertIsNone(result["worker"])
+        spawn.assert_not_called()
+        started.assert_not_called()
+
+    def test_interrupt_stops_unit_even_if_inspection_becomes_unavailable(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"]
         stop = self.patch(engines, "review_stop", return_value=False)
-        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime, timeout=1)
-        self.assertIn("time limit", result["error"])
+        self.patch(engines, "review_active", return_value=None)
+        workers = []
+        def interrupted():
+            raise KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
+                           on_start=lambda worker: workers.append(worker), on_wait=interrupted)
+        stop.assert_called_once_with(workers[-1])
+        self.assertFalse(engines._review_launcher(workers[-1]))
+
+    def test_capture_setup_interruption_cannot_orphan_a_launched_process(self):
+        self.fixture()
+        spawn = self.patch(engines.subprocess, "Popen")
+        self.patch(engines, "_BoundedRawCapture", side_effect=KeyboardInterrupt)
+        with self.assertRaises(KeyboardInterrupt):
+            engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        spawn.assert_not_called()
+
+    def test_failed_launcher_stops_independent_unit_and_retains_unknown_cleanup(self):
+        self.fixture(exitcode=1)
+        stop = self.patch(engines, "review_stop", return_value=False)
+        active = self.patch(engines, "review_active", return_value=None)
+        for state in (None, False):
+            with self.subTest(remaining=state):
+                active.return_value = state
+                result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                self.assertIn("failed", result["error"])
+                self.assertEqual(result["termination_confirmed"], state is False)
+                stop.assert_called_with(result["worker"])
+        self.assertEqual(stop.call_count, 2)
+
+    def test_system_exit_in_started_callback_stops_unit_and_launcher(self):
+        self.fixture()
+        workers = []
+        stop = self.patch(engines, "review_stop", return_value=False)
+        def interrupted(worker):
+            workers.append(worker)
+            if worker["pid"] is not None:
+                raise SystemExit(7)
+        with self.assertRaises(SystemExit):
+            engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime, on_start=interrupted)
+        stop.assert_called_once_with(workers[-1])
+        self.assertFalse(engines._review_launcher(workers[-1]))
+
+    def test_review_survives_wait_intervals_past_former_deadline(self):
+        service = self.fixture()
+        real_wait = subprocess.Popen.wait
+        waits = []
+        def wait(proc, timeout=None):
+            waits.append(timeout)
+            if len(waits) <= 2:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            return real_wait(proc, timeout=timeout)
+        # Waiting wakes for connection/lifecycle checks, never to enforce total elapsed time.
+        with patch.object(subprocess.Popen, "wait", wait), patch.object(engines.time, "monotonic", return_value=86400):
+            result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
+                                    on_wait=lambda: True)
+        self.assertIsNone(result["error"])
+        self.assertTrue(result["termination_confirmed"])
+        self.assertGreaterEqual(len(waits), 3)
+        self.assertNotIn("runtime_max", service.call_args.kwargs)
+
+    def test_disconnected_caller_stops_unit_and_cannot_return_success(self):
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"]
+        stop = self.patch(engines, "review_stop", return_value=False)
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
+                                on_wait=lambda: False)
+        self.assertIn("cancelled", result["error"])
         stop.assert_called_once_with(result["worker"])
         self.assertTrue(result["termination_confirmed"])
 
     def test_cancel_callback_prevents_prompt_delivery(self):
         service = self.fixture()
         received = self.runtime / "fixture-input.txt"
+        ready = self.runtime / "fixture-ready"
         service.return_value = [sys.executable, "-I", "-c",
-                                f"import sys,pathlib; pathlib.Path({str(received)!r}).write_text(sys.stdin.read())"]
-        stop = self.patch(engines, "review_stop", return_value=False)
+                                f"import sys,pathlib; pathlib.Path({str(ready)!r}).touch(); "
+                                f"pathlib.Path({str(received)!r}).write_text(sys.stdin.read())"]
+        def cancel_when_ready(worker):
+            if worker["pid"] is None:
+                return True
+            until = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < until:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists())
+            return False
+        def fixture_stop(worker):
+            until = time.monotonic() + 5
+            while not received.exists() and time.monotonic() < until:
+                time.sleep(0.01)
+            return False
+        stop = self.patch(engines, "review_stop", side_effect=fixture_stop)
         result = engines.review("Must not be delivered", engine="claude", snapshot=self.snapshot, runtime=self.runtime,
-                                on_start=lambda worker: worker["pid"] is None)
+                                on_start=cancel_when_ready)
         self.assertIn("cancelled", result["error"])
         stop.assert_called_once_with(result["worker"])
         self.assertTrue(result["termination_confirmed"])

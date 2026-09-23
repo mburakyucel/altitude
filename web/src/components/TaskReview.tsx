@@ -77,7 +77,7 @@ export function ReviewMenu({ task, controls, view }: { task: TaskView; controls:
   return <section className="task-review-menu" aria-label="Cross-engine review">
     {review.latest ? <><button className="btn btn-ghost" onClick={() => view(review.latest!.id)}>View review</button><p className="text-meta text-muted">{reviewStatus(review.latest)}</p></>
       : <><button className="btn btn-ghost" disabled={controls.disabled || !review.available} onClick={() => controls.run("request")}>Request cross-engine review</button>
-        <p className="text-meta text-muted">{review.available ? [review.engine_label, review.model, "One read-only run, up to 10 minutes."].filter(Boolean).join(" · ") : review.why || "A second engine is unavailable."}</p>
+        <p className="text-meta text-muted">{review.available ? [review.engine_label, review.model, "Focused, read-only review."].filter(Boolean).join(" · ") : review.why || "A second engine is unavailable."}</p>
         {review.available ? <p className="text-meta text-muted">Uses the configured allowance{review.allowance_known ? "." : "; remaining allowance is unknown."} Merging waits for L2 to address the review.</p> : null}</>}
     <ReviewFeedback controls={controls} />
   </section>;
@@ -97,7 +97,7 @@ export function ReviewRow({ review, controls, availability, onRead }: { review: 
       <summary onClick={onRead}>Review details</summary>
       <div className="task-review-detail">
         <p>Requested by {review.requested_by === "l2" ? "L2" : "you"}. {[review.engine_label, review.model].filter(Boolean).join(" · ")}</p>
-        <p>One read-only run, up to 10 minutes. Review does not approve merging or release other holds.</p>
+        <p>Focused, read-only review. Review does not approve merging or release other holds.</p>
         {review.focus ? <p><strong>Focus:</strong> <InlineProse text={review.focus} /></p> : null}
         {review.error ? <p className="text-danger"><InlineProse text={review.error} /></p> : null}
         {review.result?.text ? <p><InlineProse text={review.result.text} /></p> : null}
@@ -116,7 +116,7 @@ export function ReviewRow({ review, controls, availability, onRead }: { review: 
         {review.snapshot?.captured_context_hash ? <p className="text-meta task-review-evidence">Captured context: {review.snapshot.captured_context_hash}</p> : null}
         {review.snapshot?.limitations?.length ? <p className="text-meta"><strong>Capture limitations:</strong> <InlineProse text={review.snapshot.limitations.join("\n")} /></p> : null}
         {review.reconciled ? <p className="text-meta task-review-evidence">L2 assessed head: {review.reconciled.head}<br />Base: {review.reconciled.base}<br />Tree: {review.reconciled.tree}<br />Context: {review.reconciled.context_hash}<br /><InlineProse text={review.reconciled.reason} /></p> : null}
-        {(review.can_retry || review.can_review_latest) && availability ? <p className="text-meta">Next review: {[availability.engine_label, availability.model].filter(Boolean).join(" · ")}. One read-only run, up to 10 minutes. Uses the configured allowance{availability.allowance_known ? "." : "; remaining allowance is unknown."}</p> : null}
+        {(review.can_retry || review.can_review_latest) && availability ? <p className="text-meta">Next review: {[availability.engine_label, availability.model].filter(Boolean).join(" · ")}. Focused, read-only review. Uses the configured allowance{availability.allowance_known ? "." : "; remaining allowance is unknown."}</p> : null}
         <div className="task-review-actions">
           {review.can_cancel ? <button className="link" disabled={controls.disabled} onClick={() => controls.run("cancel", review)}>Cancel review</button> : null}
           {review.can_retry ? <button className="link" disabled={controls.disabled} onClick={() => controls.run("retry", review)}>Retry review</button> : null}

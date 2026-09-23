@@ -52,7 +52,7 @@ def main():
             if not gate.wait(15):
                 return {"error": "Fixture review gate timed out", "termination_confirmed": True}
             if mode["fail"]:
-                return {"error": "Review reached its ten-minute limit.", "termination_confirmed": True}
+                return {"error": "The review engine exited before returning findings.", "termination_confirmed": True}
             return {"text": "One pagination finding.", "findings": [{"id": "expiry", "severity": "high",
                     "title": "Expired cursors restart pagination", "body": "Return the explicit expiration error.",
                     "path": "pagination.py", "line": 1}], "limitations": ["Captured files only; no tests executed."],

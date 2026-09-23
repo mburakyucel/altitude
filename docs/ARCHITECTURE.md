@@ -358,13 +358,20 @@ in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
 review through the CLI, or the operator requests it through the existing task menu. The same receipt
 appears as a compact task-conversation system row. A repeated request or source message reuses it.
 The owner prepares a committed checkpoint and invokes the fixed daemon review endpoint. This is a
-bounded Altitude-managed invocation, separate from engine-native delegation; it adds no helper queue,
+focused Altitude-managed invocation, separate from engine-native delegation; it adds no helper queue,
 provider handoff, owner session or general command transport.
 
 The engine and routing seams select one configured option different from the owner, respecting
 project choices and known quota exhaustion. Unknown allowance remains eligible and visible. Admission
 uses the existing machine launch lock: one reviewer machine-wide, with an additional machine slot,
-no reservation while waiting for preparation, no automatic retry and a ten-minute execution limit.
+no reservation while waiting for preparation and no automatic retry. L2 and reviewer instructions
+set expectations for a relatively quick, focused review without a programmatic duration cutoff.
+The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
+Owner changes, cancellation and caller disconnect stop the run. Restart reconciliation cancels an
+orphaned invocation rather than leaving it running without a result consumer.
+The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
+on interruption, including keyboard interruption and process exit, before reaping the launcher.
+Unknown termination remains a fault with capacity reserved; launcher exit alone is not cleanup.
 Adapters lacking the captured-input contract are unavailable. A single configured engine remains
 fully usable for ordinary work.
 

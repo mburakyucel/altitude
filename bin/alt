@@ -470,8 +470,10 @@ def main(argv=None) -> None:
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
-            with urllib.request.urlopen(request, context=context, timeout=660 if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
+            with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
                 result = json.load(response)
+                if review_run and not result.get("ok"):
+                    sys.exit(result.get("error", "Review execution failed"))
                 if machine_run:
                     sys.stdout.write(result["output"])
                     print(f"[altitude] {result['unit']}: exit {result['exit']}"

@@ -68,7 +68,7 @@ test("cross-engine review stays in task chat through request, result and failure
   await row.getByRole("button", { name: "Cancel review" }).click(); await poll();
   await walk.state("07-cancelled", { visible: [row.getByText("Review cancelled · request still needs a decision"), row.getByRole("button", { name: "Retry review" })], hidden: [row.getByRole("button", { name: "Cancel review" })] });
   await row.getByRole("button", { name: "Retry review" }).click(); await poll();
-  review.state = "failed"; review.can_retry = true; review.error = "The review reached its ten-minute limit.";
+  review.state = "failed"; review.can_retry = true; review.error = "The review engine exited before returning findings.";
   await poll();
   await walk.state("08-failed", { visible: [row.getByText(review.error), row.getByRole("button", { name: "Retry review" })], hidden: [] });
   await row.getByRole("button", { name: "Skip review…" }).click();

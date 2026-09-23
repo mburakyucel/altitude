@@ -132,6 +132,7 @@ class TestLand(AltitudeCase):
     def test_cross_engine_assessment_rechecks_context_after_final_merge_validation(self):
         from altitude import config, engines, reviews, route, tasks as T
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        self.no_checks()
         self.staged_change()
         self.git("commit", "-q", "-m", "Committed review checkpoint")
         self.set_current_l2()
@@ -1811,6 +1812,19 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertIsNone(result["local_tests"])
         self.assertEqual(self.runner_log(), [])
         self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), expected)
+
+    def test_successful_required_check_still_waits_for_requested_review(self):
+        from altitude import config, reviews, route
+        self.assertEqual(self.classify(), "pass")
+        task = S.load_task("demo", "fix-x")
+        task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner", attempt=1)
+        S.save_task("demo", task)
+        choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
+        with mock.patch.object(route, "pick_review", return_value=choice):
+            reviews.request("demo", "fix-x", actor="l2", expected_attempt=1, request_id="review-before-required-merge")
+        with self.assertRaisesRegex(land.LandError, "review|Review"):
+            land.land("green checks with pending review", cwd=self.repo, wait=0, merge=True)
+        self.assert_not_merged()
 
     def test_exact_merge_bound_check_lands_same_tree(self):
         candidate = self.merge_candidate()

@@ -2,13 +2,17 @@
 import hashlib
 import concurrent.futures
 import json
+import http.client
+from http.server import ThreadingHTTPServer
+import socket
+import threading
 import subprocess
 import unittest
 import uuid
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import config, dispatch, engines, reviews, route, state as S, tasks as T, verify
+from altitude import config, dispatch, engines, reviews, route, server, state as S, tasks as T, verify
 
 
 class TestReviews(AltitudeCase):
@@ -75,6 +79,19 @@ class TestReviews(AltitudeCase):
             self.request(request_id=first["id"], focus="Different scope")
         self.engine.assert_not_called()
 
+    def test_restart_cancels_live_orphan_even_when_owner_identity_is_unchanged(self):
+        self.request()
+        task = S.load_task(self.project, self.slug)
+        task["reviews"][-1].update(state="running", generation=task["agent_id"], worker={"unit": "fixture-review"})
+        S.save_task(self.project, task)
+        with mock.patch.object(engines, "review_active", return_value=True), \
+                mock.patch.object(engines, "review_stop", return_value=True) as stop:
+            reviews.poll(self.project)
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "cancelled")
+        self.assertEqual(reviews.active_count(), 0)
+        stop.assert_called_once()
+        self.engine.assert_not_called()
+
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):
             reviews.request(self.project, self.slug, actor="l2", request_id=uuid.uuid4().hex, expected_attempt=0)
@@ -128,6 +145,41 @@ class TestReviews(AltitudeCase):
         self.assertEqual(reviews.active_count(), 0)
         self.assertEqual(self.run_review(review)["state"], "failed")
         self.engine.assert_not_called()
+
+    def test_interruption_retains_capacity_until_termination_is_confirmed(self):
+        def interrupted(prompt, **kwargs):
+            kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"})
+            raise KeyboardInterrupt()
+        self.engine.side_effect = interrupted
+        review = self.request()
+        with mock.patch.object(engines, "review_active", return_value=None), \
+                mock.patch.object(reviews, "_termination_fault") as fault, self.assertRaises(KeyboardInterrupt):
+            self.run_review(review)
+        current = S.load_task(self.project, self.slug)["reviews"][-1]
+        self.assertEqual(current["state"], "running")
+        self.assertTrue(current["cancel_requested"])
+        self.assertEqual(reviews.active_count(), 1)
+        fault.assert_called_once()
+        self.assertNotIn((self.project, self.slug, review["id"]), reviews._inflight)
+        with mock.patch.object(engines, "review_active", return_value=False):
+            reviews.poll(self.project)
+        self.assertEqual(reviews.active_count(), 0)
+        self.assertEqual(self.engine.call_count, 1)
+
+    def test_interruption_with_confirmed_termination_persists_failure_without_fault(self):
+        def interrupted(prompt, **kwargs):
+            kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"})
+            raise SystemExit(7)
+        self.engine.side_effect = interrupted
+        with mock.patch.object(engines, "review_active", return_value=False), \
+                mock.patch.object(reviews, "_termination_fault") as fault, self.assertRaises(SystemExit):
+            self.run_review()
+        current = S.load_task(self.project, self.slug)["reviews"][-1]
+        self.assertEqual(current["state"], "failed")
+        self.assertIn("interrupted", current["error"])
+        self.assertNotIn("result", current)
+        self.assertEqual(reviews.active_count(), 0)
+        fault.assert_not_called()
 
     def test_path_shaped_request_id_cannot_escape_task_artifacts(self):
         for identity in ("../escape", str(self.tmp / "escape"), "review/child", ".", ".."):
@@ -188,7 +240,7 @@ class TestReviews(AltitudeCase):
             self.assertFalse((snapshot / "source" / "untracked-secret.txt").exists())
             self.assertFalse((snapshot / "source" / ".claude").exists())
             self.assertNotEqual(snapshot, kwargs["runtime"])
-            self.assertEqual(kwargs["timeout"], 600)
+            self.assertNotIn("timeout", kwargs)
             return self.success(prompt, **kwargs)
         self.engine.side_effect = inspect
         result = self.run_review(context_ids=[source["id"]])
@@ -326,6 +378,90 @@ class TestReviews(AltitudeCase):
         self.assertEqual((task["state"], task["fault"]), ("blocked", "review-termination"))
         self.assertEqual(self.engine.call_count, 1)
 
+    def test_disconnected_caller_cancels_request_and_releases_confirmed_capacity(self):
+        def disconnected(prompt, **kwargs):
+            self.assertTrue(kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"}))
+            self.assertFalse(kwargs["on_wait"]())
+            return {"error": "Caller disconnected", "termination_confirmed": True}
+        self.engine.side_effect = disconnected
+        result = self.run_review(on_wait=lambda: False)
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(reviews.active_count(), 0)
+        with self.assertRaises(T.TransitionError):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_http_stream_returns_result_and_disconnect_cancels_real_request(self):
+        class Handler(server.Handler):
+            def log_message(self, *_args):
+                pass
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=httpd.serve_forever)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        for disconnect in (False, True):
+            with self.subTest(disconnect=disconnect):
+                self.commit("value.py", f"VALUE = {3 if disconnect else 2}\n")
+                previous = S.load_task(self.project, self.slug).get("reviews", [])
+                request = self.request(previous=previous[-1]["id"] if previous else None)
+                observed, finished = threading.Event(), threading.Event()
+                release = threading.Event()
+                def run_engine(prompt, **kwargs):
+                    self.assertTrue(kwargs["on_start"]({"unit": "fixture", "pid": 12345, "started_ticks": "1"}))
+                    try:
+                        self.assertTrue(kwargs["on_wait"]())
+                        observed.set()
+                        self.assertTrue(release.wait(5))
+                        if disconnect:
+                            for _ in range(20):
+                                if not kwargs["on_wait"]():
+                                    return {"error": "Caller disconnected", "termination_confirmed": True}
+                            self.fail("Disconnected HTTP caller was not detected")
+                        return self.success(prompt, **kwargs)
+                    finally:
+                        finished.set()
+                self.engine.side_effect = run_engine
+                client = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+                body = json.dumps({"project": self.project, "slug": self.slug, "attempt": 1, "review_id": request["id"]})
+                try:
+                    client.request("POST", "/api/task/review/run", body, {"Content-Type": "application/json"})
+                    response = client.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertTrue(observed.wait(5))
+                    if disconnect:
+                        response.fp.raw._sock.shutdown(socket.SHUT_RDWR)
+                        response.close()
+                        client.close()
+                    release.set()
+                    if not disconnect:
+                        result = json.load(response)
+                        self.assertTrue(result["ok"])
+                        self.assertEqual(result["review"]["state"], "completed")
+                    self.assertTrue(finished.wait(5))
+                finally:
+                    release.set()
+                    client.close()
+        # server_close below joins the request handler, including the durable final receipt.
+        httpd.shutdown()
+        httpd.server_close()
+        result = reviews.view(self.project, self.slug)["latest"]
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(reviews.active_count(), 0)
+
+    def test_changed_owner_cancels_during_wait(self):
+        def changed(prompt, **kwargs):
+            self.assertTrue(kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"}))
+            task = S.load_task(self.project, self.slug)
+            task["agent_id"] = "new-owner"
+            S.save_task(self.project, task)
+            self.assertFalse(kwargs["on_wait"]())
+            return {"error": "Owner changed", "termination_confirmed": True}
+        self.engine.side_effect = changed
+        result = self.run_review()
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(reviews.active_count(), 0)
+
     def test_poller_cannot_reconcile_before_completed_result_is_durable(self):
         original_save = S.save_task
         observed = []
@@ -345,7 +481,7 @@ class TestReviews(AltitudeCase):
             latest = reviews.view(self.project, self.slug)["latest"]
             self.assertTrue(latest["can_cancel"])
             self.assertFalse(latest["can_withdraw"])
-            return {"error": "Timed out", "termination_confirmed": True}
+            return {"error": "Engine exited", "termination_confirmed": True}
         self.engine.side_effect = inspect_running
         failed = self.run_review()
         self.request(previous=failed["id"])
@@ -438,7 +574,7 @@ class TestReviews(AltitudeCase):
 
     def test_failure_retry_preserves_operator_requirement(self):
         review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
-        self.engine.side_effect = lambda *args, **kwargs: {"error": "Review timed out", "termination_confirmed": True}
+        self.engine.side_effect = lambda *args, **kwargs: {"error": "Review engine exited", "termination_confirmed": True}
         failed = self.run_review(review)
         self.assertEqual(failed["state"], "failed")
         retry = self.request(previous=review["id"])

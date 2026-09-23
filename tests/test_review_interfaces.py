@@ -80,7 +80,13 @@ class TestReviewInterfaces(AltitudeCase):
         self.assertTrue(request.full_url.endswith("/api/task/review/run"))
         self.assertEqual(json.loads(request.data), {"project": self.project, "slug": self.slug, "attempt": "2",
                                                    "review_id": "review", "context_ids": ["source"]})
-        self.assertEqual(transport.call_args.kwargs["timeout"], 660)
+        self.assertIsNone(transport.call_args.kwargs["timeout"])
+
+    def test_streamed_execution_error_is_not_a_success_receipt(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(b'  {"ok":false,"error":"Review interrupted"}')
+        with mock.patch("urllib.request.urlopen", return_value=response), self.assertRaisesRegex(SystemExit, "Review interrupted"):
+            self.cli("task", "review", "run", "--review-id", "review")
 
     def test_operator_cannot_run_or_assess(self):
         self.setenv("ALTITUDE_ACTOR", T.OPERATOR_MESSAGE_ROLE)
@@ -115,7 +121,7 @@ class TestReviewInterfaces(AltitudeCase):
             status, value = self.post({**base, "attempt": "2", "review_id": "review", "context_ids": ["source"]},
                                       "/api/task/review/run")
         self.assertEqual((status, value), (200, {"ok": True, "review": {"id": "review"}}))
-        run.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2, context_ids=["source"])
+        run.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2, context_ids=["source"], on_wait=mock.ANY)
 
     def test_http_retry_keeps_previous_identity_and_wake_failure_keeps_receipt(self):
         task = S.load_task(self.project, self.slug)
@@ -139,7 +145,7 @@ class TestReviewInterfaces(AltitudeCase):
             run.assert_not_called()
         with mock.patch.object(reviews, "run", side_effect=T.TransitionError("attempt 1 is no longer current")):
             status, value = self.post({**payload, "attempt": 1}, "/api/task/review/run")
-        self.assertEqual((status, value), (409, {"error": "attempt 1 is no longer current"}))
+        self.assertEqual((status, value), (409, {"ok": False, "error": "attempt 1 is no longer current"}))
 
     def test_http_unavailable_is_conflict_and_status_read_does_not_launch(self):
         with mock.patch.object(reviews, "request", side_effect=T.TransitionError("Second engine unavailable")):

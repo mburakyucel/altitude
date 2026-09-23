@@ -229,8 +229,11 @@ total spawned. The same breakdown stays available in task and report details aft
 L2 can choose a **cross-engine review** when a second opinion is useful. The operator can request
 the same review from the task menu; an existing review opens its status and findings in the task
 conversation. A compact line shows progress, with original findings and L2 dispositions in details.
-One read-only reviewer examines a captured committed revision for at most ten minutes, using an
-additional machine slot and the configured account. It cannot edit, run tests or approve merging.
+One read-only reviewer gives a relatively quick, focused second opinion on a captured committed
+revision, using an additional machine slot and the configured account. Scope guidance replaces a
+programmatic duration cutoff; L2 observes the run and can cancel if it gets stuck or goes off scope. It cannot edit, run tests or approve merging.
+Review launches require working service inspection. Interruption stops the reviewer unit as well as
+its launcher; uncertain termination retains capacity for recovery.
 Accepted requests wait for L2 assessment or authorized withdrawal before merge. Later edits are
 labelled separately. Single-engine work continues normally when no second engine is available.
 See [requesting and assessing review](docs/CLI.md#cross-engine-review).
