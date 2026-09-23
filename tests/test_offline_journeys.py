@@ -134,8 +134,8 @@ class TestOfflineJourneys(AltitudeCase):
             for key in ("session_id", "attempt", "worktree", "branch"):
                 self.assertEqual(resumed[key], task[key])
             self.assertEqual(resumed["prs"], [101])
-            self.assertIn("write a fresh schema-valid report.json", self.engine.calls[-1]["prompt"])
-            self.assertIn("no new work is needed", self.engine.calls[-1]["prompt"])
+            self.assertTrue(self.engine.calls[-1]["prompt"].startswith("Message from"))
+            self.assertNotIn("Task question", self.engine.calls[-1]["prompt"])
             self.assertFalse(T.report_current(resumed, S.task_dir(self.project, slug) / "report.json"))
             T.message(self.project, slug, "l2", "Guidance already incorporated; delivery is unchanged.", by="l2")
             if continuation == "fresh":
@@ -331,7 +331,7 @@ class TestOfflineJourneys(AltitudeCase):
                 self.assertNotEqual(fresh["agent_id"], task["agent_id"])
                 self.assertIn(question["id"], self.engine.calls[-1]["prompt"])
                 self.assertIn(question["detail"], self.engine.calls[-1]["prompt"])
-                self.assertIn("Response received" if accept else question["detail"], self.engine.calls[-1]["prompt"])
+                self.assertIn("Response in message" if accept else question["detail"], self.engine.calls[-1]["prompt"])
                 self.assertIn(message_id, self.engine.calls[-1]["prompt"])
                 self.assertIn("Keep fourteen days." if accept else "Can we roll back after day fourteen?",
                               self.engine.calls[-1]["prompt"])

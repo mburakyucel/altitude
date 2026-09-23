@@ -100,9 +100,7 @@ class ConversationDecisions(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["agent_id"], task["session_id"], task["attempt"]), ("owner", "conversation", 1))
         prompt = T.render_inbox(T.pending(self.project, self.slug))
-        self.assertIn(message["id"], prompt)
-        self.assertIn(question["id"], prompt)
-        self.assertIn("does not authorize", prompt)
+        self.assertEqual(prompt, f"Message from Burak (message id {message['id']}):\n{message['text']}")
         self.assertEqual(task["hold_merge"], "Operator review")
         state = S.regen_state_md(self.project).split("## Tasks")[0]
         self.assertIn(question["id"], state)
@@ -222,7 +220,6 @@ class ConversationDecisions(AltitudeCase):
         self.assertEqual((result["audience"], receipt["by"], receipt["source"], receipt["message_id"]),
                          ("operator", "l3", "task", answer["id"]))
         self.assertEqual((receipt["l3_authority"], receipt["recorded_by"], receipt["recorded_attempt"]), (basis, "l2", 1))
-        self.assertIn(basis, T.question_context(result))
         self.assertEqual(T.decisions(self.project), [])
         self.assertEqual(self.resolve(answer, reason=receipt["text"], l3_authority="  " + basis + "  "), result)
         with self.assertRaisesRegex(T.TransitionError, "already resolved"):
@@ -307,19 +304,15 @@ class ConversationDecisions(AltitudeCase):
         self.assertEqual([m["id"] for m in view["messages"]], [q["anchor_id"] for q in view["questions"]])
         history = T.message(self.project, self.slug, "burak", "Why was the first proposal changed?",
                             question_id=first["id"], revision=first["revision"])
-        self.assertIn(f"{first['id']} revision {first['revision']} is resolved", history["question_context"])
-        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
-            self.resolve(history)
+        self.assertEqual((history["question_id"], history["question_revision"]), (first["id"], first["revision"]))
         with self.assertRaisesRegex(T.TransitionError, "unavailable"):
             T.message(self.project, self.slug, "burak", "hello", question_id="missing", revision=1)
 
     def test_single_revision_updates_the_group_reason_used_for_reparking(self):
         original = self.current()
         question = self.ask("Choose the revised retention period.")
-        task = S.load_task(self.project, self.slug)
-        context = T.group_context(task)
-        self.assertIn("Saved group reason: Choose the revised retention period.", context)
-        self.assertNotIn(f"Saved group reason: {original['detail']}", context)
+        group = S.load_task(self.project, self.slug)["question_groups"][-1]
+        self.assertEqual(group["reason"], "Choose the revised retention period.")
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Can we discuss that revision?")
         T.resume(self.project, self.slug)
         T.block(self.project, self.slug, "Choose the revised retention period.", actor="l2",
@@ -588,7 +581,7 @@ class ConversationDecisions(AltitudeCase):
         self.assertEqual(question["detail"], original)
         self.assertEqual(question["asked_by"], "l2")
         self.assertEqual(T.task_messages(self.project, self.slug)[0]["id"], question["anchor_id"])
-        self.assertIn(question["id"], message["question_context"])
+        self.assertEqual(message["question_refs"], [{"id": question["id"], "revision": question["revision"]}])
         T.resume(self.project, self.slug)
         self.assertEqual(self.current()["status"], "open")
         self.assertEqual(T.decisions(self.project)[0]["id"], question["id"])
@@ -615,7 +608,6 @@ class ConversationDecisions(AltitudeCase):
                 self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], T.OPERATOR_MESSAGE_ROLE)
                 self.assertEqual(T.decisions(self.project), [after])
                 self.assertFalse(l3.queue_path(self.project).exists(), "parking an operator dilemma does not queue L3 again")
-                self.assertIn("Keep it visible if still valid", T.question_context(after))
         T.resume(self.project, self.slug)
         changed = T.block(self.project, self.slug, before["detail"], actor="l2", updates={"waiting_on": "l3"},
                           recommendation="Keep it for fourteen days.")["questions"][-1]

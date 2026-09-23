@@ -366,7 +366,10 @@ leaves unqualified references as text. Switching projects supplies the destinati
 
 A message from the operator (task page, chat through L3, or `alt task message`) is appended to the task's durable
 conversation and to its inbox. Each file is published atomically under the project writer lock;
-concurrent reads see complete messages. Nothing is killed. The engine seam supplies the inbox at a native hook
+concurrent reads see complete messages. The owner receives the exact text with its sender and
+message ID, plus the answered question's ID for a Needs you answer; it already holds the brief,
+persona and its own questions, so no question state or procedure is attached. Hooks fired inside a
+helper subagent leave the inbox to the owner. Nothing is killed. The engine seam supplies the inbox at a native hook
 checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
 worker retains the fault path even with pending steering. For a blocked task the same locked append
 records a due `resume_after` request, except when Stop holds the inbox. The L3
@@ -407,7 +410,7 @@ Follow-ups also win against worker-exit/report-handoff races. Verification is bo
 worker start, block identity and the follow-up timestamp; stale verification, fault effects, archive
 callbacks and report-turn receipts cannot conclude resumed work. Every resumed code-owner turn
 rechecks delivery and writes a fresh report, even when replayed guidance adds no work. The shared
-persona and runtime resume prompt require all prior deliveries, exact remaining scope and holds
+persona requires all prior deliveries, exact remaining scope and holds
 to survive; chat acknowledgement cannot substitute for reporting.
 The old report file remains readable until replacement, with its historical copy retained in events.
 Archived/done/rejected tasks remain read-only; archived restoration is not part of this lifecycle.
@@ -421,7 +424,6 @@ and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport r
 A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
-the inbox handoff names its stable ID/revision and the IDs of the actual source messages.
 The owner or coordinator writes the actual choice in plain language with the task's user-facing
 purpose and material consequences clear before answering. Detailed reasoning and history stay
 accessible in the owning conversation; concise presentation changes no revision or authority rule.
@@ -501,7 +503,7 @@ other filesystem locations, symlinks and nested artifacts are refused. See
 
 The provider conversation, attempt, engine and model remain under the ordinary continuity rules.
 When those rules queue a fresh attempt after a provider limit, an existing dilemma still accepts
-replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;
+replies and explicit acceptance into the normal inbox. The fresh brief carries the still-open questions once, since that session never saw them;
 dispatch and delivery use the existing paths, and the UI says the message waits for the L2 to start.
 An FYI (`alt fyi [slug] "text"`) is a system row in the project's chat, not a task-state change.
 The writer records explicit L3 selection as `heads_up: true`; these concise lines stay visible
@@ -543,14 +545,15 @@ stay quiet; a finished probe schedules no further CI check. A changed block,
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
 stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
 
-L3 applies an original operator merge decision to each held PR through
-[`hold-merge --approval`](CLI.md#recorded-merge-approval), preserving the source, applicable question,
-current PR/head and scope judgment in its receipt. It reviews corrections in both task and project
-chat. Altd validates authority, question evidence, the current hold and assigned/adopted PR identity;
+The owner applies the operator's task-chat approval of a held PR with `alt land --merge --approval`;
+L3 applies a project-chat approval through [`hold-merge --approval`](CLI.md#recorded-merge-approval).
+The receipt preserves the source, current PR/head and scope judgment. Altd validates authority, the
+current hold and assigned/adopted PR identity;
 [the architecture](ARCHITECTURE.md#isolation-and-landing) specifies those boundaries.
 
-Release changes the hold while preserving worker and question state. L3 verifies the receipt before
-resuming a blocked owner, who completes review and current-candidate checks through `alt land --merge`.
+Release changes the hold while preserving worker and question state. After an L3 release, L3 verifies
+the receipt before resuming a blocked owner, who completes review and current-candidate checks through
+`alt land --merge`.
 A follow-up restores the original review requirement for its own scoped release; an explicit renewed
 hold requires approval of that renewed requirement. Failed reconciliation follows L3's recovery path.
 

@@ -41,6 +41,17 @@ class InboxHook(AltitudeCase):
         self.assertEqual(T.pending(self.project, self.slug), [])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 2, "the conversation keeps them")
 
+    def test_a_helper_subagent_tool_call_leaves_messages_for_the_owner(self):
+        T.message(self.project, self.slug, "l3", "Only the owner should read this.")
+
+        helper = self.run_hook("PostToolUse", agent_id="helper-1", agent_type="Explore")
+        owner = self.run_hook("PostToolUse")
+
+        self.assertEqual((helper.returncode, helper.stdout), (0, ""))
+        context = json.loads(owner.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(context.split("\n", 1)[1], "Only the owner should read this.")
+        self.assertTrue(context.startswith("Message from L3 (message id "), context)
+
     def test_when_the_worker_is_about_to_stop_the_messages_keep_it_going(self):
         T.message(self.project, self.slug, "burak", "One more thing before you finish.")
 

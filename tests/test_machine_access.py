@@ -130,6 +130,22 @@ class TestMachineAccess(AltitudeCase):
         brief = self.alt("task", "status", self.slug, "--brief", env={"ALTITUDE_PROJECT": self.project})
         self.assertIn(f"machine access: {question['detail']}", brief.stdout)
 
+    def test_grant_binds_the_purpose_the_operator_read_not_a_later_revision(self):
+        question = self.ask("May I install ffmpeg under my user?")
+        row = self.answer(question)
+        self.tick()
+        T.block(self.project, self.slug, "Revised purpose", actor="l2", expected_state="running", expected_attempt=1,
+                updates={"waiting_on": "burak"}, questions={"questions": [
+                    {"id": question["id"], "question": "May I restart the service instead?"}]})
+        revised = S.load_task(self.project, self.slug)["questions"][-1]
+        self.assertEqual(revised["revision"], question["revision"] + 1)
+        self.resolve(revised, row)  # the owner may judge the earlier answer still applies ...
+        self.tick()
+        with self.assertRaises(T.TransitionError):  # ... but a grant needs the operator's answer to this purpose
+            T.grant_machine_access(self.project, self.slug, row["id"], question=revised["id"],
+                                   revision=revised["revision"], reason="r", actor="l3")
+        self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+
     def test_commands_run_only_under_a_grant_and_are_recorded(self):
         refused = self.run_command("echo hello", status=403)
         self.assertIn("no machine grant", refused["error"])

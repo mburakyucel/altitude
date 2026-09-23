@@ -99,8 +99,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(result["agent"]["id"], "agent-new")
         self.assertIn("Message from Burak (", seen["prompt"])
         self.assertIn("\nUse the existing API.", seen["prompt"])
-        self.assertIn("Pending task question", seen["prompt"])
-        self.assertIn("does not authorize", seen["prompt"])
+        self.assertNotIn("Need one decision.", seen["prompt"], "the session already asked it")
         self.assertEqual((seen["name"], seen["session_id"], seen["cwd"]),
                          (f"{self.project}/{self.slug}-1", "session-old", str(self.worktree)))
         self.assertEqual((seen["env"]["ALTITUDE_ATTEMPT"], seen["env"]["ALTITUDE_SESSION_KEY"]),
@@ -226,8 +225,7 @@ class TestTaskConversation(ChatCase):
         self.block()
         seen = {}
         self.resume(seen)
-        self.assertTrue(seen["prompt"].startswith("Continue from your progress file."))
-        self.assertIn("Need one decision.", seen["prompt"])
+        self.assertEqual(seen["prompt"], "Continue from your progress file.")
 
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")

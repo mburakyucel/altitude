@@ -41,8 +41,9 @@ The personas define [L2 task ownership and decisions](personas/l2.md) and
 [L3 coordination, feedback and recovery](personas/l3.md). L3 dispatches concrete requests without
 a separate scoping or research stage; implementation choices belong to the owner.
 
-For large or ambiguous implementation, L2's first output is a short proposal and it blocks for the
-operator's go before writing code.
+L2 blocks for the operator's go on a short proposal before writing code only when a material product/UX,
+security, spend or paradigm choice is unsettled, or the brief asks for it. Otherwise it replies with a
+one-paragraph plan and proceeds; the operator can redirect at any checkpoint.
 Module-level calls belong to the implementing session and are reported in the PR.
 Prefer small, safely mergeable increments for large or complex issues as described in the
 [delivery guidance](docs/CLI.md#incremental-issue-delivery). Splitting work does not bypass unresolved

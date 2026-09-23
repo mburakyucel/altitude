@@ -8,18 +8,16 @@ from altitude import config, dispatch, state as S, tasks
 
 EXPECTED_FIELDS = {
     "branch",
-    "completion_contract",
-    "conversation_contract",
     "engine",
     "leases",
     "merge_policy",
     "model",
-    "never_list",
+    "overlaps",
     "paths",
     "project",
+    "report_schema",
     "request",
     "repo",
-    "publication_contract",
     "slug",
     "task_dir",
     "title",
@@ -72,12 +70,11 @@ class TestBriefRender(AltitudeCase):
         task = tasks.new(self.project, "Shared docs", "request",
                          paths=["docs/ARCHITECTURE.md", "README.md", "altitude/config.py"])
         rendered = dispatch.build_brief(self.project, task["slug"])
-        self.assertIn("Shared paths with `other-worker` on README.md, docs/ARCHITECTURE.md: "
-                      "expect to rebase onto main before landing and keep edits in shared docs "
-                      "to your own sections.", rendered)
+        self.assertIn("Shared with `other-worker` on README.md, docs/ARCHITECTURE.md: "
+                      "rebase onto main before landing and keep shared-doc edits to your own sections.", rendered)
         self.assertIsNone(dispatch.wip_hold(self.project, task))
         self.assertNotIn("Blocked: lease", rendered)
-        self.assertNotIn("Shared paths with", self.default_rendered)
+        self.assertNotIn("Shared with", self.default_rendered)
 
     def test_shared_scope_uses_directory_boundaries_and_literal_paths(self):
         self.assertEqual(dispatch.shared_paths(["./docs/", "my dir/file.py"],
@@ -93,18 +90,18 @@ class TestBriefRender(AltitudeCase):
         self.assert_no_unformatted_field(self.held_rendered)
 
     def test_merge_guarantees_survive_rendering(self):
+        self.assertIn("alt land --merge --approval <message-id>", self.held_rendered)
+        self.assertNotIn("--approval", self.default_rendered)
         for rendered in (self.default_rendered, self.held_rendered):
-            with self.subTest(held="Held for operator review" in rendered):
-                self.assertIn("never merge around it", rendered)
-                self.assertIn("full local test suite on the exact merge candidate", rendered)
+            self.assertIn("report.json", rendered)
+            self.assertIn("Never restart or stop", rendered)
 
-    def test_direct_execution_and_delegation_survive_rendering(self):
-        rendered = self.default_rendered
-        self.assertIn("Implement directly", rendered)
-        self.assertIn("your engine's own subagents", rendered)
-        self.assertIn("Direct implementation is normal", rendered)
-        self.assertIn("Review is optional", rendered)
-        self.assertIn("alt task reply", rendered)
+    def test_brief_carries_task_facts_not_role_procedure(self):
+        """The persona owns conversation and delegation procedure; the brief names only this task."""
+        fixed = self.default_rendered.split("**Request:**")[0]
+        for procedure in ("alt task resolve", "--questions-file", "Implement directly", "Hard boundaries"):
+            self.assertNotIn(procedure, fixed)
+        self.assertLess(len(fixed), 1500)
 
 
 if __name__ == "__main__":

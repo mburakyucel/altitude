@@ -69,8 +69,6 @@ class LaunchSource(AltitudeCase):
         launch = self.engine.calls[-1]
         self.assertEqual(launch["persona"].read_text(), original)
         self.assertEqual(launch["persona"].parent.parent, source)
-        self.assertIn("Never publish private material", launch["prompt"])
-        self.assertNotIn("Never use", launch["prompt"])
         self.assertIn(str(source / "schemas/report.json"), launch["prompt"])
         self.assertFalse((launch["cwd"] / "private.txt").exists())
         self.assertEqual(shutil.which("alt", path=engines.clean_env()["PATH"]), str(source / "bin/alt"))

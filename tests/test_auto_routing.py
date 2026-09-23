@@ -93,8 +93,8 @@ class TestAutoIntegration(AltitudeCase):
             return self.rejected() if args[0] == "claude" else self.launched(*args, **kwargs)
         with mock.patch.object(engines, "start_l2", side_effect=launch) as execute:
             dispatch.run(self.project, task["slug"])
-        self.assertIn("one L2 (codex, operator-model)", execute.call_args_list[-1].args[2])
-        self.assertIn("one L2 (codex, operator-model)", (S.task_dir(self.project, task["slug"]) / "brief.md").read_text())
+        self.assertIn("codex (operator-model) owns this", execute.call_args_list[-1].args[2])
+        self.assertIn("codex (operator-model) owns this", (S.task_dir(self.project, task["slug"]) / "brief.md").read_text())
 
     def test_each_rejected_option_is_tried_once_and_no_option_leaves_actionable_hold(self):
         self.policy("claude:fable > claude:opus")
