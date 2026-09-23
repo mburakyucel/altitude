@@ -495,17 +495,19 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
                 server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "merge", "7"]})
         run.assert_not_called()
 
-    def test_sept7_l3_sets_wip_through_broker_but_cannot_register_or_cross_projects(self):
-        for options, expected in ((["--wip", "5"], 5), (["--unset-wip"], None)):
+    def test_l3_sets_routing_through_broker_but_cannot_register_or_cross_projects(self):
+        for options, expected in ((["--routing", "codex"], config.parse_routing("codex")),
+                                  (["--unset-routing"], None)):
             result = server.l3_verb_request(self.project, {
                 "kind": "alt", "args": ["project", "set", self.project, *options, "--reason", "test"]})
             self.assertEqual(result["returncode"], 0, result["stderr"])
             dispatch.run_settings(self.project)
-            self.assertEqual(config.project(self.project).get("wip"), expected)
+            self.assertEqual(config.project(self.project).get("routing"), expected)
         events = [json.loads(line) for line in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
         self.assertEqual([(e["actor"], e["reason"]) for e in events], [("l3", "test")] * 2)
         for args in (["project", "add", "forbidden"], ["project", "remove", self.project],
-                     ["project", "set", "other", "--wip", "5", "--reason", "test"]):
+                     ["project", "set", "other", "--routing", "codex", "--reason", "test"],
+                     ["project", "set", self.project, "--wip", "5", "--reason", "test"]):
             result = server.l3_verb_request(self.project, {"kind": "alt", "args": args})
             self.assertNotEqual(result["returncode"], 0)
         self.assertNotIn("forbidden", config.load_projects())

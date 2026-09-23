@@ -34,18 +34,16 @@ These illustrative inspection commands use a registered project, task and PR; su
 Add `--json` where supported for the full record. The [CLI reference](CLI.md) describes the
 inspection and task lifecycle verbs.
 
-Project verbs are `alt project add <name> [--path PATH] [--wip N]`, `list`, `discover`,
-`remove <name>`, and `set <name> --wip N --reason "…"` (or `--unset-wip --reason "…"`).
-Registration stores WIP only when supplied; otherwise the project inherits the default of 8.
-L3 can set its own project's cap from 1 to the effective machine cap or unset it. The machine
-defaults to 80; the operator can use `alt machine set --wip N --reason "…"` (including N above 80),
+Project verbs include `alt project add <name> [--path PATH]`, `list`, `discover`,
+`remove <name>` and `set <name>` for routing preferences. All projects share one machine cap,
+defaulting to 80; the operator can use `alt machine set --wip N --reason "…"` (including N above 80),
 `alt machine set --unset-wip --reason "…"`, and `alt machine show` to set, reset and inspect it.
 Machine changes, project add and remove are operator-only. See [concurrency examples](CLI.md#concurrency-limits).
 A set persists a reason-bearing request that altd applies on its next tick,
-without a PR, restart, or free task slot. The first registry load removes stored legacy caps of 3
-once and logs the migration; approval and engine pins are preserved, and subsequent explicit
-caps of 3 persist. Lowering a cap preserves running work and project overrides; new launches wait
-until both caps have room. Planned file lists guide coordination; overlapping files do not hold dispatch.
+without a PR, restart, or free task slot. Stored project caps impose no limit. Lowering the machine
+cap preserves running work; launches wait until it has room. Blocked tasks consume no capacity, and
+eligible resumes across all projects take available slots before fresh work. Planned file lists
+guide coordination; overlapping files do not hold dispatch.
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
 L3 and the operator file requested backlog through altd with `alt issue new --title "…" -`

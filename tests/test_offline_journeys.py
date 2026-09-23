@@ -22,7 +22,8 @@ class TestOfflineJourneys(AltitudeCase):
         self.private_ledgers()
         self.quiet_engines()
         # Real routing chooses the configured tier, given only deterministic installation/quota evidence.
-        self.register(self.project, routing=[[{"engine": config.ENGINES[-1], "model": "fixture-model"}]], wip=1)
+        self.register(self.project, routing=[[{"engine": config.ENGINES[-1], "model": "fixture-model"}]])
+        self.patch(config, "WIP_PER_MACHINE", 1)
         self.engine = FakeL2()
         self.engine.install(self)
         self.logs = []

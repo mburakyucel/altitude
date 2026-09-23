@@ -29,7 +29,10 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const initial = await readTask(request);
   expect(initial).toMatchObject({ state: "queued", attempt: 0, worktree: null, planned_wait: { reason, after: null } });
-  expect((await (await request.get("/api/overview")).json()).wip.per_project.atlas).toBe(1);
+  const capacity = (await (await request.get("/api/overview")).json()).wip;
+  expect(capacity).toMatchObject({ per_project: { atlas: 1 }, machine: 1, limit_machine: 1 });
+  expect(capacity).not.toHaveProperty("limit_project");
+  expect(capacity).not.toHaveProperty("limits_per_project");
   await plannedRow.click();
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
@@ -52,6 +55,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await walk.open(workPath);
   const queuedRow = work.getByRole("link", { name: /^Check index compatibility · Queued · waits for a slot/ });
   await walk.state("04-released-queued-at-capacity", { visible: [queuedRow, dependentRow], hidden: [plannedRow] });
+  await expect(queuedRow).toContainText("WIP limit: 1 running on this machine");
   const released = await readTask(request);
   expect(released.state).toBe("queued");
   expect(released.planned_wait).toBeFalsy();

@@ -1625,8 +1625,7 @@ class Handler(BaseHTTPRequestHandler):
                 name = o["name"]
                 restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                 try:
-                    with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default",
-                                            wip=o.get("wip")) as entry:
+                    with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default") as entry:
                         pass
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)

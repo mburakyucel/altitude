@@ -115,7 +115,7 @@ class TestProjectRegistry(AltitudeCase):
             return json.load(response)
 
     def test_sept7_http_registration_and_daemon_set_share_one_project_transaction(self):
-        dispatch.request_setting(self.project, "wip", 5, "test", actor="l3")
+        dispatch.request_setting(self.project, "routing", config.ENGINES[0], "test", actor="l3")
         entered, release, set_finished = threading.Event(), threading.Event(), threading.Event()
         from contextlib import contextmanager
         register = config.add_project
@@ -125,37 +125,41 @@ class TestProjectRegistry(AltitudeCase):
                 entered.set()
                 self.assertTrue(release.wait(3))
                 yield entry
-        def set_wip():
+        def set_routing():
             result = dispatch.run_settings(self.project)
             set_finished.set()
             return result
         with mock.patch.object(config, "add_project", side_effect=prepare), ThreadPoolExecutor() as pool:
             add = pool.submit(self.post, "add", name=self.project, path=str(self.repo))
             self.assertTrue(entered.wait(3))
-            setting = pool.submit(set_wip)
+            setting = pool.submit(set_routing)
             try:
                 self.assertFalse(set_finished.wait(.05), "the set waits for registration's project lock")
             finally:
                 release.set()
-            self.assertNotIn("wip", add.result()["project"])
-            self.assertEqual(setting.result()["wip"]["status"], "done")
-        self.assertEqual(config.project(self.project)["wip"], 5)
+            self.assertNotIn("routing", add.result()["project"])
+            self.assertEqual(setting.result()["routing"]["status"], "done")
+        self.assertEqual(config.project(self.project)["routing"], config.parse_routing(config.ENGINES[0]))
         with mock.patch.object(server, "remove_l3_verb_broker"):
             self.post("remove", name=self.project)
         self.assertNotIn(self.project, config.load_projects())
 
     def test_setup_failure_retains_registration_and_preserves_other_projects_and_engine_pins(self):
         other = self.project + "-other"
-        self.register(other, wip=5)
+        self.register(other, approval="manual")
         def failed_setup(_project):
             config.set_l3_engine(other, config.ENGINES[0])
             raise RuntimeError("test broker unavailable")
         with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=failed_setup):
-            self.assertTrue(self.post("add", name=self.project, path=str(self.repo), wip=4)["ok"])
+            result = self.post("add", name=self.project, path=str(self.repo), approval="manual", wip=4)
+            self.assertTrue(result["ok"])
+            self.assertNotIn("wip", result["project"])
             server.project_setup.run(self.project)
-        self.assertEqual(config.project(self.project)["wip"], 4)
+        self.assertEqual(config.project(self.project)["approval"], "manual")
+        self.assertNotIn("wip", config.project(self.project))
+        self.assertNotIn("wip", json.loads(config.PROJECTS_FILE.read_text())[self.project])
         self.assertEqual(server.project_setup.observe(self.project)["operation"]["state"], "failed")
-        self.assertEqual(config.project(other)["wip"], 5)
+        self.assertEqual(config.project(other)["approval"], "manual")
         self.assertEqual(config.project(other)["l3_engine"], config.ENGINES[0])
 
 

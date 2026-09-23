@@ -154,6 +154,18 @@ def note_limit(engine: str, limit: dict) -> None:
     note_rejection({"engine": engine, "model": limit.get("model")}, limit)
 
 
+def resume_hold(engine: str, model: str | None) -> str | None:
+    """Availability of a saved session, independent of fresh-task routing preferences."""
+    from . import engines
+    if engine not in config.ENGINES:
+        return f"saved engine {engine} is not configured"
+    installed = engines.installation(engine)
+    if installed["available"] is False:
+        return installed["why"]
+    option = {"engine": engine, "model": model or config.default_model("l2", engine), "role": "l2"}
+    return _rejected(option) or _unavailable(*_usage()[engine])
+
+
 def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
     """Fresh dispatch and its queue explanation share the same one-attempt target and pin policy."""
     if task.get("next_engine"):

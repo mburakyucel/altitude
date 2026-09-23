@@ -39,7 +39,7 @@ const overview = {
 
 const project = {
   name: "altitude",
-  config: { approval: "ask", wip: 2 },
+  config: { approval: "ask" },
   l3: { session_id: "abcdef1234567890", turns: 12 },
   busy: false,
   tasks: [{ slug: "fix-timer", state: "running", title: "Fix the timer", updated: ago(2) }],

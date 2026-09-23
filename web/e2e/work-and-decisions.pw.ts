@@ -214,7 +214,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   const done: Row = { slug: "walk-done", state: "done", title: "Link task PR chips", updated: minutesAgo(90), prs: [208] };
   const state: Overlay = {
     queue: [decision],
-    wip: { per_project: {}, machine: 1, waiting: [{ project: project.name, slug: queued.slug, why: "dispatch", hold: `WIP limit 1 reached for ${project.name} (1 running)` }] },
+    wip: { per_project: {}, machine: 1, waiting: [{ project: project.name, slug: queued.slug, why: "dispatch", hold: "WIP limit: 1 running on this machine" }] },
     project: (json) => ({ ...json, tasks: [...(json.tasks as Row[]).map((t) => t.slug === base.slug ? blocked : t), queued, waitsL3, parked, stoppedTask, faulty], archive: [done] }),
     task: { [base.slug]: blocked },
   };

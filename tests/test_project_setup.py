@@ -62,7 +62,9 @@ class ProjectSetup(AltitudeCase):
                 self.assertFalse(current.get("fault"))
                 self.assertFalse(current.get("resume_failed"))
                 self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
-            self.assertEqual(dispatch.pending_task_operations(self.project), [slug])
+            self.assertEqual(dispatch.pending_task_operations(self.project), [])
+            with mock.patch.object(S, "now", return_value=current["resume_after"]):
+                self.assertEqual(dispatch.pending_task_operations(self.project), [slug])
             self.assertEqual(dispatch.resume_due(self.project), [])
             second = T.message(self.project, slug, "burak", "Also keep my draft", by="burak")
         self.assertFalse(config.INCIDENT_INDEX.exists())
@@ -100,7 +102,9 @@ class ProjectSetup(AltitudeCase):
             return real_ensure(*args, **kwargs)
         with setup.operation_lock(self.project), mock.patch.object(setup, "ensure_guards", side_effect=preflight):
             self.assertTrue(dispatch.resume(self.project, slug)["held"])
-        self.assertEqual(dispatch.resume_due(self.project), [slug])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        with mock.patch.object(S, "now", return_value=S.load_task(self.project, slug)["resume_after"]):
+            self.assertEqual(dispatch.resume_due(self.project), [slug])
         self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"], arrived[0]["id"]])
         self.assertEqual(S.load_task(self.project, slug)["resume_request"], arrived[0]["id"])
         with mock.patch.object(engines, "stop_l2_worker", return_value="Stopped"):
@@ -123,7 +127,9 @@ class ProjectSetup(AltitudeCase):
             with setup.operation_lock(self.project):
                 self.assertTrue(server.request_task_resume(self.project, slug))
                 launch.assert_not_called()
-            self.assertTrue(server.request_task_resume(self.project, slug))
+            self.assertFalse(server.request_task_resume(self.project, slug))
+            with mock.patch.object(S, "now", return_value=S.load_task(self.project, slug)["resume_after"]):
+                self.assertTrue(server.request_task_resume(self.project, slug))
             self.assertFalse(server.request_task_resume(self.project, slug))
             launch.assert_called_once()
         self.assertEqual(S.load_task(self.project, slug)["state"], "running")

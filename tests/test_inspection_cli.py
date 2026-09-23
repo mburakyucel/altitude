@@ -27,7 +27,8 @@ class TestInspectionCLI(AltitudeCase):
         self.private_ledgers()
         self.quiet_engines()
         self.ghdir = self.fake_gh()
-        self.register(self.project, path=self.repo, wip=1)
+        self.register(self.project, path=self.repo)
+        self.patch(config, "WIP_PER_MACHINE", 1)
         self.setenv("ALTITUDE_PROJECT", self.project)
         self.setenv("ALTITUDE_ACTOR", "burak")
 
