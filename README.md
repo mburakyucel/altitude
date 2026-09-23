@@ -82,7 +82,7 @@ report covers all of them. See [continuation after merge](docs/CLI.md#continue-a
 
 A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
 continue that owner's session, attempt and worktree with the same PR, objective and review holds.
-L3 can also request continuation with `alt task resume <slug> --reason "…"`. The previous report
+L3 can also request continuation with `alt task resume <slug> --reason '…'`. The previous report
 stays in task history. Every resumed code-owner turn rechecks delivery and writes a fresh report,
 including replayed guidance that adds no work, retaining all deliveries and exact remaining scope.
 A chat acknowledgement cannot complete that turn. A saved message is not proof that the
@@ -107,7 +107,7 @@ The command targets the project's repository, retains branches, and returns the 
 and URL. The operator can use the same verb. Unconfirmed results remain explicit.
 
 An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
-Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
+Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason '…' --message '…'`.
 The owner inspects and incorporates its history in the task worktree first. Adoption records that
 specific PR and original head. Commit messages need no ownership labels or repair. Updates go to
 the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
@@ -190,9 +190,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   **Stopped by you** identifies an operator stop.
   **Planned · waits for …**
   keeps decided short-term work visible with one reason, without a worker or WIP slot.
-  Create it with `alt task new --wait "…"` or `--after <task>` and a written brief; a named
+  Create it with `alt task new --wait '…'` or `--after <task>` and a written brief; a named
   dependency releases it when archived done, while L3 or the operator can explicitly release
-  either wait with `alt task release <slug> --reason "…"`. Messages stay saved for launch without
+  either wait with `alt task release <slug> --reason '…'`. Messages stay saved for launch without
   releasing the task or replacing the original brief's authority. Issues remain the long-term backlog.
   Compact status rows open the owning conversation at its question when one needs you;
   questions and quick answers live in Needs you
@@ -499,7 +499,7 @@ self-deployment fetch once more after the specific stale-reference error. Progre
 fresh fetch to succeed; unrelated errors and a failed second fetch remain visible.
 
 To preserve deployment edits for an authorized reconciliation, L3 or the operator can use
-[`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
+[`alt task preserve-checkout <slug> --reason '…'`](docs/CLI.md#dirty-checkout-recovery)
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
 changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
 snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
@@ -539,8 +539,9 @@ prevention or an evidence-backed no-change disposition. The development coordina
 under its own authority, on any installation. See [incident follow-through](docs/CLI.md#incident-recovery-and-prevention).
 
 For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
-existing fault-blocked task. Status names its next action and time. The daemon follows relevant fresh
-CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers terminal
+blocked task: a faulted owner, or an owner parked on a question while its required check queues. Status
+names its next action and time. The daemon follows relevant fresh CI, reruns one selected run only for
+a fault, preserves uncertain submission evidence, and delivers terminal
 results durably to that project's L3, including unchanged failures. L3 reconciles the next step and
 gives a concise heads-up when significant work remains blocked; repeated observations stay quiet.
 Artifact capacity needs fresh uploaded artifacts; a passing run
@@ -623,7 +624,7 @@ Setup friction and confusing product language are useful feedback too. Keep exam
 or redacted; send security-sensitive details privately to the maintainer through your invitation
 channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
-Managed projects' L3s can use `alt issue upstream --title "…" -` through their coordinator transport.
+Managed projects' L3s can use `alt issue upstream --title '…' -` through their coordinator transport.
 The JSON body describes expected and actual behavior, a fictional/redacted reproduction, and the
 version if known. Altd resolves the product repository from its installation origin or the operator's
 `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting; callers cannot choose a destination or other upstream

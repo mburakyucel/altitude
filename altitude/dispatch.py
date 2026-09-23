@@ -169,7 +169,8 @@ def run_ci_recheck(project: str, slug: str) -> None:
         now = datetime.fromisoformat(S.now())
         if not notifying:
             if record["reads"] >= 24 or now >= datetime.fromisoformat(record["deadline"]):
-                _ci_finish(project, task, record, {"error": "CI probe exhausted its read/deadline bound; recovery unverified"})
+                _ci_finish(project, task, record, {"error": "CI probe exhausted its read/deadline bound; recovery unverified. "
+                                                        "Next: register another finite recheck or message the owner."})
                 notifying = True
             elif now < datetime.fromisoformat(record["due_at"]):
                 return
@@ -221,7 +222,7 @@ def run_ci_recheck(project: str, slug: str) -> None:
                 # A relevant live run or fresh completed execution supplies evidence without a write.
                 fresh = (run["status"] != "completed"
                          or datetime.fromisoformat(run["updated_at"]) >= datetime.fromisoformat(current["at"]))
-                if not fresh:
+                if not fresh and not current.get("wait"):  # a wait observes; only a fault recovery reruns
                     observed_attempt = run["run_attempt"]
                     run = _ci_run(project, repository, current["run"])
                     current["target"] = target = current["run"]
@@ -272,7 +273,8 @@ def run_ci_recheck(project: str, slug: str) -> None:
                 current["error"] = str(exc)[:300]
                 current["read_failures"] = current.get("read_failures", 0) + 1
                 if current["read_failures"] >= 3:
-                    _ci_finish(project, task, current, {"error": "CI evidence reads failed three times; recovery unverified"})
+                    _ci_finish(project, task, current, {"error": "CI evidence reads failed three times; recovery unverified. "
+                                                               "Next: check the run by hand, then register another finite recheck or message the owner."})
                 else:
                     S.save_task(project, task)
     l3.queue_ci_recheck(project, slug)

@@ -284,7 +284,7 @@ def main(argv=None) -> None:
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
     pc.add_argument("slug"); pc.add_argument("--reason", required=True)
-    ci = ts.add_parser("recheck-ci", help="L3/operator: record one bounded CI evidence probe for a fault-blocked task")
+    ci = ts.add_parser("recheck-ci", help="L3/operator: record one bounded CI evidence probe for a blocked task")
     ci.add_argument("slug"); ci.add_argument("--run", required=True, type=int)
     ci.add_argument("--at", required=True); ci.add_argument("--reason", required=True)
     tp = ts.add_parser("paths", help="L3/operator: replace the advisory comma-separated planned file list")

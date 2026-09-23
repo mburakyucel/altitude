@@ -153,7 +153,9 @@ activation and each owner's current status before requesting handoff; completed 
 
 ### Durable CI recheck
 
-L3 or the operator records one probe against an existing fault-blocked task in its project:
+L3 or the operator records one probe against a blocked task in its project. A fault-blocked task gets
+a recovery probe; a task blocked on a question while its required check queues or runs gets a wait,
+which only observes that check until it is terminal:
 
 ```sh
 alt task recheck-ci blocked-owner --run 12345 --at 2026-09-10T02:00:00Z --reason 'Verify artifact upload after the external accounting wait'
@@ -169,12 +171,14 @@ registration retries return the same receipt; another active probe refuses repla
 to register the probe. Registration starts no worker and needs no free worker slot.
 
 At the due time, altd prefers relevant live or fresh completed CI among twenty recent executions
-of that workflow, branch, event and PR. Otherwise it reruns the selected run once. Freshness uses
+of that workflow, branch, event and PR. Otherwise a recovery probe reruns the selected run once, and a
+wait reports the selected run as it is. Freshness uses
 the scheduled check time, so evidence from before the intended wait does not satisfy it. Altd saves
 the baseline attempt and intent before submission, then reads attempt metadata to reconcile uncertain
 writes without blind resubmission. Reruns use their original workflow; they do not adopt a new base
 workflow. Each API call has a twenty-second limit; reads run at five-minute intervals and stop at
-three failures, twenty-four rounds or two hours after the scheduled time. Missing artifacts remain
+three failures, twenty-four rounds or two hours after the scheduled time; the exhausted evidence names
+the next action. Missing artifacts remain
 unverified, including on a green run with a tolerated upload error. Fresh nonexpired, nonempty
 artifacts from the observed execution establish successful upload, not another owner's candidate readiness.
 
@@ -388,7 +392,7 @@ The [L3 next-action contract](../personas/l3.md#authority-and-coordination) uses
 and verbs. A justified wait names its dependency or finite observation, owner, trigger and the decision
 its result informs. An incident marked `watch` alone schedules nothing. When historical evidence is
 irretrievable, record that limit, use retained evidence for specific remaining questions and expose
-any capability or authority gap through `alt task escalate <slug> --question "…"`. Escalation keeps
+any capability or authority gap through `alt task escalate <slug> --question '…'`. Escalation keeps
 the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
 correction follows the existing task/PR path. A changed operational contract requires its decision
 before execution. Needed diagnostic authorization names an investigation outcome, original owner,
@@ -407,7 +411,7 @@ For fictional Atlas tasks whose original worker units were collected, the proced
 | Launch failed before a session or worktree exists | Retain the original task and failed launch record. Inspect retained launch output and supported worker evidence for a specific unresolved question. If recovery cannot be established, L3 uses `alt task escalate` on that task for any required decision on a bounded launch investigation, naming evidence, cleanup and stop conditions. Any exception to verified-recovery-before-resume requires authorization; once authorized, diagnostic iteration stays within those bounds. Do not create a replacement owner. |
 | Validation failed on an existing session and held PR | Retain the exact failed candidate, check logs, session and hold. Review retained failures for an actionable cause. If supported reads cannot establish recovery, L3 uses `alt task escalate` for any required authority to investigate the failing check with the same owner, naming evidence, cleanup and stop conditions. Approved diagnostic iteration needs no per-run confirmation. A full validation rerun, machine changes or broader diagnostic access needs its applicable authority; prior passing checks and a collected owner unit do not explain failed descendants. |
 
-Neither case has a meaningful timer merely because time can pass. `recheck-ci` can rerun a workflow;
+Neither case has a meaningful timer merely because time can pass. `recheck-ci` can rerun a failed run;
 it is not passive host observation or a substitute for the missing diagnostic authority. After a
 decision, L3 verifies supported execution and reconciles findings at the investigation boundary;
 an inconclusive diagnostic command can inform the owner's next in-scope step. Automatic fault retries,
@@ -535,7 +539,7 @@ worktrees use freshly fetched `origin/main`; owned resume validates its existing
 remote fetch or deployment gate. Deployment and activation failures remain separately visible.
 Preservation is an explicit recovery action, independent of otherwise valid isolated work.
 
-`alt task preserve-checkout <slug> --reason "…"` asks altd to preserve the selected project's dirty
+`alt task preserve-checkout <slug> --reason '…'` asks altd to preserve the selected project's dirty
 main checkout for an existing blocked task that has never launched. It is available to the
 operator and project-bound L3, and denied to L2. It needs neither a worker nor a free task slot.
 The CLI queues a durable request; `alt task status <slug>` shows `daemon_request.status`, its
@@ -603,7 +607,7 @@ An unlaunched task with a saved `main-unpushed` fault can requeue through explic
 resume independently of deployment recovery. Restart alone does not recover or discard edits.
 
 For upstream defects, the originating L3 checks public delivery evidence and local observations
-that the actual cause is gone before `alt task resume <slug> --reason "<verified fix and observation>"`.
+that the actual cause is gone before `alt task resume <slug> --reason '<verified fix and observation>'`.
 Notification receipt, issue closure and unrelated restart do not establish repair. Saved unchanged
 blockers do not generate repeated recovery nudges; new affected tasks, new blockers and changed
 details remain actionable. `alt task message` from L3 to a faulted task records non-waking discussion;
@@ -764,8 +768,8 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ```text
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort high|xhigh] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
-alt task message <slug> <text> [--image <id>]
-alt task reply <text>
+alt task message <slug> <text>|- [--file <path>] [--image <id>]
+alt task reply <text>|- [--file <path>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
@@ -777,12 +781,17 @@ alt task done <slug> --digest <text>
 alt task reject <slug> --reason <reason>
 ```
 
+`-` (or no text) reads the message from stdin, so a quoted heredoc such as `alt task reply - <<'EOF'`
+keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted argument suffices for
+one line. Without `--questions-file`, a block's reason is its question: a different reason revises the
+open question, and the saved reason re-parks it unchanged.
+
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
-`alt task message <slug> "Resolve the conflicts and retain the review hold."` continues a reported
-owner whose recorded PR is still open. `alt task resume <slug> --reason "Continue the existing PR"`
+`alt task message <slug> 'Resolve the conflicts and retain the review hold.'` continues a reported
+owner whose recorded PR is still open. `alt task resume <slug> --reason 'Continue the existing PR'`
 is the equivalent coordinator/operator continuation without a new conversation message. Both use
 the daemon's existing resume path and retain the attempt, provider session, worktree, branch, PR,
 expected files and all holds. PR lookup failure or a closed PR refuses admission. A saved message or
@@ -822,7 +831,7 @@ backlog; planned tasks hold work already decided by the operator.
 A named dependency releases the task automatically only when archived done; an already
 archived-done dependency is satisfied immediately. A merged PR alone, rejection, failure or a
 missing dependency does not satisfy it. L3 or the operator can explicitly release either kind
-with `alt task release <slug> --reason "…"`; the recorded reason also explains an early override
+with `alt task release <slug> --reason '…'`; the recorded reason also explains an early override
 of a named dependency. Release restores ordinary dispatch eligibility, subject to the existing
 capacity, engine and other launch gates, without releasing merge holds.
 
@@ -1206,7 +1215,7 @@ Select reconciliation edits with `git add` and inspect `git diff --cached`; `alt
 The explicit command records the active immutable `adopted_pr` receipt and `pr-adopted` event before
 publication, visible through `alt task status` and `alt task events`. `--dry-run` fetches and
 validates the PR but records nothing and stages/pushes nothing. After adoption, ordinary
-`alt land --message "…" [--merge]` reuses that PR and its original branch. Retrying adoption with the same original PR/head is
+`alt land --message '…' [--merge]` reuses that PR and its original branch. Retrying adoption with the same original PR/head is
 idempotent; selecting another original head for that PR is refused. If origin moves, inspect and
 incorporate only changes belonging to this task; the original receipt remains unchanged.
 
