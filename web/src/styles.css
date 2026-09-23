@@ -1132,7 +1132,7 @@
   }
 }
 
-/* Needs you (§3.3): contiguous project sections, then the calm line. */
+/* Needs you (§3.8): the selected project first, collapsible project sections, then the calm line. */
 .needs-page {
   gap: 16px;
 }
@@ -1170,6 +1170,41 @@
 }
 .needs-project h2 {
   overflow-wrap: anywhere;
+}
+.needs-project-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.needs-project-toggle::before {
+  content: "▾" / "";
+  margin-right: 8px;
+  color: var(--text-muted);
+}
+.needs-project-toggle[aria-expanded="false"]::before {
+  content: "▸" / "";
+}
+.needs-project-count {
+  display: inline-block;
+  margin-left: 10px;
+  font-size: var(--text-meta);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.shell[data-phone] .needs-project-toggle {
+  min-height: var(--target-min);
+}
+.needs-project-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .calm {
   margin: 8px 0 0;

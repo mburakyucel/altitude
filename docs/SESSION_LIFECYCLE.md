@@ -440,8 +440,9 @@ purpose and material consequences clear before answering. Detailed reasoning and
 accessible in the owning conversation; concise presentation changes no revision or authority rule.
 
 Global Needs you and the owning L2 chat show questions and quick answers. Needs you keeps each
-project's attention items together beneath a full project heading that wraps at both viewports.
-This global inbox includes all projects regardless of the selected project. Project Work retains
+project's attention items together beneath a full project heading that wraps at both viewports,
+with the selected project's section first; each heading collapses or reopens its section without
+touching staged answers. This global inbox includes all projects regardless of the selected project. Project Work retains
 each unfinished task once in **Current**, with compact question and execution status; its waiting
 row opens the owning question. A wake or capacity wait alone changes no question.
 Answers and withdrawals reduce the question count without removing the task; closing the last removes

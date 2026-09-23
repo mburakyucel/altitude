@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 import { TaskMessageSchema } from "../data/api";
+import { setSelectedProject } from "../shell/scope";
 
 const OPERATOR = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3") ?? "";
 
@@ -59,6 +60,7 @@ function overview(queue: unknown[]) {
     projects: [
       { name: "altitude", managed: true },
       { name: "tutor", managed: true },
+      { name: "notes", managed: true },
     ],
     queue,
     wip: { per_project: {}, machine: 0, waiting: [] },
@@ -113,7 +115,7 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
 }
 
 describe("Needs you", () => {
-  it("keeps interleaved projects contiguous in first-appearance order without splitting question groups", async () => {
+  it("puts the selected project first, follows a selection change, and keeps question groups whole", async () => {
     const first = { ...l2Asks, title: "Shared task title", group_id: "scope", group_revision: 1 };
     const other = { ...asks, title: "Shared task title", group_id: "scope", group_revision: 1 };
     mockFetch([first, other, { ...first, id: "follow-up", question: "Which regions?" }, stopped,
@@ -121,16 +123,67 @@ describe("Needs you", () => {
     localStorage.setItem("altitude.project", "altitude");
     renderApp({ route: "/" });
     const list = await screen.findByLabelText("Decisions");
-    const sections = within(list).getAllByRole("region");
-    expect(sections.map((section) => section.getAttribute("aria-label"))).toEqual(["Project tutor", "Project altitude"]);
-    expect(within(sections[0]!).getAllByRole("article")).toHaveLength(2);
-    expect(within(sections[1]!).getAllByRole("article")).toHaveLength(2);
-    const group = within(sections[0]!).getByRole("article", { name: "Shared task title" });
+    const labels = () => within(list).getAllByRole("region").map((section) => section.getAttribute("aria-label"));
+    expect(labels()).toEqual(["Project altitude", "Project tutor"]);
+    const [altitude, tutor] = within(list).getAllByRole("region");
+    expect(within(altitude!).getAllByRole("article")).toHaveLength(2);
+    expect(within(tutor!).getAllByRole("article")).toHaveLength(2);
+    const group = within(tutor!).getByRole("article", { name: "Shared task title" });
     expect(within(group).getByText("2 questions to answer")).toBeInTheDocument();
     expect(within(group).getByText("Which regions?")).toBeInTheDocument();
     expect(within(group).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/tutor/tasks/score-phonemes?question=q-badge&revision=1");
-    expect(within(sections[0]!).getByRole("article", { name: "Fix the audio" })).toBeInTheDocument();
+    expect(within(tutor!).getByRole("article", { name: "Fix the audio" })).toBeInTheDocument();
     expect(screen.getByText("4 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
+    act(() => setSelectedProject("tutor"));
+    expect(labels()).toEqual(["Project tutor", "Project altitude"]);
+    expect(within(list).getAllByRole("article")).toHaveLength(4);
+  });
+
+  it("keeps first-appearance order when the selected project has nothing waiting", async () => {
+    mockFetch([stopped, asks]);
+    localStorage.setItem("altitude.project", "notes");
+    renderApp({ route: "/" });
+    const list = await screen.findByLabelText("Decisions");
+    const labels = () => within(list).getAllByRole("region").map((section) => section.getAttribute("aria-label"));
+    expect(labels()).toEqual(["Project tutor", "Project altitude"]);
+    act(() => setSelectedProject("altitude"));
+    expect(labels()).toEqual(["Project altitude", "Project tutor"]);
+  });
+
+  it("collapses and reopens a project from its heading without losing staged answers", async () => {
+    mockFetch([asks, l2Asks, stopped]);
+    const { user, queryClient } = renderApp({ route: "/" });
+    const list = await screen.findByLabelText("Decisions");
+    const altitude = within(list).getByRole("region", { name: "Project altitude" });
+    const tutor = within(list).getByRole("region", { name: "Project tutor" });
+    await user.click(within(altitude).getByRole("button", { name: "Accent" }));
+    expect(within(altitude).getByRole("button", { name: "Send 1 answer" })).toBeEnabled();
+
+    const toggle = within(altitude).getByRole("button", { name: "altitude" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(altitude).getByRole("heading", { level: 2 })).toHaveTextContent("altitude1 question");
+    expect(within(altitude).queryByRole("article")).toBeNull();
+    expect(within(tutor).getAllByRole("article")).toHaveLength(2);
+
+    // A background refresh keeps the collapsed state; keyboard reopens it with the staged pick intact.
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveTextContent("altitude");
+    expect(within(altitude).getByRole("button", { name: "Accent" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(altitude).getByRole("button", { name: "Send 1 answer" })).toBeEnabled();
+
+    const tutorToggle = within(tutor).getByRole("button", { name: "tutor" });
+    tutorToggle.focus();
+    await user.keyboard(" ");
+    expect(tutorToggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(tutor).getByRole("heading", { level: 2 })).toHaveTextContent("1 question · 1 stopped task");
+    expect(within(tutor).queryByRole("article")).toBeNull();
+    expect(screen.getByText("2 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
   });
 
   it("removes an old group's saved receipt while retaining the new group even if the follow-up read fails", async () => {

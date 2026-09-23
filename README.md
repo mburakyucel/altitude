@@ -157,7 +157,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   with each command and its output recorded on the task, until the purpose is done or the grant is
   revoked. The owner never hands terminal commands back to the operator for authorized work.
 - **Selective attention.** Needs you collects unresolved dilemmas in clearly named project sections,
-  with each project's items together and full project names wrapping when needed. Each item
+  the selected project first, each heading collapsing or reopening its items, and full project names
+  wrapping when needed. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,
   concise actions, and the material consequences needed to answer. Detailed reasoning and history
   stay accessible in the owning conversation. The model can ask a plain question, offer one
