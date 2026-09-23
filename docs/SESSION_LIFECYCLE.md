@@ -67,7 +67,8 @@ Failed or interrupted introductory calls wait for an explicit Retry; maintenance
 repeat agent calls automatically.
 
 Setup operations and results survive refresh and reconnection. A read crossing repair completion
-refreshes the operation, guard receipts and observed configuration together. Interrupted operations
+refreshes the operation, guard receipts and observed configuration together; a retry accepted during
+a read runs as soon as the read releases the setup lock. Interrupted operations
 are checked against current configuration before retry; healthy effects are reused. Maintenance evaluates
 current requirements for existing projects without reattachment, session rotation or lost history.
 Saved task-worktree overrides are checked too. Routine guard repair also runs before affected launches and preserves custom hooks unless the

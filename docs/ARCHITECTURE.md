@@ -236,7 +236,8 @@ Reads combine these records with current filesystem, hook and coordinator eviden
 storage under a nonblocking operation-lock probe. Changed records trigger one fresh inspection;
 an acquired lock stays held through that inspection so repair cannot invalidate its receipts.
 A still-running record under the free lock exposes an interrupted runner; a busy runner remains
-checking. Retry rechecks completed effects before writing.
+checking. Only the runner waits for the lock: a read in flight delays an accepted repair rather
+than losing its wake. Retry rechecks completed effects before writing.
 Pending, running, created, reused, not-applicable, failed and input-needed results come from
 observed work. A queued notification or saved start request never proves an agent is running.
 Recorded task worktrees expose their own hook overrides; inherited healthy guards share the

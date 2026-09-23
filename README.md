@@ -309,7 +309,8 @@ instructions, Git guards and coordinator. Altitude performs routine setup automa
 shows what it created, reused or could not complete. Existing projects receive current checks
 and missing requirements without losing their conversations or repeating healthy setup.
 **Retry** repeats supported setup; **Discuss with L3** opens the existing conversation for help.
-Status reads crossing a completed repair refresh its operation and verified guard receipts together.
+Status reads crossing a completed repair refresh its operation and verified guard receipts together,
+and a retry accepted during a status read runs as soon as that read finishes.
 L3 can request bounded repair even when tasks cannot launch, and programmatic checks verify the
 result before a step is complete. Custom hooks require your integration choice. See
 [project setup and repair](docs/SETUP.md#project-setup-and-repair).
