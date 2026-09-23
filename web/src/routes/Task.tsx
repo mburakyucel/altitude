@@ -177,7 +177,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
-interface PendingMessage { text: string; images?: ImagePreview[] }
+interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
 
 function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, showLive, phone, selection, onEscapeOwnership }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
@@ -269,10 +269,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     return async (text: string, onAccepted: () => void, images?: ImageSubmission) => {
       following.current = true;
       setLatest(false);
-      const preview = { text, images: images?.previews };
+      const preview = { id: (images?.request_id ?? crypto.randomUUID()).replaceAll("-", ""), text, images: images?.previews };
       setPending(preview);
       try {
-        const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text,
+        const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text, request_id: preview.id,
           ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
           ...(images ? { request_id: images.request_id, images: images.images } : {}),
           ...(group && group.questions.length > 1 && context && inGroup(context)
@@ -373,7 +373,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
-          {pending ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
+          {pending && !messages.some((message) => message.id === pending.id) ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
           {(task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>

@@ -1194,6 +1194,9 @@ receipt and server failures without acceptance evidence restore it with "Could n
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
 after the submitted text on a new line. Combined failed drafts remain unconfirmed if any send lacks a
 receipt. No text matching or automatic resend infers delivery.
+Task sends carry a UUID `request_id`, retained as the saved message ID. The conversation renders
+the pending preview only while that ID is absent from polled messages, so the saved row owns its
+display even before the POST completes. Text recovery still follows the send response.
 The composer keeps only submitted-text recovery in browser-tab `sessionStorage`, keyed by stable
 project or project/task identity. Live request callbacks outlast component unmount and restore a
 failure only to their original conversation. A receipt removes its request's recovery copy before
@@ -1239,7 +1242,7 @@ behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
 The same composer adds a single image control and a conditional preview strip.
 Image admission freezes that submission's controls until acceptance or confirmed refusal; an uncertain
-response retains a pending bubble and retries with the same identity while mounted. Submitted captions
+response retains a pending bubble until polling observes its saved message and retries with the same identity while mounted. Submitted captions
 use the existing text recovery; image bytes are not persisted in browser storage. Acceptance clears selection
 and releases the composer before the agent finishes. Private thumbnails and a modal viewer belong
 to the original saved message. Image interaction states and boundaries are specified in

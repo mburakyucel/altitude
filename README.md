@@ -428,7 +428,8 @@ Conversation polling continues while replies stream,
 and a queued message moves into history as part of the server's guarded turn admission.
 
 An accepted project or task message stays sent if its response stream, a later refresh, or the
-immediate worker wake fails. The composer stays cleared and keeps any new draft. A refused send
+immediate worker wake fails. Task polling replaces the pending preview with the saved message,
+even before the send response arrives. The composer stays cleared and keeps any new draft. A refused send
 restores recoverable text with Retry; an unconfirmed delivery preserves the text and asks you to
 check the conversation before sending again. A failed assistant answer belongs to the sent turn.
 

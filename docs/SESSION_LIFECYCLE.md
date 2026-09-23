@@ -578,6 +578,9 @@ Explicit refusal restores recoverable text with Retry. When transport or a serve
 delivery unconfirmed, the composer preserves both submitted and newly typed text, asks the operator
 to check the conversation, and offers no send Retry, including when another overlapping send is refused.
 It never infers acceptance by matching text.
+Task polling replaces a pending preview as soon as its submission ID appears in saved messages,
+including before the POST response arrives. Separate sends with identical text remain separate
+messages; failed or unconfirmed responses retain the existing draft recovery.
 Submitted-text recovery belongs to the original project/task beyond a composer mount. Browser-tab
 storage retains each outstanding submission and the recovered draft; a live receipt retires only
 its own submission immediately. Navigation preserves late failure recovery, and reload without a

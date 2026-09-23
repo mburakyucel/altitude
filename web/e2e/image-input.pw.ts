@@ -396,6 +396,38 @@ test("late admission and clipboard selection stay with the original project", as
   await walk.state("03-return-to-original-saved-image", { visible: [v.preview], hidden: [v.strip] });
 });
 
+test("task: polling replaces the pending image before its send response arrives", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  await open(page, "task", info);
+  const v = controls(page, "task");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let saved!: () => void;
+  const stored = new Promise<void>((resolve) => { saved = resolve; });
+  await page.route("**/api/l2/message", async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    saved();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await v.picker.setInputFiles(await screenshotFile(page));
+  await v.field.fill(caption);
+  await v.send.click();
+  try {
+    await stored;
+    await expect(v.preview).toBeVisible(); // Only the saved thumbnail opens the viewer.
+    await expect(page.locator(".bubble").filter({ hasText: caption })).toHaveCount(1);
+    await walk.state("01-image-polled-response-pending", {
+      visible: [v.preview], hidden: [page.getByLabel("Sending images", { exact: true }), v.strip],
+    });
+    const view = await (await request.get("/api/task/alpha/image-task")).json();
+    expect(view.messages.filter((row: { text: string }) => row.text === caption)).toHaveLength(1);
+  } finally { release(); }
+  await expect(v.field).toBeEnabled();
+  await expect(page.locator(".bubble").filter({ hasText: caption })).toHaveCount(1);
+});
+
 test("task: image-only checkpoint delivery and archived viewing retain the original image", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await open(page, "task", info);
