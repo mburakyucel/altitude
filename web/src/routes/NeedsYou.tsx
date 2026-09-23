@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useOverview } from "../data/api";
 import type { Decision } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
 import { DecisionAlertToggle } from "../data/alerts";
 import { attentionSummary, decisionGroups } from "../data/decisions";
+import { useSelectedProject } from "../shell/scope";
 
 /** The subtitle: how much waits, across how many projects. */
 export function needsSummary(queue: Decision[]): string {
@@ -11,9 +13,23 @@ export function needsSummary(queue: Decision[]): string {
   return `${attentionSummary(queue)} ${where}`;
 }
 
-/** Needs you (SPEC.md §2.1): contiguous project sections in first-appearance order. */
+/** Section order (SPEC.md §3.8): the selected project first when it has items, then first appearance. */
+export function projectOrder(queue: Decision[], selected: string | null): string[] {
+  const projects = [...new Set(queue.map((decision) => decision.project))];
+  return selected && projects.includes(selected) ? [selected, ...projects.filter((project) => project !== selected)] : projects;
+}
+
+/** Needs you (SPEC.md §2.1): contiguous project sections, each collapsible from its heading. */
 export default function NeedsYou() {
   const overview = useOverview();
+  const selected = useSelectedProject();
+  // Page state only: cards stay mounted while collapsed, so staged answers survive.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (project: string) => setCollapsed((current) => {
+    const next = new Set(current);
+    if (!next.delete(project)) next.add(project);
+    return next;
+  });
 
   return (
     <div className="page needs-page">
@@ -43,14 +59,25 @@ export default function NeedsYou() {
       ) : (
         <>
           <div className="needs-list" aria-label="Decisions">
-            {[...new Set(overview.data!.queue.map((decision) => decision.project))].map((project) => (
-              <section className="needs-project" key={project} aria-label={`Project ${project}`}>
-                <h2 className="text-card-title font-semibold">{project}</h2>
-                {decisionGroups(overview.data!.queue.filter((decision) => decision.project === project)).map((group) => (
-                  <DecisionCard key={`${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
-                ))}
-              </section>
-            ))}
+            {projectOrder(overview.data!.queue, selected).map((project) => {
+              const items = overview.data!.queue.filter((decision) => decision.project === project);
+              const open = !collapsed.has(project);
+              return (
+                <section className="needs-project" key={project} aria-label={`Project ${project}`}>
+                  <h2 className="text-card-title font-semibold">
+                    <button type="button" className="needs-project-toggle" aria-expanded={open} onClick={() => toggle(project)}>
+                      {project}
+                      {open ? null : <span className="needs-project-count text-muted">{attentionSummary(items)}</span>}
+                    </button>
+                  </h2>
+                  <div className="needs-project-cards" hidden={!open}>
+                    {decisionGroups(items).map((group) => (
+                      <DecisionCard key={`${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
           <p className="calm text-muted">
             That is everything. Running work stays in each project. FYIs from L3 appear in that project&apos;s chat.

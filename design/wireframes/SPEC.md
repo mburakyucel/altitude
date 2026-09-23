@@ -486,10 +486,15 @@ implementation detail, evidence and history remain accessible in the owning conv
 saved question detail opens under **More context** there when it differs from the visible question.
 Needs you groups all attention items into contiguous project sections. Each section starts with
 the full owning project name as a heading; names wrap without clipping on phone and desktop,
-including shared prefixes and unbroken names. Project order follows first appearance in the queue;
-items keep their order within each project, and question groups stay together. This applies to
-single-project and mixed-project queues, including questions, reviews, stops and faults. The selected
-project never supplies an item's owner or filters the inbox. Saved reads retain the sections.
+including shared prefixes and unbroken names. The selected project's section comes first whenever
+it has items, on entry and when the selection changes; the other projects follow first appearance
+in the queue. Items keep their order within each project, and question groups stay together. This
+applies to single-project and mixed-project queues, including questions, reviews, stops and faults.
+The selected project never supplies an item's owner or filters the inbox. Saved reads retain the
+sections. Each heading is a disclosure button with a small chevron: a click, Enter or Space
+collapses that section to its heading and a count (**2 questions · 1 stopped task**) and reopens it.
+Sections start open; collapsing keeps staged answers and changes no question, and the state lasts
+for the page visit, with no setting.
 The task title is its own fully wrapping link below source/time and above the question.
 `web/e2e/needs-ownership.pw.ts` walks ownership and navigation; `work-and-decisions.pw.ts`
 walks empty, loading, saved/read errors, sending, sent, failed and denied states at both viewports.

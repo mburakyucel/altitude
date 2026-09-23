@@ -1312,9 +1312,13 @@ Only global Needs you carries a numeric attention badge. Project rail and switch
 their state dots. The badge counts operator questions awaiting a response plus existing operational
 attention items; Needs you and project summaries label questions and operational items separately.
 Needs you groups items by their `project` into contiguous sections with fully wrapping project
-headings on phone and desktop, including question groups, reviews, stops and faults. Projects
-follow first appearance in the queue; items retain their order within each project. Sections are
-independent of the selected project and remain visible on saved reads after a failed refresh.
+headings on phone and desktop, including question groups, reviews, stops and faults. The selected
+project's section leads when it has items; the other projects follow first appearance in the queue,
+and items retain their order within each project. Each heading is a disclosure that collapses its
+section to the heading and an item count and reopens it, by pointer or keyboard; cards stay mounted
+while collapsed, so staged answers survive, and the state is page state rather than a setting. The
+selected project never filters the inbox, and sections remain visible on saved reads after a failed
+refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
