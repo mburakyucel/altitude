@@ -522,9 +522,13 @@ chat acknowledgement does not complete a turn. Done/archived/rejected
 tasks remain outside continuation: archived worktrees may have been removed, and restoring their
 execution context and ownership requires a separate product decision.
 Report freshness includes the current delivery timestamp. Verification requires all recorded PRs,
-the current published head on GitHub and in the clean worktree, and matching reported merge SHAs;
-a clean worktree reconciled onto main after its merge also has no unpublished work. Pending work,
-older reports and a raced delivery cannot complete the task. Recorded deliveries use the report
+the current published head on GitHub and in the clean worktree, and reported merge SHAs naming
+GitHub's merge commit in full or by a prefix of at least seven characters; a clean worktree
+reconciled onto main after its merge also has no unpublished work. Pending work, older reports and
+a raced delivery cannot complete the task. Completion verifies a reported delivery whose recorded
+verdict is not ok against GitHub again and records the fresh verdict in a `report-reverified`
+event, so a merged delivery reaches `done` without a new owner turn; an unmerged or mismatched
+delivery still cannot complete. Recorded deliveries use the report
 path even when the local branch has no remaining diff. Merges continue activating independently
 of owner completion through the existing deployment observation.
 

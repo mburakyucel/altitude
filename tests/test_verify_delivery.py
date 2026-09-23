@@ -4,7 +4,7 @@ import json
 import os
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import state as S, verify
+from altitude import state as S, tasks as T, verify
 
 
 class TestVerifyDelivery(AltitudeCase):
@@ -198,3 +198,53 @@ class TestVerifyDelivery(AltitudeCase):
 
         self.assertEqual(result["verdict"], "contradicted")
         self.assertIn("PR #41: reported merge SHA differs from GitHub", result["problems"])
+
+    def test_abbreviated_merge_sha_names_the_same_commit(self):
+        head, merge = self.publish(41)
+        report = self.report()
+        self.assertNotEqual(head[:7], merge[:7])
+        for reported, verdict in ((merge[:7], "ok"), (merge[:12], "ok"), (merge[:6], "contradicted"),
+                                  (head[:7], "contradicted"), (head[:12], "contradicted")):
+            with self.subTest(reported=reported):
+                report["landed"]["prs"][0]["merge_sha"] = reported
+                S.write_json(self.report_path, report)
+                result = self.result()
+                self.assertEqual(result["verdict"], verdict, result["problems"])
+
+    def report_contradicted(self, merge_sha):
+        report = self.report()
+        report["landed"]["prs"][0]["merge_sha"] = merge_sha
+        S.write_json(self.report_path, report)
+        self.task.update(state="reported", verified={
+            "verdict": "contradicted", "problems": ["PR #41: reported merge SHA differs from GitHub"],
+            "delivery": self.task["delivery"], "owner": T.report_owner(self.task), "attempt": 1})
+        self.save()
+
+    def reverified(self):
+        return [e for e in S.read_events(self.project, "continue") if e["kind"] == "report-reverified"]
+
+    def test_completion_reverifies_a_merged_delivery_reported_with_an_abbreviated_sha(self):
+        _, merge = self.publish(41)
+        self.report_contradicted(merge[:7])
+
+        task = T.done(self.project, "continue", actor="l3", digest="closed after the verifier fix")
+
+        self.assertEqual(task["state"], "done")
+        self.assertEqual(task["verified"]["verdict"], "ok")
+        self.assertEqual([e["verdict"] for e in self.reverified()], ["ok"])
+        self.assertTrue((S.archive_dir(self.project) / "continue" / "digest.md").is_file())
+
+    def test_completion_still_refuses_a_mismatched_or_unmerged_delivery(self):
+        head, merge = self.publish(41)
+        self.report_contradicted(head[:7])
+        with self.assertRaisesRegex(T.TransitionError, "reported merge SHA differs from GitHub"):
+            T.done(self.project, "continue", actor="l3")
+        self.report_contradicted(merge[:7])
+        self.pulls["41"].update(state="OPEN", mergeCommit=None)
+        self.save()
+        with self.assertRaisesRegex(T.TransitionError, "reported merged but GitHub says OPEN"):
+            T.done(self.project, "continue", actor="l3")
+        task = S.load_task(self.project, "continue")
+        self.assertEqual(task["state"], "reported")
+        self.assertEqual(task["verified"]["verdict"], "contradicted")
+        self.assertEqual([e["verdict"] for e in self.reverified()], ["contradicted", "contradicted"])
