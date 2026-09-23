@@ -964,18 +964,22 @@ After a harmless follow-up, checkpoint and park with the still-valid `block --re
 recommendation fields preserve its approach; parking or revision preserves its required authority.
 
 ```text
-alt task resolve <slug> --question <id> --revision <n> --message <source-id> \
+alt task resolve <slug> --question <id> [--revision <n>] --message <source-id> \
   --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
   [--l3-authority <specific-evidence-and-rationale>] \
   [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
 
-alt task resolve <slug> --question <id> --revision <n> --disposition withdrawn --reason <why>
+alt task resolve <slug> --question <id> [--revision <n>] --disposition withdrawn --reason <why>
 ```
+
+`--revision` defaults to the question's current revision.
 
 `--source task` (default) cites a durable task message ID. `--source project` cites the original
 operator chat `turn_id`, available from the project's recorded chat; an L3-authored relay is not an
 operator source. The existing CLI door checks owning task and attempt, and the resolution checks
-source provenance and question/revision. An L3 answer can settle an L3-audience question. For an
+source provenance and timing. An operator message sent after the question was first asked can settle
+its current revision, including after re-publication; the owner judges whether it still answers the
+question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer can settle an L3-audience question. For an
 unnecessary operator escalation already settled within delegated L3 authority, the owner adds
 `--l3-authority` with the specific brief/rule/recorded-decision evidence and why it applies. This requires
 an authentic L3 task message bound to that exact question revision. The owner judges the substance;
@@ -1000,7 +1004,7 @@ controls and retains its history; it grants no approval and discards no work. No
 or automatic withdrawal is involved.
 
 When a provider limit queues a fresh attempt, existing question replies and quick acceptance wait
-in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
+in the normal inbox. The new owner receives the still-open questions in its brief; semantic
 resolution remains an operation of the running or blocked owning L2.
 
 ### This repository's temporary local gate
@@ -1223,10 +1227,22 @@ to adopted PRs.
 
 ### Recorded merge approval
 
-L3 applies original operator authority to a held PR through its project-bound daemon connection:
+The owner applies the operator's approval from its own task chat while landing:
 
 ```text
-alt task hold-merge <slug> --approval <message-id> --source task --pr-number <number> --head <full-sha> --reason <interpretation>
+alt land --merge --approval <message-id> --message <summary>
+```
+
+The owner judges that the message approves the current scope. After checks pass and just before merge,
+landing checks under the project lock and the owner's publication fence that it is the operator's
+original task message, sent after the current hold generation, and that the PR is the task's open,
+ready, same-repository PR targeting main at the candidate head. Refusals keep the hold.
+
+L3 applies an approval given in project chat (or on the owner's behalf) through its project-bound
+daemon connection:
+
+```text
+alt task hold-merge <slug> --approval <message-id> --source task|project --pr-number <number> --head <full-sha> --reason <interpretation>
 ```
 
 Read `alt task messages <slug> --json`, `alt task status <slug>` and `alt pr <number> --json`,
@@ -1237,23 +1253,16 @@ coordinator relays cannot authorize merge. Relevant corrections require action, 
 hold when appropriate. Routine integration stays within the original decision's scope.
 
 `--source task` (default) cites the original operator message or saved UI choice with its 32-character
-ID. `--source project` cites an original user/chat turn's 12-character ID in this project. Pending
-project chat must enter the conversation and L3's review before release. Missing, corrupt, duplicate
-or non-operator sources refuse.
-
-Add paired `--question <id> --revision <n>` when the approval carries question context. An answer
-used as merge authority requires the current answered operator resolution from that same source,
-with no remainder and the recorded UI option when applicable. The owner records a typed answer
-through `alt task resolve`. A later conversational approval can carry a resolved question as context
-only; its source follows that resolution and supplies its own authority. Stale viewed revisions refuse.
+ID. `--source project` cites an original user/chat turn's 12-character ID in this project. Missing,
+corrupt, duplicate or non-operator sources refuse.
 
 Altd verifies the current hold and the project's open, non-draft PR targeting main at the supplied
 head. Task publication branch and recorded active/adopted PR identity must match. Explicit hold changes
 create a new generation and require approval after that requirement arose. Each held follow-up needs
 its own release; L3 can cite the original decision when its actual scope covers that PR.
 
-Success stores `merge_approval` and a `release-merge` event with source/author/time, applicable
-question/revision/option, hold ID/event/time, PR URL/head, scope reason and actor `l3`. Local validation
+Success stores `merge_approval` and a `release-merge` event with source/author/time, hold
+ID/event/time, PR URL/head, scope reason and actor (`l2` or `l3`). Local validation
 refusals retain the hold and record `merge-approval-refused`. Inspect `alt task show <slug>` and
 `alt task events <slug> --json` before resuming a blocked owner. The owner completes review and
 current-candidate checks through `alt land --merge`; release itself preserves worker and question state.

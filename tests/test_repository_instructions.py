@@ -114,10 +114,8 @@ class TestRepositoryInstructions(AltitudeCase):
             with self.subTest(kind=kind):
                 rules = self.layout(kind)
                 self.assertEqual(engines.repository_rules(self.repo), rules)
-                self.assertEqual(dispatch.project_never_list(self.repo), "Never publish fixture records.")
         self.layout("absent")
         self.assertIsNone(engines.repository_rules(self.repo))
-        self.assertIn("no changes outside the brief", dispatch.project_never_list(self.repo))
 
     def test_next_turn_resolves_migrated_rules_instead_of_caching_the_legacy_path(self):
         legacy = self.layout("legacy")

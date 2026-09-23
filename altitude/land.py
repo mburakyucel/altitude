@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, github_intake, state as S
+from . import config, dispatch, github_intake, state as S, tasks as T
 
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
@@ -913,10 +913,13 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
          authority: dict | None = None, adopt_pr: int | None = None,
          expected_head: str | None = None, reason: str | None = None,
-         closes_issues: list[int] | None = None) -> dict:
-    """Run the whole sequence from the current worktree; returns the JSON-ready result object."""
+         closes_issues: list[int] | None = None, approval: str | None = None) -> dict:
+    """Run the whole sequence from the current worktree; returns the JSON-ready result object.
+    `approval` names the operator's task-chat message approving a held PR; it releases the hold just before merge."""
     if not message.strip():
         raise LandError("--message is empty")
+    if approval and not merge:
+        raise LandError("--approval applies only with --merge")
     closes_issues = list(dict.fromkeys(closes_issues or []))
     if any(type(n) is not int or n <= 0 for n in closes_issues):
         raise LandError("--closes-issue requires a positive issue number in this repository")
@@ -951,12 +954,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         )
     hold_merge = task.get("hold_merge")
     if hold_merge:  # an explicit merge hold is the exception to merge-by-default
-        if merge:
-            raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
-                            f"Burak releases it with `alt task hold-merge {slug} --off`; "
-                            "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
+        if merge and not approval:
+            raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; after the operator approves "
+                            "the PR in the task chat, re-run with `--merge --approval <message-id>`; until then "
+                            "re-run `alt land` without `--merge`")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
-              "the PR will be opened but not merged")
+              + ("the operator approval is applied before merge" if merge else "the PR will be opened but not merged"))
     # This is deliberately before fetch, committing, or any GitHub call. Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
@@ -1078,9 +1081,15 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _require_current_publisher(project, slug, current, authority)
         if current.get("adopted_pr") != adoption:
             raise LandError("task adoption changed before merge")
-        if current.get("hold_merge"):
-            raise LandError(f"task carries a merge hold: {current['hold_merge']}")
         _require_closing_issues(root, number, closes_issues)
+        if current.get("hold_merge"):
+            if not approval:
+                raise LandError(f"task carries a merge hold: {current['hold_merge']}")
+            try:
+                T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
+                                       reason="owner applied the operator's task-chat approval")
+            except T.TransitionError as exc:
+                raise LandError(str(exc)) from exc
     if checks == "local-required":
         merged, main_run, local_tests = _merge_on_local_suite(
             root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption), merge=merge,

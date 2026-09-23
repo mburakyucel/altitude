@@ -6,7 +6,6 @@ import fcntl
 import json
 import os
 import subprocess
-import re
 import shlex
 import sys
 import uuid
@@ -101,16 +100,6 @@ def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request
     incidents.system_fault("l2-resume-recovery", f"{project}/{slug}: {reason}", project=project, task=slug,
                            expected_block_id=claim.get("block_id"))
     raise ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
-
-
-def project_never_list(repo: Path) -> str:
-    """Best effort: the 'Never' bullets from the project's rules, else a generic line."""
-    md = engines.repository_rules(repo)
-    if md:
-        lines = [l.strip("- ").strip() for l in md.read_text().splitlines() if re.match(r"^\s*-\s*\*\*?never", l, re.I) or "never" in l.lower()[:40]]
-        if lines:
-            return "; ".join(l[:160] for l in lines[:8])
-    return "no changes outside the brief; no weakened guardrails; honor any recorded merge hold"
 
 
 def l2_engine(task: dict) -> str:
@@ -725,54 +714,16 @@ def build_brief(project: str, slug: str) -> str:
     request = (d / "request.md").read_text()
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
-        merge_policy = f"**Held for operator review** — prepare a reviewed, green PR. After approval, L3 records release with `hold-merge --approval`; the owner completes current-candidate checks and `alt land --merge`. Respect the live hold until release. Why: {task['hold_merge']}"
+        merge_policy = (f"**Held for operator review** ({task['hold_merge']}): open a reviewed, green PR; after the "
+                        "operator approves it in this task's chat, merge with `alt land --merge --approval "
+                        "<message-id>`.")
     else:
-        merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
+        merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     engine = task.get("l2_engine") or task.get("engine") or "pending quota route"
-    completion_contract = (
-        f"Code delivery writes a concise schema-valid `report.json` (`{config.SCHEMAS / 'report.json'}`) in "
-        f"`{d}` so Altitude can verify it. A no-code task may use `alt task done` after sending its result; "
-        "Altitude finalizes it only after this worker exits."
-    )
-    conversation_contract = (
-        "They reach you at your next checkpoint: after a tool call or when you are about to stop in a Claude "
-        "session, or when this turn ends and Altitude resumes your thread on Codex. Reply in plain language with "
-        "`alt task reply \"<message>\"`. Ask directly only when the repository and brief cannot resolve the "
-        "choice: checkpoint `progress.md`, reply with the question, then `alt task block \"$ALTITUDE_TASK\" "
-        "--reason \"<question>\"` and stop; the answer resumes this session."
-        " Supply --recommendation '<approach>' --label '<accept action>' --why '<short rationale>' when "
-        "there is a concrete recommended approach. A conversational follow-up wakes you to discuss while "
-        "the pending question remains open: waking is not approval to implement the disputed approach. "
-        "Use the question identity/revision and original message id supplied in your inbox with "
-        "`alt task resolve` to record a clear decision before continuing. Clarify real ambiguity in chat, "
-        "without requiring an approval phrase or redundant confirmation. Close obsolete questions with "
-        "a cited superseded disposition; retain only still-relevant unanswered parts using --remaining."
-        " Use a plain question when no quick choice is useful, or one question with a recommended action "
-        "or alternatives. Ask dependent questions sequentially after their prerequisites are settled. "
-        "Ask up to three independent questions together using `alt task block \"$ALTITUDE_TASK\" "
-        "--questions-file <JSON-file>`. JSON is {\"questions\":[{\"question\":\"...\",\"options\": "
-        "[{\"key\":\"a\",\"label\":\"Short action\",\"text\":\"Chosen approach\"}],\"recommended_key\":\"a\",\"why\":\"...\"}]}. "
-        "A plain question omits options and recommended_key. Supply up to three options with one explicit "
-        "recommended_key. No default or follow-up counts as an answer. Revise existing members by adding "
-        "their id; omitted members stay open. Resolve each answered or obsolete member against the same "
-        "source message where appropriate; unrelated unanswered members remain open."
-    )
-    publication_contract = (
-        "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
-        "`--merge` only when allowed. Read the live `hold_merge` value and never merge around it."
-    )
     other_leases = leases(project, exclude=slug)
-    overlaps = []
-    for other in other_leases:
-        shared = shared_paths(task_paths(project, task), other["paths"])
-        if shared:
-            overlaps.append(f"`{other['slug']}` on {', '.join(shared)}")
-    if overlaps:
-        publication_contract += (
-            f" Shared paths with {'; '.join(overlaps)}: expect to rebase onto main before landing "
-            "and keep edits in shared docs to your own sections."
-        )
+    overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
+                if (shared := shared_paths(task_paths(project, task), other["paths"]))]
     progress = d / "progress.md"
     if task.get("attempt") and progress.exists():
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
@@ -783,15 +734,14 @@ def build_brief(project: str, slug: str) -> str:
         engine=engine,
         model=task.get("engine_model") or task.get("model") or "provider default",
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in other_leases) or "none"),
+        overlaps=(f" Shared with {'; '.join(overlaps)}: rebase onto main before landing and keep shared-doc "
+                  "edits to your own sections." if overlaps else ""),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
         task_dir=d, merge_policy=merge_policy,
-        never_list=project_never_list(worktree),
         repo=config.project_path(project),
-        branch=worktree_branch(slug, worktree),
-        completion_contract=completion_contract, conversation_contract=conversation_contract,
-        publication_contract=publication_contract, request=request)
-    if task.get("questions"):
-        text += "\n\n" + T.group_context(task) + "\n"
+        branch=worktree_branch(slug, worktree), request=request)
+    if questions := T.open_questions(task):
+        text += "\n\n**Open questions from the earlier session:**" + questions + "\n"
     return text
 
 
@@ -1063,14 +1013,6 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     rows = claim["messages"]
     prompt = T.render_inbox(rows) or "Continue from your progress file."
-    prompt += ("\n\nBefore ending this resumed turn, recheck the guidance and current delivery. "
-               "For code work, write a fresh schema-valid report.json in your task folder even if "
-               "the guidance is already incorporated and no new work is needed. Preserve every prior "
-               "delivery, exact remaining scope and holds. A chat acknowledgement or an earlier report "
-               "does not complete this turn; report current verified results or explicitly block. "
-               "For no-repository-change work, use the persona's explicit completion path.")
-    if task.get("questions"):
-        prompt += "\n\n" + T.group_context(task)
     worker = {}
     try:
         with S.project_lock(project):

@@ -511,7 +511,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
                 self.assertEqual([row["text"] for row in rows if row.get("wake", True)], ["Earlier steering"] * index)
                 [handoff] = [row for row in rows if row.get("wake") is False]
                 self.assertEqual(handoff["text"], "A newer scope decision?")
-                self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
+                self.assertEqual(handoff["question_id"], task["questions"][-1]["id"])
 
     def test_restart_discards_a_launched_claim_superseded_by_a_new_question(self):
         earlier = T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
@@ -531,7 +531,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual([row for row in rows if row.get("wake", True)], [earlier])
         [handoff] = [row for row in rows if row.get("wake") is False]
         self.assertEqual(handoff["text"], "A newer scope decision?")
-        self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
+        self.assertEqual(handoff["question_id"], task["questions"][-1]["id"])
         self.assertEqual(dispatch.resume_due(self.project), [])
 
     def test_background_resume_cancellation_preserves_the_question(self):
@@ -647,7 +647,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual([row["text"] for row in rows if row.get("wake", True)], ["Earlier steering", "New answer"])
         [handoff] = [row for row in rows if row.get("wake") is False]
         self.assertEqual(handoff["text"], "New question")
-        self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
+        self.assertEqual(handoff["question_id"], task["questions"][-1]["id"])
         self.assertIn("l2-resume", incidents.FAULTS.read_text())
 
     def test_old_resume_error_cannot_borrow_a_new_claims_block_identity(self):

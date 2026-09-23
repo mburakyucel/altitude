@@ -1,6 +1,7 @@
 """Independent questions share a conversation and one atomic answer submission, never implicit defaults."""
 import copy
 import json
+from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -58,16 +59,34 @@ class QuestionGroups(AltitudeCase):
         with mock.patch.object(S, "project_lock", side_effect=AssertionError("poll remains a read")):
             self.assertEqual(T.question_views(self.project, self.slug), group["questions"])
 
-    def test_initial_owner_brief_teaches_plain_single_and_independent_group_questions(self):
+    def test_question_procedure_lives_in_the_persona_not_the_brief(self):
         self.assertIsNone(self.group())
         brief = dispatch.build_brief(self.project, self.slug)
-        self.assertIn("Use a plain question", brief)
-        self.assertIn("one question with a recommended action or alternatives", brief)
-        self.assertIn("dependent questions sequentially", brief)
-        self.assertIn("three independent questions together", brief)
-        self.assertIn("--questions-file <JSON-file>", brief)
-        self.assertIn('"recommended_key":"a"', brief)
-        self.assertIn("No default or follow-up counts as an answer", brief)
+        self.assertNotIn("--questions-file", brief)
+        self.assertIn("--questions-file", (Path(__file__).parents[1] / "personas" / "l2.md").read_text())
+
+    def test_delivery_carries_the_words_and_ids_while_the_owner_keeps_its_own_questions(self):
+        group = self.ask()
+        first, _, third = group["questions"]
+        T.accept_questions(self.project, self.slug, group["id"], group["revision"], self.answers(group, (0,)))
+        typed = T.message(self.project, self.slug, "burak", "The search team.")
+        delivered = T.render_inbox(T.pending(self.project, self.slug))
+        self.assertIn(f"answers question {first['id']}):\n", delivered)
+        self.assertIn(f"(message id {typed['id']}):\nThe search team.", delivered)
+        for detail in (group["questions"][1]["detail"], third["detail"], "Fits the storage budget."):
+            self.assertNotIn(detail, delivered)
+        self.assertLess(len(delivered), 400)
+        # A re-published question keeps the operator's earlier answer valid; the current revision is the default.
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Set rollout details.", actor="l2",
+                questions={"questions": [{"id": third["id"], "question": "Which team owns the rollout, again?"}]})
+        resolved = T.resolve_question(self.project, self.slug, third["id"], None, typed["id"], expected_attempt=1,
+                                      disposition="answered", reason="The search team owns this rollout.")
+        self.assertEqual((resolved["revision"], resolved["status"]), (2, "resolved"))
+        # A replacement session never saw the questions, so its brief lists what is still open, once.
+        brief = dispatch.build_brief(self.project, self.slug)
+        self.assertIn(group["questions"][1]["detail"], brief)
+        self.assertNotIn(third["detail"], brief)
 
     def test_subset_batch_saves_one_message_and_leaves_plain_question_open(self):
         group = self.ask()
@@ -135,7 +154,9 @@ class QuestionGroups(AltitudeCase):
         self.resolve(first, message, reason="Keep rollback for twenty-one days.")
         self.resolve(second, message, reason="Run cleanup at night.")
         self.assertEqual([q["status"] for q in self.group()["questions"]], ["resolved", "resolved", "open"])
-        self.assertIn("Interpret the response conversationally", T.group_context(S.load_task(self.project, self.slug)))
+        still_open = T.open_questions(S.load_task(self.project, self.slug))
+        self.assertIn("Which teams are available?", still_open)
+        self.assertNotIn("Run cleanup at night.", still_open)
         self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
 
     def test_custom_followup_reask_restores_only_named_input_and_refuses_stale_retargeting(self):
@@ -160,8 +181,6 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(retry["question_group"], current)
         with self.assertRaisesRegex(T.TransitionError, "no longer open"):
             T.accept_question(self.project, self.slug, first["id"], 1, text="21 days")
-        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
-            self.resolve(current["questions"][0], {"id": sent["response"]["message_id"]})
         fresh = T.accept_question(self.project, self.slug, first["id"], 2, text="21 days")
         self.assertNotEqual(fresh["response"]["message_id"], sent["response"]["message_id"])
         self.assertEqual([q["id"] for q in T.decisions(self.project)], [q["id"] for q in current["questions"][1:]])
@@ -280,8 +299,6 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(current["questions"][0]["options"], [])
         self.assertIsNone(current["questions"][0]["recommendation"])
         self.assertEqual(current["anchor_id"], group["anchor_id"])
-        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
-            self.resolve(current["questions"][0], message)
         self.resolve(group["questions"][1], message, disposition="superseded", reason="Cleanup no longer applies.")
 
     def test_group_revision_preserves_missing_members_and_refuses_obsolete_choices(self):
@@ -362,9 +379,8 @@ class QuestionGroups(AltitudeCase):
         self.assertNotIn("resume_after", task)
         self.assertEqual(len(T.pending(self.project, self.slug)), 2)
         self.assertEqual(result["question_group"]["questions"][2]["status"], "open")
-        prompt = T.group_context(task) + T.render_inbox(T.pending(self.project, self.slug))
-        for question in group["questions"]:
-            self.assertIn(question["id"], prompt)
+        prompt = T.render_inbox(T.pending(self.project, self.slug))
+        self.assertIn(f"answers question {group['questions'][0]['id']}", prompt)
         self.assertIn(message["id"], prompt)
         self.assertIn("Why only seven days?", prompt)
         self.assertTrue(all(q["resolution"] is None for q in result["question_group"]["questions"]))
@@ -378,7 +394,7 @@ class QuestionGroups(AltitudeCase):
         first = group["questions"][0]
         explicit = T.message(self.project, self.slug, "burak", "14 days", question_id=first["id"], revision=1)
         self.resolve(first, explicit)
-        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
+        with self.assertRaisesRegex(T.TransitionError, "answers a different question"):
             self.resolve(group["questions"][1], explicit)
 
     def test_l3_structured_escalation_preserves_every_actual_question_without_waking(self):
@@ -391,9 +407,7 @@ class QuestionGroups(AltitudeCase):
         self.assertTrue(all(q["audience"] == "operator" and q["asked_by"] == "l3" for q in current["questions"]))
         self.assertEqual(len(T.decisions(self.project)), 3)
         [handoff] = T.pending(self.project, self.slug)
-        for question in current["questions"]:
-            self.assertIn(question["id"], handoff["question_context"])
-            self.assertIn(question["detail"], handoff["question_context"])
+        self.assertNotIn("question_context", handoff)
         self.assertFalse(handoff["wake"])
         self.assertEqual(dispatch.resume_due(self.project), [])
 

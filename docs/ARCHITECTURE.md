@@ -561,19 +561,15 @@ Without CI, or under this repository's temporary local policy, the full local su
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
-Operator merge decisions originate in task chat, UI choices or project chat. L3 applies them through
-[`hold-merge --approval`](CLI.md#recorded-merge-approval), citing the original source, current PR/head,
-applicable question revision and its scope judgment. L3 reviews later corrections in both conversations.
+Operator merge decisions originate in task chat, UI choices or project chat. The owner applies a
+task-chat approval with `alt land --merge --approval`; L3 applies a project-chat approval through
+[`hold-merge --approval`](CLI.md#recorded-merge-approval). Each cites the original source and current
+PR/head with its scope judgment and reviews later corrections.
 It interprets permission, conditions and revocation; altd validates provenance and recorded boundaries.
 Design feedback, implementation-only permission and coordinator relays cannot authorize merge.
 
 The shared source reader verifies original operator authorship and unique identity. Project sources
-use original user/chat turn IDs. Missing, corrupt or duplicate evidence refuses release. Pending
-project chat must enter the conversation and L3's review before it can supply authority.
-Question answers require the current resolved operator revision, an answered resolution from that
-source, no remainder and the recorded option for a UI choice. A later approval can carry an already
-resolved question as context; `question_context_only` preserves that distinction and imports no old
-option. Its source must follow the earlier resolution.
+use original user/chat turn IDs. Missing, corrupt or duplicate evidence refuses release.
 
 Under the project lock, altd verifies the latest hold event against task state and binds the current
 hold ID to its original recorded requirement. Approval must follow that requirement. Explicit hold

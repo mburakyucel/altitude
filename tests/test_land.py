@@ -556,7 +556,7 @@ class TestLand(AltitudeCase):
             land.land("fix: held", cwd=self.repo, wait=0, merge=True)
         message = str(cm.exception)
         self.assertIn(reason, message)
-        self.assertIn("alt task hold-merge fix-x --off", message)
+        self.assertIn("--merge --approval <message-id>", message)
         self.assertEqual(commands, [
             ["git", "rev-parse", "--show-toplevel"],
             ["git", "rev-parse", "--git-dir"],

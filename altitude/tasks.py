@@ -498,23 +498,16 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             raise TransitionError("message context names a question or a group, not both")
         if explicit_question:
             target = _question_target(task, question_id, revision)
-            row.update(question_id=target["id"], question_revision=target["revision"],
-                       question_refs=[{"id": target["id"], "revision": target["revision"]}],
-                       question_context=question_context(target))
-            if groups and any((q["id"], q["revision"]) != (target["id"], target["revision"])
-                              for q in _group_members(task, groups[-1])):
-                row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
+            row.update(question_id=target["id"], question_revision=target["revision"], answers=[target["id"]],
+                       question_refs=[{"id": target["id"], "revision": target["revision"]}])
         elif groups or group_id is not None or group_revision is not None:
             group = (_group_target(task, group_id, group_revision)
                      if group_id is not None or group_revision is not None else groups[-1])
             members = _group_members(task, group)
             row.update(group_id=group["id"], group_revision=group["revision"],
-                       question_refs=[{"id": q["id"], "revision": q["revision"]} for q in members],
-                       question_context=group_context(task, group))
+                       question_refs=[{"id": q["id"], "revision": q["revision"]} for q in members])
             if len(members) == 1:
                 row.update(question_id=members[0]["id"], question_revision=members[0]["revision"])
-            if groups and group["id"] != groups[-1]["id"]:
-                row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
         d = S.task_dir(project, slug)
         if uploads or image_ids:
             if role not in (OPERATOR_MESSAGE_ROLE, "l3") or uploads and image_ids:
@@ -845,9 +838,11 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None, *, running_
 
 
 def render_inbox(rows: list[dict]) -> str:
-    """The messages as the worker reads them."""
-    return "\n\n".join((row.get("question_context", "") + "\n\n" if row.get("question_context") else "")
-                       + f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}; message id {row['id']}):\n{row['text']}"
+    """The messages as the worker reads them: the words, their sender and the id a decision cites.
+    The worker already holds its persona, brief and its own questions; nothing else is repeated here."""
+    return "\n\n".join(f"Message from {str(row.get('by') or 'burak').capitalize()} (message id {row['id']}"
+                       + (f"; answers question {', '.join(row['answers'])}" if row.get("answers") else "")
+                       + f"):\n{row['text']}"
                        + ("\nImages: " + ", ".join(f"{image['id']} ({image['name']})" for image in row["images"])
                           if row.get("images") else "")
                        for row in rows)
@@ -1645,59 +1640,12 @@ def _ensure_question(project: str, task: dict) -> bool:
     return True
 
 
-def question_context(question: dict) -> str:
-    if question["status"] == "resolved":
-        resolution = question["resolution"]
-        return (f"Task question {question['id']} revision {question['revision']} is resolved "
-                f"({resolution['disposition']}, recorded from {resolution.get('source') or 'task lifecycle'} "
-                f"by {resolution['by']}): {resolution['text']}\n"
-                + (f"L3 authority assessed by {resolution['recorded_by']} (attempt {resolution['recorded_attempt']}): "
-                   f"{resolution['l3_authority']}\n" if resolution.get("l3_authority") else "")
-                + f"Question: {question['detail']}\n"
-                "This closes that question only. Withdrawal and supersession do not accept the old recommendation. "
-                "Existing task scope and merge holds remain unchanged.")
-    recommendation = question.get("recommendation")
-    return (f"Pending task question {question['id']} revision {question['revision']} "
-            f"(asked by {question['asked_by']}; authority: {question['audience']}): {question['detail']}\n"
-            + (f"Recommended approach: {recommendation['text']}\n" if recommendation else "")
-            + ("Quick choices: " + "; ".join(f"{o['key']}: {o['text']}" for o in question_choices(question)) + "\n"
-               if question_choices(question) else "")
-            + (f"Response received in task message {question['response']['message_id']}: {question['response']['text']}\n"
-               "Interpret the response conversationally: it may settle the choice or ask a follow-up. "
-               "Receipt alone does not resolve the question. To ask it again, publish its id with --questions-file; "
-               "that creates a fresh revision and restores its answer field.\n" if question.get("response") else "")
-            + "Discussing this question or waking the worker does not authorize the disputed implementation. "
-            "On receiving guidance, assess this question before lengthy analysis. Keep it visible if still valid; "
-            "if doubtful, withdraw it now: alt task resolve \"$ALTITUDE_TASK\" "
-            f"--question {question['id']} --revision {question['revision']} "
-            "--disposition withdrawn --reason '<why it needs reassessment>'. Explain in chat, then investigate. "
-            "Re-ask when the decision is ready, even unchanged; use --questions-file to preserve independent members. "
-            "An answer does not cancel required revisions. When the actual source message settles the "
-            "choice, record it before proceeding: alt task resolve \"$ALTITUDE_TASK\" "
-            f"--question {question['id']} --revision {question['revision']} --message <message-id> "
-            "--source task --disposition answered --reason '<chosen approach>'. A simple contextual answer "
-            "is sufficient; no magic approval phrase or redundant confirmation. For partial answers, add "
-            "--remaining '<only still-relevant unanswered parts>'; use --disposition superseded when a "
-            "changed direction makes the old question irrelevant, without accepting its recommendation. "
-            "For an operator decision relayed through L3 cite its original project message with --source project. "
-            "For an unnecessary escalation settled within L3's delegated authority, cite the L3 task message "
-            "and add --l3-authority '<specific brief/rule/recorded-decision evidence and rationale>'. "
-            "The owner checks that authority applies; recommendations and discussion are not settled answers. "
-            "L3-authored text alone cannot settle a question requiring operator judgment. Merge holds remain unchanged.")
-
-
-def group_context(task: dict, group: dict | None = None) -> str:
-    groups = _groups(task)
-    group = group or (groups[-1] if groups else None)
-    if not group:
-        return ""
-    return (f"Task question group {group['id']} revision {group['revision']}. "
-            f"Saved group reason: {group['reason']}\n"
-            "Each question is independent. A single source message may answer several; use alt task resolve "
-            "for each actually answered or irrelevant question and leave other questions open. "
-            "Park with the saved group reason only while its remaining questions are still valid. "
-            "To revise a member, use --questions-file and its id; omitted members remain unchanged.\n\n"
-            + "\n\n".join(question_context(q) for q in _group_members(task, group)))
+def open_questions(task: dict) -> str:
+    """A replacement session never saw its predecessor's questions; a running one already holds them."""
+    rows = [q for q in task.get("questions", []) if q["status"] == "open"]
+    return "".join(f"\n- Open question {q['id']} (for {q['audience']}): {q['detail']}"
+                   + (f" Response in message {q['response']['message_id']}: {q['response']['text']}"
+                      if q.get("response") else "") for q in rows)
 
 
 def question_view(project: str, task: dict, question: dict) -> dict:
@@ -1767,7 +1715,7 @@ def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
 
 
 def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str, *,
-                     l3_authority: str | None = None) -> dict:
+                     l3_authority: str | None = None, exact: bool = False) -> dict:
     """Original authority and viewed revision shared by decisions and merge reconciliation."""
     row = next((r for r in _decision_messages(project, slug, source) if r["id"] == message_id), None)
     authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
@@ -1777,7 +1725,10 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
         raise TransitionError("L3 authority must cite an original L3 task message")
     if not authorized:
         raise TransitionError("resolution must cite an original message with authority for this question")
-    if source == "task":
+    # An operator answer survives re-publication. Design approvals and machine grants (`exact`) stay bound
+    # to the captures or purpose the operator actually read.
+    relaxed = row["role"] == OPERATOR_MESSAGE_ROLE and not exact and not question.get("design")
+    if source == "task" and not relaxed:
         refs = row.get("question_refs")
         if l3_authority and {"id": question["id"], "revision": question["revision"]} not in (refs or []):
             raise TransitionError("L3 authority source must name this exact question revision")
@@ -1786,12 +1737,17 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
                 raise TransitionError("source message discusses a different question revision")
         elif row.get("question_id") and (row["question_id"], row.get("question_revision")) != (question["id"], question["revision"]):
             raise TransitionError("source message discusses a different question revision")
-    if (row["at"][:19] < question["asked"][:19] if source == "project" else row["at"] < question["asked"]):
-        raise TransitionError("source message predates this question revision")
+    if relaxed and (row.get("question_refs") or row.get("question_id")) and question["id"] not in (
+            {r["id"] for r in row.get("question_refs") or []} | {row.get("question_id")}):
+        raise TransitionError("source message answers a different question")
+    asked = min(q["asked"] for q in S.load_task(project, slug).get("questions", [question])
+                if q["id"] == question["id"]) if relaxed else question["asked"]
+    if (row["at"][:19] < asked[:19] if source == "project" else row["at"] < asked):
+        raise TransitionError("source message predates this question")
     return row
 
 
-def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str | None, *,
+def resolve_question(project: str, slug: str, identity: str, revision: int | None, message_id: str | None, *,
                      disposition: str, reason: str, expected_attempt: int, source: str = "task",
                      remaining: str | None = None, recommendation: str | None = None,
                      recommendation_label: str | None = None, recommendation_why: str | None = None,
@@ -1818,6 +1774,8 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
         if task.get("state") not in ("running", "blocked"):
             raise TransitionError("only the active task owner may resolve its question")
         _require_daemon_fence(task, slug)
+        if revision is None:  # the current revision of this question
+            revision = next((q["revision"] for q in reversed(task.get("questions", [])) if q["id"] == identity), None)
         question = _question_target(task, identity, revision)
         row = ({"role": "l2", "by": "l2"} if withdrawn else
                _decision_source(project, slug, question, message_id, source, l3_authority=l3_authority))
@@ -1937,7 +1895,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
             question["acceptance_message"] = row
             question["response"] = {"text": option["text"], "at": at, "message_id": message_id}
         group["revision"] += 1
-        row["question_context"] = group_context(task, group)
+        row["answers"] = [q["id"] for q, _ in chosen]
         saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}
         group.setdefault("submissions", []).append(saved)
         # Receipt and human message share one atomic status write. Inbox delivery is recovered by pending().
@@ -2045,7 +2003,7 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
         current = _publish_block_questions(task, question, actor, questions, recommendation,
                                            recommendation_label, recommendation_why)
         S.save_task(project, task)
-        handoff = {**current[-1]["message"], "question_context": group_context(task), "wake": False}
+        handoff = {**current[-1]["message"], "wake": False}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", handoff)
     S.append_event(project, slug, "escalated", by=actor, question=question)
     return task
@@ -2089,7 +2047,7 @@ def grant_machine_access(project: str, slug: str, approval: str, *, question: st
                     or saved.get("disposition") != "answered" or saved.get("remaining")
                     or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
                 raise ValueError("cite the operator message that answered the current operator question revision")
-            operator = _decision_source(project, slug, decision, approval, source)
+            operator = _decision_source(project, slug, decision, approval, source, exact=True)
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
             S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
                            revision=revision, reason=reason, error=str(exc))
@@ -2123,26 +2081,20 @@ def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
-                         reason: str, actor: str,
-                         question: str | None = None, revision: int | None = None,
-                         source: str = "task") -> dict:
-    """L3 judges scope and later corrections; altd binds original authority to this hold and PR.
+                         reason: str, actor: str, source: str = "task") -> dict:
+    """Release a merge hold on the operator's own approval of the task's current PR.
 
-    I-20260909-074919: UI decisions and contextual reaffirmations use the common decision contract.
-    L3 rejects ambiguity, revocation and implementation-only permission.
+    The owner applies an approval from the task chat; L3 applies one from project chat. Either judges that the
+    message approves the current scope; altd binds that original message, sent after this hold, to this PR head.
     """
-    if actor != "l3" or not reason.strip():
-        raise TransitionError("recorded approval requires the coordinator daemon and a reason")
+    if actor not in ("l2", "l3") or not reason.strip() or (actor == "l2" and source != "task"):
+        raise TransitionError("the owner applies task-chat approval; L3 applies project-chat approval")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         try:
             if not task.get("hold_merge") or task["state"] not in ("running", "blocked", "reported"):
                 raise ValueError("task has no active merge hold")
-            from . import l3
-            if any(r.get("trigger") == "chat" for r in l3._queue_rows(l3.queue_path(project))):
-                raise ValueError("review pending project chat before applying approval")
-            sources = _decision_messages(project, slug, source)
-            approvals = [r for r in sources if r["id"] == approval]
+            approvals = [r for r in _decision_messages(project, slug, source) if r["id"] == approval]
             operator = approvals[0] if len(approvals) == 1 else {}
             if operator.get("role") != OPERATOR_MESSAGE_ROLE or operator.get("by") != OPERATOR_MESSAGE_ROLE:
                 raise ValueError("cite the original operator approval")
@@ -2151,26 +2103,6 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 if parsed.tzinfo is None:
                     raise ValueError("approval evidence needs timezone-aware timestamps")
                 return parsed
-            decision, resolution = None, {}
-            if question is not None:
-                decision = _question_target(task, question, revision)
-                saved = decision.get("resolution") or {}
-                resolution = saved if (saved.get("message_id"), saved.get("source")) == (approval, source) else {}
-                if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
-                        or decision["status"] != "resolved"
-                        or resolution and (decision["audience"] != "operator"
-                            or resolution.get("disposition") != "answered" or resolution.get("remaining")
-                            or (resolution.get("source"), resolution.get("by")) != (source, OPERATOR_MESSAGE_ROLE))):
-                    raise ValueError("approval needs the current answered operator question revision")
-                _decision_source(project, slug, decision, approval, source)
-                if not resolution and not timestamp(saved["at"]) < timestamp(operator["at"]):
-                    raise ValueError("context-only approval must follow the earlier question resolution")
-                if "option_key" in resolution and decision.get("acceptance_message") and not any(
-                        o["key"] == resolution.get("option_key") and o["text"] == resolution.get("text")
-                        for o in question_choices(decision)):
-                    raise ValueError("approval choice does not match its recorded option")
-            elif revision is not None or operator.get("question_refs") or operator.get("question_id"):
-                raise ValueError("cite the approval's question and revision")
             events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
                       if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
             hold = next((event for event in reversed(events)
@@ -2198,14 +2130,10 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 raise ValueError("approval PR must be open, ready, and match the task branch and observed head")
         except (ValueError, KeyError, TypeError, AttributeError, OSError, TransitionError) as exc:
             S.append_event(project, slug, "merge-approval-refused", actor=actor, approval=approval,
-                           question=question, revision=revision, reason=reason, source=source, error=str(exc))
+                           reason=reason, source=source, error=str(exc))
             raise TransitionError(f"recorded merge approval refused: {exc}") from exc
-        receipt = {"actor": actor, "authorized_by": operator["role"], "reason": reason,
-                   "source": source,
+        receipt = {"actor": actor, "authorized_by": operator["role"], "reason": reason, "source": source,
                    "approval": approval, "approved_at": operator["at"],
-                   "question": question, "revision": revision,
-                   "question_context_only": decision is not None and not resolution,
-                   "option_key": resolution.get("option_key"),
                    "hold": task["hold_merge"], "hold_event": generation, "hold_at": hold["at"],
                    "hold_id": task.get("hold_merge_id"),
                    "pr": pull["number"], "url": pull["url"], "head": head, "at": S.now()}

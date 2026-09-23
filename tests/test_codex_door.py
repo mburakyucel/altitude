@@ -256,7 +256,6 @@ class TestFreshAttempt(AltitudeCase):
         brief = dispatch.build_brief(PROJECT, task["slug"])
         self.assertIn("Attempt 1 stopped before finishing", brief)
         self.assertIn("- done: half of it", brief)
-        self.assertIn("Altitude resumes your thread on Codex", brief, "one conversation contract for both engines")
 
     def test_fresh_dispatch_does_not_turn_a_previous_selection_into_a_pin(self):
         task = T.new(PROJECT, "Switch fixture", "Do it.", actor="burak")

@@ -60,9 +60,9 @@ class TestWorkerStatusResume(AltitudeCase):
             self.assertEqual((_engine, session, kwargs["extra_env"]["ALTITUDE_ATTEMPT"]),
                              (engine, task["session_id"], "3"))
             self.assertIn(message["text"], prompt)
-            self.assertIn("write a fresh schema-valid report.json", prompt)
-            self.assertIn("no new work is needed", prompt)
-            self.assertIn("exact remaining scope and holds", prompt)
+            # The resumed turn carries the message alone; the persona already requires a fresh report.
+            self.assertEqual(prompt, T.render_inbox([message]))
+            self.assertIn("Every resumed code-owner turn", (config.PERSONAS / "l2.md").read_text())
             late.append(T.message(self.project, slug, "l3", "Keep the evidence.", by="l3"))
             return {"returncode": 0, "agent": {"id": f"new-{slug}", "sessionId": session,
                                                "input_delivered": True}}

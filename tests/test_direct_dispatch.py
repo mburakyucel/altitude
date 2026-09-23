@@ -31,7 +31,7 @@ class TestDirectDispatch(AltitudeCase):
         for task in (first, second):
             self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
         brief = (S.task_dir(self.project, second["slug"]) / "brief.md").read_text()
-        self.assertIn("Shared paths with `first` on README.md, docs/ARCHITECTURE.md", brief)
+        self.assertIn("Shared with `first` on README.md, docs/ARCHITECTURE.md", brief)
 
     def test_default_project_cap_is_eight_and_machine_cap_is_eighty(self):
         self.register(self.project)

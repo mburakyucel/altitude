@@ -16,7 +16,8 @@ from altitude import config, dispatch, engines, images, state as S, tasks as T  
 
 inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 project, slug = os.environ.get("ALTITUDE_PROJECT"), os.environ.get("ALTITUDE_TASK")
-if not project or not slug:
+# A helper subagent's tool call fires this hook too; its messages belong to the owner (agent_id marks a subagent).
+if not project or not slug or inp.get("agent_id"):
     sys.exit(0)
 try:
     with S.project_lock(project):

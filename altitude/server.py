@@ -423,8 +423,6 @@ def merge_approval_parser() -> argparse.ArgumentParser:
     parser.add_argument("slug")
     parser.add_argument("--approval", required=True)
     parser.add_argument("--source", choices=("task", "project"), default="task")
-    parser.add_argument("--question")
-    parser.add_argument("--revision", type=int)
     parser.add_argument("--pr-number", dest="pr", required=True, type=int)
     parser.add_argument("--head", required=True)
     parser.add_argument("--reason", required=True)
@@ -432,16 +430,13 @@ def merge_approval_parser() -> argparse.ArgumentParser:
 
 
 def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: int, head: str, reason: str,
-                                 question: str | None = None, revision: int | None = None,
                                  source: str = "task") -> dict:
     """I-20260907-205556: bind durable operator approval to the checkout-origin PR before releasing a hold."""
     S.require_task_slug(slug)
     if (pr < 1 or source not in ("task", "project")
             or not re.fullmatch(r"[0-9a-f]{12}" if source == "project" else r"[0-9a-f]{32}", approval)
-            or (question is None) != (revision is None)
-            or question is not None and (not re.fullmatch(r"[0-9a-f]{32}", question) or revision < 1)
             or not re.fullmatch(r"[0-9a-f]{40}", head) or not reason.strip()):
-        raise ValueError("approval requires source message ids, paired question/revision, positive PR number, full head SHA, and reason")
+        raise ValueError("approval requires a source message id, positive PR number, full head SHA, and reason")
     from . import github_intake
     owner, repository = github_intake.project_repo(project)
     url = f"https://github.com/{owner}/{repository}/pull/{pr}"
@@ -455,7 +450,7 @@ def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: in
         raise ValueError("approval PR could not be read from the project origin")
     try:
         return T.apply_merge_approval(project, slug, approval, pull, head=head, reason=reason, actor="l3",
-                                      question=question, revision=revision, source=source)
+                                      source=source)
     except T.TransitionError as exc:
         raise ValueError(str(exc)) from exc
 
