@@ -302,6 +302,13 @@ account-wide meter or subscription entitlement from a plan name. Safe pre-output
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
 attempt's engine, session and launch model. See [routing lifecycle](SESSION_LIFECYCLE.md#fresh-dispatch).
 
+The engine boundary refreshes both seat readings every five minutes before dispatch. Native
+headless `/usage` supplies live account rows; the other native reader uses `account/rateLimits/read`.
+Statusline snapshots supply session display data, not routing quota. Failed reads replace previous
+success with unknown; successful observations expire after thirty minutes. Collection neither
+resumes task sessions nor changes routing preferences. See the [quota source and compatibility
+limits](SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
+
 `config.subprocess_env()` supplies the common tool environment for engine discovery/launch,
 landing and restart builds. It preserves Node on PATH, otherwise asks installed nvm for its
 default and prepends the returned executable's directory, including package-manager shims.
@@ -1507,7 +1514,7 @@ work is derived from it. `/api/monitor` answers with `seats`: one row per config
 seam's order, as `{engine, label, quota}`, where the label is the seam's display name and the quota is
 that seat's reading whole. Only the engine seam knows which reading belongs to which engine, so the
 page ties no reading to an engine key and spells no provider. It sits in the shell's page container
-and shows one seat card per row: either the five-hour and seven-day windows a statusline snapshot
+and shows one seat card per row: either the five-hour and seven-day windows a native usage report
 names, or windows named by the length the seat reports. Each window renders independently, including
 zero; an absent five-hour, seven-day, first or second window is explicitly named, without a meter.
 Available windows show percent used, a meter with the 70% reserve line drawn, when it

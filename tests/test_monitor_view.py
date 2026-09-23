@@ -23,6 +23,12 @@ def write_snapshot(path, at, five=10, seven=20):
     }))
 
 
+def write_quota(at, five=10, seven=20):
+    S.write_json(config.MONITOR_DIR / route.QUOTA_CLAUDE, {
+        "known": True, "at": at, "five_hour": five, "seven_day": seven,
+        "five_hour_resets": at + 3600, "seven_day_resets": at + 86_400})
+
+
 class TestQuotaAge(AltitudeCase):
     def setUp(self):
         super().setUp()
@@ -31,11 +37,11 @@ class TestQuotaAge(AltitudeCase):
     def test_no_snapshot_at_all_is_unknown_and_says_what_produces_a_reading(self):
         quota = monitor.quota()
         self.assertFalse(quota["known"])
-        self.assertIn("alt install-statusline", quota["why"])
+        self.assertIn("daemon", quota["why"])
 
     def test_a_fresh_snapshot_reports_its_reset_times_and_when_it_was_taken(self):
         at = int(time.time())
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at)
+        write_quota(at)
         quota = monitor.quota()
         self.assertTrue(quota["known"])
         self.assertNotIn("stale", quota)
@@ -44,7 +50,7 @@ class TestQuotaAge(AltitudeCase):
 
     def test_an_aged_snapshot_keeps_its_figures_and_says_stale(self):
         at = int(time.time()) - route.FRESH_SECONDS - 60
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at, five=41, seven=52)
+        write_quota(at, five=41, seven=52)
         quota = monitor.quota()
         self.assertFalse(quota["known"])  # the router still refuses to route on it
         self.assertTrue(quota["stale"])
@@ -145,7 +151,7 @@ class TestSeats(AltitudeCase):
         self.private_ledgers()
 
     def test_one_seat_per_configured_engine_in_the_seams_order_carries_that_seats_reading(self):
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", int(time.time()))
+        write_quota(int(time.time()))
         (config.MONITOR_DIR / route.QUOTA_CODEX).write_text(json.dumps({"known": False, "why": "Codex binary not found"}))
         seats = route.seats()
         self.assertEqual([row["engine"] for row in seats], list(config.ENGINES))

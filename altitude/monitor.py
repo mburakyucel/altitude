@@ -1,10 +1,9 @@
 """Context and quota per session."""
 from __future__ import annotations
-import json
 import time
-from pathlib import Path
 
 from . import engines, config, route, state as S
+from .engines import transcript_context_percent
 
 
 def sessions() -> list[dict]:
@@ -48,62 +47,13 @@ def sessions() -> list[dict]:
     return out
 
 
-def transcript_context_percent(session_id: str | None, cwd: Path | None) -> float | None:
-    """Read the last assistant usage from the session transcript (~/.claude/projects/<slug>/<sid>.jsonl)."""
-    if not session_id:
-        return None
-    base = Path.home() / ".claude" / "projects"
-    cands = list(base.glob(f"*/{session_id}.jsonl"))
-    if not cands:
-        return None
-    try:
-        with open(cands[0], "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 200_000))
-            tail = f.read().decode("utf-8", "ignore").splitlines()
-    except OSError:
-        return None
-    for line in reversed(tail):
-        try:
-            o = json.loads(line)
-        except ValueError:
-            continue
-        message = o.get("message") or {}
-        u = message.get("usage") if o.get("type") == "assistant" and message.get("model") != "<synthetic>" else None
-        if u:
-            tokens = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
-            if tokens:
-                return round(100.0 * tokens / config.CONTEXT_WINDOW, 1)
-    return None
-
-
 def quota() -> dict:
-    """Latest 5h/7d numbers, reset times, and the epoch second the snapshot was written.
-
-    ``known`` is the routing contract and stays exactly as strict: true only while the newest
-    statusline snapshot is younger than route.FRESH_SECONDS. An older snapshot is not nothing, so it
-    still returns its figures marked ``stale`` and the reader decides; no snapshot at all is the
-    only unknown, and it carries ``why`` so a page can say what produces a reading.
-    """
-    best = None
-    for p in config.MONITOR_DIR.glob("statusline-*.json"):
-        d = S.read_json(p, {}) or {}
-        rl = d.get("rate_limits") or {}
-        if not rl:
-            continue
-        ts = d.get("_at", 0)
-        if best is None or ts > best[0]:
-            best = (ts, rl)
-    if not best:
-        return {"known": False,
-                "why": "needs the statusline wrapper (alt install-statusline) and one interactive session"}
-    at, rl = best
-    five, seven = rl.get("five_hour") or {}, rl.get("seven_day") or {}
-    fresh = time.time() - at <= route.FRESH_SECONDS
-    return {"known": fresh, "five_hour": five.get("used_percentage"),
-            "seven_day": seven.get("used_percentage"), "five_hour_resets": five.get("resets_at"),
-            "seven_day_resets": seven.get("resets_at"), "at": at,
+    """The unattended seat reading; expired observations retain their figures as stale."""
+    reading = S.read_json(config.MONITOR_DIR / route.QUOTA_CLAUDE, {}) or {}
+    if not reading.get("known"):
+        return reading or {"known": False, "why": "Waiting for the daemon's quota refresh"}
+    fresh = 0 <= time.time() - reading.get("at", 0) <= route.FRESH_SECONDS
+    return {**reading, "known": fresh,
             **({} if fresh else {"stale": True})}
 
 

@@ -21,6 +21,86 @@ from zoneinfo import ZoneInfo
 from . import config, state as S
 
 logger = logging.getLogger(__name__)
+_last_quota_refresh: float | None = None
+
+
+def _claude_quota() -> dict:
+    """Read live-only /usage rows (CLI 2.1.277+), never cached control-API windows."""
+    from . import route
+    unknown = {"known": False, "why": "No live plan quota: /usage requires CLI 2.1.277+ and subscription login"}
+    try:
+        version = subprocess.run([config.CLAUDE_BIN, "--version"], capture_output=True, text=True,
+                                 timeout=5, check=True, env=clean_env())
+        release = re.match(r"(\d+)\.(\d+)\.(\d+)", version.stdout)
+        if not release or tuple(map(int, release.groups())) < (2, 1, 277):
+            return unknown
+        result = subprocess.run(
+            [config.CLAUDE_BIN, "--print", "/usage", "--output-format", "stream-json", "--verbose",
+             "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config"],
+            capture_output=True, text=True, timeout=20, check=True, env=clean_env(), cwd=config.HOME)
+        reading = {}
+        for event in map(json.loads, result.stdout.splitlines()):
+            if event.get("type") == "result" and event.get("is_error"):
+                return unknown
+            if event.get("type") != "assistant" or not event.get("usage_report"):
+                continue
+            rows = (event["usage_report"].get("rate_limits") or {}).get("limits") or []
+            for row in rows:
+                window = {"session": "five_hour", "weekly_all": "seven_day"}.get(row.get("kind"))
+                if window is None:
+                    continue
+                used = route._number(row.get("percent"))
+                if (used is None or isinstance(row.get("percent"), bool) or window in reading
+                        or "severity" not in row or "is_active" not in row):
+                    return unknown
+                reset = row.get("resets_at")
+                reading.update({window: used, f"{window}_resets":
+                                datetime.fromisoformat(reset).timestamp() if reset else None})
+        return {"known": True, "at": time.time(), **reading} if reading else unknown
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+        return unknown
+
+
+def refresh_quotas(min_interval: float = 300) -> None:
+    """Refresh both seats without an interactive session or a model turn."""
+    from . import quota_codex, route
+    global _last_quota_refresh
+    now = time.monotonic()
+    if _last_quota_refresh is not None and now - _last_quota_refresh < min_interval:
+        return
+    _last_quota_refresh = now
+    for path, read in ((route.QUOTA_CODEX, quota_codex.read), (route.QUOTA_CLAUDE, _claude_quota)):
+        S.write_json(config.MONITOR_DIR / path, read())
+
+
+def transcript_context_percent(session_id: str | None, cwd: Path | None) -> float | None:
+    """Read the last assistant usage from the session transcript (~/.claude/projects/<slug>/<sid>.jsonl)."""
+    if not session_id:
+        return None
+    base = Path.home() / ".claude" / "projects"
+    cands = list(base.glob(f"*/{session_id}.jsonl"))
+    if not cands:
+        return None
+    try:
+        with open(cands[0], "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 200_000))
+            tail = f.read().decode("utf-8", "ignore").splitlines()
+    except OSError:
+        return None
+    for line in reversed(tail):
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        message = o.get("message") or {}
+        u = message.get("usage") if o.get("type") == "assistant" and message.get("model") != "<synthetic>" else None
+        if u:
+            tokens = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
+            if tokens:
+                return round(100.0 * tokens / config.CONTEXT_WINDOW, 1)
+    return None
 
 
 def repository_rules(repo: Path) -> Path | None:

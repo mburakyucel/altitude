@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from . import config, state as S
 
 QUOTA_CODEX = "quota-codex.json"
+QUOTA_CLAUDE = "quota-claude.json"
 WEEK_MINUTES = 7 * 24 * 60
 SHORT_MINUTES = 5 * 60
 # A quota snapshot older than this is stale: the router refuses to route on it and the pages label it.

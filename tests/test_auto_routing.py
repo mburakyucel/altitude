@@ -1,8 +1,9 @@
 """Configured Auto options flow through real routing, launch, session and failure handling."""
 from unittest import mock
+import time
 
 from tests.support import AltitudeCase
-from altitude import config, digest, dispatch, engines, incidents, l3, monitor, route, server, state as S, tasks as T
+from altitude import config, digest, dispatch, engines, incidents, l3, monitor, quota_codex, route, server, state as S, tasks as T
 
 
 REJECTION = {"scope": "model", "why": "provider rejected the selected model as inaccessible"}
@@ -14,8 +15,9 @@ class TestAutoIntegration(AltitudeCase):
         self.private_ledgers()
         self.patch(engines, "installation", return_value={"available": None, "why": "installed; access unknown"})
         self.patch(engines, "usage_hold", return_value=None)
-        self.patch(monitor, "quota", return_value={"known": False})
-        self.patch(route, "quota_codex", return_value={"known": False})
+        self.read_quota, self.read_other_quota = monitor.quota, route.quota_codex
+        self.quota = self.patch(monitor, "quota", return_value={"known": False})
+        self.other_quota = self.patch(route, "quota_codex", return_value={"known": False})
         self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
         self.patch(dispatch, "_task_worktree", return_value=self.repo)
         self.patch(dispatch, "_validate_task_worktree")
@@ -155,6 +157,38 @@ class TestAutoIntegration(AltitudeCase):
         saved = S.load_task(self.project, task["slug"])
         self.assertEqual((saved["l2_engine"], saved["session_id"], saved["launch_model"], saved["attempt"]),
                          ("claude", "conversation", "opus", 1))
+
+    def test_quota_refresh_changes_fresh_dispatch_without_changing_running_or_resumed_sessions(self):
+        self.policy("codex,claude:opus")
+        self.quota.side_effect, self.other_quota.side_effect = self.read_quota, self.read_other_quota
+        self.patch(engines, "_last_quota_refresh", None)
+        native = self.patch(engines, "_claude_quota", return_value={
+            "known": True, "at": time.time(), "seven_day": 5, "five_hour": 1})
+        self.patch(quota_codex, "read", return_value={
+            "known": True, "read_at": S.now(), "primary_used": 60,
+            "primary_window_minutes": route.WEEK_MINUTES})
+        engines.refresh_quotas(min_interval=0)
+        first = self.task()
+        with mock.patch.object(engines, "start_l2", side_effect=self.launched):
+            dispatch.run(self.project, first["slug"])
+        running = S.load_task(self.project, first["slug"])
+        self.assertEqual(running["l2_engine"], "claude")
+        native.return_value = {"known": True, "at": time.time(), "seven_day": 90, "five_hour": 1}
+        engines.refresh_quotas(min_interval=0)
+        self.assertEqual(S.load_task(self.project, first["slug"]), running)
+        second = T.new(self.project, "Next fresh task", "Use current quota")
+        with mock.patch.object(engines, "start_l2", side_effect=self.launched):
+            dispatch.run(self.project, second["slug"])
+        self.assertEqual(S.load_task(self.project, second["slug"])["l2_engine"], "codex")
+        T.message(self.project, first["slug"], T.OPERATOR_MESSAGE_ROLE, "Preserve this session", wake_blocked=False)
+        T.block(self.project, first["slug"], "Ready to resume")
+        with mock.patch.object(engines, "resume_l2", side_effect=lambda engine, name, sid, prompt, **kwargs: {
+                "returncode": 0, "agent": {"id": "resumed-worker", "sessionId": sid}}) as resume:
+            dispatch.resume(self.project, first["slug"])
+        self.assertEqual((resume.call_args.args[0], resume.call_args.args[2]), ("claude", running["session_id"]))
+        saved = S.load_task(self.project, first["slug"])
+        for key in ("l2_engine", "session_id", "launch_model", "attempt"):
+            self.assertEqual(saved[key], running[key])
 
     def test_project_pin_parks_quota_failure_without_replacing_conversation(self):
         self.policy("claude:fable > codex", l2_engine="claude", l2_model="opus")

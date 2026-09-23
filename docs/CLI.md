@@ -721,6 +721,12 @@ Default preferences tie Codex's default model with Claude Fable and put Opus bel
 `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. A project override replaces the
 whole preference list, and `--unset-routing` restores those defaults.
 
+The daemon collects account quota every five minutes without an interactive session. The native
+headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
+rows; unavailable or failed reads remain unknown. Thirty-minute-old observations are stale. Monitor
+explains unknown quota, and Auto continues to use configured tie order until weekly readings are
+comparable. See [source compatibility and verification limits](SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
+
 | Intended preference | `--routing` value |
 | --- | --- |
 | Claude-only account with Opus available | `'claude:opus'` |

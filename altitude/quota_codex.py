@@ -10,7 +10,6 @@ import time
 from datetime import datetime, timezone
 
 from . import config, state
-from .route import QUOTA_CODEX
 
 _REQUESTS = (
     {"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -18,7 +17,6 @@ _REQUESTS = (
     {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}},
 )
 _MAX_OUTPUT_BYTES = 4 * 1024 * 1024
-_last_refresh_at: float | None = None
 
 
 def _spawn():
@@ -188,20 +186,3 @@ def read(timeout: float = 20.0) -> dict:
         "plan_type": limits.get("planType"),
         "read_at": state.now(),
     }
-
-
-def refresh() -> dict:
-    """Read and atomically persist the Codex quota used by the router."""
-    result = read()
-    state.write_json(config.MONITOR_DIR / QUOTA_CODEX, result)
-    return result
-
-
-def refresh_if_due(min_interval: float = 300) -> dict | None:
-    """Refresh no more often than ``min_interval`` seconds."""
-    global _last_refresh_at
-    now = time.monotonic()
-    if _last_refresh_at is not None and now - _last_refresh_at < min_interval:
-        return None
-    _last_refresh_at = now
-    return refresh()
