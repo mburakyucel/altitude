@@ -9,7 +9,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   Missing or failed readings remain unknown; stale readings never become fresh by being reread.
 
 - Setup reads crossing repair completion refresh the completed operation and verified Git guard
-  receipts together; interrupted repairs remain distinguishable (#429).
+  receipts together; interrupted repairs remain distinguishable (#429). A retry accepted during
+  a status read runs as soon as the read finishes instead of waiting for periodic maintenance.
 
 - Fresh L2 activity previews scroll with chat and disappear after 60 seconds without fresh public
   output. Missing or unavailable output leaves no box; recorded output remains in Live session.

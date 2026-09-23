@@ -283,6 +283,51 @@ class ProjectSetup(AltitudeCase):
                 self.assertEqual(raced["status"], "ready")
                 self.assertIn("Updated", self.step("guards", raced)["detail"])
 
+    def test_retry_accepted_during_observation_runs_when_the_read_releases_the_lock(self):
+        self.perform()
+        git("config", "--local", "--unset-all", "core.hooksPath", cwd=self.repo)
+        setup.request(self.project, "repair", actor="operator")
+        interrupted = setup.read(self.project)["operation"]
+        setup.save(self.project, operation={**interrupted, "state": "running", "step": "guards"})
+        inspected, accepted, locked, released = (threading.Event() for _ in range(4))
+        for event in (accepted, released):
+            self.addCleanup(event.set)
+        original = setup._observe
+
+        def paused(project, record, **kwargs):
+            if threading.current_thread().name == "observer":
+                if inspected.is_set():
+                    locked.set()
+                    self.assertTrue(released.wait(10))
+                else:
+                    inspected.set()
+                    self.assertTrue(accepted.wait(10))
+            return original(project, record, **kwargs)
+
+        self.patch(setup, "_observe", paused)
+        outcomes = {}
+        observer = threading.Thread(target=lambda: outcomes.update(view=setup.observe(self.project)), name="observer")
+        runner = threading.Thread(target=lambda: outcomes.update(run=setup.run(self.project)), name="runner")
+        observer.start()
+        self.assertTrue(inspected.wait(10))
+        retry = setup.request(self.project, "repair", actor="operator")
+        self.assertEqual(retry["operation"]["state"], "pending")
+        self.assertNotEqual(retry["operation"]["id"], interrupted["id"])
+        accepted.set()
+        self.assertTrue(locked.wait(10))
+        runner.start()
+        released.set()
+        observer.join(10)
+        runner.join(10)
+        self.assertFalse(observer.is_alive() or runner.is_alive())
+        self.assertEqual(outcomes["view"]["operation"]["id"], retry["operation"]["id"])
+        self.assertEqual(outcomes["view"]["status"], "checking")
+        stored = setup.read(self.project)
+        self.assertEqual(stored["operation"]["id"], retry["operation"]["id"])
+        self.assertEqual(stored["operation"]["state"], "complete")
+        self.assertEqual(stored["guards"]["action"], "installed")
+        self.assertIn("Installed and verified", self.step("guards")["detail"])
+
     def test_failure_keeps_coordinator_reachable_and_retry_reuses_completed_steps(self):
         with mock.patch.object(git_policy, "repair_hooks", side_effect=git_policy.GitPolicyError("Cannot write Git configuration")):
             failed = self.perform()

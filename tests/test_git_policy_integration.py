@@ -309,6 +309,7 @@ class TestDispatchDeploymentIndependence(AltitudeCase):
         fault.assert_not_called()                                 # flagged for an authorized restart, never restarted
 
     def test_decision_11_tick_discovers_merge_and_requests_activation_while_its_worker_runs(self):
+        self.addCleanup(server.stop_l3_verb_brokers)
         task = T.new("altitude", "Still running after merge", "Finish the delivery.", actor="burak")
         task.update(state="running", agent_id="detached", session_id="same-session")
         S.save_task("altitude", task)

@@ -37,9 +37,10 @@ if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is
     SOURCE = (REPO / ".altitude-source/current").resolve()
 # Product issue target, set only in altd's environment. Unset uses this installation's origin.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
-# Operator decision 2026-09-09 Pacific: this project's hosted CI is suspended.
-# Remove this exception when restoring its workflow; other projects retain their gates.
-LOCAL_CHECK_REPOSITORY = "mburakyucel/altitude"
+# Operator decision 2026-09-17: enforce PR CI without a paid repository plan.
+PR_CHECK_REPOSITORY = "mburakyucel/altitude"
+PR_CHECK_WORKFLOW = ".github/workflows/self-hosted-checks.yml"
+PR_CHECK_NAME = "check"
 PERSONAS = SOURCE / "personas"
 SCHEMAS = SOURCE / "schemas"
 TEMPLATES = SOURCE / "templates"

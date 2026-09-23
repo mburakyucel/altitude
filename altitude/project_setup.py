@@ -36,13 +36,17 @@ def save(project: str, **updates) -> dict:
 
 
 @contextmanager
-def operation_lock(project: str):
-    """A dead runner releases its lock; saved progress alone never proves it is running."""
+def operation_lock(project: str, *, wait: bool = False):
+    """A dead runner releases its lock; saved progress alone never proves it is running.
+
+    Probes never wait. The runner waits, so a read holding the lock delays an accepted repair
+    instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
+    """
     directory = config.project_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".setup.lock").open("a") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
             yield False
             return
@@ -242,8 +246,8 @@ def _fault(project: str, detail: str) -> None:
 
 def run(project: str) -> None:
     from . import server
-    with config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project) as acquired:
-        if not attached or not active or not acquired or config.restart_in_progress() or not config.is_managed(project):
+    with config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project, wait=True):
+        if not attached or not active or config.restart_in_progress() or not config.is_managed(project):
             return
         operation = read(project).get("operation") or {}
         if operation.get("state") not in ("pending", "running"):

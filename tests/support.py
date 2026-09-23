@@ -199,7 +199,9 @@ elif cmd == ("api", "graphql"):
                                     "matchingPullRequests": connection([{"number": body["number"],
                                         "baseRefName": body["baseRefName"], "headRefName": body["headRefName"]}])}}
                     for i, item in enumerate(checks)]
-        commit = {"oid": head, "statusCheckRollup": {"contexts": connection(contexts)} if contexts else None}
+        tree = subprocess.check_output(["git", "rev-parse", head + "^{tree}"], text=True).strip()
+        commit = {"oid": head, "tree": {"oid": tree},
+                  "statusCheckRollup": {"contexts": connection(contexts)} if contexts else None}
         body.update(baseRef={"target": {"oid": remote_oid(body["baseRefName"])},
                              "branchProtectionRule": None, "rules": connection([])},
                     commits={"nodes": [{"commit": commit}]}, potentialMergeCommit=None)
@@ -212,7 +214,8 @@ elif cmd == ("pr", "merge"):
         # A composed journey opts in: the hosted merge also advances the real local bare remote.
         head = "refs/remotes/origin/" + body["headRefName"]
         base = "refs/remotes/origin/" + body["baseRefName"]
-        tree = subprocess.check_output(["git", "merge-tree", "--write-tree", base, head], text=True).strip()
+        tree = read("merge_tree.txt") or subprocess.check_output(
+            ["git", "merge-tree", "--write-tree", base, head], text=True).strip()
         parents = ["-p", base] + (["-p", head] if "--merge" in args else [])
         head = subprocess.check_output(["git", "commit-tree", tree, *parents,
                                        "-m", "fixture hosted merge"], text=True).strip()

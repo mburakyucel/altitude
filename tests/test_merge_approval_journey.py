@@ -25,7 +25,6 @@ class TestMergeApprovalJourney(AltitudeCase):
     join_background = journeys.TestOfflineJourneys.join_background
     fake_runner = test_land.TestLand.fake_runner
     record_commands = test_land.TestLand.record_commands
-    local_policy = test_land.TestLand.local_policy
 
     def setUp(self):
         super().setUp()
@@ -387,20 +386,21 @@ class TestMergeApprovalJourney(AltitudeCase):
         pull.pop("headRefOid")  # The GitHub fixture observes the actual remote head after each push.
         S.write_json(gh / "pr.json", pull)
         (gh / "merge_git.txt").write_text("advance the local remote\n")
-        self.local_policy(exit_code=1, output="Ran 1 test in 0.1s\n\nFAILED (failures=1)\n")
+        S.write_json(gh / "checks.json", [])
+        self.fake_runner("make", 1, "Ran 1 test in 0.1s\n\nFAILED (failures=1)\n")
         failed = land.land("test: verify rebased story", cwd=worktree, merge=True, wait=0)
         self.assertFalse(failed["merged"])
         self.assertEqual(failed["local_tests"]["head"], rebased)
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
         self.fake_runner("make", script=(
             "import subprocess\n"
-            "assert sys.argv[1:] == ['check']\n"
+            "assert sys.argv[1:] == ['test']\n"
             "assert open('README.md').read() == " + repr(combined) + "\n"
             "assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()\n"
             "print('Ran 1 test in 0.1s\\n\\nOK')\n"))
         first = land.land("test: merge rebased story", cwd=worktree, merge=True, wait=0)
         self.assertTrue(first["merged"])
-        self.assertEqual(first["checks"], "local-pass")
+        self.assertEqual(first["checks"], "none-configured")
         self.assertEqual(first["local_tests"]["head"], rebased)
         self.assertEqual(S.load_task(self.project, slug)["merge_approval"], receipt)
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), combined)
@@ -435,7 +435,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         final = land.land("test: merge the scoped conclusion", cwd=worktree, merge=True, wait=0)
         self.assertTrue(final["merged"])
         self.assertEqual(final["local_tests"]["head"], second["head"])
-        self.assertNotEqual(first["local_tests"]["candidate"], final["local_tests"]["candidate"])
+        self.assertNotEqual(first["local_tests"]["head"], final["local_tests"]["head"])
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), combined + "The agreed conclusion.\n")
         self.assertEqual([e["pr"] for e in S.read_events(self.project, slug) if e["kind"] == "release-merge"], [101, 102])
 
