@@ -25,7 +25,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   const plannedRow = work.getByRole("link", { name: `Check index compatibility · Planned · waits for ${reason}`, exact: true });
   const dependentRow = work.getByRole("link", { name: `Measure migrated index · Planned · waits for ${dependency}`, exact: true });
   await walk.open(workPath);
-  await walk.state("01-planned-beside-running", { visible: [plannedRow, dependentRow, work.getByRole("link", { name: /^Migrate the index · Running/ })], hidden: [] });
+  await walk.state("01-planned-beside-running", { visible: [plannedRow, dependentRow, work.getByRole("link", { name: /^Migrate the index · L2 working/ })], hidden: [] });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const initial = await readTask(request);
   expect(initial).toMatchObject({ state: "queued", attempt: 0, worktree: null, planned_wait: { reason, after: null } });
@@ -63,7 +63,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
 
   await control(request, "complete-dependency");
   await walk.open(workPath);
-  const runningRow = work.getByRole("link", { name: /^Check index compatibility · Running/ });
+  const runningRow = work.getByRole("link", { name: /^Check index compatibility · L2 replying to you/ });
   const dependentQueued = work.getByRole("link", { name: /^Measure migrated index · Queued · waits for a slot/ });
   await walk.state("05-running-and-dependency-auto-released", { visible: [runningRow, dependentQueued], hidden: [queuedRow, dependentRow] });
   expect((await readTask(request, dependency)).state).toBe("done");
@@ -78,7 +78,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   expect(evidence.request).toBe("Keep the original pagination contract.\n");
   await control(request, "complete-planned");
   await walk.open(workPath);
-  await walk.state("06-named-dependent-running", { visible: [work.getByRole("link", { name: /^Measure migrated index · Running/ })], hidden: [dependentQueued] });
+  await walk.state("06-named-dependent-running", { visible: [work.getByRole("link", { name: /^Measure migrated index · L2 working/ })], hidden: [dependentQueued] });
 });
 
 test("planned-message denial retains the draft and restores sending after access returns", async ({ page, request }, info) => {

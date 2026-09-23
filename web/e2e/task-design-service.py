@@ -65,6 +65,18 @@ def main():
                 T.resolve_question("atlas", slug, question["id"], question["revision"], response["message_id"],
                                    disposition="answered", reason=response["text"], expected_attempt=1)
                 return self._json({"ok": True})
+            if self.path == "/fixture/park":
+                # The owner parks its saved group again after reading a reply; open questions return as asked again.
+                with server._bg_guard:
+                    resumed = server._bg.get(f"resume:atlas:{slug}")
+                if resumed:
+                    resumed.join(10)
+                    assert not resumed.is_alive(), "The fixture resume did not finish"
+                task = S.load_task("atlas", slug)
+                if task["state"] == "blocked":
+                    T.resume("atlas", slug)
+                T.block("atlas", slug, T._groups(task)[-1]["reason"], actor="l2", expected_attempt=1)
+                return self._json(T.question_group_view("atlas", S.load_task("atlas", slug)))
             if self.path == "/fixture/implementation-review":
                 question = S.load_task("atlas", slug)["questions"][-1]
                 answer = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Use the proposed layout.")

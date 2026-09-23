@@ -121,12 +121,12 @@ def _save(record: dict) -> None:
 
 
 def _waiting() -> list[str]:
-    """One key per waiting operator question, in the form the page and the worker both use.
+    """One key per waiting operator question or held review, in the form the page and the worker both use.
 
     Keyed on the decision, not its revision: a block and its escalation publish the same waiting
     decision twice, and the operator is woken for it once."""
-    return [f"{row['project']}:{row['slug']}:{row.get('group_id') or row['id']}"
-            for row in digest.queue() if row.get("id")]  # a fault or a stopped task is not a question
+    return [f"{row['project']}:{row['slug']}:{row.get('group_id') or row.get('id') or 'review:%s' % row['pr']}"
+            for row in digest.queue() if row.get("id") or row["kind"] == "review"]  # not a fault or a stop
 
 
 def subscribe(endpoint: str) -> dict:

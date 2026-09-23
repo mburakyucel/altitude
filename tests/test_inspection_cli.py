@@ -217,7 +217,7 @@ class TestInspectionCLI(AltitudeCase):
         text = cli("queue")
         rows = {row["slug"]: row for row in json.loads(cli("queue", "--json"))["waiting"]}
         self.assertEqual(rows["parked"]["reason"], "paused: Landing window pending")
-        self.assertEqual(rows["stopped"]["reason"], "stopped: Operator stopped the task")
+        self.assertEqual(rows["stopped"]["reason"], f"stopped by {config.OPERATOR}: Operator stopped the task")
         self.assertEqual(rows["l3-wait"]["reason"], "waiting on L3: Coordination question")
         self.assertEqual(rows["operator-wait"]["reason"], f"waiting on {config.OPERATOR}: Choose a colour")
         self.assertIn("paused: Landing window pending", text)

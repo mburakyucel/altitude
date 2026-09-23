@@ -273,7 +273,7 @@ describe("Project page", () => {
     const panel = await screen.findByRole("region", { name: "Work" });
     const active = within(panel).getByRole("region", { name: "Current" });
     const row = (name: RegExp) => within(active).getByRole("link", { name });
-    expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · Running · Opus on Alpha · started 2 min ago");
+    expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · L2 working · Opus on Alpha · started 2 min ago");
     expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waits for L3");
     expect(row(/^Ask L3/).querySelector(".dot")).toHaveAttribute("data-state", "running");
     expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a slot · WIP limit: 1 running on this machine");
@@ -295,14 +295,14 @@ describe("Project page", () => {
     const row = within(panel).getByRole("link", { name: "Index follow-up · Planned · waits for index-migration" });
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "idle");
     expect(row).toHaveAttribute("href", "/projects/altitude/tasks/later");
-    expect(within(panel).getByRole("link", { name: /^Fix the timer · Running/ })).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: /^Fix the timer · L2 working/ })).toBeInTheDocument();
 
     task.planned_wait = null;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
     await waitFor(() => expect(row).toHaveAccessibleName("Index follow-up · Queued · waits for dispatch"));
     task.state = "running";
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
-    await waitFor(() => expect(row).toHaveAccessibleName("Index follow-up · Running"));
+    await waitFor(() => expect(row).toHaveAccessibleName("Index follow-up · L2 working"));
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "running");
     expect(within(panel).getAllByRole("link", { name: /^Index follow-up/ })).toHaveLength(1);
   });
@@ -316,16 +316,16 @@ describe("Project page", () => {
     const panel = await screen.findByRole("region", { name: "Work" });
     const row = within(panel).getByRole("link", { name: /^Add the badge/ });
     expect(row).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
-    expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Queued · waits for dispatch");
+    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Queued · waits for dispatch");
     expect(within(panel).queryByRole("article")).toBeNull();
     expect(within(panel).queryByRole("button", { name: "Resume" })).toBeNull();
     const refresh = () => act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     fixtures.overview = { ...overview, queue: [decision, { ...decision, id: "q-second" }] };
     await refresh();
-    await waitFor(() => expect(row).toHaveTextContent("Needs you · 2 questions"));
+    await waitFor(() => expect(row).toHaveTextContent("Your turn · 2 questions"));
     fixtures.overview = overview;
     await refresh();
-    await waitFor(() => expect(row).toHaveTextContent("Needs you · 1 question"));
+    await waitFor(() => expect(row).toHaveTextContent("Your turn · 1 question"));
 
     fixtures.overview = { ...overview, queue: [] };
     await refresh();
@@ -345,7 +345,7 @@ describe("Project page", () => {
     const panel = await screen.findByRole("region", { name: "Work" });
     const current = within(panel).getByRole("region", { name: "Current" });
     expect(within(current).getAllByRole("link")).toHaveLength(1);
-    expect(within(current).getByRole("link", { name: /^Add the badge/ })).toHaveTextContent("Needs you · 2 questions");
+    expect(within(current).getByRole("link", { name: /^Add the badge/ })).toHaveTextContent("Your turn · 2 questions");
     expect(within(current).queryByRole("link", { name: /^Shipped/ })).toBeNull();
     expect(panel).toHaveTextContent("1 current · 1 done this week");
   });
@@ -357,11 +357,11 @@ describe("Project page", () => {
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     const panel = await screen.findByRole("region", { name: "Work" });
     const row = within(panel).getByRole("link", { name: /^Add the badge/ });
-    expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Stopped");
+    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Stopped by you");
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "danger");
     fixtures.project = { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", fault: "host", blocked_reason: "Cannot write the checkout.", resume_after: ago(-1) }] };
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
-    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Blocked: Cannot write the checkout."));
+    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Paused · Cannot write the checkout."));
     expect(row).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
   });
 

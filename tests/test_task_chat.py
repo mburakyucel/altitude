@@ -111,7 +111,8 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(T.pending(self.project, self.slug), [], "delivered messages leave the inbox")
         self.assertEqual([m["text"] for m in T.task_messages(self.project, self.slug)],
                          ["Need one decision.", "Use the existing API."])
-        self.assertEqual(T.decisions(self.project)[0]["status"], "open")
+        self.assertEqual(T.question_views(self.project, self.slug)[-1]["status"], "open")
+        self.assertEqual(T.decisions(self.project), [], "the reply handed the turn to the resumed session")
 
     def worker_env(self):
         return {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}

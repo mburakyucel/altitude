@@ -83,7 +83,7 @@ test("conversation-first design: custom answers, staged presets and conversation
   await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await page.getByRole("link", { name: "Design example: later L2 reply", exact: true }).click();
-  await expect(page.getByText("Discussion leaves every question open.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sent · the L2 has your reply.", { exact: true })).toBeVisible();
 
   await walk.open(route("Group") + "?reset");
   await page.getByRole("button", { name: "Use recommendations", exact: true }).click();
@@ -96,7 +96,7 @@ test("conversation-first design: custom answers, staged presets and conversation
   await walk.open(route("Group") + "?reset");
   await field.fill("Could we roll back after day seven?");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("04-followup", { visible: [page.getByText("Discussion leaves every question open.", { exact: true }), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
+  await walk.state("04-followup", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true }), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
   await field.fill("Keep 14 days; use snapshots so region no longer matters.");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("Retention: 14 days.", { exact: true })).toBeVisible();

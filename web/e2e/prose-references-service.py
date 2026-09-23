@@ -54,6 +54,9 @@ def main():
                    "I recommend A because #248 is ready.")
     tasks.message("alpha", slug, tasks.OPERATOR_MESSAGE_ROLE, "Explain the references.", wake_blocked=False)
     tasks.message("alpha", slug, "l2", "Decision answer: PR #272 and other/repo#273.\n\n~~~\nissue #904\n~~~")
+    # The reply handed the turn back; the owner parks the same question again, so it is the operator's turn.
+    tasks.resume("alpha", slug)
+    tasks.block("alpha", slug, tasks._groups(S.load_task("alpha", slug))[-1]["reason"], actor="l2")
 
     serve()
 

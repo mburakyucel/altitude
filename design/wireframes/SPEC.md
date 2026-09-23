@@ -197,7 +197,7 @@ The conversation scrolls inside the fixed shell, shrinks above the keyboard, and
 row while the operator is at the bottom; scrolling up leaves the reading position in place.
 Keyboard transitions, draft growth and streaming preserve bottom-follow or, when reading older
 messages, the same visible message and offset. Sending resumes following. Opening details keeps
-the reading position; View question deliberately returns to the existing question anchor.
+the reading position; the **Your turn** pill deliberately returns to the open question at the end.
 
 Shared prose links apply to L3/L2 conversations, live session prose, folded/expanded system replies,
 decision questions, recommendations and follow-ups, and report notes, digest and prose fields.
@@ -337,10 +337,11 @@ for resume at <time>", or plain "waits for dispatch"; never a file lease, which 
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
 on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
-operator ("Needs you · N questions" plus independent execution status, amber dot); blocked by a
-fault ("Blocked: <one sentence>", red dot); operator-stopped ("Stopped", red dot);
-owner/daemon-parked without a question, fault or operator stop ("Paused", idle dot);
-reported ("Report landed · waits for L3", running dot);
+operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus "Waiting for you",
+amber dot); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
+blocked by a fault ("Paused · <one sentence>", red dot); operator-stopped ("Stopped by you", red dot);
+owner/daemon-parked without a question, review, fault or operator stop ("Paused", idle dot);
+reported ("Report landed · waits for L3", running dot, or "waiting for you" with a held review);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
 week).
 
@@ -509,13 +510,14 @@ Freshness is owner judgment, independent of worker status.
 An answer settles only the stated choice; requested work remains required. Guidance may queue before
 the owner's checkpoint; the owner considers an earlier answer with later guidance before acting.
 
-The recommendation body and response controls are the same component as the one at the question's
-message anchor in chat. Loading uses a skeleton with no inferred count; empty Needs you says
+The recommendation body and response controls are the same component as the open question at the
+end of the chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
 refresh notice and disabled sending. During submission, the control says **Sending…** and cannot be
-repeated. Sent members leave the attention count; remaining members stay together. A brief **Sent to L2**
-receipt links to chat, where each submitted response replaces its member's input and remains readable.
-The card leaves Needs you when no members await a response. This records delivery, not agreement:
+repeated. Sending anything hands the turn back: the task's card leaves Needs you and the badge drops,
+though every question stays open in the record. A brief **Sent to L2** receipt links to chat. When
+the owner parks again, still-needed questions return labelled **asked again**; a revised question
+is new. This records delivery, not agreement:
 the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
 Failure retains responses with Retry. Denied writes require a refreshed read. A changed question
 clears only its own stale draft; independent drafts survive refresh and another member's submission.
@@ -545,15 +547,15 @@ switch on never announces what is already waiting.
 ### 3.9 Open the owning L2 question
 
 `/projects/:name/tasks/:slug?question=<id>&revision=<n>` opens the owning human conversation at
-that durable question's group, with preceding explanation visible. Every member link focuses the
-same stable group anchor; the conversation renders the group once. L3 escalation text stays attributed to
-L3 and contains the actual dilemma and recommendation. Later technical events do not change the
-anchor. The live session starts closed when entering a question; **Activity & evidence** reveals
+that durable question's group. The open group is the last thing in the conversation, right above
+the composer, and scrolls with the messages; it is never pinned. When the owner writes after asking,
+the group moves to the end again. Every member link focuses it; closed groups stay at their original
+message. L3 escalation text stays attributed to L3 and contains the actual dilemma and recommendation. The live session starts closed when entering a question; **Activity & evidence** reveals
 technical event summaries and the link to the existing live view.
 
 The question field and normal composer accept a follow-up, a simple answer such as “21 days”, or a nuanced decision.
-There is no recipient selector, note form or extra confirmation. A follow-up wakes the owner to assess
-the question (§3.8). The L2 records a clear decision against its source message;
+There is no recipient selector, note form or extra confirmation. A follow-up hands the turn back and
+wakes the owner to assess the question (§3.8); the group becomes **Sent · the L2 has your reply.** The L2 records a clear decision against its source message;
 the UI never treats sending as approval. A sent member keeps its receipt while the owner responds;
 an explicit re-publication restores input with a fresh revision. Unchanged ordinary re-parking
 does not ask the person to send again. Ambiguity is clarified in conversation. A partial answer
@@ -582,14 +584,15 @@ Opening from Needs you or Work pushes one task entry and retains the origin tab.
 history entry and falls back to the project for a direct link. Conversation/Live session switches
 replace that entry and preserve the same-task draft. Leaving the task clears its draft; a late send
 stays bound to its original task. A new reply does not pull the reader away from the question:
-**Latest messages** follows the bottom, and **View question** returns to an offscreen open dilemma.
+**Latest messages** follows the bottom, and the **Your turn · N questions ↓** pill returns to an
+offscreen open question.
 Pending-question reads poll every two seconds. Stale navigation refreshes before acceptance, and
 every write names its exact question revision. Archived tasks retain history without a composer.
 
 #### 3.9.1 Pending design preview
 
 A question with saved design content has a **View preview · vN** link in Needs you and its owning
-task conversation. When the open question is offscreen, the conversation's **View question** row
+task conversation. When the open question is offscreen, the conversation's jump row
 also exposes its preview, including on direct chat entry at the latest messages and after partial
 answers. Question navigation follows an open group member with an attachment before another open
 member. Work's task row opens the exact owning question.
@@ -707,11 +710,15 @@ Reject confirmation and operational Resume. Desktop retains its direct operation
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
 selection and reading position. A failure remains visible, not only inside details.
 
-Compact task states include **L2 · Running**, **L2 · Waits for L3**, **L2 · Needs your answer**,
-**L2 · Blocked by a fault**, and **L2 · Paused**; **Merge held** can accompany any of these. Details
-separates each full reason. Waiting on L3 adds no operator badge. An operator question remains at
-its chat anchor with View question/Latest messages when applicable, and no generic Resume while
-the question is open. A fault retains a visible short cause and **L3 has been told**. Operational
+Compact task states use the §3.5 labels (**L2 working**, **Waits for L3**, **Your turn · …**,
+**L2 replying to you**, **Paused · fault**, **Paused**, **Stopped by you**); **Merge held** can
+accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
+An operator question sits at the end of the chat with its pill and Latest messages when applicable,
+and no generic Resume while the question is open. A held review-ready PR whose owner has stopped
+(#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
+**Approve merge** sends the operator's own message "Approved: merge PR #N at <head>." and the L2 merges
+with it after a final check of that same head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
+unrelated question never hides that review. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. Phone tab
@@ -773,7 +780,7 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
 planned (the wait reason replaces the live panel; the conversation accepts messages without release);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
-operator (the question inline at its recorded message anchor); blocked on L3 ("Waits for L3"
+operator (the question at the end of the chat); blocked on L3 ("Waits for L3"
 with the full reason in details); blocked by a fault (a red line with the first sentence, at most 100 characters,
 and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
 the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
@@ -932,7 +939,8 @@ polls it and never guesses.
 
 ### 4.3 Discuss and decide in the owning conversation
 
-Every dilemma opens its owning L2 chat. Follow-ups and unclear answers stay open; a clear decision
+Every dilemma opens its owning L2 chat. Follow-ups and unclear answers stay open in the record and
+hand the turn back to the owner, which answers and re-parks what remains; a clear decision
 is sufficient for the L2 to record the source, outcome and scope and proceed. Closing an obsolete
 dilemma records why it is unnecessary, without approving its abandoned recommendation. Partial
 answers keep only relevant outstanding parts. Quick acceptance records the explicit chosen option;
@@ -945,16 +953,16 @@ nor a generic resume authorizes implementation of the disputed approach or relea
 Only global Needs you carries a numeric attention badge, across one or several projects. On phone
 it appears in bottom navigation, or the header link while keyboard use hides that navigation; the
 two are never visible together. Its unit
-is one unanswered operator question plus each existing operational attention item. Two questions
-on one task count as two; answering one reduces the badge by one. A known zero hides it. Project
+is one operator question on the operator's turn, one held review, plus each existing operational
+attention item. Two questions on one task count as two; any reply to that task removes both until
+its owner asks again. A known zero hides it. Project
 rail/switcher rows retain their state dots, and Work has no attention badge. Task totals remain
 labelled text. Running tasks, FYIs and queued messages do not add attention.
 
-Needs you says **N questions across N projects**; operational items, when present, are named
-separately. Project summaries use the same distinction. Loading and failed reads never imply
-zero; cached counts are labelled stale until refreshed. Follow-ups retain counts, partial answers
-remove only answered members, and final answers remove that task's card. Those changes do not
-claim that its worker resumed.
+Needs you says **N questions across N projects**; reviews and operational items, when present,
+are named separately. Project summaries use the same distinction. Loading and failed reads never imply
+zero; cached counts are labelled stale until refreshed. A follow-up, partial answer or final answer
+removes that task's card until its owner re-parks. Those changes do not claim that its worker resumed.
 
 ### 4.5 Copy
 
@@ -1087,8 +1095,8 @@ as specified in §3.10. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics
 
 Task states include running+held, waits-for-L3, waits-for-L3+held, operator-question+held,
 fault+held and operational pause. One compact status names waiting and merge state
-separately; the complete reasons open in scrollable task details. The original question remains
-in chat with View question/Latest messages when applicable. Faults retain a visible cause and
+separately; the complete reasons open in scrollable task details. The open question remains
+at the end of the chat with its pill and Latest messages when applicable. Faults retain a visible cause and
 L3 notification. Open questions do not acquire a generic Resume, and merge restrictions never
 acquire a release action. Desktop keeps directly available operational actions while disclosing
 long reasons. Phone sheets fit above the keyboard; closing them preserves draft and reading

@@ -194,6 +194,38 @@ class TestMergeApprovalJourney(AltitudeCase):
                          (approval_id, "l2", held["hold_merge_id"], prepared["head"]))
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The final story.\n")
 
+    def test_a_fault_wait_sees_the_held_correction_it_needs_through_verified_recovery(self):
+        # L3 8fae1943 and #419: B's later proposal must not hide its merge decision; A recovers in its session.
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Fix the shared checkout", "Review the checkout fix before merging", "The final story.\n")
+        waiting = T.new(self.project, "Export report", "Export the report.", actor="burak")
+        waiting.update(state="blocked", attempt=1, agent_id="a-agent", session_id="a-session", fault="worker:export",
+                       waiting_on="l3", hold_merge="Export review",
+                       blocked_reason=f"system fault [worker:export]; waits for {pull['url']} in task {slug}")
+        S.save_task(self.project, waiting)
+        self.tick()
+        T.block(self.project, slug, "Build the retry dashboard next? Recommended: yes, after this fix.", actor="l2")
+        rows = [row for row in self.request("/api/overview")["queue"] if row["slug"] == slug]
+        self.assertEqual([(row["kind"], row.get("pr")) for row in rows], [("asks", None), ("review", 101)])
+        self.assertEqual(T.wait_label(S.load_task(self.project, waiting["slug"])), "paused · fault worker:export")
+        self.assertIn(pull["url"], S.load_task(self.project, waiting["slug"])["blocked_reason"])
+        self.tick()
+        approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
+                                                    "text": "Approved: merge PR #101."})["message"]
+        self.assertEqual([row for row in self.request("/api/overview")["queue"] if row["slug"] == slug], [])
+        self.wait_state(slug, "running")
+        proposal = S.load_task(self.project, slug)["questions"][-1]["anchor_id"]  # the owner's words, not approval
+        self.owner_lands_with_approval(slug, worktree, gh, prepared, approval["id"], proposal)
+        owner = S.load_task(self.project, slug)
+        self.assertIsNone(owner["hold_merge"])
+        self.assertEqual([q["status"] for q in owner["questions"]], ["open"], "the proposal stays for its owner")
+        self.tick()
+        T.resume(self.project, waiting["slug"], actor="l3", reason=f"observed {pull['url']} merged on main")
+        recovered = S.load_task(self.project, waiting["slug"])
+        self.assertEqual((recovered["state"], recovered["agent_id"], recovered["session_id"], recovered["attempt"]),
+                         ("running", "a-agent", "a-session", 1))
+        self.assertEqual((recovered.get("fault"), recovered["hold_merge"]), (None, "Export review"))
+
     def test_ui_escalation_reaffirmation_fault_recovery_and_normal_land(self):
         # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(

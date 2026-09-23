@@ -95,8 +95,11 @@ class ConversationDecisions(AltitudeCase):
         T.resume(self.project, self.slug)
         T.message(self.project, self.slug, "l2", "We would need a rebuild. Fourteen days would extend that window.",
                   expected_attempt=1)
+        self.assertEqual(T.decisions(self.project), [], "the operator's reply handed the turn back")
+        T.block(self.project, self.slug, question["detail"], actor="l2")
         [card] = T.decisions(self.project)
-        self.assertEqual((card["id"], card["revision"], card["status"]), (question["id"], 1, "open"))
+        self.assertEqual((card["id"], card["revision"], card["status"], card["asked_again"]),
+                         (question["id"], 1, "open", True))
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["agent_id"], task["session_id"], task["attempt"]), ("owner", "conversation", 1))
         prompt = T.render_inbox(T.pending(self.project, self.slug))
@@ -584,7 +587,7 @@ class ConversationDecisions(AltitudeCase):
         self.assertEqual(message["question_refs"], [{"id": question["id"], "revision": question["revision"]}])
         T.resume(self.project, self.slug)
         self.assertEqual(self.current()["status"], "open")
-        self.assertEqual(T.decisions(self.project)[0]["id"], question["id"])
+        self.assertEqual(T.decisions(self.project), [], "the discussion handed the turn back")
 
     def test_owner_reparks_the_same_question_after_discussion_without_revising_or_downgrading_it(self):
         for escalated in (False, True):

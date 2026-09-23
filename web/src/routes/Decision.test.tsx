@@ -5,6 +5,8 @@ import { DecisionSchema, QuestionGroupSchema, TaskMessageSchema, TaskViewSchema 
 
 const operator = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3")!;
 const at = "2026-09-08T02:00:00Z";
+/** Sending anything hands the turn back: the server records when, and earlier questions leave the queue. */
+const handed = "2026-09-08T02:05:00Z";
 const question = DecisionSchema.parse({ project: "atlas", slug: "index", title: "Index rollout", id: "q-index", revision: 1,
   anchor_id: "question-message", status: "open", audience: "operator", asked_by: "l3", asked: at,
   question: "How long should we retain the old index?", recommendation: { text: "Keep it for seven days.", label: "Use 7 days & resume", why: "This covers the rollback window." } });
@@ -22,19 +24,19 @@ function setup({ archived = false, denied = false, missing = false } = {}) {
   let refuse = denied;
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
-    if (path === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: task.question?.status === "open" && !task.question.response ? [task.question] : [], wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
+    if (path === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: task.question?.status === "open" && !task.question.response && !task["handed_back"] ? [task.question] : [], wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
     if (path === "/api/project/atlas") return json({ name: "atlas", tasks: [], repository: "https://github.com/example/atlas" });
     if (path === "/api/task/atlas/index") return json(task);
     if (path === "/api/decide") {
       if (refuse) return json({ error: "Access denied" }, 403);
       const closed = { ...question, response: { text: "Use seven days.", at, message_id: "answer" } };
-      task = { ...task, state: "running", question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: "Use seven days.", at }] };
+      task = { ...task, state: "running", handed_back: handed, question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: "Use seven days.", at }] };
       return json({ question: closed });
     }
     if (path === "/api/l2/message") {
       const body = JSON.parse(String(init?.body));
       const message = { id: "followup", role: operator, text: body.text, at };
-      task = { ...task, state: "running", messages: [...task.messages!, message] };
+      task = { ...task, state: "running", handed_back: handed, messages: [...task.messages!, message] };
       return json({ message });
     }
     return json({ error: "unavailable" }, 404);
@@ -47,6 +49,7 @@ const convo = () => screen.getByRole("region", { name: "Task conversation" });
 
 function setupGroup() {
   let failure = 0;
+  let handedBack: string | null = null;
   let group = QuestionGroupSchema.parse({ id: "rollout", revision: 1, anchor_id: question.anchor_id, questions: [
     { ...question, group_id: "rollout", group_revision: 1, recommended_key: "seven", options: [
       { key: "seven", label: "7 days", text: "Keep the index for seven days." },
@@ -58,11 +61,12 @@ function setupGroup() {
   const messages = [...initial.messages!, { id: "region-message", role: "l2" as const, text: "Which region should host the backup?", at }];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const route = String(input);
-    if (route === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: group.questions.filter((q) => q.status === "open" && !q.response), wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
+    if (route === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: group.questions.filter((q) => q.status === "open" && !q.response && !handedBack), wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
     if (route === "/api/project/atlas") return json({ name: "atlas", tasks: [] });
-    if (route === "/api/task/atlas/index") return json({ ...initial, question_group: group, question: group.questions.find((q) => q.status === "open"), questions: group.questions, messages });
+    if (route === "/api/task/atlas/index") return json({ ...initial, handed_back: handedBack, question_group: group, question: group.questions.find((q) => q.status === "open"), questions: group.questions, messages });
     if (route === "/api/decide") {
       if (failure) return json({ error: "Send unavailable" }, failure);
+      handedBack = handed;
       const body = JSON.parse(String(init?.body));
       const answers = body.answers ?? [body];
       group = { ...group, questions: group.questions.map((q) => {
@@ -73,6 +77,7 @@ function setupGroup() {
     }
     if (route === "/api/l2/message") {
       const body = JSON.parse(String(init?.body));
+      handedBack = handed;
       return json({ message: { id: "group-reply", role: operator, text: body.text, at } });
     }
     return json({}, 404);
@@ -99,7 +104,7 @@ describe("Independent questions in one conversation", () => {
     expect(screen.getByText("Could not send answers. Your responses are kept here.")).toBeVisible();
   });
 
-  it("mixes Other and a plain answer in one send, retaining the question context and receipts", async () => {
+  it("mixes Other and a plain answer in one send and hands the turn back", async () => {
     const { fetch } = setupGroup();
     const { user, queryClient } = renderApp({ route: path });
     expect(await screen.findByRole("button", { name: "Send answers" })).toBeDisabled();
@@ -110,7 +115,7 @@ describe("Independent questions in one conversation", () => {
     await user.type(custom, "21 days");
     await user.type(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" }), "Which is closest to our users?");
     await user.click(screen.getByRole("button", { name: "Send 2 answers" }));
-    await waitFor(() => expect(screen.getAllByText("Sent to L2")).toHaveLength(2));
+    await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = fetch.mock.calls.find(([url]) => url === "/api/decide")!;
     expect(JSON.parse(String(call[1]?.body)).answers).toEqual([
       { question_id: "q-index", revision: 1, text: "21 days" },
@@ -165,7 +170,7 @@ describe("Independent questions in one conversation", () => {
     expect(screen.getByRole("button", { name: "14 days" })).toHaveAttribute("aria-pressed", "true");
     server.fail(0);
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.getAllByText("Sent to L2")).toHaveLength(2));
+    await within(convo()).findByText("Sent · the L2 has your reply.");
     const calls = server.fetch.mock.calls.filter(([url]) => url === "/api/decide");
     expect(calls).toHaveLength(2);
     expect(calls[1]![1]?.body).toEqual(calls[0]![1]?.body);
@@ -187,13 +192,13 @@ describe("Independent questions in one conversation", () => {
     await user.click(await screen.findByRole("button", { name: "14 days" }));
     expect(server.fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
-    await screen.findByText("Sent to L2");
+    await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = server.fetch.mock.calls.find(([url]) => url === "/api/decide")!;
     expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }] });
     expect(screen.queryByRole("button", { name: "Send 1 answer" })).toBeNull();
   });
 
-  it("opens the whole group at either question and stages an alternative before sending only that answer", async () => {
+  it("opens the whole group at either question, and sending only that answer hands the whole turn back", async () => {
     const { fetch } = setupGroup();
     const { user, queryClient } = renderApp({ route: "/projects/atlas/tasks/index?question=q-region&revision=1" });
     const choice = await screen.findByRole("button", { name: "14 days" });
@@ -206,15 +211,15 @@ describe("Independent questions in one conversation", () => {
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Use recommendations" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
-    await screen.findByText("Sent to L2");
+    await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = fetch.mock.calls.find(([url]) => url === "/api/decide")!;
     expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }] });
-    expect(convo()).toHaveTextContent("1 question to answer");
+    expect(screen.queryByRole("textbox", { name: "Your answer to: Which region should host the backup?" })).toBeNull();
     expect(screen.queryByRole("button", { name: "14 days" })).toBeNull();
-    expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue.map((q) => q.id)).toEqual(["q-region"]);
+    await waitFor(() => expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue).toEqual([]));
   });
 
-  it("sends ordinary discussion with the group context and never accepts any answer on send", async () => {
+  it("sends ordinary discussion with the group context, hands the turn back and never accepts any answer", async () => {
     const { fetch } = setupGroup();
     const { user } = renderApp({ route: path });
     await user.type(await screen.findByRole("textbox", { name: "Message the L2" }), "Why seven days, and which region is closest?");
@@ -223,7 +228,8 @@ describe("Independent questions in one conversation", () => {
     const call = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
     expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Why seven days, and which region is closest?", group_id: "rollout", group_revision: 1, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
-    expect(convo()).toHaveTextContent("2 questions to answer");
+    await within(convo()).findByText("Sent · the L2 has your reply.");
+    expect(screen.queryByRole("button", { name: /^Send (\d+ )?answers?$/ })).toBeNull();
   });
 
   it("discards only the changed member's draft and preserves independent answers", async () => {
@@ -256,7 +262,7 @@ describe("Conversation-first decisions", () => {
     expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("sends a follow-up with its question identity and leaves the dilemma open", async () => {
+  it("sends a follow-up with its question identity, hands the turn back and leaves the question record open", async () => {
     const { fetch } = setup();
     const { user, queryClient } = renderApp({ route: path });
     const field = await screen.findByRole("textbox", { name: "Message the L2" });
@@ -267,7 +273,9 @@ describe("Conversation-first decisions", () => {
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
     const sent = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
     expect(JSON.parse(String(sent[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Can we roll back after day seven?", question_id: "q-index", revision: 1, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
-    expect(queryClient.getQueryData<{ queue: unknown[] }>(["overview"])?.queue).toHaveLength(1);
+    // The saved message hands the turn back; the change stream's next overview read drops the question.
+    await act(() => queryClient.invalidateQueries({ queryKey: ["overview"] }));
+    expect(queryClient.getQueryData<{ queue: unknown[] }>(["overview"])?.queue).toHaveLength(0);
   });
 
   it("positions the question when its conversation anchor arrives after the initial read", async () => {

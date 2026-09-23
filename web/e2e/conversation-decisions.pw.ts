@@ -41,11 +41,21 @@ async function modelCheckpoint(request: APIRequestContext, slug: string) {
   expect(response.ok()).toBe(true);
   return response.json() as Promise<{ message_id: string; answer: string }>;
 }
-async function sent(card: Locator) {
-  await expect(card).toHaveAttribute("data-status", "open");
-  await expect(card.getByText("Sent to L2", { exact: true })).toBeVisible();
-  await expect(card.getByRole("button")).toHaveCount(0);
+/** A sent reply hands the turn back: the open group becomes one quiet line at the end of the chat. */
+async function handedBack(page: Page, card: Locator, line = "Sent · the L2 has your reply.") {
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  await expect(conversation.getByRole("status").filter({ hasText: line })).toBeVisible();
+  await expect(card).toHaveCount(0);
 }
+/** The owner parks again; questions it still needs return to the operator as asked again. */
+async function park(request: APIRequestContext, slug: string) {
+  const response = await request.post("/fixture/park", { data: { slug } });
+  expect(response.ok()).toBe(true);
+  const group = await response.json() as Group;
+  expect(group.questions.filter((q) => q.status === "open").every((q) => (q as Question & { asked_again?: boolean }).asked_again)).toBe(true);
+  return group;
+}
+const turnLabel = (page: Page) => page.getByRole("region", { name: "Task conversation", exact: true }).locator(".conversation-turn");
 async function submit(page: Page, request: APIRequestContext, slug: string, resolve = true) {
   const saved = page.waitForResponse((row) => row.url().endsWith("/api/decide"));
   await page.getByRole("button", { name: /^Send \d+ answers?$/ }).click();
@@ -79,10 +89,11 @@ test("early owner withdrawal preserves independent answers and work, then reasks
   const [review, retention] = initial.question_group.questions as [Question, Question];
   const list = page.getByRole("article", { name: "Review revised rollout", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
-  const withdraw = async () => {
+  const withdraw = async (remaining: boolean) => {
     await send(page, "Audit the rollout wording before merge.");
     await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
     await modelCheckpoint(request, slug);
+    if (remaining) await park(request, slug);
   };
   const ready = async (changed = false) => {
     const response = await request.post("/fixture/freshness-ready", { data: { slug, changed } });
@@ -100,12 +111,15 @@ test("early owner withdrawal preserves independent answers and work, then reasks
   expect((await readTask(request, slug)).question_group.questions.map((q) => [q.id, q.revision, q.status]))
     .toEqual(initial.question_group.questions.map((q) => [q.id, q.revision, q.status]));
   await walk.open("/");
-  await walk.state("02-harmless-followup-keeps-fresh-actions", {
+  await walk.state("02-harmless-followup-hands-turn-back", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [list] });
+  await park(request, slug);
+  await page.reload();
+  await walk.state("02b-asked-again-keeps-fresh-actions", {
     visible: [list.getByRole("button", { name: "Merge rollout", exact: true }), list.getByRole("button", { name: "14 days", exact: true })],
     hidden: [list.getByText("Discussion in progress · decision still open", { exact: true })],
   });
   await list.getByRole("link", { name: "Open L2 chat", exact: true }).click();
-  await withdraw();
+  await withdraw(true);
   await page.reload();
   const old = questionCard(page, review);
   const reason = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful.";
@@ -153,7 +167,7 @@ test("early owner withdrawal preserves independent answers and work, then reasks
   await walk.state("07-same-question-ready-again-with-fresh-action", {
     visible: [questionCard(page, unchanged).getByRole("button", { name: "Merge rollout", exact: true })], hidden: [old.getByRole("button")],
   });
-  await withdraw();
+  await withdraw(false);
   await page.reload();
   const withdrawnAgain = questionCard(page, unchanged);
   const closedGroup = withdrawnAgain.locator("xpath=ancestor::div[contains(@class, 'conversation-question')]");
@@ -255,7 +269,7 @@ test("owner records delegated L3 authority while operator decisions and independ
   expect(finalOverview.projects[0].counts).toEqual(initialOverview.projects[0].counts);
   await walk.open(info.project.name === "phone" ? "/projects/atlas?tab=work" : "/projects/atlas");
   const work = page.getByRole("region", { name: "Work", exact: true });
-  const projectRow = work.getByRole("link", { name: /^Lease and policy · Needs you · 1 question/ });
+  const projectRow = work.getByRole("link", { name: /^Lease and policy · Your turn · 1 question/ });
   await walk.state("05-project-retains-operator-choice-and-blocked-task", {
     visible: [projectRow],
     hidden: [work.getByRole("article"), work.getByText(policy.question, { exact: true }), work.getByText(lease.question, { exact: true })],
@@ -276,7 +290,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await walk.open(workPath);
   await expect(row).toHaveCount(1);
   await walk.state("01-work-single-row-three-questions", {
-    visible: [row.getByText(/Needs you · 3 questions/), badge(5)],
+    visible: [row.getByText(/Your turn · 3 questions/), badge(5)],
     hidden: [work.getByRole("article"), work.getByText(retention.question, { exact: true })],
   });
   await expect(primary.locator(".badge")).toHaveCount(1);
@@ -291,11 +305,11 @@ test("Work rows retain running questions and partial answers, then keep the task
   await modelCheckpoint(request, slug);
   await back.click();
   await expect(page).toHaveURL(workPath);
-  await walk.state("03-running-followup-keeps-attention", {
-    visible: [row.getByText(/Needs you · 3 questions/), row.getByText(/^Running/), badge(5)], hidden: [work.getByRole("article")],
+  await walk.state("03-running-followup-hands-turn-back", {
+    visible: [row.getByText("L2 replying to you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await page.goForward();
-  await expect(questionCard(page, retention)).toBeInViewport();
+  await handedBack(page, questionCard(page, retention));
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByRole("group", { name: "Stop this task?", exact: true })).toBeHidden();
   await expect(page.getByRole("button", { name: "Continue session", exact: true })).toBeVisible();
@@ -303,39 +317,47 @@ test("Work rows retain running questions and partial answers, then keep the task
   expect((await readTask(request, slug)).question_group.questions.filter((q) => q.status === "open")).toHaveLength(3);
   await back.click();
   await expect(page).toHaveURL(workPath);
+  // Stop is the operator's own action: the turn stays with the L2 and the questions stay open.
   await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
-    visible: [row.getByText(/Needs you · 3 questions/), row.getByText(/^Stopped/), badge(5)], hidden: [work.getByRole("article")],
+    visible: [row.getByText("Stopped by you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
+  await row.click();
+  await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Continue session", exact: true }).click();
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await park(request, slug);
+  await back.click();
+  await walk.state("03c-owner-asks-all-three-again", {
+    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for you", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
+  });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();
   await list.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  // Submission preserves the response, while explicit Stop holds its delivery and resolution.
-  await expect.poll(async () => (await readTask(request, slug)).steering.state).toBe("stopped");
-  await expect(list.getByText(retention.question, { exact: true })).toBeHidden();
-  await walk.state("04-inbox-partial-answer", {
-    visible: [list.getByText(region.question, { exact: true }), list.getByText(owner.question, { exact: true }), badge(4)],
-    hidden: [list.getByText(retention.question, { exact: true })],
+  await expect(list).toBeHidden();
+  await walk.state("04-inbox-partial-answer-hands-turn-back", {
+    visible: [page.getByRole("heading", { name: "Needs you", exact: true }), badge(2)],
+    hidden: [list],
   });
-  await walk.open(workPath);
-  await walk.state("05-same-row-two-questions", {
-    visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Stopped/), badge(4)], hidden: [work.getByRole("article")],
-  });
-  await row.click();
-  await page.getByRole("button", { name: "Continue session", exact: true }).click();
+  expect((await readTask(request, slug)).question_group.questions.filter((q) => q.status === "open" && !q.response)).toHaveLength(2);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await walk.open(workPath);
+  await walk.state("05-row-replying-after-answer", {
+    visible: [row.getByText("L2 replying to you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
+  });
   await modelCheckpoint(request, slug);
-  await back.click();
-  await walk.state("05b-explicit-continuation-keeps-question-row", {
-    visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Running/), badge(4)], hidden: [work.getByRole("article")],
+  const again = await park(request, slug);
+  expect(again.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
+  await walk.state("05b-owner-asks-remaining-two-again", {
+    visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for you", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "Use recommendations", exact: true }).click();
   await submit(page, request, slug);
-  await expect(list.getByText(region.question, { exact: true })).toBeHidden();
+  await expect(list).toBeHidden();
+  await park(request, slug);
   await walk.open(workPath);
   await walk.state("06-same-row-last-question", {
-    visible: [row.getByText(/Needs you · 1 question/), row.getByText(/^Running/), badge(3)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Waiting for you", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
   });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`question=${owner.id}&revision=${owner.revision}$`));
@@ -345,7 +367,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await back.click();
   await expect(page).toHaveURL(workPath);
   await walk.state("07-answered-task-still-current", {
-    visible: [row.getByText(/^Running/), badge(2)], hidden: [row.getByText(/Needs you/), work.getByRole("article")],
+    visible: [row.getByText("L2 replying to you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute("href", taskPath(slug));
@@ -395,7 +417,7 @@ test("one global inbox spans projects while Work and question context retain the
   const primary = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
   await walk.open("/projects/atlas?tab=work");
   await walk.state("01-work-is-selected-project-only", {
-    visible: [work.getByRole("link", { name: /^Index rollout · Needs you/ })],
+    visible: [work.getByRole("link", { name: /^Index rollout · Your turn · 1 question/ })],
     hidden: [work.getByRole("link", { name: /^Choose backup retention/ })],
   });
   await expect(page.locator(".badge:visible")).toHaveCount(1);
@@ -427,12 +449,12 @@ test("one global inbox spans projects while Work and question context retain the
   await walk.state("04-back-to-global-inbox", { visible: [card], hidden: [page.getByRole("region", { name: "Task conversation", exact: true })] });
   await walk.open("/projects/beacon?tab=work");
   await walk.state("05-other-project-work", {
-    visible: [work.getByRole("link", { name: /^Choose backup retention · Needs you · 1 question/ })],
+    visible: [work.getByRole("link", { name: /^Choose backup retention · Your turn · 1 question/ })],
     hidden: [work.getByRole("link", { name: /^Index rollout/ })],
   });
 });
 
-test("Needs you anchors the L3 dilemma; follow-ups and ambiguity stay open, a simple answer resolves in the same L2", async ({ page, request }, info) => {
+test("the L3 dilemma ends the chat; a follow-up hands the turn back until it is asked again, a simple answer resolves in the same L2", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
@@ -449,32 +471,32 @@ test("Needs you anchors the L3 dilemma; follow-ups and ambiguity stay open, a si
   await expect(card).toBeInViewport();
   await expect(card.locator("..").locator("..")).toBeFocused();
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
-  await expect(conversation.getByText("Read-only verification 9: fixture migration remains healthy.", { exact: true })).not.toBeInViewport();
+  // The open question follows every later message instead of sitting at its original anchor.
+  await expect(conversation.locator(".msg-row").filter({ hasText: "Read-only verification 9: fixture migration remains healthy." }).locator("~ .conversation-question")).toHaveCount(1);
   await expect(conversation.getByText("The new index passes the fixture checks. Keeping the old one preserves instant rollback.", { exact: true })).toHaveCount(1);
-  await walk.state("02-anchored-question-and-l3-context", {
-    visible: [card, card.getByText(question.question, { exact: true }), card.getByRole("button", { name: question.recommendation!.label, exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
+  await walk.state("02-question-at-the-end-with-l3-context", {
+    visible: [turnLabel(page).getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question.question, { exact: true }), ...(info.project.name === "phone" ? [] : [page.getByText("Replying hands the turn back to the L2.", { exact: true })]), card.getByRole("button", { name: question.recommendation!.label, exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
     hidden: [page.getByRole("combobox", { name: "Recipient", exact: true }), page.getByPlaceholder("Add a note for the L2 (optional)")],
   });
   await expect(conversation.getByText("The brief sets no retention limit; the operator should choose the rollback window.", { exact: true })).toHaveCount(1);
   await send(page, "Could we roll back after day seven?");
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await readTask(request, slug)).question?.status).toBe("open");
-  await conversation.getByRole("button", { name: "View question", exact: true }).click();
+  expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
   const reply = await modelCheckpoint(request, slug);
-  // Let the real pending-question poll deliver the owner reply while preserving the reading position.
+  // Let the real pending-question poll deliver the owner reply above the quiet line.
   await expect(conversation.getByText(reply.answer, { exact: true })).toHaveCount(1, { timeout: 25_000 });
-  await expect(card).toBeInViewport();
-  await expect(conversation.getByRole("button", { name: "Latest messages", exact: true })).toBeVisible();
-  await walk.state("03-follow-up-keeps-choice-open", {
-    visible: [card, card.getByRole("button", { name: question.recommendation!.label, exact: true })],
-    hidden: [card.getByText("Decision recorded", { exact: true })],
+  await handedBack(page, card);
+  await walk.state("03-follow-up-hands-turn-back", {
+    visible: [conversation.getByText("Could we roll back after day seven?", { exact: true }), conversation.getByText(reply.answer, { exact: true })],
+    hidden: [card, turnLabel(page), page.getByText("Replying hands the turn back to the L2.", { exact: true })],
   });
-  await walk.state("03b-follow-up-exchange", {
-    action: () => conversation.getByRole("button", { name: "Latest messages", exact: true }).click(),
-    visible: [conversation.getByText("Could we roll back after day seven?", { exact: true }), conversation.getByText(reply.answer, { exact: true }), conversation.getByRole("button", { name: "View question", exact: true })],
-    hidden: [conversation.getByText("Decision recorded", { exact: true })],
+  await park(request, slug);
+  await expect(card).toBeVisible({ timeout: 25_000 });
+  await walk.state("03b-owner-asks-again", {
+    visible: [turnLabel(page).getByText("Your turn · 1 question · asked again", { exact: true }), card.getByRole("button", { name: question.recommendation!.label, exact: true }), conversation.getByText(reply.answer, { exact: true })],
+    hidden: [card.getByText("Decision recorded", { exact: true }), conversation.getByRole("status").filter({ hasText: "Sent · the L2 has your reply." })],
   });
-  await expect(conversation.getByText(reply.answer, { exact: true })).toBeInViewport();
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(true);
   await send(page, "Maybe two weeks, but I am unsure about cost.");
   await modelCheckpoint(request, slug);
@@ -488,8 +510,9 @@ test("Needs you anchors the L3 dilemma; follow-ups and ambiguity stay open, a si
   expect(resolved.resolution).toMatchObject({ disposition: "answered", message_id: chosen.message_id, text: "Keep the old index for fourteen days." });
   expect(final.session_id).toBe(initial.session_id);
   const workers = await (await request.get("/fixture/workers")).json();
-  expect(workers.calls).toHaveLength(1);
-  expect(workers.calls[0].session_id).toBe(initial.session_id);
+  // The first follow-up and the reply after the owner parked again each resumed the same session.
+  expect(workers.calls).toHaveLength(2);
+  for (const call of workers.calls) expect(call.session_id).toBe(initial.session_id);
   expect(workers.calls[0].prompt).toContain(question.id);
   await page.reload();
   await recorded(card);
@@ -552,7 +575,7 @@ test("partial answers retain only the relevant remainder; a changed direction cl
   });
 });
 
-test("a submitted answer survives a lost response without duplicate messages, and stale navigation shows the receipt", async ({ page, request }, info) => {
+test("a submitted answer survives a lost response without duplicate messages, and stale navigation shows the hand-back", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
@@ -581,12 +604,13 @@ test("a submitted answer survives a lost response without duplicate messages, an
   await walk.state("01-acceptance-clears-list-on-refresh", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });
   await walk.open(atQuestion(slug, question));
   const historical = questionCard(page, question);
-  await sent(historical);
-  await walk.state("02-stale-link-keeps-receipt-no-old-action", { visible: [historical], hidden: [historical.getByRole("button")] });
+  const answer = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".bubble").filter({ hasText: question.recommendation!.text });
+  await handedBack(page, historical);
+  await walk.state("02-stale-link-shows-sent-answer-no-old-action", { visible: [answer], hidden: [historical, page.getByRole("button", { name: question.recommendation!.label, exact: true })] });
   await walk.open(`/projects/atlas/decisions/${slug}`);
   await expect(page).toHaveURL(new RegExp(`/projects/atlas/tasks/${slug}(\\?|$)`));
-  await sent(historical);
-  await walk.state("03-legacy-link-opens-owning-chat", { visible: [historical, page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [page.getByRole("combobox", { name: "Recipient", exact: true })] });
+  await handedBack(page, historical);
+  await walk.state("03-legacy-link-opens-owning-chat", { visible: [answer, page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [page.getByRole("combobox", { name: "Recipient", exact: true })] });
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await readTask(request, slug)).session_id).toBe(initial.session_id);
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
@@ -618,7 +642,7 @@ test("a revised recommendation refuses the stale action and anchors the current 
   await walk.state("03-current-acceptance-recorded", { visible: [currentCard], hidden: [currentCard.getByRole("button")] });
 });
 
-test("a requeued dilemma accepts discussion and a durable response while its next worker waits to start", async ({ page, request }, info) => {
+test("a requeued dilemma accepts a durable response and discussion while its next worker waits to start", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";
   const initial = await readTask(request, slug);
@@ -632,7 +656,7 @@ test("a requeued dilemma accepts discussion and a durable response while its nex
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(true);
   await walk.open("/projects/atlas?tab=work");
   await walk.state("00-requeued-question-discoverable-in-work", {
-    visible: [page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Index rollout · Needs you · 1 question · Queued/ })],
+    visible: [page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Index rollout · Your turn · 1 question · Queued/ })],
     hidden: [page.getByRole("region", { name: "Work", exact: true }).getByRole("article")],
   });
   await walk.open(atQuestion(slug, question));
@@ -643,8 +667,24 @@ test("a requeued dilemma accepts discussion and a durable response while its nex
   await expect(field).toBeEnabled();
   await expect(accept).toBeEnabled();
   await walk.state("01-requeued-question-still-actionable", {
-    visible: [card, field, accept, page.getByText("Queued", { exact: true }).first(), ...(info.project.name === "phone" ? [] : [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })])],
+    visible: [card, field, accept, page.getByText("Your turn · 1 question", { exact: true }).first(), ...(info.project.name === "phone" ? [] : [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })])],
     hidden: [page.getByRole("button", { name: "Resume", exact: true }), ...(info.project.name === "phone" ? [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })] : [])],
+  });
+  await accept.click();
+  await submit(page, request, slug, false);
+  await handedBack(page, card, "Sent · waiting for the L2 to start.");
+  const decided = await readTask(request, slug);
+  expect(decided.state).toBe("queued");
+  const receipt = decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.response!;
+  expect(decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution).toBeNull();
+  expect(decided.messages.filter((row) => row.id === receipt.message_id)).toHaveLength(1);
+  expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
+  let engine = await (await request.get("/fixture/workers")).json();
+  expect(engine.calls).toHaveLength(0);
+  await expect(field).toBeEnabled();
+  await walk.state("02-answer-saved-worker-still-queued", {
+    visible: [field, conversation.getByText("Sent · waiting for the L2 to start.", { exact: true })],
+    hidden: [accept, conversation.getByText("Work resumed", { exact: true })],
   });
   const followup = "Could we roll back after day seven?";
   await send(page, followup);
@@ -653,46 +693,22 @@ test("a requeued dilemma accepts discussion and a durable response while its nex
   expect(discussed.state).toBe("queued");
   expect(discussed.question?.status).toBe("open");
   expect(discussed.messages.filter((row) => row.text === followup)).toHaveLength(1);
-  expect((await queue(request)).some((row) => row.slug === slug)).toBe(true);
-  let engine = await (await request.get("/fixture/workers")).json();
-  expect(engine.calls).toHaveLength(0);
-  expect(engine.pending[slug].filter((row: { text: string }) => row.text === followup)).toHaveLength(1);
-  await walk.state("02-follow-up-saved-awaiting-worker", {
-    visible: [conversation.locator(".bubble").filter({ hasText: followup }), field],
-    hidden: [card.getByText("Decision recorded", { exact: true })],
-  });
-  await accept.click();
-  await submit(page, request, slug, false);
-  await sent(card);
-  const decided = await readTask(request, slug);
-  expect(decided.state).toBe("queued");
-  const receipt = decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.response!;
-  expect(decided.questions.find((row) => row.id === question.id && row.revision === question.revision)!.resolution).toBeNull();
-  expect(decided.messages.filter((row) => row.id === receipt.message_id)).toHaveLength(1);
-  expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
-  await expect(field).toBeEnabled();
-  await walk.state("03-decision-recorded-worker-still-queued", {
-    action: () => conversation.getByRole("button", { name: "Latest messages", exact: true }).click(),
-    visible: [field, conversation.getByText("Waiting for the L2 to start", { exact: true })],
-    hidden: [accept, conversation.getByText("Work resumed", { exact: true })],
-  });
-  const followOn = "Include the rollback window in the release notes.";
-  await send(page, followOn);
-  const final = await readTask(request, slug);
-  expect(final.state).toBe("queued");
-  expect(final.messages.filter((row) => row.text === followOn)).toHaveLength(1);
   engine = await (await request.get("/fixture/workers")).json();
   expect(engine.calls).toHaveLength(0);
   expect(engine.pending[slug].filter((row: { id: string }) => row.id === receipt.message_id)).toHaveLength(1);
-  expect(engine.pending[slug].filter((row: { text: string }) => row.text === followOn)).toHaveLength(1);
+  expect(engine.pending[slug].filter((row: { text: string }) => row.text === followup)).toHaveLength(1);
+  await walk.state("03-follow-up-saved-awaiting-worker", {
+    visible: [conversation.locator(".bubble").filter({ hasText: followup }), field, conversation.getByText("Sent · waiting for the L2 to start.", { exact: true })],
+    hidden: [accept, card.getByText("Decision recorded", { exact: true })],
+  });
   await page.reload();
-  await sent(card);
-  await walk.state("04-queued-receipt-and-composer-survive-reload", { visible: [card, field], hidden: [accept] });
+  await handedBack(page, card, "Sent · waiting for the L2 to start.");
+  await walk.state("04-queued-hand-back-and-composer-survive-reload", { visible: [field, conversation.locator(".bubble").filter({ hasText: followup })], hidden: [accept] });
   await walk.open("/projects/atlas?tab=work");
   const work = page.getByRole("region", { name: "Work", exact: true });
   await walk.state("05-answered-task-remains-queued-in-work", {
     visible: [work.getByRole("link", { name: /^Index rollout · Queued/ })],
-    hidden: [work.getByText(/Needs you ·/).filter({ hasText: "Index rollout" }), work.getByRole("article")],
+    hidden: [work.getByText(/Your turn ·/).filter({ hasText: "Index rollout" }), work.getByRole("article")],
   });
 });
 
@@ -759,7 +775,10 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   // Deselecting the region leaves an explicit one-answer batch, never a default for the other questions.
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
   await submit(page, request, slug);
+  await handedBack(page, questionCard(page, retention));
+  await park(request, slug);
   await recorded(questionCard(page, retention));
+  await expect(turnLabel(page)).toHaveText("Your turn · 2 questions · asked again");
   expect(submissions).toEqual([{ project: "atlas", slug, group_id: group.id, group_revision: group.revision,
     answers: [{ question_id: retention.id, revision: retention.revision, option_key: "fourteen" }] }]);
   let after = await readTask(request, slug);
@@ -767,6 +786,8 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
   await card.getByRole("button", { name: "Use recommendations", exact: true }).click();
   await submit(page, request, slug);
+  await handedBack(page, questionCard(page, region));
+  await park(request, slug);
   await recorded(questionCard(page, region));
   after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([owner.id]);
@@ -789,7 +810,10 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   expect(after.question_group.questions.every((q) => q.status === "resolved")).toBe(true);
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
   expect(after.session_id).toBe(initial.session_id);
-  expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
+  // Each answer after the owner parked again resumed the same session.
+  const calls = (await (await request.get("/fixture/workers")).json()).calls as { session_id: string }[];
+  expect(calls).toHaveLength(3);
+  for (const call of calls) expect(call.session_id).toBe(initial.session_id);
   await page.reload();
   for (const q of group.questions) await recorded(questionCard(page, q));
   await page.getByRole("button", { name: "Latest messages", exact: true }).click();
@@ -814,7 +838,11 @@ test("a group follow-up accepts nothing; one typed decision answers several memb
   expect(source.question_refs).toEqual(group.questions.map((q) => ({ id: q.id, revision: q.revision })));
   await page.reload();
   const card = groupCard(page, group);
-  await walk.state("group-follow-up-keeps-all-three-open", { visible: [card.getByText("3 questions to answer", { exact: true })], hidden: [card.getByText("Decision recorded", { exact: true })] });
+  await handedBack(page, card);
+  expect((await queue(request)).some((row) => row.slug === slug)).toBe(false);
+  await park(request, slug);
+  await page.reload();
+  await walk.state("group-follow-up-asked-again-keeps-all-three-open", { visible: [turnLabel(page).getByText("Your turn · 3 questions · asked again", { exact: true }), card.getByText("3 questions to answer", { exact: true })], hidden: [card.getByText("Decision recorded", { exact: true })] });
   await send(page, "Keep 14 days; use snapshots so the backup region no longer matters.");
   expect((await readTask(request, slug)).question_group.questions.every((q) => q.status === "open")).toBe(true);
   const chosen = await modelCheckpoint(request, slug);
@@ -822,6 +850,8 @@ test("a group follow-up accepts nothing; one typed decision answers several memb
   expect(after.question_group.questions[0]!.resolution).toMatchObject({ disposition: "answered", message_id: chosen.message_id });
   expect(after.question_group.questions[1]!.resolution).toMatchObject({ disposition: "superseded", message_id: chosen.message_id });
   expect(after.question_group.questions[2]!.status).toBe("open");
+  expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(0);
+  await park(request, slug);
   expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
   await page.reload();
   await recorded(questionCard(page, retention));
@@ -871,6 +901,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   const staleResponse = page.waitForResponse((row) => row.url().endsWith("/api/decide"));
   await card.getByRole("button", { name: "Send 2 answers", exact: true }).click();
   expect((await staleResponse).status()).toBe(409);
+  await page.unroute(read);
   const failed = await readTask(request, slug);
   expect(failed.messages).toEqual(before.messages);
   expect(failed.question_group.questions.every((q) => q.status === "open")).toBe(true);
@@ -885,7 +916,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   await card.getByRole("button", { name: "East", exact: true }).click();
   await submit(page, request, slug, false);
   const payload = (await submitted).postDataJSON();
-  await expect(card.getByText("Sent to L2", { exact: true })).toHaveCount(2);
+  await handedBack(page, card);
   expect((await request.post("/api/decide", { data: payload })).ok()).toBe(true);
   const after = await readTask(request, slug);
   const receipts = after.question_group.questions.filter((q) => q.response).map((q) => q.response!);
@@ -895,7 +926,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   expect(after.question_group.questions.filter((q) => q.status === "open" && !q.response)).toHaveLength(1);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
-  await walk.state("refreshed-recommendations-recorded-once", { visible: [card.getByText("1 question to answer", { exact: true })], hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })] });
+  await walk.state("refreshed-answers-recorded-once-turn-handed-back", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true })], hidden: [card, page.getByRole("button", { name: "Use recommendations", exact: true })] });
 });
 
 test("question loading, read failure, write failure and denied access retain recoverable conversation state", async ({ page, request }, info) => {

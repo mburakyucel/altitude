@@ -7,7 +7,7 @@ import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction,
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { agoText, when } from "../data/observed";
-import { questionPath } from "../data/decisions";
+import { questionPath, turnLabel } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
@@ -17,7 +17,7 @@ import type { Steering } from "../components/TaskSteering";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
-import { Question, QuestionSet } from "../components/DecisionCard";
+import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
@@ -79,6 +79,9 @@ interface Facts {
   canReject: boolean;
   /** The composer's hint line for this state. */
   hint: string;
+  /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
+  review: Decision | null;
+  repository?: string | null;
 }
 
 function faultSummary(text: string): string {
@@ -96,8 +99,13 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = state === "blocked" && !held && !faultKind && str(task["waiting_on"]) === "l3";
   const finished = state === "done" || state === "rejected";
-  const awaitingAnswer = (task.question_group?.questions ?? (task.question ? [task.question] : []))
-    .some((question) => question.status === "open" && !question.response && question.audience !== "l3");
+  const turnRows = overview?.queue.filter((row) => row.project === project && row.slug === task.slug) ?? [];
+  // The header counts the task's own open questions, so it agrees with the chat before the overview refreshes.
+  const handedBack = str(task["handed_back"]);
+  const asked = state === "blocked" || state === "reported" ? (task.question_group?.questions ?? []).filter((question) =>
+    question.status === "open" && !question.response && question.audience !== "l3" && (question.asked ?? "") > handedBack) : [];
+  const turn = turnLabel([...asked, ...turnRows.filter((row) => row.kind === "review")]);
+  const replying = Boolean(task["handed_back"]) && (state === "running" || held);
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
   const engineLabel = overview?.engines.find((e) => e.engine === engineId)?.label ?? engineId;
@@ -122,10 +130,10 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = task.steering?.state === "stopped" ? "Stopped" : task.steering?.state === "stopping" ? "Stopping…"
+  const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
+    : faultKind && state === "blocked" ? "Paused · fault" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
-    ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : awaitingAnswer ? "Needs your answer" : task.question?.response ? "Waiting for L2" : "Paused"
-    : sentence(state || "unknown");
+    ? waitsOnL3 ? "Waits for L3" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
   const dot: Facts["dot"] =
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
 
@@ -172,6 +180,8 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
         : held
           ? "Delivered when Altitude resumes the L2."
           : "Sending resumes the L2 with your message.",
+    review: turnRows.find((row) => row.kind === "review") ?? null,
+    repository,
   };
 }
 
@@ -196,6 +206,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];
+  // The open group is the last thing in the chat; a reply hands the questions asked before it back to the L2.
+  const live = Boolean(group?.questions.some((question) => question.status === "open"));
+  const handedBack = str(task["handed_back"]);
+  const turn = open.filter((question) => question.audience !== "l3" && (!handedBack || (question.asked ?? "") > handedBack));
+  const count = `Your turn · ${turn.length} question${turn.length === 1 ? "" : "s"}`;
+  const turnText = turn.some((question) => question.asked_again) ? `${count} · asked again` : count;
   const scroller = useRef<HTMLDivElement>(null);
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
@@ -285,7 +301,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
           cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
         );
-        void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
+        for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
         if (images && submission.current?.request_id === images.request_id) submission.current = null;
         if (mounted.current) setPending((current) => current === preview ? null : current);
       } catch (error) {
@@ -330,7 +346,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         </details> : content}
       </div>);
     }
-    if (atGroup && group) {
+    if (atGroup && group && !live) {
       const withdrawn = group.questions.every((q) => q.resolution?.disposition === "withdrawn");
       rows.push(<div key={`${key}-group`} className="conversation-question" data-historical={withdrawn || undefined} tabIndex={-1} ref={(node) => {
         group.questions.forEach((q) => {
@@ -374,7 +390,22 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
           {pending && !messages.some((message) => message.id === pending.id) ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
-          {(task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
+          {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
+            group.questions.forEach((q) => {
+              const id = `${q.id}:${q.revision}`;
+              if (node) anchors.current.set(id, node); else anchors.current.delete(id);
+            });
+          }}>
+            {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
+              <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
+              <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+            </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
+          </div> : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>
+          : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
+          {facts.review ? <div className="conversation-question" data-turn="operator">
+            <p className="conversation-turn">Your turn · review before merge</p>
+            <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
+          </div> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
@@ -383,7 +414,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         </div>
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
-        {current && questionOffscreen ? <button type="button" className="link" onClick={() => jumpTo(current)}>View question</button> : null}
+        {current && questionOffscreen && turn.length ? <button type="button" className="conversation-pill" onClick={() => jumpTo(current)}>{count} ↓</button> : null}
         {current?.design_url && questionOffscreen ? <a href={current.design_url} target="_blank" rel="noopener noreferrer">View preview · v{current.revision}</a> : null}
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
@@ -396,7 +427,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={["stopped", "stopping", "stop_unconfirmed"].includes(steering.state) ? "" : task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} />
+        hint={["stopped", "stopping", "stop_unconfirmed"].includes(steering.state) ? "" : task.state !== "queued" && turn.length ? "Replying hands the turn back to the L2." : facts.hint} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
           : ["stopping", "stop_unconfirmed"].includes(steering.state) ? <p className="text-meta text-muted">Keep editing while Stop is confirmed.</p> : null}
       </div> : null}
@@ -707,7 +738,7 @@ export default function Task() {
   useEffect(() => setDetailsOpen(false), [project, slug]);
   const facts = task.data ? taskFacts(task.data, overview.data, project) : null;
   const header = phone ? <PhoneHeader overview={overview} onTitleClick={facts ? () => setDetailsOpen(true) : undefined} status={facts ?
-    <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden />L2 · <span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span> : undefined
+    <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span> : undefined
   }>{facts ? <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button> : null}</PhoneHeader> : null;
   let content: ReactNode;
   if (task.isPending) content = <TaskSkeleton phone={phone} />;

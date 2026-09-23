@@ -12,10 +12,11 @@ async function task(request: APIRequestContext) {
   return response.json() as Promise<{ question: Question; question_group: { questions: Question[] }; hold_merge: string; messages: { text: string }[] }>;
 }
 const atQuestion = (q: Question) => `${taskPath}?question=${q.id}&revision=${q.revision}`;
+const park = async (request: APIRequestContext) => expect((await request.post("/fixture/park")).ok()).toBe(true);
 const card = (page: Page, q: Question) => page.getByRole("region", { name: "Task conversation", exact: true })
   .locator(`[data-question-id="${q.id}"][data-question-revision="${q.revision}"]`);
 
-test("a saved proposal opens from chat, full size and back; follow-up is not approval and approval retains the hold", async ({ page, request }, info) => {
+test("a saved proposal opens from chat, full size and back; a follow-up hands the turn back, is not approval, and approval retains the hold", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const initial = await task(request);
   const q = initial.question;
@@ -59,13 +60,20 @@ test("a saved proposal opens from chat, full size and back; follow-up is not app
   await preview.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Send", exact: true }).click();
   await expect.poll(async () => (await task(request)).messages.some((m) => m.text === "Could the reply have more room?")).toBe(true);
   expect((await task(request)).question.status).toBe("open");
-  await previewWalk.state("04-follow-up-keeps-decision-open", {
-    visible: [card(preview, q).getByRole("button", { name: "Use this design" }), preview.getByText("Could the reply have more room?", { exact: true })],
-    hidden: [card(preview, q).getByText("Decision recorded", { exact: true })],
+  const sent = preview.getByRole("region", { name: "Task conversation", exact: true }).getByRole("status").filter({ hasText: "Sent · the L2 has your reply." });
+  await previewWalk.state("04-follow-up-hands-turn-back", {
+    visible: [sent, preview.getByText("Could the reply have more room?", { exact: true })],
+    hidden: [card(preview, q), preview.getByText("Decision recorded", { exact: true })],
+  });
+  await park(request);
+  await previewWalk.state("04b-asked-again-decision-still-open", {
+    visible: [preview.getByText("Your turn · 1 question · asked again", { exact: true }), card(preview, q).getByRole("button", { name: "Use this design" }), card(preview, q).getByRole("link", { name: "View preview · v1", exact: true })],
+    hidden: [sent, card(preview, q).getByText("Decision recorded", { exact: true })],
   });
   await card(preview, q).getByRole("button", { name: "Use this design" }).click();
   await preview.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(card(preview, q).getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(sent).toBeVisible();
+  await expect(card(preview, q)).toHaveCount(0);
   expect((await task(request)).question.status).toBe("open");
   expect((await request.post("/fixture/checkpoint")).ok()).toBe(true);
   await preview.reload();
@@ -157,14 +165,20 @@ test("the current implementation preview is discoverable from Needs you, Work an
   await walk.open(taskPath);
   const jumps = page.locator(".conversation-jumps");
   const currentPreview = jumps.getByRole("link", { name: previewName, exact: true });
-  await walk.state("review-05-latest-chat-entry", { visible: [currentPreview, jumps.getByRole("button", { name: "View question", exact: true })], hidden: [] });
+  const pill = jumps.getByRole("button", { name: "Your turn · 1 question ↓", exact: true });
+  // The open question ends the chat, so the latest view already shows it.
+  await expect(card(page, review)).toBeInViewport();
+  await walk.state("review-05-latest-chat-ends-with-question", { visible: [card(page, review).getByRole("link", { name: previewName, exact: true })], hidden: [currentPreview, pill] });
+  await conversation.locator(".convo-scroll").evaluate((node) => { node.scrollTop = 0; });
+  await walk.state("review-05b-reading-back-keeps-preview-and-turn", { visible: [currentPreview, pill], hidden: [] });
   await expect(card(page, review)).not.toBeInViewport();
   await draft.fill("Does the implementation preserve my place when I return?");
   await inspectCurrent(currentPreview, "review-06-from-latest-chat");
   await expect(draft).toHaveValue("Does the implementation preserve my place when I return?");
-  await jumps.getByRole("button", { name: "View question", exact: true }).click();
+  await pill.click();
   await expect(card(page, review)).toBeInViewport();
   await expect(currentPreview).toBeHidden();
+  await expect(pill).toBeHidden();
 
   await walk.open(atQuestion(proposal));
   const earlier = card(page, proposal);
@@ -199,13 +213,24 @@ test("a grouped review keeps its current preview reachable after another member 
   await walk.open(taskPath);
   const jumps = page.locator(".conversation-jumps");
   const preview = jumps.getByRole("link", { name: "View preview · v1", exact: true });
-  const viewQuestion = jumps.getByRole("button", { name: "View question", exact: true });
-  await walk.state("group-review-01-two-open-members", { visible: [preview, viewQuestion], hidden: [] });
+  const scroller = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".convo-scroll");
+  const readBack = () => scroller.evaluate((node) => { node.scrollTop = 0; });
+  await expect(card(page, review)).toBeInViewport();
+  await walk.state("group-review-01-two-open-members-end-the-chat", {
+    visible: [card(page, review).getByRole("link", { name: "View preview · v1", exact: true }), card(page, date)],
+    hidden: [preview, jumps.getByRole("button", { name: /^Your turn/ })],
+  });
+  await readBack();
+  await walk.state("group-review-01b-reading-back-shows-shortcuts", { visible: [preview, jumps.getByRole("button", { name: "Your turn · 2 questions ↓", exact: true })], hidden: [] });
   await expect(preview).toBeInViewport();
   await expect(preview).toHaveAttribute("href", review.design_url);
   expect((await request.post("/fixture/resolve-question", { data: { id: date.id } })).ok()).toBe(true);
   await expect.poll(async () => (await task(request)).question.status).toBe("resolved");
+  // Answering one member in chat hands the turn back; the owner asks the review again.
+  await park(request);
   await page.reload();
+  await readBack();
+  const viewQuestion = jumps.getByRole("button", { name: "Your turn · 1 question ↓", exact: true });
   await walk.state("group-review-02-preview-survives-partial-answer", { visible: [preview, viewQuestion], hidden: [] });
   await expect(preview).toBeInViewport();
   const opened = page.waitForEvent("popup");

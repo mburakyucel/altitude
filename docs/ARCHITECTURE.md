@@ -1364,7 +1364,13 @@ source/audience, stable ID and message anchor, and an open or resolved status. A
 contains up to three open members plus closed history, a group revision, and one stable discussion
 anchor. `task_view` projects `question_group` with member records, `question` as the first
 open member (or latest receipt), and individual revision history;
-`GET /api/overview` and the project view project the same unresolved operator questions. Question
+`GET /api/overview` and the project view project the operator's turn: unresolved operator questions
+asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
+delivery whose owner stopped in `blocked` or `reported` (#419). Any operator message or quick answer
+hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
+marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
+restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
+`paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question
 state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
 records a decision. On receiving guidance, the owner assesses each question before lengthy work.
 Unaffected choices remain answerable; doubtful ones are withdrawn with a reason in chat and re-asked
@@ -1558,7 +1564,8 @@ its engine as the engine seam reports them, the last PR with whether it merged a
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
-prose under day dividers, the question component at its recorded message anchor, and the composer
+prose under day dividers, the open question group at the end of the conversation (closed groups
+at their recorded message anchor), a held review card when one waits, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with
@@ -1585,7 +1592,7 @@ Desktop keeps direct header actions. Two tabs, Conversation and Live session, sw
 (`/live` selects the second); they stay visible
 when software keyboard use hides bottom navigation. The composer sits above that navigation or
 the keyboard. Details closes back to its opener without changing the draft or reading position.
-Open questions retain their chat anchor and View question action, with no generic Resume; viewing
+Open questions sit at the end of the chat with the **Your turn** jump pill, with no generic Resume; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
 read-only with the composer and activity preview gone. View switches preserve draft text and selection.
 The read-only activity projection uses only the selected worker generation, existing redaction and

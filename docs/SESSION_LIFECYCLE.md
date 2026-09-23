@@ -428,7 +428,9 @@ capacity waits retain the composer. Refused sends restore recoverable text, whil
 response keeps the recovery hint and never resends automatically. Merge-held status persists after
 send and reload. `reported-continuation.pw.ts` walks continuation and refusal; the shared composer
 and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
-A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
+A task's versioned dilemma remains open independently of that wake and its worker state. Sending
+it anything hands the turn back: its questions leave Needs you until the owner parks again, when
+still-open ones return as **asked again** and a held review-ready PR shows its own review item. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
 The owner or coordinator writes the actual choice in plain language with the task's user-facing
@@ -1052,8 +1054,8 @@ Reject, operational Resume and live-panel controls. The compact phone header nam
 Merge held independently. Full block/hold reasons,
 metadata, Reject with confirmation and operational Resume open in task details. Stop and Continue
 remain directly accessible in both views on phone and desktop. Faults retain a visible cause and
-the L3 notification. An open question stays at its conversation anchor with View question/Latest
-messages and no generic Resume. Disclosure,
+the L3 notification. An open question stays at the end of the conversation with its **Your turn**
+pill/Latest messages and no generic Resume. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
 
@@ -1072,9 +1074,10 @@ No summarizer or duplicate reply is generated. View changes preserve the draft a
 blocked questions use the existing question conversation, and finished tasks remove the preview,
 composer and Stop.
 
-An owner/daemon park without a question, fault or operator stop remains blocked and displays
+An owner/daemon park without a question, review, fault or operator stop remains blocked and displays
 **Paused** with an idle card dot. Queue and restart inventories call an unassigned wait **paused**;
-they attribute waits only to a recorded recipient. **Stopped** identifies an operator stop.
+they attribute waits only to a recorded recipient or the operator's turn. **Stopped by you**
+identifies an operator stop, and a fault reads **Paused · fault**.
 
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline

@@ -154,7 +154,8 @@ def _brief_text(record: dict) -> str:
     engine = f"{engine_name}/{model}" if engine_name else "unassigned"
     ci = record.get("ci_recheck") or {}
     next_ci = ci.get("due_at") or (ci.get("delivery") or {}).get("next_at")
-    return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}", f"engine/model: {engine}",
+    waiting = f" ({record['waiting']})" if record.get("waiting") else ""
+    return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}{waiting}", f"engine/model: {engine}",
                       f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
                       f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
                       f"machine access: {(record.get('machine_access') or {}).get('purpose') or 'none'}",
@@ -618,7 +619,8 @@ def main(argv=None) -> None:
             rows = T.task_messages(p, args.slug, args.last)
             out(rows) if args.as_json else print(_messages_text(rows))
         elif tc == "list":
-            out([{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
+            out([{**{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")}, "waiting": T.wait_label(t)}
+                 for t in S.list_tasks(p, include_archive=args.all)])
         return
     if c == "fyi":
         out(T.fyi(_project(args), args.slug, args.text, actor=ACTOR)); return
