@@ -759,7 +759,7 @@ test("grouped choices start unselected, submit only picked answers, and the reco
   await expect(card.locator('[aria-pressed="true"]')).toHaveCount(0);
   const west = questionCard(page, region).getByRole("button", { name: "West", exact: true });
   await expect(west).toHaveAttribute("aria-description", "Recommended");
-  await expect(west.getByText("Recommended", { exact: true })).toBeVisible();
+  await expect(west.locator(".option-recommended")).toBeVisible();
   await expect(west).toHaveAttribute("aria-pressed", "false");
   await walk.state("review-02b-group-recommended-marked", { visible: [west], hidden: [card.locator('[aria-pressed="true"]')] });
   const submissions: unknown[] = [];

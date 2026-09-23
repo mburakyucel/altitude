@@ -1448,7 +1448,7 @@ The shared question component appears on Needs you and at its conversation ancho
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
-An explicitly recommended choice carries a **Recommended** tag, distinct from the pressed selection, and is never preselected.
+An explicitly recommended choice has an accent border and a corner star (announced as "Recommended"), distinct from the pressed selection, and is never preselected.
 Edits to independent members survive another member's response; changed revisions discard their own
 stale choices without retargeting them. Explicitly republishing a responded member gives it a new revision
 and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.

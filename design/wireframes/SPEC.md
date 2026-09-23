@@ -496,8 +496,9 @@ walks empty, loading, saved/read errors, sending, sent, failed and denied states
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
-Each explicitly recommended choice carries a small **Recommended** tag and accent border; it is never
-preselected, and the operator's pick keeps the separate pressed style. **Send N answers** submits picks.
+Each explicitly recommended choice has an accent border and text with a small star badge on its
+top-right corner (announced and titled "Recommended"), so the cue never narrows the label. It is never
+preselected; the operator's pick adds the tinted fill and ring. **Send N answers** submits picks.
 The task title and card background open the same chat destination. Reference links remain ordinary
 external links. Plain questions accept a typed answer in place; no inferred default exists. Operational stops and faults open the task's
 ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
