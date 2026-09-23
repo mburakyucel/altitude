@@ -454,6 +454,16 @@ owned by other active tasks. Protected branches require the guarded landing path
 fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for operator review.
+Merging invocations hold a separate `flock` on `altitude-land.lock` in the repository's common
+Git directory, from before ownership reads and fetch through checks and merge. All its worktrees
+share the lock; task-state locks remain short, so messages and Stop stay available. Admission waits
+at most one hour and refreshes ownership and holds before publication. Current main is merged into
+the task branch before pushing when needed, preserving adopted ancestry and triggering fresh head
+checks. A conflicting integration is aborted with local work retained for owner reconciliation.
+The process owns the turn: return, exception or termination releases it without daemon recovery.
+There is no persistent queue or FIFO guarantee. Nonmerging preparation and dry runs do not take
+the turn; other repositories remain independent. External Git/GitHub writers and older installed
+landing code do not participate, so exact base/head refusals remain necessary.
 The temporary local-check repository in `config.py` selects this project's operator-authorized
 exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
@@ -469,7 +479,7 @@ unstaged and untracked work. Before pushing, the owner reviews all outgoing comm
 PR diff for scope and privacy, including intermediate content absent from the final tree.
 Parallel tasks may edit shared paths; their briefs
 name those paths and ask owners to rebase onto main before landing and keep shared-doc edits to
-their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
+their own sections. For conflicts requiring manual reconciliation, the owner updates the task branch;
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
 
@@ -560,7 +570,7 @@ remains effective.
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
 The original head must remain an ancestor during landing and resume.
 The task keeps its local branch and publishes a fast-forward refspec to the original PR branch;
-adopted pushes never retry with force. The owner incorporates main with a merge commit, preserving
+adopted pushes never retry with force. Landing incorporates main with a merge commit, preserving
 the adopted history. Adoption cannot be widened to a later external head.
 The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
 and the live task owner/hold/active receipt are rechecked before merging. The fetched base branch

@@ -15,6 +15,8 @@ first — a merged PR can start another delivery; a closed PR is refused — so
 a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
 from __future__ import annotations
 import contextlib
+import fcntl
+import functools
 import json
 import os
 import re
@@ -32,6 +34,7 @@ from . import config, dispatch, github_intake, state as S, tasks as T
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
+LAND_WAIT_TIMEOUT = 3600
 
 
 class LandError(RuntimeError):
@@ -908,6 +911,35 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     return finish(merged, None if pair.get("local_checks") else main_run, tests)
 
 
+def _serialized_merge(function):
+    """#433: siblings must not advance the base while a landing validates its candidate."""
+    @functools.wraps(function)
+    def run(message, **kwargs):
+        if not kwargs.get("merge") or kwargs.get("dry_run"):
+            return function(message, **kwargs)
+        root = Path(kwargs.get("cwd") or Path.cwd())
+        common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
+        with open(Path(common) / "altitude-land.lock", "a") as lock:
+            deadline = time.monotonic() + LAND_WAIT_TIMEOUT
+            waiting = False
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if not waiting:
+                        _note("waiting for another landing in this repository (up to 3600 seconds)")
+                        waiting = True
+                    if time.monotonic() >= deadline:
+                        raise LandError("landing wait timed out; no candidate selected — re-run alt land when ready")
+                    time.sleep(1)
+            if waiting:
+                _note("landing turn acquired; refreshing ownership, base and candidate checks")
+            return function(message, **kwargs)
+    return run
+
+
+@_serialized_merge
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int = 600, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
@@ -1041,6 +1073,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
+    if merge and _git(root, "merge-base", "--is-ancestor", f"origin/{base}", "HEAD").returncode != 0:
+        _note(f"integrating current origin/{base} before publishing the candidate")
+        try:
+            _need(_git(root, "merge", "--no-edit", f"origin/{base}", timeout=300), "integrate current base")
+        except LandError:
+            if (git_dir / "MERGE_HEAD").exists():
+                _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
+            raise
     replaced = _push(root, publish_branch, recorded_tip,
                      source_branch=branch if adoption else None)
     pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")

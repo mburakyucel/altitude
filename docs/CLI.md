@@ -1009,6 +1009,26 @@ When a provider limit queues a fresh attempt, existing question replies and quic
 in the normal inbox. The new owner receives the still-open questions in its brief; semantic
 resolution remains an operation of the running or blocked owning L2.
 
+### Concurrent landings
+
+`alt land --merge` waits for other merging invocations in the same repository before fetching,
+publishing or testing. It prints when waiting and when its turn starts. Keep the command and owner
+session alive; ordinary contention needs no L3 landing-window request. Admission waits at most
+3600 seconds, independently of `--wait`, which still bounds hosted-check polling. A timeout
+refuses without selecting a candidate or publishing changes; retry explicitly when ready.
+
+Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
+the task branch when needed before pushing and checking the fresh candidate. This preserves
+adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
+not stashed. Required checks, review and original approval sources still govern delivery.
+Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
+Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
+
+The turn is a process-owned repository lock, not a durable or FIFO queue. Nonmerging preparation,
+dry runs and other repositories do not wait for it. External writers and older landing versions
+can still change refs: stale base/head evidence refuses merge and is never reused or retried
+automatically. Only invocations using this installed version share serialization.
+
 ### This repository's temporary local gate
 
 The operator's 2026-09-09 Pacific policy selects verified local checks for this repository through
@@ -1214,7 +1234,8 @@ pushes; rejected pushes never retry with force. `--merge` uses a merge commit an
 branch deletion, so the repository must permit that merge method. Host-side branch deletion
 settings remain the repository operator's policy.
 
-When main advances, preserve the adopted commits with a merge commit:
+`--merge` incorporates current main while holding the repository turn. If that integration
+conflicts, reconcile manually while preserving the adopted commits with a merge commit:
 
 ```sh
 git fetch origin main
