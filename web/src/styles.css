@@ -1589,9 +1589,6 @@
 .task-stop kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
 .live-steering { padding: 0 14px 8px; }
 .message-delivery { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; max-width: 90%; text-align: right; }
-@media (max-height: 650px) {
-  .task-activity:not([data-expanded]) .task-activity-words, .task-activity:not([data-expanded]) .task-activity-age { display: none; }
-}
 .shell[data-phone] .convo-scroll {
   padding: 12px 16px 8px;
 }

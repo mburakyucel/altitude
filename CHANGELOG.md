@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Fresh L2 activity previews scroll with chat and disappear after 60 seconds without fresh public
+  output. Missing or unavailable output leaves no box; recorded output remains in Live session.
+
 - Desktop chats use compact headers, with wrapping task titles and directly accessible actions.
   Task metadata and token usage open in Task details on phone and desktop.
 

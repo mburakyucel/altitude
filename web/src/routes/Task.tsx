@@ -379,6 +379,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
           </details> : null}
+          {facts.canMessage && steering.state === "running" && !(task.state === "blocked" && current) ? <TaskActivity activity={task.activity} /> : null}
         </div>
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
@@ -387,7 +388,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
       {facts.canMessage ? <div className="convo-dock">
-        {steering.state === "running" && !(task.state === "blocked" && current) ? <TaskActivity activity={task.activity} refresh={refresh} /> : null}
         {steering.state !== "idle" ? <div className="task-dock-controls">
           <button type="button" className="link" onClick={showLive}>View live session</button>
           <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />

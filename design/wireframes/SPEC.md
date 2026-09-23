@@ -683,17 +683,16 @@ status enables **Stopped** and Continue. Desktop Stop advertises **Esc**; the ke
 input, composition, dialog, recording, menu or overlay owns it. Recording cancels and overlays close
 before Escape can reach the worker. Phone always has the visible button.
 
-One compact L2 activity area above the composer opens with the activity line: a dot and **Working ·
-output 12 sec ago** while output was recorded within 60 seconds (the accent dot pulses softly; reduced
-motion keeps it steady), **No new activity for …** with a still neutral dot after that, **Output
-recorded · time unavailable** or **No activity recorded yet** without evidence, and **Expand** on the
-right. Below it, the current worker's public text appears verbatim after redaction, clamped to two
-lines, with its source time in the §3.4 format or **time unavailable**. **Expand** reveals it;
-**Collapse** folds it. Each newer update replaces the preview without moving or duplicating
-Conversation. Activity never proves useful progress. **No public update yet.** covers empty
-commentary; **Activity unavailable** keeps a retained update marked **Last known update ·** its time,
-and offers **Retry activity**. Generation changes clear previous words. Short
-viewports fold the words and age until expanded, keeping activity and controls reachable. **View live
+One compact L2 activity preview sits at the end of the conversation's scrolling column. It appears
+only while both public words and recorded output are less than 60 seconds old. Stale, missing,
+untimed and unavailable output leaves no box; tool output alone never revives stale prose. The preview
+scrolls away with chat, and updates or expiry never pull an older-message reader to the bottom.
+It opens with **Working · output 12 sec ago** and a softly pulsing accent dot (steady under reduced
+motion), with **Expand** on the right. The current worker's public text appears verbatim after
+redaction, clamped to two lines, with its source time in the §3.4 format, including on short viewports.
+**Expand** reveals it; **Collapse** folds it. Each newer update replaces the preview without
+duplicating Conversation. Activity never proves useful progress. Generation changes clear previous
+words. Live session retains quiet, missing, untimed and unavailable activity status. **View live
 session** opens older output under existing retention. Questions, decisions and results stay durable;
 there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
 
@@ -701,7 +700,7 @@ Below 1280px the live session panel follows the §2.2 rule for the work panel: a
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
 too. Phone anatomy: one 54px header with Back, title, concise L2 state and independent **Merge held**
 status; a two-tab row **Conversation | Live session** (the `live` route selects the second); content;
-activity, Stop and the shared compact composer on Conversation. Live session has the same
+scrolling fresh activity, Stop and the shared compact composer on Conversation. Live session has the same
 Stop/Continue controls. The title and details button open a scrollable sheet
 with full title, attempt/context/tokens, PR/checks, complete block/hold reasons, and existing
 Reject confirmation and operational Resume. Desktop retains its direct operational actions and
@@ -784,7 +783,8 @@ recorded lifecycle boundaries stay visible), streaming, paused, ended, or unavai
 file for this attempt").
 
 `web/e2e/l2-progress.pw.ts` walks phone and desktop with deterministic fixtures for both engines:
-loading; replacing/expanded/quiet/untimed/unavailable activity; the shared cue and record times in both
+loading; replacing/expanded/expired/missing/untimed/unavailable previews and scrolling with older-message
+position preserved; the shared cue and record times in both
 views, a long call without output, reduced motion, an untimed row, unavailable activity and an ended session; queued/unconfirmed/delivered steering;
 direct Live session Stop; stopping with editable draft and racing messages held; stopped; correction
 and capacity wait; continued session with preserved work; blocked question; finished; denied Stop;

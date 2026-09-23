@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { TaskView } from "../data/api";
 import { Stamp } from "./Stamp";
 
@@ -50,23 +50,20 @@ export function CueLine({ cue }: { cue: Cue }) {
 }
 
 /** The activity line over a replaceable preview of public output; the task conversation owns lasting replies. */
-export function TaskActivity({ activity, refresh }: { activity: TaskView["activity"]; refresh: () => void }) {
+export function TaskActivity({ activity }: { activity: TaskView["activity"] }) {
   const [expanded, setExpanded] = useState(false);
   const now = useNow();
-  const last = useRef(activity);
-  if (activity?.state !== "unavailable" || last.current?.generation !== activity.generation) last.current = activity;
-  const unavailable = activity?.state === "unavailable";
-  const commentary = (unavailable ? last.current : activity)?.commentary;
+  const commentary = activity?.commentary;
+  const cue = activityCue(activity, now);
+  const age = elapsed(commentary?.time_kind === "source" ? commentary.at : null, now);
   useEffect(() => setExpanded(false), [activity?.generation]);
+  if (cue.state !== "working" || !commentary?.text.trim() || age == null || age >= 60) return null;
   return <section className="task-activity" aria-label="L2 activity" data-expanded={expanded || undefined}>
     <div className="task-activity-heading text-meta">
-      <CueLine cue={activityCue(activity, now)} />
-      {unavailable ? <button type="button" className="link" onClick={refresh}>Retry activity</button> : null}
-      {commentary ? <button type="button" className="link" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "Collapse" : "Expand"}</button> : null}
+      <CueLine cue={cue} />
+      <button type="button" className="link" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "Collapse" : "Expand"}</button>
     </div>
-    <p className="task-activity-words">{commentary?.text ?? (activity ? "No public update yet." : "Reading activity…")}</p>
-    {commentary ? <p className="task-activity-age text-meta text-muted">
-      {unavailable ? "Last known update · " : ""}<Stamp at={commentary.time_kind === "source" ? commentary.at : null} className="activity-time" />
-    </p> : null}
+    <p className="task-activity-words">{commentary.text}</p>
+    <p className="task-activity-age text-meta text-muted"><Stamp at={commentary.at} className="activity-time" /></p>
   </section>;
 }
