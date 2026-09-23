@@ -100,6 +100,9 @@ small group; a question link names its durable ID and revision and focuses the o
   Hardware keyboards retain navigation. When viewport evidence is unavailable, navigation remains.
   Hidden navigation leaves focus and screen-reader traversal; a nonzero Needs you count remains
   reachable from the header. Draft, selection and reading position survive keyboard dismissal.
+- Ordinary use never changes page scale: focusing, typing, switching fields, sending and dismissing the
+  keyboard keep the zoom level, so touch layouts render fields at 16px. Manual pinch zoom stays
+  available everywhere, including mocks and design previews.
 - Browser-managed safe areas remain intact. When navigation hides, the composer owns any applicable
   bottom inset once, without the navigation's reserved home-indicator gap above the keyboard.
 - Breakpoint constants live in one place in the web code and are the only place widths are named.

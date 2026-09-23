@@ -2355,3 +2355,11 @@
     animation: none;
   }
 }
+
+/* Touch browsers zoom the page when a focused field's text is under 16px; ordinary forms and chats keep
+   their scale while manual pinch zoom stays available. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea, select {
+    font-size: 16px !important;
+  }
+}

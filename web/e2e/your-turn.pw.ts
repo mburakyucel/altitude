@@ -118,6 +118,34 @@ test("a question at the end of the chat: reply hands the turn back, asked again,
   });
 });
 
+test("answering on a phone keeps the page scale: fields stay at 16px, drafts and reach are kept", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const v = view(page, info);
+  await walk.open("/");
+  await v.article("Index rollout").getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  await v.card.getByRole("button", { name: "Other…", exact: true }).click();
+  const answer = v.card.getByRole("textbox", { name: /Your answer to:/ });
+  await expect(answer).toBeFocused();
+  await answer.pressSequentially("Keep it until the rollback drill passes.");
+  const fontSize = (field: typeof answer) => field.evaluate((node) => getComputedStyle(node).fontSize);
+  const scale = () => page.evaluate(() => window.visualViewport?.scale ?? 1);
+  // Touch layouts keep fields at 16px so WebKit does not zoom on focus; desktop keeps its compact type.
+  if (v.phone) for (const field of [answer, v.field]) expect(await fontSize(field)).toBe("16px");
+  else expect(await fontSize(answer)).toBe("14px");
+  await walk.state("10-typing-an-answer-keeps-scale", { visible: [answer, v.card.getByRole("button", { name: "Send 1 answer", exact: true })], hidden: [] });
+  expect(await scale()).toBe(1);
+  await v.field.click();
+  await v.field.fill("A draft for the L2.");
+  await walk.state("10b-switching-to-the-composer-keeps-the-answer", { visible: [v.field, v.send], hidden: [] });
+  expect(await scale()).toBe(1);
+  await expect(answer).toHaveValue("Keep it until the rollback drill passes.");
+  await page.keyboard.press("Escape");
+  await answer.click();
+  await expect(answer).toBeInViewport();
+  await expect(v.field).toHaveValue("A draft for the L2.");
+  expect(await scale()).toBe(1);
+});
+
 test("a held PR waits for review before merge in the chat; approval hands it back", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   const v = view(page, info);
