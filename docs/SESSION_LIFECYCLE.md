@@ -431,7 +431,7 @@ send and reload. `reported-continuation.pw.ts` walks continuation and refusal; t
 and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
 A task's versioned dilemma remains open independently of that wake and its worker state. Sending
 it anything hands the turn back: its questions leave Needs you until the owner parks again, when
-still-open ones return as **asked again** and a held review-ready PR shows its own review item. Blocks and
+still-open ones return as **asked again** and a held review-ready PR shows its own review item unless an open question links it. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
 The owner or coordinator writes the actual choice in plain language with the task's user-facing

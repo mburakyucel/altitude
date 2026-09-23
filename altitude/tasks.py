@@ -1950,11 +1950,15 @@ def operator_questions(task: dict) -> list[dict]:
 
 
 def review_pr(task: dict) -> int | None:
-    """#419: a held delivery whose owner has stopped waits for the operator's review, question or not."""
+    """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
+    An open operator question that names the PR is already that review, so it is asked once."""
     number = (task.get("prs") or [None])[-1]
+    names = re.compile(rf"(/pull/|PR #?){number}\b")
     if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
             and task.get("state") in ("blocked", "reported") and not any(
-                task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))):
+                task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
+            and not any(names.search(" ".join([q["detail"], *(f"{o['label']} {o['text']}" for o in question_choices(q))]))
+                        for q in operator_questions(task))):
         return number
     return None
 

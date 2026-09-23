@@ -1449,7 +1449,7 @@ The shared question component appears on Needs you and at its conversation ancho
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
-**Use recommendations** is available when no manual picks exist and stages only explicit recommendations.
+An explicitly recommended choice carries a **Recommended** tag, distinct from the pressed selection, and is never preselected.
 Edits to independent members survive another member's response; changed revisions discard their own
 stale choices without retargeting them. Explicitly republishing a responded member gives it a new revision
 and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.
@@ -1576,7 +1576,7 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, and the composer
+at their recorded message anchor), a held review card when one waits and no open question links its PR, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with

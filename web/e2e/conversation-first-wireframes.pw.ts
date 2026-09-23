@@ -49,7 +49,7 @@ test("conversation-first design: custom answers, staged presets and conversation
   await group.getByRole("button", { name: "East", exact: true }).click();
   await walk.state("03-custom-and-preset", {
     visible: [custom, page.getByRole("button", { name: "Send 2 answers", exact: true }), field],
-    hidden: [page.getByText("Decision recorded", { exact: true }), page.getByRole("button", { name: "Use recommendations", exact: true })],
+    hidden: [page.getByText("Decision recorded", { exact: true })],
   });
   await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
   await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(2);
@@ -86,7 +86,9 @@ test("conversation-first design: custom answers, staged presets and conversation
   await expect(page.getByText("Sent · the L2 has your reply.", { exact: true })).toBeVisible();
 
   await walk.open(route("Group") + "?reset");
-  await page.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await expect(page.locator("[data-recommended]")).toHaveCount(2);
+  await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(0);
+  for (const choice of await page.locator("[data-recommended]").all()) await choice.click();
   await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(2);
   await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
@@ -140,7 +142,7 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
       await walk.state(state, { visible: [marker], hidden: [page.getByRole("combobox")] });
     }
     if (["accepted-waiting", "archived", "no-recommendation", "revised"].includes(state)) {
-      await expect(page.getByRole("button", { name: "7 days · recommended", exact: true })).toBeHidden();
+      await expect(page.getByRole("button", { name: "7 days", exact: true })).toBeHidden();
     }
     if (state === "archived") await expect(page.getByRole("textbox")).toBeHidden();
     if (state === "send-error") await expect(page.getByRole("textbox")).toHaveValue("Could we roll back after day seven?");
@@ -149,7 +151,7 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
       await expect(page.locator(".badge:visible").filter({ hasText: /^\d+$/ })).toHaveCount(0);
       await expect(page.getByLabel(state === "list-loading" ? "Attention loading" : "Attention unavailable").filter({ visible: true })).toBeVisible();
     }
-    if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: "7 days · recommended", exact: true })).toBeDisabled();
+    if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: "7 days", exact: true })).toBeDisabled();
     const overflow = await page.locator(".cf").evaluate(el => el.scrollWidth > el.clientWidth);
     expect(overflow, state + " must not scroll horizontally").toBe(false);
   }
@@ -166,7 +168,7 @@ test("conversation-first proposal: recovery and voice actions", async ({ page },
   const walk = walkthrough(page, info);
   await page.route("https://fonts.**/*", route => route.abort());
   await walk.open(route("waiting"));
-  await page.getByRole("button", { name: "7 days · recommended", exact: true }).click();
+  await page.getByRole("button", { name: "7 days", exact: true }).click();
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
   await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
