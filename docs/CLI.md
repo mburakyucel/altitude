@@ -693,7 +693,7 @@ Use these commands to change settings.
 Lowering the cap lets running work continue. Fresh and resumed launches wait until the aggregate
 running count falls below it. Blocked tasks consume no capacity. Eligible ready resumes take available
 capacity before fresh launches across all projects. Operator waits, faults without verified recovery,
-future due times and unavailable engines reserve no slots and do not hold eligible work. The limit
+future due times, busy project setup and unavailable engines reserve no slots and do not hold eligible work. The limit
 counts running tasks, excluding engines' native helpers and L3 turns.
 
 ### Automatic routing preferences

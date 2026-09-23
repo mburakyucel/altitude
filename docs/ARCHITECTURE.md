@@ -378,6 +378,8 @@ capacity while its task binding is recovered; it remains the same worker. Existi
 planned dependencies and engine/quota gates remain authoritative. Status reports the machine limit and
 running counts per project, with no project caps.
 Stored project `wip` overrides impose no limit, and project registration and settings expose no cap.
+Resume readiness probes the existing setup lock without waiting; setup contention in one project
+does not hold fresh work in another project, regardless of their daemon tick order.
 
 `alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the settings request
 and receipt implementation, with operator-only authority and a positive integer machine cap;
