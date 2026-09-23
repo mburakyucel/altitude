@@ -29,7 +29,7 @@ def _waiting(project: str, task: dict, restart: dict | None) -> dict:
     if task.get("planned_wait"):
         kind, reason = "planned", f"waits for {task['planned_wait']['reason']}"
     elif task["state"] == "blocked" and not task.get("resume_after"):
-        kind, label = T.block_status(task)
+        kind, label = T.block_status(project, task)
         reason = f"{label}: {task.get('blocked_reason') or 'blocked'}"
     elif restart and restart.get("requested_at") and not restart.get("failed"):
         kind = "restart"

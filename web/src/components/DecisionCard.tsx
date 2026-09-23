@@ -7,7 +7,7 @@ import { useToast } from "../data/Toast";
 import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { InlineProse, Prose, ProseScope } from "./Prose";
+import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
 
 type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
@@ -15,7 +15,7 @@ const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`
 function optionsFor(question: Decision): Option[] {
   if (question.options) return question.options;
   const recommended = question.recommendation;
-  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Use recommendation", text: recommended.text }] : [];
+  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Accept", text: recommended.text }] : [];
 }
 function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
@@ -70,8 +70,6 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
     if (draft.option) return [answer(q, draft.option)];
     return draft.text?.trim() ? [{ question_id: q.id, revision: q.revision, text: draft.text.trim() }] : [];
   });
-  const recommendations = open.filter((q) => q.id && q.revision != null && optionsFor(q).some((o) => o.key === recommendedKey(q)))
-    .map((q) => answer(q, recommendedKey(q)!));
   const perform = (input: DecideInput) => {
     decide.mutate(input, {
       onSuccess: () => {
@@ -117,7 +115,7 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
         </>;
         const content = <>
-          <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
+          <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />
           {resolved ? <div className="decision-receipt" role="status">
             {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
             {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
@@ -133,11 +131,15 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
             <Prose text={question.detail} />
           </details> : null}
           {actionable && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
-            {options.map((option) => <button key={option.key} className="btn btn-ghost" type="button"
-              aria-pressed={draft?.option === option.key} disabled={inputDisabled}
-              onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
-              {option.label}
-            </button>)}
+            {options.map((option) => {
+              // The recommendation is marked on its own choice; only the operator's pick is pressed.
+              const recommended = option.key === recommendedKey(question);
+              return <button key={option.key} className="btn btn-ghost" type="button" data-recommended={recommended || undefined}
+                aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} title={recommended ? "Recommended" : undefined} disabled={inputDisabled}
+                onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
+                {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">★</span> : null}
+              </button>;
+            })}
             <button className="btn btn-ghost" type="button" aria-pressed={custom} disabled={inputDisabled}
               onClick={() => edit(question, custom ? {} : { text: "" })}>Other…</button>
           </div> : null}
@@ -154,10 +156,6 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
       })}
       {open.length ? <div className="question-batch">
         <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? "Sending…" : selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
-        {!Object.values(drafts).some((draft) => draft.option || draft.text !== undefined) && recommendations.length ? <button type="button" className="btn btn-ghost" disabled={unavailable} onClick={() => {
-          decide.reset();
-          setDrafts((old) => ({ ...old, ...Object.fromEntries(open.filter((q) => recommendations.some((a) => a.question_id === q.id)).map((q) => [draftKey(q), { option: recommendedKey(q)! }])) }));
-        }}>Use recommendations</button> : null}
         <p className="text-meta text-muted">{selected.length ? "Only these answers will be sent. You can answer the rest later." : "Choose an answer or write your own. Follow-up questions are welcome."}</p>
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">
@@ -187,8 +185,8 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   });
   const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
   return <div className="question-set" data-review-pr={decision.pr ?? undefined}>
-    <p className="decision-question"><InlineProse text={decision.question || `Review PR #${decision.pr} before merge`} /></p>
-    {decision.detail ? <p className="decision-why"><InlineProse text={decision.detail} /></p> : null}
+    <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
+    {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
     {approve.isSuccess ? <p className="text-meta text-muted" role="status">Approval sent · the L2 merges after a final check of the same PR.</p> : <>
       <div className="decision-options" role="group" aria-label="Merge review">
         <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Sending…" : "Approve merge"}</button>

@@ -253,7 +253,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Messaging/resume | `test_task_chat.py`, `test_chat_queue.py`, `test_resume_hold.py`: durable inbox, same session, late messages, concurrent wakes and recovery claims. Browser task lifecycle checks API persistence and terminal states. | No real provider turn or process recovery is launched. |
 | Planned work | `planned-tasks.pw.ts`: phone/desktop waiting, saved brief updates, explicit release under capacity, archived-done dependency release and real Git dispatch; send denial and Work loading/error/empty states. | Worker I/O is deterministic; named HTTP overlays establish read presentation states only. |
 | Operator image input | `test_images.py`, `test_image_chat.py`, `test_image_delivery.py`: real raster conversion/storage/HTTP, admission retry, caption ordering, checkpoint/resume restoration, handoff and archive/isolation. `image-input.pw.ts` walks selection/removal, voice/paste, loading, refusals, uncertain retry, sent viewer and missing/denied content on phone/desktop. | Native payloads and readable canonical bytes use engine fixtures; physical phone picker, clipboard permissions and live account/model image compatibility are unverified. |
-| CI recovery | `test_ci_recheck.py`, `test_ci_recheck_delivery.py`: due probes, single rerun intent, uncertain writes, fresh artifacts, finite reads/delivery, queue/turn crashes, stale lifecycle and preserved controls on both engine seams. | GitHub responses and engine calls are fixtures; real quota recovery needs fresh uploaded artifact evidence. |
+| CI recovery | `test_ci_recheck.py`, `test_ci_recheck_delivery.py`: due probes, question-blocked observation-only waits, single rerun intent, uncertain writes, fresh artifacts, finite reads/delivery, queue/turn crashes, stale lifecycle and preserved controls on both engine seams. | GitHub responses and engine calls are fixtures; real quota recovery needs fresh uploaded artifact evidence. |
 | Routing/failures | `test_route.py`, `test_direct_dispatch.py`, `test_temporary_capacity.py`, composed journeys: pins, availability, fallback, backoff and failure without duplicate completion. | Deterministic availability/quota input does not prove real authentication, entitlement or current provider compatibility. |
 | Landing | `test_land.py`, `test_land_contention.py`, `test_git_policy_integration.py`: real Git/bare origins, concurrent owner processes (merging and required-check turns, timeouts, terminated holders), ordinary and assigned histories without trailer repair, selected index content, unrelated working edits, task/PR ownership, adopted ancestry, holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. Owners review outgoing history and diffs for scope and privacy; tests do not establish semantic content screening. |
 | Merge approval | `test_recorded_merge_approval.py`, `test_merge_approval_journey.py`: original task/project/UI authority, intervening discussion, Git integration and scoped follow-up delivery; invalid sources, renewed holds and wrong PR identity refuse. | Scope, revocation and conditions are explicit coordinator judgments in fixtures; these tests do not establish live model interpretation. |
@@ -329,11 +329,12 @@ removing the disposable container. Failed runs also retain the self-contained br
 with its screenshots and failure traces. Passing runs keep only small logs and identity receipts.
 Duplicate raw results and caches are excluded; early failures keep available diagnostics.
 
-Before delivery, owners retrieve the completed export into their task folder, match its run URL,
-attempt, head and tree to the checked candidate, and verify required evidence survived container
-removal. Open a failed report with `pnpm --dir web exec playwright show-report /path/to/report`
-and verify attachments and traces open. A green GitHub job alone does not prove successful local
-export; unavailable evidence blocks delivery and goes to L3 for recovery.
+A passing required check on the current head, with its GitHub console log, is sufficient delivery
+evidence; `alt land` verifies the head, tree and base ancestry. Owners retrieve the local export
+(browser HTML report, screenshots, traces) into their task folder only to diagnose a failed run or
+when a reviewer asks, match its run URL, attempt, head and tree to the candidate, and open it with
+`pnpm --dir web exec playwright show-report /path/to/report`. When the export is unreadable from the
+task sandbox (issue #380), the owner says so in the report and continues with the console log.
 
 The runner limits evidence to 256 MiB per job and 4 GiB for this repository. Owners remove
 unneeded completed exports older than three days, and clean up earlier when capacity is tight,
@@ -347,10 +348,9 @@ and console logs; browser reports are read locally instead of downloaded from Gi
 An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
 it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
 [`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger/runner recovery, not an invented
-run ID. Runner or local evidence outages pause delivery until verified recovery and fresh CI. A probe
+run ID. Runner outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.
-The existing GitHub artifact-capacity probe remains for projects using hosted artifacts; it cannot
-verify this repository's local exports. L3 verifies local retrieval through the runner evidence path.
+The existing GitHub artifact-capacity probe remains for projects using hosted artifacts.
 
 ### Gate activation
 

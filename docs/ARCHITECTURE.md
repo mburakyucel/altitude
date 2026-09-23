@@ -86,7 +86,7 @@ Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI afte
 state and worker/session identity, refuses a stale target, and treats a retry of the same completed
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
-`alt task handoff <slug> --engine <engine> --attempt <N> --reason "…"` uses this same coordinator
+`alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for an exited owner blocked by worker death or a recognized usage
 limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
 and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
@@ -362,7 +362,7 @@ Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is o
 `after` optionally names one existing task in this project. `alt task new --wait` or `--after`
 creates the existing task record and written brief without a worker, worktree or WIP slot.
 Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
-the wait with `alt task release <slug> --reason "…"`. An already archived-done dependency is satisfied at
+the wait with `alt task release <slug> --reason '…'`. An already archived-done dependency is satisfied at
 creation; a merged PR alone, rejection, failure or a missing dependency does not release it.
 Explicit release can override a named dependency early and records its reason. Messages remain
 in the task inbox for launch and do not release it or replace the original brief's source authority.
@@ -395,7 +395,7 @@ Stored project `wip` overrides impose no limit, and project registration and set
 Resume readiness probes the existing setup lock without waiting; setup contention in one project
 does not hold fresh work in another project, regardless of their daemon tick order.
 
-`alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the settings request
+`alt machine set --wip N --reason '…'` and `--unset-wip --reason '…'` use the settings request
 and receipt implementation, with operator-only authority and a positive integer machine cap;
 80 is a default, not a fixed ceiling. The machine override lives in `$ALTITUDE_HOME/settings.json`;
 its `wip-request.json` and `events.jsonl` live alongside it. The machine event kind is `machine-set`.
@@ -411,8 +411,8 @@ machine override and restores its default. `alt machine show` inspects the activ
 override and request receipt; see [inspect/set/reset examples](CLI.md#concurrency-limits).
 
 Auto preference tiers use the same reason-bearing operational path:
-`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`, or
-`--unset-routing --reason "…"` to restore defaults. The operator and that project's L3 can change
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`, or
+`--unset-routing --reason '…'` to restore defaults. The operator and that project's L3 can change
 them without a PR, restart or free task slot. Altd applies the request on its next tick and records
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. [CLI examples](CLI.md#automatic-routing-preferences) cover
@@ -435,14 +435,13 @@ reports restored conversation history so First run waits for successful registra
 that history without interpreting its old replies or errors as a fresh startup result. Reset
 remains a separate session rotation within a managed project.
 
-`STATE.md` is regenerated from active task records and a bounded incident-reporting summary relevant
-to the next L3 turn. Incident reads project current status, evidence and cause from the existing
-Markdown record, excluding amendment history; unreadable records explicitly remain unavailable.
-The summary counts incidents not closed and shows the latest five with up to 600 characters of
-current evidence each, marking truncation and pointing to the full list. This includes role-only
-incidents and confirmed reports whose prevention remains pending. Separately it counts missing,
-failed, uncertain and confirmed incident reports and shows five outcomes with gaps first.
-No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
+`STATE.md` is regenerated from active task records and the project's incidents that are not closed.
+Incident reads project current status, evidence and cause from the existing Markdown record,
+excluding amendment history. Each open incident gets one line, newest first and at most ten: its
+status and title with its report link, **no report linked**, or the report's failed/uncertain status,
+followed by up to 300 characters of current evidence; an unreadable record reads **evidence unavailable** instead. This includes role-only incidents and
+confirmed reports whose prevention remains pending. Closed incidents, full evidence and report
+reasons stay available through `alt incident list`. No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
 ## Isolation and landing
@@ -549,7 +548,7 @@ follow-ups. Task archival alone does not close issues. Partial scope, design-onl
 operator acceptance and unrelated mentions do not warrant closing keywords or `--closes-issue`;
 L3 records remaining scope on the open issue. Holds still gate merge.
 
-For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
+For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason '…'`
 records the active immutable receipt in `adopted_pr` and a `pr-adopted` event under the project lock.
 The current owner or operator can adopt; another active task cannot own that PR or branch.
 Adoption requires the registered isolated worktree, a same-repository open PR targeting main,
@@ -641,7 +640,7 @@ The automatic-GC fixture creates its two packs with `repack -a`, which owns its 
 the regression also runs with an open caller stdin and captured output as in local landing,
 alongside real issue-close CLI/API validation. The shared CLI fixture supplies explicit empty input.
 
-Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
+Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason '…'`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the
 publication and project locks, altd requires dirty main exactly at fetched `origin/main`, then
 copies the index for capture without changing main. A local `archive/checkout-<request-id>` branch
@@ -721,7 +720,7 @@ Git log/diff/show reads include full patches and historical files, disable exter
 helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
-`alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
+`alt issue new --title '…' [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
 `alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
 or verified completion of an authorized delivery missing its closing link. L2 supplies the issue,
 merged PR and complete-scope evidence through its reply and report follow-ups; L3 verifies and closes
@@ -788,10 +787,10 @@ a meaningful finite observation during a justified wait, or an explicit capabili
 Existing task conversations and incident evidence carry this responsibility; no new timer or task
 state enforces it. Irretrievable history remains unknown. L3 uses retained evidence and supported
 reads for remaining questions, then exposes the narrow gap if they cannot establish recovery.
-A diagnostic continuation requiring a changed operational contract waits for that decision. Within
-an authorized scope, the same owner iterates diagnostics without per-command approval, retaining
-evidence and a concrete next step at the agreed finite stop or scope boundary. Explicit restrictions,
-machine grants, fix scope and holds bind; no new privilege or automatic fault retry is introduced.
+The owner investigates as part of its task, iterating non-invasive diagnosis without approval rounds;
+a changed operational contract, missing access, material machine change, unapproved spend or explicit
+restriction waits for its decision. Machine grants, fix scope and holds bind; no new privilege or
+automatic fault retry is introduced.
 Missing evidence and unrelated delivery establish no recovery. For newly investigated
 actionable system or role/procedure defects it promptly creates/reuses a sanitized issue, records
 the prevention disposition and owner/next action (or concrete reporting failure) in incident evidence,
@@ -809,14 +808,15 @@ Coordinator messages to faulted tasks use the existing non-waking inbox marker; 
 conversation and reach the worker on a later supported resume. Operator discussion still uses its
 ordinary wake path. The original attempt, provider session, launch model, worktree and merge holds
 remain under the existing dispatch and landing rules.
-`alt task recheck-ci` registers one finite CI probe on an existing fault-blocked task through the
+`alt task recheck-ci` registers one finite CI probe on a blocked task through the
 same project-bound coordinator transport. The task's `ci_recheck` record binds its block, attempt,
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
-the latest twenty runs. Otherwise it submits one rerun of the selected project-origin run after
-persisting its baseline attempt and submission intent. Restart and uncertain submission reconcile
+the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
+project-origin run after persisting its baseline attempt and submission intent; a probe on a task
+blocked on a question (`wait`) only observes the run until it is terminal. Restart and uncertain submission reconcile
 attempt metadata without repeating the write. Reads stop after three failures, twenty-four rounds
 or two hours after the due time. Fresh nonexpired, nonempty artifacts created during the observed
 execution and at or after the scheduled check time establish an upload; step conclusions alone do not. Old-run reruns
@@ -883,7 +883,7 @@ upstream target with a GitHub read and attaches it; it can resolve uncertainty o
 known matching report across kinds. Failed verification retains the prior outcome. Finalization
 compares the saved receipt so a late result cannot overwrite a concurrently verified link.
 Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
-`STATE.md`, and fault/restart coordinator messages expose status and gaps without granting reporting
+and `STATE.md` (open incidents only) expose status and gaps without granting reporting
 authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
 Publication is confirmed before notification is attempted. Its separate `notification` outcome records
 `queued`, `received`, `unavailable`, or `failed` in the existing incident outcome and source project event
@@ -1028,10 +1028,10 @@ appearing and disappearing, and saves named screenshots on passing and failing w
 Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
 workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
-GitHub artifact uploads, duplicate raw results and caches are excluded. Owners verify retrieval
-after container removal, preserve needed evidence in the task through review, and clean up
-unneeded completed exports after three days or when approaching the existing disk budget.
-Unavailable local evidence blocks delivery even when GitHub checks pass. See the
+GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
+with its console log is sufficient delivery evidence; owners retrieve a failed report only for
+diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
+when approaching the existing disk budget. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
@@ -1319,9 +1319,13 @@ Only global Needs you carries a numeric attention badge. Project rail and switch
 their state dots. The badge counts operator questions awaiting a response plus existing operational
 attention items; Needs you and project summaries label questions and operational items separately.
 Needs you groups items by their `project` into contiguous sections with fully wrapping project
-headings on phone and desktop, including question groups, reviews, stops and faults. Projects
-follow first appearance in the queue; items retain their order within each project. Sections are
-independent of the selected project and remain visible on saved reads after a failed refresh.
+headings on phone and desktop, including question groups, reviews, stops and faults. The selected
+project's section leads when it has items; the other projects follow first appearance in the queue,
+and items retain their order within each project. Each heading is a disclosure that collapses its
+section to the heading and an item count and reopens it, by pointer or keyboard; cards stay mounted
+while collapsed, so staged answers survive, and the state is page state rather than a setting. The
+selected project never filters the inbox, and sections remain visible on saved reads after a failed
+refresh.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
@@ -1456,13 +1460,17 @@ The shared question component appears on Needs you and at its conversation ancho
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
-**Use recommendations** is available when no manual picks exist and stages only explicit recommendations.
+An explicitly recommended choice has an accent border and a corner star (announced as "Recommended"), distinct from the pressed selection, and is never preselected.
 Edits to independent members survive another member's response; changed revisions discard their own
 stale choices without retargeting them. Explicitly republishing a responded member gives it a new revision
 and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.
 Needs you keeps the task's purpose, complete question, concise recommendation and material
 consequences visible before an answer. Owners write these for an operator deciding at a glance;
-clipping long technical prose is not a substitute. Additional saved question detail opens in a
+clipping long technical prose is not a substitute. Question and review-card text with line breaks
+renders through the reply prose renderer (`QuestionProse` in `web/src/components/Prose.tsx`):
+paragraphs, lists, inline code and fenced code blocks, in Needs you and the owning chat; a one-line
+question stays one compact line, as do recommendations, receipts, folded summaries and labels.
+Additional saved question detail opens in a
 **More context** disclosure in the owning chat when it differs from the question, alongside its
 surrounding reasoning, evidence and history. This
 uses the existing question and conversation records without a second summary or decision store.
@@ -1583,7 +1591,8 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, and the composer
+at their recorded message anchor), a held review card when one waits, no open question links its PR and the current head is not already
+approved, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with

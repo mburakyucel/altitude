@@ -340,6 +340,48 @@ class TestCIRecheck(AltitudeCase):
         with self.assertRaises(ValueError):
             server._validate_l3_alt_args(["task", "recheck-ci", "../foreign"])
 
+    def wait_on_a_question(self):
+        # #420: the owner parked on a question while its required check still queues; no fault is recorded.
+        self.owner.pop("fault")
+        S.save_task(self.project, self.owner)
+        self.run.update(status="queued", conclusion=None, updated_at="2026-09-09T09:59:00Z")
+
+    def test_question_blocked_owner_gets_an_observation_only_wait_until_the_check_is_terminal(self):
+        self.wait_on_a_question()
+        self.assertTrue(self.schedule()["wait"])
+        self.tick()
+        self.assertEqual(self.record()["status"], "probing")
+        self.run.update(status="in_progress")
+        self.tick(5)
+        self.assertEqual(self.record()["status"], "probing")
+        self.run.update(status="completed", conclusion="success", run_started_at="2026-09-09T10:01:00Z",
+                        updated_at="2026-09-09T10:06:00Z")
+        self.tick(5)
+        self.assertEqual(self.record()["status"], "notifying")
+        self.assertEqual(self.record()["evidence"]["conclusion"], "success")
+        self.assertFalse(self.posts)
+        self.queue.assert_called_with(self.project, self.slug)
+        self.assert_owner_preserved()
+        self.assertEqual(S.load_task(self.project, self.slug)["questions"][0]["status"], "open")
+
+    def test_a_wait_reports_an_old_terminal_run_without_a_rerun(self):
+        self.wait_on_a_question()
+        self.run.update(status="completed", conclusion="failure")
+        self.schedule()
+        self.tick()
+        self.assertFalse(self.posts)
+        self.assertEqual(self.record()["evidence"]["conclusion"], "failure")
+        self.assert_owner_preserved()
+
+    def test_an_exhausted_wait_names_the_next_action(self):
+        self.wait_on_a_question()
+        self.schedule()
+        for _ in range(25):
+            self.tick(5)
+        self.assertFalse(self.posts)
+        self.assertIn("Next: register another finite recheck or message the owner.", self.record()["evidence"]["error"])
+        self.assert_owner_preserved()
+
     def test_github_transport_binds_repository_host_method_and_timeout(self):
         with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")) as run:
             self.transport(self.project, "team/project", "runs/71/rerun", method="POST")

@@ -351,7 +351,7 @@ test("Work rows retain running questions and partial answers, then keep the task
     visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for you", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
-  await list.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await list.getByRole("button", { name: "West", exact: true }).click();
   await submit(page, request, slug);
   await expect(list).toBeHidden();
   await park(request, slug);
@@ -741,7 +741,7 @@ test("one question stages an explicit alternative before sending it to its owner
   await walk.state("alternative-interpreted-by-owner", { visible: [card.getByText(resolution.text, { exact: true })], hidden: [card.getByRole("button")] });
 });
 
-test("grouped choices start unselected, submit only picked answers, and recommendations preserve an earlier alternative", async ({ page, request }, info) => {
+test("grouped choices start unselected, submit only picked answers, and the recommended choice is marked, not preselected", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const { slug, initial } = await createGroup(request);
@@ -757,20 +757,23 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   const card = groupCard(page, group);
   await expect(card.locator("..")).toBeFocused();
   await expect(card.locator('[aria-pressed="true"]')).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toBeVisible();
+  const west = questionCard(page, region).getByRole("button", { name: "West", exact: true });
+  await expect(west).toHaveAttribute("aria-description", "Recommended");
+  await expect(west.locator(".option-recommended")).toBeVisible();
+  await expect(west).toHaveAttribute("aria-pressed", "false");
+  await walk.state("review-02b-group-recommended-marked", { visible: [west], hidden: [card.locator('[aria-pressed="true"]')] });
   const submissions: unknown[] = [];
   page.on("request", (row) => { if (row.url().endsWith("/api/decide")) submissions.push(row.postDataJSON()); });
   await questionCard(page, retention).getByRole("button", { name: "14 days", exact: true }).click();
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
   await expect(card.getByRole("button", { name: "Send 2 answers", exact: true })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toHaveCount(0);
   expect(submissions).toHaveLength(0);
   expect((await readTask(request, slug)).question_group.questions.every((q) => q.status === "open")).toBe(true);
   await card.locator("..").evaluate((node) => node.scrollIntoView({ block: "start" }));
   await expect(questionCard(page, retention).getByText(retention.question, { exact: true })).toBeInViewport();
   await walk.state("review-03-group", {
     visible: [card.getByText(owner.question, { exact: true }), card.getByRole("button", { name: "Send 2 answers", exact: true })],
-    hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })],
+    hidden: [card.locator('[data-recommended][aria-pressed="true"]')],
   });
   // Deselecting the region leaves an explicit one-answer batch, never a default for the other questions.
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
@@ -784,7 +787,8 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   let after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
-  await card.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await west.click();
+  await expect(west).toHaveAttribute("aria-pressed", "true");
   await submit(page, request, slug);
   await handedBack(page, questionCard(page, region));
   await park(request, slug);
@@ -793,10 +797,9 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([owner.id]);
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
   expect(after.question_group.questions[1]!.response?.text).toBe("Use the west region for backups.");
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toHaveCount(0);
   await questionCard(page, owner).evaluate((node) => node.scrollIntoView({ block: "center" }));
   await expect(card.getByText(owner.question, { exact: true })).toBeInViewport();
-  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })] });
+  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [west] });
   await page.goBack();
   await expect(list.getByText(owner.question, { exact: true })).toBeVisible();
   await expect(list.getByText(retention.question, { exact: true })).toHaveCount(0);
@@ -926,7 +929,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   expect(after.question_group.questions.filter((q) => q.status === "open" && !q.response)).toHaveLength(1);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
-  await walk.state("refreshed-answers-recorded-once-turn-handed-back", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true })], hidden: [card, page.getByRole("button", { name: "Use recommendations", exact: true })] });
+  await walk.state("refreshed-answers-recorded-once-turn-handed-back", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true })], hidden: [card] });
 });
 
 test("question loading, read failure, write failure and denied access retain recoverable conversation state", async ({ page, request }, info) => {
@@ -976,4 +979,38 @@ test("question loading, read failure, write failure and denied access retain rec
   await page.unroute(endpoint);
   await page.getByRole("button", { name: "Retry", exact: true }).first().click();
   await walk.state("06-read-recovered", { visible: [card, field], hidden: [error] });
+});
+
+/** A question with paragraphs and a command shows them as prose and a code block, not one bold line. */
+test("a multi-paragraph question renders paragraphs and a copyable command block in Needs you and chat", async ({ page, request }, info) => {
+  const response = await request.post("/fixture/fenced-question");
+  expect(response.ok()).toBe(true);
+  const { slug } = await response.json() as { slug: string };
+  const question = (await readTask(request, slug)).question!;
+  const command = "sudo install -d -o altitude /srv/altitude-reports\nalt ci reports --root /srv/altitude-reports";
+  const walk = walkthrough(page, info);
+  const shaped = async (card: Locator) => {
+    const text = card.locator(".decision-question");
+    await expect(text.locator(".session-prose > p")).toHaveCount(3);
+    await expect(text.locator("pre.session-code")).toHaveText(command);
+    await expect(text.locator("p code")).toHaveText("alt task recheck-ci");
+    expect(await text.locator("pre").evaluate((node) => getComputedStyle(node).fontWeight)).toBe("400");
+    return text;
+  };
+  await walk.open("/");
+  const card = page.getByRole("article", { name: "Gate merges on CI", exact: true });
+  const compact = page.getByRole("article", { name: "Index rollout", exact: true }).locator("p.decision-question");
+  const text = await shaped(card);
+  await text.locator("pre").scrollIntoViewIfNeeded();
+  await walk.state("01-needs-you-paragraphs-and-command-block", {
+    visible: [text.locator("pre.session-code"), card.getByRole("button", { name: "Install report root", exact: true }), compact],
+    hidden: [text.locator("p").filter({ hasText: "sudo install" }), compact.locator("pre")],
+  });
+  await card.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  const chat = await shaped(questionCard(page, question));
+  await walk.state("02-owning-chat-paragraphs-and-command-block", {
+    visible: [chat.locator("pre.session-code"), questionCard(page, question).getByRole("button", { name: "Install report root", exact: true })],
+    hidden: [chat.locator("p").filter({ hasText: "sudo install" })],
+  });
+  expect((await readTask(request, slug)).question?.status).toBe("open");
 });

@@ -262,7 +262,7 @@ paid provider calls. User conversations and tasks use the account's normal allow
   authentication rejections affect that engine. A strict pin must itself become usable or be changed.
 - **A task cannot start or land:** inspect its reason, the clean `main`/`origin/main` checkout,
   Git guards, GitHub authentication and applicable check results. Do not bypass a guard.
-  For dirty main, L3 or the operator explicitly requests `alt task preserve-checkout <slug> --reason "…"`
+  For dirty main, L3 or the operator explicitly requests `alt task preserve-checkout <slug> --reason '…'`
   for an unlaunched blocked task. A local archive branch retains the working snapshot and its staged
   parent; task status records the branch and SHA. Review/apply in the owner's isolated worktree and
   deliver through a PR; applying the complete snapshot flattens staging intent. Ignored files stay

@@ -145,8 +145,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
                              "blocker and amend the incident only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
                              "the cause is gone. Keep recovery and prevention evidence/ownership separate; "
-                             "unchanged follow-through stays quiet.\n\n"
-                             + upstream_summary(target), trigger="incident")
+                             "unchanged follow-through stays quiet.", trigger="incident")
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
@@ -163,8 +162,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
                          f"Its task is blocked and incident {target}/{inc['id']} holds the evidence. Read the evidence, record "
                          "verified recovery and prevention follow-through with `alt incident amend`. Unblock affected "
                          "work first through supported recovery; promptly report/reuse an issue for actionable system "
-                         "or role defects, record prevention ownership or reporting failure, and give one concise FYI.\n\n"
-                         + upstream_summary(target), trigger="incident")
+                         "or role defects, record prevention ownership or reporting failure, and give one concise FYI.", trigger="incident")
     return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
 
 
@@ -236,31 +234,25 @@ def upstream_delivery(project: str, incident: str, *, outcome: dict | None = Non
     return outcome
 
 
-def upstream_summary(project: str) -> str:
-    """Current incident follow-through and publication outcomes, from existing local evidence."""
-    current = index(project)
-    pending = [row for row in reversed(current) if row.get("status") != "closed"]
+def open_summary(project: str) -> str:
+    """Incidents not closed, one line each; full evidence and closed history stay with `alt incident list`."""
+    pending = [row for row in reversed(index(project)) if row.get("status") != "closed"]
     lines = []
-    if pending:
-        lines.append(f"Incident follow-through: {len(pending)} not closed (recovery is separate from prevention).")
-        for row in pending[:5]:
-            evidence = " ".join(row.get("evidence", "Evidence unavailable; inspect the local record.").split())
-            lines.append(f"- {row['id']}: {row.get('status', 'unavailable')} — {evidence[:600]}"
-                         + (" [truncated]" if len(evidence) > 600 else ""))
-        lines.append("Inspect full evidence with `alt incident list`; historical records do not authorize publication.")
-    rows = {row["id"]: row for row in current if "upstream" in row}
-    if not rows:
-        return "\n".join(lines)
-    counts = {status: sum(row["upstream"]["status"] == status for row in rows.values())
-              for status in ("missing", "failed", "uncertain", "confirmed")}
-    lines.append("Upstream reports: " + ", ".join(f"{status}={count}" for status, count in counts.items()))
-    ordered = sorted(reversed(list(rows.values())), key=lambda row: row["upstream"]["status"] == "confirmed")
-    for row in ordered[:5]:
-        outcome = row["upstream"]
-        lines.append(f"- {row['id']}: {outcome['status']} — {outcome.get('url') or outcome['reason']}")
-        if notice := outcome.get("notification"):
-            lines.append(f"  Local notification: {notice['status']} — {notice.get('reason') or notice['target']}")
-    lines.append("Inspect all links and gaps with `alt incident list`; reporting does not assign repair work.")
+    for row in pending[:10]:
+        report = row.get("upstream")
+        link = ("" if report is None else f"; report {report['url']}" if report.get("url")
+                else "; no report linked" if report["status"] == "missing" else f"; report {report['status']}")
+        if row.get("status") == "unavailable":
+            lines.append(f"- {row['id']}: evidence unavailable, inspect the local record")
+            continue
+        evidence = " ".join((row.get("evidence") or "").split())
+        lines.append(f"- {row['id']}: {row['status']} — {row.get('title') or 'untitled'}{link}"
+                     + (f"\n  {evidence[:300]}" + (" [truncated]" if len(evidence) > 300 else "") if evidence else ""))
+    if len(pending) > 10:
+        lines.append(f"- and {len(pending) - 10} more")
+    if lines:
+        lines = [f"{len(pending)} not closed; recovery is separate from prevention.", *lines,
+                 "Full evidence and closed history: `alt incident list`."]
     return "\n".join(lines)
 
 

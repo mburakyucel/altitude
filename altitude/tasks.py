@@ -291,12 +291,15 @@ def ci_recheck_identity(task: dict) -> dict:
 
 
 def ci_recheck_current(task: dict, record: dict) -> bool:
-    return (task.get("state") == "blocked" and bool(task.get("fault"))
-            and record.get("identity") == ci_recheck_identity(task))
+    return task.get("state") == "blocked" and record.get("identity") == ci_recheck_identity(task)
 
 
 def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor: str) -> dict:
-    """The stalled CI recovery owner (2026-09-09): one finite coordinator probe, never a resume."""
+    """One finite coordinator probe of a blocked owner's CI run, never a resume.
+
+    A fault-blocked owner (2026-09-09 stalled recovery) may get one rerun of an old failed run; a question-blocked
+    owner waiting on a queued or running check (#420) only observes it until it is terminal.
+    """
     if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not str(reason or "").strip():
         raise TransitionError("CI recheck requires L3 or the operator and a reason")
     try:
@@ -314,8 +317,8 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
             identity, int(run), due.isoformat(), reason.strip())
         if same:
             return previous
-        if task["state"] != "blocked" or not task.get("fault"):
-            raise TransitionError("CI recheck requires an existing fault-blocked task")
+        if task["state"] != "blocked":
+            raise TransitionError("CI recheck requires a blocked task")
         if (task.get("resume_after") or task.get("resume_claim") or task.get("dispatching")
                 or (task.get("daemon_request") or {}).get("status") in ("pending", "executing")):
             raise TransitionError("CI recheck cannot target a pending task lifecycle change")
@@ -326,7 +329,8 @@ def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor
             raise TransitionError("CI recheck time must be within the next seven days")
         record = {"id": uuid.uuid4().hex, "actor": actor, "requested_at": S.now(), "identity": identity,
                   "run": int(run), "at": due.isoformat(), "due_at": due.isoformat(), "reason": reason.strip(),
-                  "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat()}
+                  "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat(),
+                  "wait": not task.get("fault")}
         task["ci_recheck"] = record
         S.save_task(project, task)
         S.append_event(project, slug, "ci-recheck", request_id=record["id"], by=actor,
@@ -1945,17 +1949,50 @@ def operator_questions(task: dict) -> list[dict]:
             and not q.get("response") and q["asked"] > since]
 
 
-def review_pr(task: dict) -> int | None:
-    """#419: a held delivery whose owner has stopped waits for the operator's review, question or not."""
+def _names_pr(number: int) -> re.Pattern:
+    return re.compile(rf"(/pull/|PR #?){number}\b")
+
+
+def approved_pr(project: str, task: dict) -> int | None:
+    """#451: the operator's review-card approval of the current held head stands until the head or hold changes
+    or a later operator message about the PR; the owner still applies it with `alt land --merge --approval`."""
     number = (task.get("prs") or [None])[-1]
+    delivery = task.get("delivery") or {}
+    head = delivery.get("head") if number and delivery.get("number") == number else None
+    if not (head and task.get("hold_merge")):
+        return None
+    holds = [e["at"] for e in S.read_events(project, task["slug"]) if e.get("kind") in ("new", "hold-merge")]
+    # Records keep whole seconds; an approval must come in a later second than the head and the hold.
+    second = lambda at: datetime.fromisoformat(at.replace("Z", "+00:00")).replace(microsecond=0)
+    since = max(second(at) for at in [delivery.get("at") or "1970-01-01T00:00:00+00:00", *holds[-1:]])
+    approved, names = False, _names_pr(number)
+    for row in task_messages(project, task["slug"]):
+        if row.get("role") != OPERATOR_MESSAGE_ROLE or row.get("removed_at") or second(row["at"]) <= since:
+            continue
+        if row.get("text", "").strip() == f"Approved: merge PR #{number} at {head[:7]}.":
+            approved = True
+        elif names.search(row.get("text", "")):
+            approved = False  # a later word about the PR may condition or revoke it
+    return number if approved else None
+
+
+def review_pr(project: str, task: dict) -> int | None:
+    """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
+    An open operator question that names the PR is already that review, so it is asked once (#448), and a
+    recorded approval of the current head is not asked for again (#451)."""
+    number = (task.get("prs") or [None])[-1]
+    names = _names_pr(number)
     if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
             and task.get("state") in ("blocked", "reported") and not any(
-                task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))):
+                task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
+            and not any(names.search(" ".join([q["detail"], *(f"{o['label']} {o['text']}" for o in question_choices(q))]))
+                        for q in operator_questions(task))
+            and not approved_pr(project, task)):
         return number
     return None
 
 
-def block_status(task: dict) -> tuple[str, str]:
+def block_status(project: str, task: dict) -> tuple[str, str]:
     """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision."""
     name = config.OPERATOR
     if task.get("fault"):
@@ -1963,7 +2000,7 @@ def block_status(task: dict) -> tuple[str, str]:
     if task.get("stop_id"):
         return "stopped", f"stopped by {name}"
     stopped = task.get("state") in ("blocked", "reported")
-    count, number = len(operator_questions(task)) if stopped else 0, review_pr(task)
+    count, number = len(operator_questions(task)) if stopped else 0, review_pr(project, task)
     waits = []
     if count:
         waits.append(f"{count} question{'s' if count != 1 else ''}")
@@ -1974,13 +2011,14 @@ def block_status(task: dict) -> tuple[str, str]:
     if task.get("handed_back") and (task.get("state") == "running" or task.get("resume_after")):
         return "replying", f"L2 replying to {name}"
     who = task.get("waiting_on")
+    approved = f" · PR #{number} approved" if stopped and (number := approved_pr(project, task)) else ""
     if who in (OPERATOR_MESSAGE_ROLE, "l3"):
-        return f"waiting-{who}", f"waiting on {name if who == OPERATOR_MESSAGE_ROLE else 'L3'}"
-    return "paused", "paused"
+        return f"waiting-{who}", f"waiting on {name if who == OPERATOR_MESSAGE_ROLE else 'L3'}{approved}"
+    return "paused", f"paused{approved}"
 
 
-def wait_label(task: dict) -> str | None:
-    kind, label = block_status(task)
+def wait_label(project: str, task: dict) -> str | None:
+    kind, label = block_status(project, task)
     return label if task.get("state") == "blocked" or kind != "paused" else None
 
 
@@ -2010,7 +2048,7 @@ def decision_row(project: str, task: dict) -> dict:
 
 
 def review_row(project: str, task: dict) -> dict | None:
-    number = review_pr(task)
+    number = review_pr(project, task)
     if not number:
         return None
     delivery = task.get("delivery") or {}

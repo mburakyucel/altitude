@@ -486,18 +486,30 @@ implementation detail, evidence and history remain accessible in the owning conv
 saved question detail opens under **More context** there when it differs from the visible question.
 Needs you groups all attention items into contiguous project sections. Each section starts with
 the full owning project name as a heading; names wrap without clipping on phone and desktop,
-including shared prefixes and unbroken names. Project order follows first appearance in the queue;
-items keep their order within each project, and question groups stay together. This applies to
-single-project and mixed-project queues, including questions, reviews, stops and faults. The selected
-project never supplies an item's owner or filters the inbox. Saved reads retain the sections.
+including shared prefixes and unbroken names. The selected project's section comes first whenever
+it has items, on entry and when the selection changes; the other projects follow first appearance
+in the queue. Items keep their order within each project, and question groups stay together. This
+applies to single-project and mixed-project queues, including questions, reviews, stops and faults.
+The selected project never supplies an item's owner or filters the inbox. Saved reads retain the
+sections. Each heading is a disclosure button with a small chevron: a click, Enter or Space
+collapses that section to its heading and a count (**2 questions · 1 stopped task**) and reopens it.
+Sections start open; collapsing keeps staged answers and changes no question, and the state lasts
+for the page visit, with no setting.
 The task title is its own fully wrapping link below source/time and above the question.
 `web/e2e/needs-ownership.pw.ts` walks ownership and navigation; `work-and-decisions.pw.ts`
 walks empty, loading, saved/read errors, sending, sent, failed and denied states at both viewports.
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
-With no manual picks or open custom fields, **Use recommendations** stages only questions with an
-explicit recommendation; **Send N answers** submits them. It never overrides a picked alternative.
+Question and review-card text renders like a reply (§3.3): a one-line question stays one bold line,
+and line breaks bring separate paragraphs, lists, inline code and a fenced command in a distinct
+mono code block the operator can copy. The first paragraph keeps the headline weight. Recommendations,
+receipts, folded summaries, list rows, toasts and labels keep their one-line form.
+`conversation-decisions.pw.ts` walks a multi-paragraph question with a command block in Needs you
+and the owning chat at both viewports.
+Each explicitly recommended choice has an accent border and text with a small star badge on its
+top-right corner (announced and titled "Recommended"), so the cue never narrows the label. It is never
+preselected; the operator's pick adds the tinted fill and ring. **Send N answers** submits picks.
 The task title and card background open the same chat destination. Reference links remain ordinary
 external links. Plain questions accept a typed answer in place; no inferred default exists. Operational stops and faults open the task's
 ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
@@ -721,7 +733,10 @@ and no generic Resume while the question is open. A held review-ready PR whose o
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N at <head>." and the L2 merges
 with it after a final check of that same head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
-unrelated question never hides that review. A fault retains a visible short cause and **L3 has been told**. Operational
+unrelated question never hides that review; an open operator question that links or names the PR
+is that review, so the separate card stays away until the question closes. After **Approve merge** for the
+current head, a later park on another dependency shows that wait with "PR #N approved" and no card; a new
+head, a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. Phone tab

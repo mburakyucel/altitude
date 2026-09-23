@@ -38,8 +38,8 @@ hides that navigation. Back returns to the originating Work or Needs you view.
 The operator approved answer-in-place responses on 2026-09-14 Pacific. Choices start unselected,
 including a single question. **Other…** opens a small field under that question; plain questions show
 the field directly. Pick or type responses, then **Send N answers** once. A custom response can be
-“21 days” or “Why only seven or fourteen?”. **Use recommendations** stages explicit recommendations
-when nothing is picked, ready for Send. Only actual picks receive selection styling. You can send
+“21 days” or “Why only seven or fourteen?”. An explicitly recommended choice has an accent
+border and a corner star and is never preselected. Only actual picks receive selection styling. You can send
 fewer answers and leave the rest available. The send row stays reachable as a long group scrolls.
 These small fields use text; ordinary chat retains voice input.
 

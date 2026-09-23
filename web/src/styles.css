@@ -991,6 +991,11 @@
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
+/* A multi-paragraph question keeps its headline weight on the first paragraph; the command block reads as code. */
+.decision-question .session-prose, .decision-why .session-prose { color: inherit; font-weight: 400; }
+.decision-question .session-prose > p:first-child { font-weight: 600; }
+.decision-question .session-prose ul, .decision-why .session-prose ul { padding-left: 22px; list-style: disc; }
+.decision-question .session-prose ol, .decision-why .session-prose ol { padding-left: 22px; list-style: decimal; }
 
 .decision[data-selected] {
   border-color: var(--accent);
@@ -1132,7 +1137,7 @@
   }
 }
 
-/* Needs you (§3.3): contiguous project sections, then the calm line. */
+/* Needs you (§3.8): the selected project first, collapsible project sections, then the calm line. */
 .needs-page {
   gap: 16px;
 }
@@ -1171,6 +1176,41 @@
 .needs-project h2 {
   overflow-wrap: anywhere;
 }
+.needs-project-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.needs-project-toggle::before {
+  content: "▾" / "";
+  margin-right: 8px;
+  color: var(--text-muted);
+}
+.needs-project-toggle[aria-expanded="false"]::before {
+  content: "▸" / "";
+}
+.needs-project-count {
+  display: inline-block;
+  margin-left: 10px;
+  font-size: var(--text-meta);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.shell[data-phone] .needs-project-toggle {
+  min-height: var(--target-min);
+}
+.needs-project-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .calm {
   margin: 8px 0 0;
   font-size: var(--text-meta);
@@ -1193,6 +1233,9 @@
 .question-answer { width: 100%; min-height: 72px; max-height: 180px; resize: vertical; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-input); background: var(--surface); color: var(--text-primary); font: inherit; }
 .question-answer:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 .decision-options .btn { min-height: 44px; white-space: normal; gap: 6px; }
+/* The recommendation is an accent border with a corner star, so it never takes label width; the pick adds fill and a ring. */
+.decision-options .btn[data-recommended] { position: relative; border-color: var(--accent); color: var(--accent-text); }
+.option-recommended { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 10px; line-height: 16px; text-align: center; pointer-events: none; }
 .decision-options .btn[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-text); outline: 2px solid var(--accent); outline-offset: 3px; }
 .question-set[data-grouped] { gap: 12px; }
 .question-set[data-grouped] .question-body { gap: 8px; }

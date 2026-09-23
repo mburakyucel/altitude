@@ -75,7 +75,7 @@ Saved task-worktree overrides are checked too. Routine guard repair also runs be
 operator explicitly chooses supported integration.
 
 **Retry** repeats the supported programmatic operation. L3 receives configuration faults and can
-investigate or request repair through `alt project setup <name> --repair --reason "…"` even when
+investigate or request repair through `alt project setup <name> --repair --reason '…'` even when
 no task can start. **Discuss with L3** opens the existing conversation; it sends no message and
 starts no extra repair agent. Source fixes follow the ordinary task and PR path. Programmatic
 checks verify every repair before the checklist reports completion.
@@ -182,7 +182,7 @@ queued task
 The flags are mutually exclusive; a named dependency belongs to the same project and releases
 the wait only when archived done, including if already satisfied at creation. A PR merge alone,
 rejection, failure or missing dependency does not release it. Planned tasks create no worker or
-worktree and consume no WIP slot. L3 or the operator can use `alt task release <slug> --reason "…"`
+worktree and consume no WIP slot. L3 or the operator can use `alt task release <slug> --reason '…'`
 to release either wait explicitly, including an early named-dependency override with a recorded
 reason. The task then passes the ordinary dispatch gates; release leaves merge holds intact.
 Work and task conversations show **Planned · waits for …**, and the state digest retains the reason.
@@ -233,7 +233,7 @@ source preparation is a separate operator action from archive installation and c
 Verification retains the live PID, invocation and main-start timestamp across unit reloads,
 independently of resettable command-history metadata; actual identity changes still refuse success.
 
-L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
+L3 or the operator can request `alt task preserve-checkout <slug> --reason '…'` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
 unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records
 `checkout_archive` and a `checkout-preserved` event with its branch and immutable snapshot SHA
@@ -249,8 +249,8 @@ reviews the changes and delivers a PR. See [the recovery procedure](CLI.md#dirty
 
 Stored project WIP overrides impose no limit, and project registration and settings expose no cap.
 The operator sets the machine cap with
-`alt machine set --wip N --reason "…"` or resets it to 80 with
-`alt machine set --unset-wip --reason "…"`. Any positive integer is supported for the machine,
+`alt machine set --wip N --reason '…'` or resets it to 80 with
+`alt machine set --unset-wip --reason '…'`. Any positive integer is supported for the machine,
 including values above 80. The daemon settings implementation stores machine overrides and
 receipts persistently and drains them before project ticks. Machine changes and project add/remove
 are operator-only; an L2 cannot change scheduling limits. `alt machine show` displays active/default
@@ -270,7 +270,7 @@ base; unrelated errors or a failed repeat retain their existing failure paths. R
 fetch, and this operation does not retry faulted tasks or request a service restart.
 
 L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them with
-`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`; commas tie
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`; commas tie
 options, and `>` starts a lower-priority tier. The operator and project's L3 can change or unset this
 operational setting; altd applies it on the next tick and records the reason without a restart.
 The default ties Codex's default model and Claude Fable, with Opus as a lower-tier fallback;
@@ -431,7 +431,8 @@ send and reload. `reported-continuation.pw.ts` walks continuation and refusal; t
 and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
 A task's versioned dilemma remains open independently of that wake and its worker state. Sending
 it anything hands the turn back: its questions leave Needs you until the owner parks again, when
-still-open ones return as **asked again** and a held review-ready PR shows its own review item. Blocks and
+still-open ones return as **asked again** and a held review-ready PR shows its own review item unless an open question links it or the operator
+already approved its current head since the hold (a later message naming the PR asks again). Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
 The owner or coordinator writes the actual choice in plain language with the task's user-facing
@@ -439,8 +440,9 @@ purpose and material consequences clear before answering. Detailed reasoning and
 accessible in the owning conversation; concise presentation changes no revision or authority rule.
 
 Global Needs you and the owning L2 chat show questions and quick answers. Needs you keeps each
-project's attention items together beneath a full project heading that wraps at both viewports.
-This global inbox includes all projects regardless of the selected project. Project Work retains
+project's attention items together beneath a full project heading that wraps at both viewports,
+with the selected project's section first; each heading collapses or reopens its section without
+touching staged answers. This global inbox includes all projects regardless of the selected project. Project Work retains
 each unfinished task once in **Current**, with compact question and execution status; its waiting
 row opens the owning question. A wake or capacity wait alone changes no question.
 Answers and withdrawals reduce the question count without removing the task; closing the last removes
@@ -527,12 +529,10 @@ delivery evidence and local observations that the actual cause is gone, then req
 reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
 repair. Irretrievable historical evidence stays unknown: L3 records the next supported diagnostic
 action, a justified wait with a finite meaningful observation, or the exact capability/authority
-decision when no supported path can establish recovery. A changed operational contract for bounded
-diagnostic continuation requires that decision before execution. Within an authorized diagnostic
-scope, the same owner runs, inspects and adjusts relevant diagnostics without per-command approval,
-retaining evidence and reporting findings, uncertainty and a concrete next step at the agreed finite
-stop condition or scope/access boundary. Explicit restrictions, including one-run limits, still bind;
-machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
+decision when no supported path can establish recovery. The owner investigates as part of its task:
+non-invasive diagnosis iterates without approval rounds, and only missing access, a material machine
+or service change, unapproved spend, a live-provider test or an explicit restriction needs a decision.
+Machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
 The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
 and incident evidence, not a new lifecycle state or perpetual polling.
 Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
@@ -541,9 +541,10 @@ resume. Operator discussion retains its ordinary wake behavior. Explicit resume 
 workerless `main-unpushed` task independently of deployment recovery. Fresh dispatch validates its
 fetched base and isolated worktree; a restart does not repair deployment edits.
 
-For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason "…"`.
+For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason '…'`.
 The task-local record survives daemon restart and exposes the due probe or coordinator delivery in
-task status. One selected same-project rerun is permitted when relevant fresh CI is unavailable;
+task status. For a fault-blocked task, one selected same-project rerun is permitted when relevant fresh
+CI is unavailable; a question-blocked owner waiting on a queued or running check gets observation only;
 submission intent precedes IO, and uncertain writes are reconciled through run attempts without
 resubmission. Reads, polling and coordinator handling are finite. The queue row and turn identity
 remain durable until successful terminal chat evidence or visible exhausted delivery. Provider
@@ -726,17 +727,17 @@ Owners and helpers run relevant tests during development. This repository's self
 local full run. The branch includes current main; a branch missing it needs reconciliation
 and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
 owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
-Owners verify the runner's completed local log/identity export; failed runs also retain browser
-reports and traces. Needed evidence is copied into the task through review; unneeded completed
-exports are cleaned up after three days or when disk capacity is tight. Missing export blocks
-delivery even with green GitHub checks. GitHub artifact storage is unused. A bounded CI wait
+A passing required check with its GitHub console log is sufficient delivery evidence. The runner
+retains small logs and identity receipts; failed runs also retain browser reports and traces, which
+owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
+when the export is unreadable. Unneeded completed exports are cleaned up after three days or when
+disk capacity is tight. GitHub artifact storage is unused. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
-L3 owns the existing finite `recheck-ci` for GitHub execution; local export recovery requires
-verified retrieval from the runner. Missing runs need trigger/runner recovery. Runner or local
-storage outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
+L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
+recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
-activation does not establish evidence retrieval or release an operator hold.
+activation does not release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
@@ -747,7 +748,7 @@ The shared CLI test fixture likewise supplies explicit empty input; the same ope
 checks issue-close CLI/API validation without changing the production command's input handling.
 
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
-then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
+then uses [`alt land --adopt-pr N --expected-head SHA --reason '…'`](CLI.md#adopt-an-existing-pr).
 Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
 After a verified history-preserving merge on main, the same task can explicitly select its next
 assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
@@ -831,7 +832,7 @@ describe retained worker termination; absent or collected units, unsupported fie
 stay unknown. Signal 9, exit 137, memory snapshots and cumulative OOM counters do not establish a
 historical kill or cleared pressure. No host consumers or collected history are reconstructed, and
 the read changes neither worker retention nor L3's verified-resume responsibility.
-`alt issue upstream --title "…" -` uses that same broker/MCP boundary on either engine, with a
+`alt issue upstream --title '…' -` uses that same broker/MCP boundary on either engine, with a
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
 an issue URL or an actionable failure; the successful receipt stays in the calling project's log.

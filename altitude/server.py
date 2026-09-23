@@ -656,10 +656,9 @@ def restart_notice() -> None:
             continue
         lines = []
         for t in active:
-            tag = T.wait_label(t) or t["state"]
+            tag = T.wait_label(project, t) or t["state"]
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
-                         + "\n\n" + incidents.upstream_summary(project)
                          + "\n\nCheck each with `alt task status <slug>`. A restart does not resolve checkout faults. "
                          "Resume only after observing that the cause is gone (`alt task resume <slug> --reason \"<observed fix>\"`); leave a task waiting on "
                          "the operator to them; a running task keeps "

@@ -36,8 +36,8 @@ inspection and task lifecycle verbs.
 
 Project verbs include `alt project add <name> [--path PATH]`, `list`, `discover`,
 `remove <name>` and `set <name>` for routing preferences. All projects share one machine cap,
-defaulting to 80; the operator can use `alt machine set --wip N --reason "…"` (including N above 80),
-`alt machine set --unset-wip --reason "…"`, and `alt machine show` to set, reset and inspect it.
+defaulting to 80; the operator can use `alt machine set --wip N --reason '…'` (including N above 80),
+`alt machine set --unset-wip --reason '…'`, and `alt machine show` to set, reset and inspect it.
 Machine changes, project add and remove are operator-only. See [concurrency examples](CLI.md#concurrency-limits).
 A set persists a reason-bearing request that altd applies on its next tick,
 without a PR, restart, or free task slot. Stored project caps impose no limit. Lowering the machine
@@ -46,7 +46,7 @@ eligible resumes across all projects take available slots before fresh work. Pla
 guide coordination; overlapping files do not hold dispatch.
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
-L3 and the operator file requested backlog through altd with `alt issue new --title "…" -`
+L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
 PR closing links; when an already merged delivery lacks its link, L3 verifies the issue's full
 scope and uses `alt issue close <number> --reason completed` without another routine request.
@@ -62,7 +62,7 @@ incident evidence from published text.
 A dirty deployment checkout leaves isolated dispatch and resume available; deployment failures
 remain visible separately. To reconcile its edits, use the
 [dirty-checkout recovery procedure](CLI.md#dirty-checkout-recovery): select an unlaunched blocked
-task, pause edits to main, and request `alt task preserve-checkout <slug> --reason "…"` as L3 or
+task, pause edits to main, and request `alt task preserve-checkout <slug> --reason '…'` as L3 or
 the operator. Altd preserves staged, unstaged and untracked files on a local archive branch, records
 its branch and immutable snapshot SHA in `checkout_archive` before cleanup, and requires the checkout
 to pass the normal guard. The snapshot's parent retains staged-only content. Ignored files

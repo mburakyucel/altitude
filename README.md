@@ -82,7 +82,7 @@ report covers all of them. See [continuation after merge](docs/CLI.md#continue-a
 
 A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
 continue that owner's session, attempt and worktree with the same PR, objective and review holds.
-L3 can also request continuation with `alt task resume <slug> --reason "…"`. The previous report
+L3 can also request continuation with `alt task resume <slug> --reason '…'`. The previous report
 stays in task history. Every resumed code-owner turn rechecks delivery and writes a fresh report,
 including replayed guidance that adds no work, retaining all deliveries and exact remaining scope.
 A chat acknowledgement cannot complete that turn. A saved message is not proof that the
@@ -107,7 +107,7 @@ The command targets the project's repository, retains branches, and returns the 
 and URL. The operator can use the same verb. Unconfirmed results remain explicit.
 
 An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
-Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
+Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason '…' --message '…'`.
 The owner inspects and incorporates its history in the task worktree first. Adoption records that
 specific PR and original head. Commit messages need no ownership labels or repair. Updates go to
 the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
@@ -157,7 +157,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   with each command and its output recorded on the task, until the purpose is done or the grant is
   revoked. The owner never hands terminal commands back to the operator for authorized work.
 - **Selective attention.** Needs you collects unresolved dilemmas in clearly named project sections,
-  with each project's items together and full project names wrapping when needed. Each item
+  the selected project first, each heading collapsing or reopening its items, and full project names
+  wrapping when needed. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,
   concise actions, and the material consequences needed to answer. Detailed reasoning and history
   stay accessible in the owning conversation. The model can ask a plain question, offer one
@@ -186,13 +187,15 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   on your turn, running, planned, queued, waiting on L3 or paused by their owner. **Your turn ·
   N questions** or **Your turn · review PR #N** marks what waits for you; replying hands the task
   back to its L2 (**L2 replying to you**) until it asks again. A held review-ready PR asks for
-  review itself, with **Approve merge**. An unassigned pause reads **Paused** with a neutral dot;
+  review itself, with **Approve merge**, unless the owner's open question already links it. Once you
+approve the current head, a later wait on something else reads, for example, **Waiting on L3 · PR #N approved**
+instead of asking again; a new head, a new hold or a later message about the PR asks again. An unassigned pause reads **Paused** with a neutral dot;
   **Stopped by you** identifies an operator stop.
   **Planned · waits for …**
   keeps decided short-term work visible with one reason, without a worker or WIP slot.
-  Create it with `alt task new --wait "…"` or `--after <task>` and a written brief; a named
+  Create it with `alt task new --wait '…'` or `--after <task>` and a written brief; a named
   dependency releases it when archived done, while L3 or the operator can explicitly release
-  either wait with `alt task release <slug> --reason "…"`. Messages stay saved for launch without
+  either wait with `alt task release <slug> --reason '…'`. Messages stay saved for launch without
   releasing the task or replacing the original brief's authority. Issues remain the long-term backlog.
   Compact status rows open the owning conversation at its question when one needs you;
   questions and quick answers live in Needs you
@@ -505,7 +508,7 @@ self-deployment fetch once more after the specific stale-reference error. Progre
 fresh fetch to succeed; unrelated errors and a failed second fetch remain visible.
 
 To preserve deployment edits for an authorized reconciliation, L3 or the operator can use
-[`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
+[`alt task preserve-checkout <slug> --reason '…'`](docs/CLI.md#dirty-checkout-recovery)
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
 changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
 snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
@@ -531,10 +534,10 @@ and merge holds still apply.
 L3 keeps unfinished work actionable with an owned next step, a meaningful finite observation or a
 genuine decision. Legitimate waits name their dependency and follow-through; they need no continuously
 running worker. Irretrievable historical evidence stays unknown. When supported diagnosis cannot
-establish recovery, L3 exposes the actual capability or authority gap. Within an authorized diagnostic
-scope, the same L2 runs, inspects and adjusts diagnostics without per-command approval, retaining
-evidence and a concrete next step at the agreed stop or scope boundary. Explicit restrictions, access
-requirements, fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
+establish recovery, L3 exposes the actual capability or authority gap. Ordinary non-invasive
+investigation is part of the owner's task and iterates without approval rounds; only missing access,
+material machine changes, unapproved spend, live-provider tests or explicit restrictions need a
+question. Fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
 
 Recovery and recurrence prevention are separate responsibilities. L3 promptly reports/reuses a
 sanitized issue for actionable system or role defects and records
@@ -545,8 +548,9 @@ prevention or an evidence-backed no-change disposition. The development coordina
 under its own authority, on any installation. See [incident follow-through](docs/CLI.md#incident-recovery-and-prevention).
 
 For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
-existing fault-blocked task. Status names its next action and time. The daemon follows relevant fresh
-CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers terminal
+blocked task: a faulted owner, or an owner parked on a question while its required check queues. Status
+names its next action and time. The daemon follows relevant fresh CI, reruns one selected run only for
+a fault, preserves uncertain submission evidence, and delivers terminal
 results durably to that project's L3, including unchanged failures. L3 reconciles the next step and
 gives a concise heads-up when significant work remains blocked; repeated observations stay quiet.
 Artifact capacity needs fresh uploaded artifacts; a passing run
@@ -561,8 +565,8 @@ Installations without that matching project remain issue-only. Altitude's operat
 any implementation separately; reporting never creates, reuses, or resumes a receiving-project task.
 
 For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
-failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
-and restart summaries expose the gaps. Reporting belongs to the incident named in its receipt;
+failed, or uncertain delivery with an actionable reason. `alt incident list` holds the full history;
+coordinator state lists only open incidents with their link or gap. Reporting belongs to the incident named in its receipt;
 L3 judges whether a separate incident shares a cause and links a matching issue or creates one
 through the existing command. A broad failure label does not select an issue. Known links survive
 repeated calls and restarts; an uncertain attempt blocks another creation until the operator checks
@@ -605,9 +609,9 @@ against isolated fictional state, with external engines replaced by deterministi
 Python module processes run alongside the ordered web phases; CI browser workers scale with
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 CI retains small logs and tested commit identity on the runner host; failed runs also retain the
-self-contained HTML report, screenshots and traces. Owners verify local retrieval and keep needed
-evidence through review, cleaning up unneeded completed exports after three days or when disk
-capacity is tight. No GitHub artifact upload is required.
+self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
+failure or on a reviewer's request. Unneeded completed exports are cleaned up after three days or
+when disk capacity is tight. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
@@ -629,7 +633,7 @@ Setup friction and confusing product language are useful feedback too. Keep exam
 or redacted; send security-sensitive details privately to the maintainer through your invitation
 channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
-Managed projects' L3s can use `alt issue upstream --title "…" -` through their coordinator transport.
+Managed projects' L3s can use `alt issue upstream --title '…' -` through their coordinator transport.
 The JSON body describes expected and actual behavior, a fictional/redacted reproduction, and the
 version if known. Altd resolves the product repository from its installation origin or the operator's
 `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting; callers cannot choose a destination or other upstream
