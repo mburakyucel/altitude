@@ -15,10 +15,10 @@ function seatsWith(body: Json, patch: (quota: Json) => Json): Seat[] {
 }
 
 async function overlay(page: Page, path: string, patch: (body: Json) => Json) {
-  await page.route(`**${path}*`, async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, json: patch((await response.json()) as Json) });
-  });
+  const response = await page.request.get(path);
+  expect(response.ok()).toBe(true);
+  const body = patch((await response.json()) as Json);
+  await page.route(`**${path}*`, (route) => route.fulfill({ json: body }));
 }
 
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3600_000);

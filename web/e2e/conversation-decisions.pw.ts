@@ -862,6 +862,10 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   const card = groupCard(page, group);
   await questionCard(page, retention).getByRole("button", { name: "14 days", exact: true }).click();
   await questionCard(page, region).getByRole("button", { name: "West", exact: true }).click();
+  // Keep the observed revision until Send; background polling must not erase the stale-input case.
+  const read = `**/api/task/atlas/${slug}`;
+  const observed = await readTask(request, slug);
+  await page.route(read, (route) => route.fulfill({ json: observed }));
   expect((await request.post("/fixture/revise-group", { data: { slug } })).ok()).toBe(true);
   const before = await readTask(request, slug);
   const staleResponse = page.waitForResponse((row) => row.url().endsWith("/api/decide"));
@@ -872,6 +876,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   expect(failed.question_group.questions.every((q) => q.status === "open")).toBe(true);
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(0);
   await walk.state("stale-batch-accepts-no-members", { visible: [card.getByRole("alert"), card.getByRole("button", { name: "Refresh", exact: true })], hidden: [card.getByText("Decision recorded", { exact: true })] });
+  await page.unroute(read);
   await card.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(card.getByRole("alert")).toHaveCount(0);
   await expect(card.locator('[aria-pressed="true"]')).toHaveCount(1);
