@@ -1458,7 +1458,11 @@ stale choices without retargeting them. Explicitly republishing a responded memb
 and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.
 Needs you keeps the task's purpose, complete question, concise recommendation and material
 consequences visible before an answer. Owners write these for an operator deciding at a glance;
-clipping long technical prose is not a substitute. Additional saved question detail opens in a
+clipping long technical prose is not a substitute. Question and review-card text with line breaks
+renders through the reply prose renderer (`QuestionProse` in `web/src/components/Prose.tsx`):
+paragraphs, lists, inline code and fenced code blocks, in Needs you and the owning chat; a one-line
+question stays one compact line, as do recommendations, receipts, folded summaries and labels.
+Additional saved question detail opens in a
 **More context** disclosure in the owning chat when it differs from the question, alongside its
 surrounding reasoning, evidence and history. This
 uses the existing question and conversation records without a second summary or decision store.

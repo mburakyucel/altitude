@@ -991,6 +991,11 @@
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
+/* A multi-paragraph question keeps its headline weight on the first paragraph; the command block reads as code. */
+.decision-question .session-prose, .decision-why .session-prose { color: inherit; font-weight: 400; }
+.decision-question .session-prose > p:first-child { font-weight: 600; }
+.decision-question .session-prose ul, .decision-why .session-prose ul { padding-left: 22px; list-style: disc; }
+.decision-question .session-prose ol, .decision-why .session-prose ol { padding-left: 22px; list-style: decimal; }
 
 .decision[data-selected] {
   border-color: var(--accent);
