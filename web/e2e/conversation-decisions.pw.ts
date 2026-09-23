@@ -980,3 +980,37 @@ test("question loading, read failure, write failure and denied access retain rec
   await page.getByRole("button", { name: "Retry", exact: true }).first().click();
   await walk.state("06-read-recovered", { visible: [card, field], hidden: [error] });
 });
+
+/** A question with paragraphs and a command shows them as prose and a code block, not one bold line. */
+test("a multi-paragraph question renders paragraphs and a copyable command block in Needs you and chat", async ({ page, request }, info) => {
+  const response = await request.post("/fixture/fenced-question");
+  expect(response.ok()).toBe(true);
+  const { slug } = await response.json() as { slug: string };
+  const question = (await readTask(request, slug)).question!;
+  const command = "sudo install -d -o altitude /srv/altitude-reports\nalt ci reports --root /srv/altitude-reports";
+  const walk = walkthrough(page, info);
+  const shaped = async (card: Locator) => {
+    const text = card.locator(".decision-question");
+    await expect(text.locator(".session-prose > p")).toHaveCount(3);
+    await expect(text.locator("pre.session-code")).toHaveText(command);
+    await expect(text.locator("p code")).toHaveText("alt task recheck-ci");
+    expect(await text.locator("pre").evaluate((node) => getComputedStyle(node).fontWeight)).toBe("400");
+    return text;
+  };
+  await walk.open("/");
+  const card = page.getByRole("article", { name: "Gate merges on CI", exact: true });
+  const compact = page.getByRole("article", { name: "Index rollout", exact: true }).locator("p.decision-question");
+  const text = await shaped(card);
+  await text.locator("pre").scrollIntoViewIfNeeded();
+  await walk.state("01-needs-you-paragraphs-and-command-block", {
+    visible: [text.locator("pre.session-code"), card.getByRole("button", { name: "Install report root", exact: true }), compact],
+    hidden: [text.locator("p").filter({ hasText: "sudo install" }), compact.locator("pre")],
+  });
+  await card.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  const chat = await shaped(questionCard(page, question));
+  await walk.state("02-owning-chat-paragraphs-and-command-block", {
+    visible: [chat.locator("pre.session-code"), questionCard(page, question).getByRole("button", { name: "Install report root", exact: true })],
+    hidden: [chat.locator("p").filter({ hasText: "sudo install" })],
+  });
+  expect((await readTask(request, slug)).question?.status).toBe("open");
+});

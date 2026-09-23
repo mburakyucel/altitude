@@ -501,6 +501,12 @@ walks empty, loading, saved/read errors, sending, sent, failed and denied states
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
+Question and review-card text renders like a reply (§3.3): a one-line question stays one bold line,
+and line breaks bring separate paragraphs, lists, inline code and a fenced command in a distinct
+mono code block the operator can copy. The first paragraph keeps the headline weight. Recommendations,
+receipts, folded summaries, list rows, toasts and labels keep their one-line form.
+`conversation-decisions.pw.ts` walks a multi-paragraph question with a command block in Needs you
+and the owning chat at both viewports.
 Each explicitly recommended choice has an accent border and text with a small star badge on its
 top-right corner (announced and titled "Recommended"), so the cue never narrows the label. It is never
 preselected; the operator's pick adds the tinted fill and ring. **Send N answers** submits picks.
