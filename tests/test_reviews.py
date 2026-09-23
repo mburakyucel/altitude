@@ -143,6 +143,18 @@ class TestReviews(AltitudeCase):
         self.assertEqual(reviews.active_count(), 0)
         self.engine.assert_not_called()
 
+    def test_oversized_deleted_base_file_is_refused_before_diff_materialization(self):
+        self.commit("large.txt", "x\n" * (1024 * 1024 + 1))
+        git("push", "origin", "HEAD:main", cwd=self.worktree)
+        git("rm", "large.txt", cwd=self.worktree)
+        git("commit", "-q", "-m", "Remove large base file", cwd=self.worktree)
+        with mock.patch.object(reviews, "_git", wraps=reviews._git) as commands:
+            result = self.run_review()
+        self.assertEqual(result["state"], "failed")
+        self.assertIn("bounds", result["error"])
+        self.assertFalse(any(call.args[1] in ("diff", "cat-file") for call in commands.call_args_list))
+        self.engine.assert_not_called()
+
     def test_images_require_selected_owner_account_and_preserve_limitation(self):
         task = S.load_task(self.project, self.slug)
         task["image_messages"] = [{"id": "visual", "at": S.now(), "role": T.OPERATOR_MESSAGE_ROLE,

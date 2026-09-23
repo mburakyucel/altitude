@@ -240,19 +240,23 @@ def _capture(project, task, review, context_ids):
     source = snapshot / "source"
     source.mkdir()
     entries = []
-    total = 0
-    for raw in _git(Path(task["worktree"]), "ls-tree", "-rlz", identity["tree"], binary=True).split(b"\0"):
-        if not raw:
-            continue
-        metadata, name = raw.split(b"\t", 1)
-        mode, kind, oid, size = metadata.decode().split()
-        path = PurePosixPath(name.decode())
-        if path.is_absolute() or ".." in path.parts or mode not in ("100644", "100755") or kind != "blob":
-            raise T.TransitionError("Review snapshots require ordinary tracked files; links and special entries are unavailable.")
-        total += int(size)
-        if int(size) > 2 * 1024 * 1024 or total > 64 * 1024 * 1024 or len(entries) >= 10000:
-            raise T.TransitionError("Review snapshot exceeds its bounds: 2 MiB per file, 64 MiB total, 10000 files.")
-        entries.append((path, oid))
+    # Deleted/replaced base content also enters changes.patch, so bound both inputs before diffing.
+    for tree in (identity["base"], identity["tree"]):
+        total = count = 0
+        for raw in _git(Path(task["worktree"]), "ls-tree", "-rlz", tree, binary=True).split(b"\0"):
+            if not raw:
+                continue
+            metadata, name = raw.split(b"\t", 1)
+            mode, kind, oid, size = metadata.decode().split()
+            path = PurePosixPath(name.decode())
+            if path.is_absolute() or ".." in path.parts or mode not in ("100644", "100755") or kind != "blob":
+                raise T.TransitionError("Review snapshots require ordinary tracked files; links and special entries are unavailable.")
+            total += int(size)
+            count += 1
+            if int(size) > 2 * 1024 * 1024 or total > 64 * 1024 * 1024 or count > 10000:
+                raise T.TransitionError("Review snapshot exceeds its bounds: 2 MiB per file, 64 MiB per tree, 10000 files.")
+            if tree == identity["tree"]:
+                entries.append((path, oid))
     # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
     content = io.BytesIO(_git(Path(task["worktree"]), "cat-file", "--batch", binary=True,
                              stdin="".join(oid + "\n" for _, oid in entries).encode()))

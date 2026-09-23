@@ -370,8 +370,9 @@ fully usable for ordinary work.
 
 Capture records committed head, fetched base, merge-candidate tree, context identities and input
 hashes. Raw Git blobs preserve exact bytes without export attributes; untracked files, symlinks and
-submodules are excluded by refusal. Captures accept at most 10000 files, 2 MiB per file and 64 MiB in
-total. Context includes the brief, request, original authority messages and corrections, decisions,
+submodules are excluded by refusal. Both base and candidate accept at most 10000 files, 2 MiB per file
+and 64 MiB per tree, so removed content is bounded before creating the diff. Context includes the brief,
+request, original authority messages and corrections, decisions,
 and default-all or selected L2 evidence, bounded to 64 KiB. Image evidence needs a textual account.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. CLI-internal authentication uses
