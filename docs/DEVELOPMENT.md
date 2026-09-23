@@ -213,7 +213,7 @@ launch options, exit/result and cleanup in private task evidence. A successful l
 prove every required browser protection; retain the isolation evidence the task requires before
 claiming verification. Do not navigate to a deployment while this prerequisite is unavailable.
 
-Issue [#441](https://github.com/mburakyucel/altitude/issues/441) reports system Chrome rejecting its
+Issue #441 reports system Chrome rejecting its
 SUID helper and read-only crash storage before navigation. The reporting Altitude version and host
 permissions are unknown. A bounded current-worker check with disposable writable storage reproduces
 the helper rejection; locked bundled Chromium also refuses with `No usable sandbox`. Neither emits
