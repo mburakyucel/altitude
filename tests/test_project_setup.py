@@ -243,6 +243,46 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual(l3.info(self.project)["session_id"], "saved")
         self.assertEqual(S.load_task(self.project, task["slug"]), before)
 
+    def test_observation_crossing_repair_completion_refreshes_operation_and_receipt(self):
+        self.perform()
+        git("init", "-q", "-b", "main", cwd=config.REPO)
+        git("add", "hooks", cwd=config.REPO)
+        git("commit", "-qm", "Fictional installation", cwd=config.REPO)
+        sha = git("rev-parse", "HEAD", cwd=config.REPO).strip()
+        old = config.REPO / ".altitude-source" / sha / "hooks"
+        for module, boundary in ((setup, "_repository"), (git_policy, "inspect_hooks"), (setup, "_coordinator")):
+            with self.subTest(boundary=boundary):
+                git("config", "--local", "--unset-all", "core.hooksPath", cwd=self.repo)
+                self.assertIn("Installed", self.step("guards", self.perform())["detail"])
+                git("config", "--local", "core.hooksPath", str(old), cwd=self.repo)
+                self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "stale")
+                setup.request(self.project, "repair", actor="operator")
+                operation = setup.read(self.project)["operation"]
+                setup.save(self.project, operation={**operation, "state": "running", "step": "guards"})
+                original = getattr(module, boundary)
+                completed = False
+
+                def finish_repair(*args, **kwargs):
+                    nonlocal completed
+                    result = original(*args, **kwargs)
+                    if not completed:
+                        completed = True
+                        setup.run(self.project)
+                    return result
+
+                with mock.patch.object(module, boundary, side_effect=finish_repair):
+                    raced = setup.observe(self.project)
+                stored = setup.read(self.project)
+                fresh = setup.observe(self.project)
+                self.assertTrue(completed)
+                self.assertEqual(stored["operation"]["id"], operation["id"])
+                self.assertEqual(stored["operation"]["state"], "complete")
+                self.assertEqual(stored["guards"]["action"], "updated")
+                self.assertEqual(raced["operation"], stored["operation"])
+                self.assertEqual(raced["steps"], fresh["steps"])
+                self.assertEqual(raced["status"], "ready")
+                self.assertIn("Updated", self.step("guards", raced)["detail"])
+
     def test_failure_keeps_coordinator_reachable_and_retry_reuses_completed_steps(self):
         with mock.patch.object(git_policy, "repair_hooks", side_effect=git_policy.GitPolicyError("Cannot write Git configuration")):
             failed = self.perform()

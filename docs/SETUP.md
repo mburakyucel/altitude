@@ -187,6 +187,7 @@ launch checks refresh recognized owned guard paths to the active source; saved t
 overrides receive the same checks. Failed or interrupted introductory
 agent calls wait for an explicit Retry; routine maintenance does not repeat them. Refresh, reconnection
 and interruption retain operation records; observations reconcile completed writes before retry.
+When repair completes during a check, its completed operation and verified receipts refresh together.
 Unconfirmed results remain unknown until checked.
 
 **Retry** requests the supported programmatic operation again. L3 receives configuration faults and can
