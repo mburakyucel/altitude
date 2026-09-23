@@ -695,6 +695,9 @@ running count falls below it. Blocked tasks consume no capacity. Eligible ready 
 capacity before fresh launches across all projects. Operator waits, faults without verified recovery,
 future due times, busy project setup and unavailable engines reserve no slots and do not hold eligible work. The limit
 counts running tasks, excluding engines' native helpers and L3 turns.
+`alt task status` reports pending admission waits in `wip_hold`; running tasks have none.
+Its `hold` field stays empty because project queue observations are not individual task holds.
+`blocked_reason`, `waiting_on`, `fault` and `hold_merge` retain the task's actual recorded holds.
 
 ### Automatic routing preferences
 

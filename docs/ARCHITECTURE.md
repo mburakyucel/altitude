@@ -387,6 +387,9 @@ hold eligible work. A resumed worker already launched and recorded in its recove
 capacity while its task binding is recovered; it remains the same worker. Existing sessions, merge holds,
 planned dependencies and engine/quota gates remain authoritative. Status reports the machine limit and
 running counts per project, with no project caps.
+Task inspection computes admission waits for tasks without a launched worker; it does not
+project the shared project queue hold onto individual tasks. Running workers retain their
+independent merge holds, and blocked tasks retain their question and fault state.
 Stored project `wip` overrides impose no limit, and project registration and settings expose no cap.
 Resume readiness probes the existing setup lock without waiting; setup contention in one project
 does not hold fresh work in another project, regardless of their daemon tick order.

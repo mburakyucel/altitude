@@ -197,7 +197,9 @@ capacity. Eligible ready resumes across projects receive available capacity befo
 operator waits, faults without verified recovery, future due times and unavailable engines reserve
 no slot and do not prevent eligible work. A busy project setup lock also makes its resume ineligible
 until setup releases it, independent of project tick order. A resumed worker already launched and recorded in its recovery
-claim still consumes capacity while task binding is recovered. Shared planned files do not
+claim still consumes capacity while task binding is recovered. Admission holds apply only before
+a worker launches; task status does not inherit another queued task's project hold. Operator,
+fault and merge holds keep their own recorded state. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
 landing, and keeps shared-doc edits in that task's own sections. Status shows expected files and
 informational overlaps. Owners can edit newly needed files within the authorized objective without
