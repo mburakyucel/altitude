@@ -5,7 +5,7 @@ from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
 from tests.fakes import FakeL2
-from altitude import config, digest, dispatch, engines, project_setup, route, server, state as S, tasks as T
+from altitude import config, digest, dispatch, engines, project_setup, route, server, state as S, status, tasks as T
 
 
 class TestResumePriority(AltitudeCase):
@@ -73,6 +73,72 @@ class TestResumePriority(AltitudeCase):
         self.assertEqual(S.load_task("other", fresh["slug"])["state"], "queued")
         self.assertEqual(dispatch.run_task_operation(self.project, original["slug"])["state"], "running")
         self.assertEqual(digest.wip()["machine"], 1)
+
+    def test_running_status_excludes_admission_holds_during_concurrent_queue_reads(self):
+        self.fake_gh()
+        original = self.launch("Owner reads status")
+        original["hold_merge"] = "Operator review required"
+        S.save_task(self.project, original)
+        pending = self.new("Pending launch")
+        for resumed in (False, True):
+            with self.subTest(resumed=resumed):
+                if resumed:
+                    self.pause(original)
+                    replacement = self.launch("Temporary slot owner", "other")
+                    T.message(self.project, original["slug"], "burak", "Continue")
+                    self.assertIn("1 running on this machine", dispatch.resume(self.project, original["slug"])["held"])
+                    waiting_resume = status.status(self.project, original["slug"])
+                    self.assertEqual(waiting_resume["state"], "blocked")
+                    self.assertEqual(waiting_resume["wip_hold"], "WIP limit: 1 running on this machine")
+                    self.pause(replacement, "other")
+                    self.assertIn("agent", dispatch.resume(self.project, original["slug"]))
+                # Queue admission writes a project hold after the subject is running.
+                # Synchronize each read with another admission pass in a separate thread.
+                server.dispatch_waiting(self.project)
+                barrier = threading.Barrier(2)
+
+                def admission():
+                    for _ in range(3):
+                        barrier.wait(5)
+                        server.dispatch_waiting(self.project)
+                        barrier.wait(5)
+
+                with ThreadPoolExecutor() as pool:
+                    worker = pool.submit(admission)
+                    for _ in range(3):
+                        barrier.wait(5)
+                        try:
+                            running = status.status(self.project, original["slug"])
+                            waiting = status.status(self.project, pending["slug"])
+                            self.assertEqual(running["state"], "running")
+                            self.assertIsNone(running["hold"])
+                            self.assertIsNone(running["wip_hold"])
+                            self.assertEqual(running["hold_merge"], "Operator review required")
+                            self.assertEqual(running["session_id"], original["session_id"])
+                            self.assertEqual(waiting["state"], "queued")
+                            self.assertEqual(waiting["wip_hold"], "WIP limit: 1 running on this machine")
+                            self.assertEqual(S.read_json(config.project_dir(self.project) / "hold.json")["reason"],
+                                             waiting["wip_hold"])
+                            self.assertEqual(digest.wip()["machine"], 1)
+                        finally:
+                            barrier.wait(5)
+                    worker.result(5)
+
+    def test_task_status_preserves_real_waits_without_inheriting_project_queue_hold(self):
+        self.fake_gh()
+        for updates in ({"waiting_on": "burak", "hold_merge": "Operator review"},
+                        {"fault": "fixture-unrecovered", "hold_merge": "Operator review"}):
+            with self.subTest(updates=updates):
+                original = self.launch(f"Blocked owner {len(self.fake.calls)}")
+                blocked = self.pause(original, **updates)
+                S.write_json(config.project_dir(self.project) / "hold.json",
+                             {"at": S.now(), "reason": "WIP limit: old project queue observation"})
+                result = status.status(self.project, original["slug"])
+                self.assertEqual(result["state"], "blocked")
+                self.assertEqual(result["blocked_reason"], blocked["blocked_reason"])
+                self.assertIsNone(result["hold"])
+                for key, value in updates.items():
+                    self.assertEqual(result[key], value)
 
     def test_ineligible_resumes_and_planned_work_do_not_reserve_capacity(self):
         for reason, updates in (("operator", {"waiting_on": "burak"}),

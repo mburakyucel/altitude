@@ -182,7 +182,7 @@ def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
 def status(project: str, slug: str) -> dict:
     """Return read-only orientation signals; faults never escape.
 
-    ``wip_hold`` reports capacity; planned files describe expected work and informational overlaps.
+    ``wip_hold`` reports admission waits; planned files describe expected work and informational overlaps.
     """
     errors: list[str] = []
     out = {
@@ -231,11 +231,6 @@ def status(project: str, slug: str) -> dict:
         out["other_leases"] = dispatch.leases(project, exclude=out["slug"])
     except Exception as e:
         _error(errors, "other_leases", e)
-
-    try:
-        out["hold"] = S.read_json(config.project_dir(project) / "hold.json", None)
-    except Exception as e:
-        _error(errors, "hold", e)
 
     try:
         out["gate"] = ("github-actions" if (config.project_path(project) / ".github" / "workflows").is_dir()

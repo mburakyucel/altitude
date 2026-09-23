@@ -1316,6 +1316,8 @@ def launch_lock():
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    if task and occupies_slot(task):
+        return None
     tasks = [(p, t) for p in config.load_projects() for t in S.list_tasks(p)]
     total = sum(occupies_slot(t) for _, t in tasks)
     if total >= config.machine_wip():

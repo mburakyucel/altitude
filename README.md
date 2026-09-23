@@ -227,6 +227,7 @@ Only the operator changes this limit. Altd applies requests on its next tick wit
 slot or service restart. Stored project overrides impose no limit. Lowering the machine limit lets
 running work continue and holds launches until capacity is available. The default of 80 is
 configurable above 80. See [concurrency commands and validation](docs/CLI.md#concurrency-limits).
+Capacity waits apply to pending launches; running owners see no admission hold in task status.
 
 ## Engines that can evolve with the work
 
