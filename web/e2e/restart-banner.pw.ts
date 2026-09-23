@@ -1,13 +1,10 @@
 import { test } from "./fixtures";
 import { expect, type Page } from "@playwright/test";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
-/**
- * Restart banner states (SPEC.md §3.13, slice 5). The running service has no restart pending on
- * demand, so every pending state is the real overview with its `restart` field set, named "-overlay";
- * absent is the real field pinned to null so the walk is deterministic. POST /api/restart is answered
- * here and never reaches the service: pressing Restart in this walk restarts nothing.
- */
+/** Presentation overlays retain the real fictional overview. Every restart POST is intercepted:
+ * these walks prove UI states, never an actual service restart or backend transition. */
 type Json = Record<string, unknown>;
 
 // Finish overview overlays before teardown disposes their fetched responses (#380).
@@ -25,85 +22,141 @@ const pending = {
   since: new Date(Date.now() - 2 * 3600_000).toISOString(),
   head: "0000000",
   files: ["web/src/routes/Monitor.tsx", "web/src/shell/RestartBanner.tsx"],
+  waiting_for: [],
 };
 
-test("restart banner offers Restart at the narrow quiet point while workers run, and leaves when the new process answers", async ({ page }, info) => {
-  // Six reloads with a full overview read each: longer than Playwright's default 30s on a slow poll.
+test("dismissed update survives polling, navigation and refresh; new updates and failures can notify", async ({ page, request }, info) => {
   test.setTimeout(120_000);
+  let restartPosts = 0;
+  await page.route("**/api/restart", (route) => { restartPosts++; return route.fulfill({ json: { ok: true } }); });
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
-  await page.route("**/api/restart", (route) => route.fulfill({ json: { ok: true, unit: "altitude-restart-walkthrough" } }));
-  const banner = page.getByRole("status", { name: "Restart pending" });
-  const phone = info.project.name === "phone";
-  const details = page.getByRole("dialog", { name: "Update details" });
-  const detailRoot = phone ? details : banner;
-  const restart = banner.getByRole("button", { name: "Restart", exact: true });
-  const what = detailRoot.getByText("Merged changes to the web app are waiting to activate.");
-  const rule = detailRoot.getByText(/^Altitude restarts at the next quiet moment\./);
-  const waiting = detailRoot.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/);
-  const restarting = banner.getByText("Altitude is restarting…", { exact: true });
-  const heading = page.getByRole("heading", { name: "Needs you", exact: true });
-
+  const notice = page.getByRole("status", { name: "Restart pending" });
+  const dismiss = page.getByRole("button", { name: "Dismiss update notice" });
+  const monitor = page.getByRole("region", { name: "Altitude update" });
   await restartIs(page, null);
-  await walk.open("/");
-  await walk.state("01-absent", { visible: [heading], hidden: [banner] });
+  await walk.open(project.path);
+  await walk.state("01-no-update", { visible: [page.getByRole("button", { name: "More actions" })], hidden: [notice] });
 
-  await restartIs(page, { ...pending, waiting_for: [] });
-  await walk.open("/");
-  await walk.state("02-pending-quiet-overlay", { visible: [banner, restart, ...(phone ? [banner.getByText("Update ready")] : [what, rule])], hidden: [restarting, waiting] });
-  if (phone) {
-    await walk.state("02-update-details", { action: () => banner.getByRole("button", { name: "Details", exact: true }).click(), visible: [details, what, rule], hidden: [] });
-    await details.getByRole("button", { name: "Close details" }).click();
-  }
-  // Above the header: before the phone header in the document, first in the main pane on the desktop.
-  expect(await page.evaluate(() => {
-    const status = document.querySelector('[role="status"][aria-label="Restart pending"]')!;
-    const header = document.querySelector("header.phone-header");
-    const main = document.querySelector("main")!;
-    return header
-      ? Boolean(status.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING) && !main.contains(status)
-      : main.firstElementChild === status;
-  }), "the banner sits above the header (SPEC.md §3.13)").toBe(true);
-  expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - document.documentElement.clientWidth),
-    "no viewport scrolls horizontally with the banner up").toBeLessThanOrEqual(0);
-
-  await restartIs(page, { ...pending, waiting_for: ["altitude/walkthrough-task", "altitude L3"] });
-  await walk.open("/");
-  await walk.state("03-pending-busy-overlay", { visible: [banner, ...(phone ? [banner.getByText("Update ready")] : [what, rule, waiting])], hidden: [restart, restarting] });
-  if (phone) {
-    await walk.state("03-waiting-details", { action: () => banner.getByRole("button", { name: "Details", exact: true }).click(), visible: [details, what, rule, waiting], hidden: [restart] });
-    await details.getByRole("button", { name: "Close details" }).click();
-  }
-
-  await restartIs(page, { ...pending, waiting_for: [] });
-  await walk.open("/");
-  await expect(restart).toBeVisible();
-  await walk.state("04-under-way-after-press-overlay", {
-    action: () => restart.click(),
-    visible: [banner, restarting], hidden: [restart, rule, waiting],
+  await restartIs(page, pending);
+  await page.reload();
+  await walk.state("02-compact-pending-overlay", { visible: [notice, dismiss, notice.getByText("Update ready")], hidden: [notice.getByRole("button", { name: "Restart", exact: true })] });
+  const composer = page.getByRole("textbox", { name: "Message" });
+  await expect(composer).toBeVisible();
+  await composer.fill("Draft remains usable with an update notice.");
+  expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  await walk.state("03-keyboard-dismissed", {
+    action: async () => { await dismiss.focus(); await page.keyboard.press("Enter"); },
+    visible: [composer], hidden: [notice],
   });
+  await expect(composer).toHaveValue("Draft remains usable with an update notice.");
+  // An actual ordinary overview poll must complete without recreating the notice.
+  await page.waitForResponse((response) => response.url().includes("/api/overview") && response.ok(), { timeout: 30_000 });
+  await expect(notice).toBeHidden();
+  await page.getByRole("link", { name: "Monitor", exact: true }).click();
+  await walk.state("04-dismissed-details-discoverable", { visible: [monitor, monitor.getByRole("button", { name: "Restart", exact: true })], hidden: [notice] });
+  await page.goBack();
+  await expect(composer).toBeVisible();
+  await expect(notice).toBeHidden();
+  await page.reload();
+  await expect(composer).toBeVisible();
+  await expect(notice).toBeHidden();
 
-  await restartIs(page, { ...pending, waiting_for: [], requested_at: new Date().toISOString(), unit: "altitude-restart-walkthrough" });
-  await walk.open("/");
-  await walk.state("05-under-way-requested-overlay", { visible: [banner, restarting], hidden: [restart, rule] });
-
-  await restartIs(page, null);
-  await walk.open("/");
-  await walk.state("06-answered", { visible: [heading], hidden: [banner, restart, restarting] });
+  await restartIs(page, { ...pending, waiting_for: ["altitude L3"], requested_at: new Date().toISOString() });
+  await page.reload();
+  await walk.state("05-status-change-stays-dismissed", { visible: [composer], hidden: [notice] });
+  const next = { ...pending, head: "1111111" };
+  await restartIs(page, next);
+  await page.reload();
+  await walk.state("06-new-update-overlay", { visible: [notice, dismiss], hidden: [] });
+  await dismiss.click();
+  await restartIs(page, { ...next, failed: "Build did not complete" });
+  await page.reload();
+  await walk.state("07-new-failure-overlay", { visible: [notice.getByText("Activation failed"), dismiss], hidden: [] });
+  await dismiss.click();
+  await page.reload();
+  await expect(composer).toBeVisible();
+  await expect(notice).toBeHidden();
+  await restartIs(page, { ...next, failed: "Activation verification failed" });
+  await page.reload();
+  await walk.state("08-changed-failure-overlay", { visible: [notice.getByText("Activation failed")], hidden: [] });
+  await dismiss.click();
+  await restartIs(page, next);
+  await page.reload();
+  await walk.state("09-resolved-failure-stays-dismissed", { visible: [composer], hidden: [notice] });
+  expect(restartPosts).toBe(0);
 });
 
-test("failed activation after an accepted restart stays actionable", async ({ page }, info) => {
-  let failed = false;
-  await page.route("**/api/overview*", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, json: { ...await response.json(), restart: { ...pending, waiting_for: [], failed: failed ? "Activation did not complete" : null,
-      requested_at: failed ? new Date().toISOString() : null } } });
-  });
-  await page.route("**/api/restart", (route) => { failed = true; return route.fulfill({ json: { ok: true } }); });
+test("Monitor retains waiting, denied, requesting, accepted and failed update actions", async ({ page }, info) => {
+  test.setTimeout(90_000);
   const walk = walkthrough(page, info);
+  const notice = page.getByRole("status", { name: "Restart pending" });
+  const status = page.getByRole("status", { name: "Update status" });
+  const restart = status.getByRole("button", { name: "Restart", exact: true });
+  const restarting = status.getByText("Altitude is restarting…", { exact: true });
+  let mode = "denied";
+  let release!: () => void;
+  const requestGate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/restart", async (route) => {
+    if (mode === "denied") return route.fulfill({ status: 403, json: { error: "Restart permission denied." } });
+    if (mode === "pending") await requestGate;
+    if (mode === "failed") await restartIs(page, { ...pending, requested_at: new Date().toISOString(), failed: "Activation did not complete" });
+    return route.fulfill({ json: { ok: true } });
+  });
+  await restartIs(page, { ...pending, waiting_for: ["altitude/walkthrough-task", "altitude L3"] });
   await walk.open("/");
-  const banner = page.getByRole("status", { name: "Restart pending" });
-  const retry = banner.getByRole("button", { name: "Restart", exact: true });
-  await walk.state("01-activation-failed-after-acceptance", { action: () => retry.click(),
-    visible: [retry, banner.getByText(info.project.name === "phone" ? "Activation failed. L3 has the fault." : "Automatic activation did not complete; L3 has the fault.")],
-    hidden: [banner.getByText("Altitude is restarting…", { exact: true })] });
+  await notice.getByRole("link", { name: "Update details in Monitor" }).click();
+  await walk.state("01-waiting-details-overlay", { visible: [status, status.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/)], hidden: [notice, restart] });
+  await restartIs(page, pending);
+  await page.reload();
+  await walk.state("02-quiet-point-overlay", { visible: [restart, status.getByText("Altitude restarts at the next quiet moment.")], hidden: [notice, restarting] });
+  await walk.state("03-request-denied-overlay", { action: () => restart.click(), visible: [restart, status.getByRole("alert").filter({ hasText: "Restart permission denied." })], hidden: [restarting] });
+  const toast = page.getByRole("status").filter({ hasText: "Couldn't start the restart." });
+  await expect(toast).toBeVisible();
+  await toast.getByRole("button", { name: "Dismiss" }).click();
+  await expect(toast).toBeHidden();
+  await expect(status.getByRole("alert")).toBeVisible();
+  mode = "pending";
+  const accepted = page.waitForResponse((response) => response.url().endsWith("/api/restart") && response.ok());
+  try {
+    await walk.state("04-request-in-flight-overlay", { action: () => restart.click(), visible: [restarting], hidden: [restart, status.getByRole("alert")] });
+  } finally { release(); }
+  await accepted;
+  await walk.state("05-request-accepted-overlay", { visible: [restarting], hidden: [restart] });
+  await restartIs(page, { ...pending, requested_at: new Date().toISOString() });
+  await page.reload();
+  await walk.state("06-requested-status-overlay", { visible: [restarting], hidden: [restart, notice] });
+  await restartIs(page, pending);
+  await page.reload();
+  // Keep the same mounted details component: a later failure must override mutation success.
+  mode = "failed";
+  await walk.state("07-failed-after-acceptance-overlay", { action: () => restart.click(), visible: [restart, status.getByText("Automatic activation did not complete; L3 has the fault.")], hidden: [restarting] });
+  await restartIs(page, null);
+  await page.reload();
+  await walk.state("08-no-update", { visible: [page.getByText("No update pending.", { exact: true })], hidden: [status, restart, notice] });
+});
+
+test("Monitor update status has explicit loading and recoverable read-error states", async ({ page }, info) => {
+  await page.route("**/api/restart", (route) => route.fulfill({ status: 403, json: { error: "No restart in this walkthrough." } }));
+  let mode = "loading";
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/overview*", async (route) => {
+    if (mode === "loading") await gate;
+    if (mode === "error") return route.fulfill({ status: 503, json: { error: "Update status unavailable." } });
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...await response.json(), restart: null } });
+  });
+  const walk = walkthrough(page, info);
+  const section = page.getByRole("region", { name: "Altitude update" });
+  const loading = section.getByText("Loading update status…", { exact: true });
+  const error = section.getByText("Could not read update status.", { exact: false });
+  await walk.open("/monitor");
+  try {
+    await walk.state("01-loading-overlay", { visible: [loading], hidden: [error, page.getByRole("button", { name: "Restart", exact: true })] });
+  } finally { mode = "error"; release(); }
+  await expect(error).toBeVisible({ timeout: 15_000 });
+  await walk.state("02-read-error-overlay", { visible: [error, section.getByRole("button", { name: "Retry" })], hidden: [loading] });
+  mode = "ready";
+  await walk.state("03-recovered-empty", { action: () => section.getByRole("button", { name: "Retry" }).click(), visible: [section.getByText("No update pending.", { exact: true })], hidden: [error, loading] });
 });

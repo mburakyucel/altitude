@@ -82,8 +82,7 @@ export default function AppShell() {
 
   return (
     <div className="shell" ref={shell} data-phone={phone || undefined} style={LAYOUT_SIZES}>
-      {/* The restart banner sits above the header on every route (SPEC.md §3.13): above the phone
-          header, and at the top of the main pane above a page's own header on the desktop. */}
+      {/* The dismissible update notice precedes page headers; Monitor owns its full status (§3.13). */}
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />

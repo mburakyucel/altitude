@@ -851,27 +851,44 @@ the existing conversation opened by **Discuss with L3**, including its recording
 
 ### 3.13 Restart banner
 
-On every route, above the phone header and first in the desktop main pane, when a merged change
-awaits activation: "Merged changes to <what changed> are waiting to activate.", where what changed
-is "the backend", "the web app", "the backend and the web app", or "Altitude"; the file count; and
-"landed 2h ago" with the exact time on hover. The next line says
-"Altitude restarts at the next quiet moment." and appends "Waiting for <list>." while it waits.
+Above the phone header and first in the desktop main pane, an undismissed pending update shows
+one compact row: **Update ready · Details · ×**. During activation the summary reads
+**Altitude is restarting…**; a failure reads **Activation failed**. Details opens Monitor, where
+**Altitude update** retains the complete status and permitted action after dismissal. Monitor
+has no duplicate banner. The notice stays in normal layout flow, with 44px touch targets, and
+never overlays conversation, composer, navigation or keyboard controls.
+
+Close has the accessible name **Dismiss update notice**. Dismissal is presentation only and
+persists in this browser across polling, navigation and refresh for the update's head/since.
+Wait-list and requested-at changes do not reshow it. A changed head/since or new nonempty failure
+identity shows a new notice; an unchanged or cleared failure does not repeat one. If browser
+storage is unavailable, Close still hides it for the mounted page.
+
+Monitor says "Merged changes to <what changed> are waiting to activate.", naming the backend,
+web app, both, or Altitude, with file count and age (exact time on hover). The next line says
+"Altitude restarts at the next quiet moment." and appends "Waiting for <list>." when needed.
 
 The quiet point has no dispatch or resume claim, L3 turn, or report verification in flight; running
 workers do not hold activation. **Restart** appears when the waiting list is empty and no restart
 is under way. Pressing it or receiving a recorded restart request removes the button and changes
 the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not
-complete; L3 has the fault." The banner leaves when the new process answers without a pending
+complete; L3 has the fault." The notice leaves when the new process answers without a pending
 restart. Data: `GET /api/overview` `restart`; the button requests `POST /api/restart`.
 
-On phone this is a compact summary with **Details** and the same available **Restart** action.
-Changed area, file count, age and quiet-point wait reasons expand on request. A failed activation
-or request remains explicit. The details can wrap and scroll; no failure or permitted restart
-action is concealed by the compact presentation. Desktop retains the fuller summary.
+Update status loads independently of Monitor readings, with **Loading update status…**, a read
+error with Retry, or **No update pending.** Request errors remain beside the action. Details wrap
+and use normal page scrolling on both viewports. Pending, waiting, restarting, activation failure,
+request denial, loading, read error, empty, dismissed and new-event states are walked on phone
+and desktop in `web/e2e/restart-banner.pw.ts`, including removals after actions.
+
+All banner notices and toasts offer an accessible close control. Toast timers, hover/focus pause
+and action controls remain available. Inline form/transport errors, task faults, task questions
+and conversation navigation are contextual state or actions, not dismissible banner notices;
+their existing recovery, answer and navigation controls remain visible.
 
 ### 3.14 Monitor
 
-Anatomy: **Monitor** title; **Seats**, one card per configured engine in the API's order and under
+Anatomy: **Monitor** title; **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
 its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
 plan when supplied, and "reading 3m old". Exact reading times appear on hover.

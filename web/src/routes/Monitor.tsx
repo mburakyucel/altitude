@@ -1,13 +1,14 @@
 import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
 import { TokenUsage } from "../components/TokenUsage";
+import { RestartDetails } from "../shell/RestartBanner";
 import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
  * Monitor (SPEC.md §3.14): one seat card per configured engine with its windows, their reset times
  * in human terms, the 70% reserve line and the age of the reading; where each role would go right now
- * and why; the sessions the monitor knows, each with its task. Everything here is display: nothing on
- * this page decides anything, and it reads `/api/monitor` and the shared overview only.
+ * and why; the sessions the monitor knows, each with its task. Update status and the permitted
+ * Restart action read the shared overview independently of the monitor readings.
  *
  * `/api/monitor` sends one seat row per configured engine, in the seam's order and under the seam's
  * own label, so the page ties no reading to an engine key and spells no provider: a seat reports
@@ -164,7 +165,7 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
   );
 }
 
-/** "L3 · altitude · Auto", "L3 · altitude · pinned to Codex", "L2 · new task": who the row answers for. */
+/** Role, project and configured engine pin: who the row answers for. */
 function roleLabel(row: RoutingRow, label: (engine: unknown) => string): string {
   if (row.role !== "l3") return "L2 · new task";
   const pin = str(row.pin);
@@ -272,6 +273,13 @@ export default function Monitor() {
   return (
     <div className="page">
       <h1 className="text-page-title font-semibold">Monitor</h1>
+      <section className="monitor-section" aria-labelledby="monitor-update">
+        <h2 id="monitor-update" className="monitor-head">Altitude update</h2>
+        {overview.isPending ? <p role="status">Loading update status…</p> : overview.isError ?
+          <p className="text-danger">Could not read update status. <button type="button" className="link" onClick={() => overview.refetch()}>Retry</button></p> :
+          overview.data.restart ? <RestartDetails key={JSON.stringify([overview.data.restart.head, overview.data.restart.since])} restart={overview.data.restart} /> :
+          <p className="monitor-muted">No update pending.</p>}
+      </section>
       {monitor.isPending ? (
         <Skeleton />
       ) : monitor.isError ? (
