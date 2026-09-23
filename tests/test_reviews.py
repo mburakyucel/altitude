@@ -8,7 +8,7 @@ import uuid
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import config, engines, reviews, route, state as S, tasks as T
+from altitude import config, dispatch, engines, reviews, route, state as S, tasks as T, verify
 
 
 class TestReviews(AltitudeCase):
@@ -84,6 +84,50 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError):
             self.request(source_id=source["id"])
         self.assertFalse(S.load_task(self.project, self.slug).get("reviews"))
+
+    def test_reported_open_delivery_request_uses_existing_continuation(self):
+        task = S.load_task(self.project, self.slug)
+        task.update(state="reported", prs=[7])
+        S.save_task(self.project, task)
+        S.write_json(S.task_dir(self.project, self.slug) / "report.json", {"landed": {"prs": [{"number": 7, "merged": False}]}})
+        with mock.patch.object(verify, "gh", return_value={"state": "OPEN"}):
+            review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["state"], "blocked")
+        self.assertEqual(task["resume_request"], review["id"])
+        self.assertIn(review["id"], {row["id"] for row in T.pending(self.project, self.slug)})
+        self.assertTrue(task["report_after"])
+        self.engine.assert_not_called()
+
+    def test_owner_stop_cancels_attached_review_without_resume(self):
+        stopped = self.patch(engines, "stop_l2_worker", return_value="Fixture stopped")
+        stop_review = self.patch(engines, "review_stop", return_value=True)
+        def during_run(prompt, **kwargs):
+            self.assertTrue(kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"}))
+            dispatch.stop(self.project, self.slug, by=T.OPERATOR_MESSAGE_ROLE)
+            return {"text": "Not current acceptance", "findings": [], "termination_confirmed": True}
+        self.engine.side_effect = during_run
+        result = self.run_review()
+        self.assertEqual(result["state"], "cancelled")
+        self.assertNotIn("result", result)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["state"], "blocked")
+        self.assertTrue(task["stop_id"])
+        self.assertFalse(reviews.view(self.project, self.slug)["available"])
+        stop_review.assert_called_once()
+        stopped.assert_called_once()
+
+    def test_restart_observes_terminated_reviewer_without_relaunch(self):
+        review = self.request()
+        task = S.load_task(self.project, self.slug)
+        task["reviews"][-1].update(state="running", generation=task["agent_id"], worker={"unit": "fixture-review"})
+        S.save_task(self.project, task)
+        with mock.patch.object(engines, "review_active", return_value=False):
+            reviews.poll(self.project)
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "failed")
+        self.assertEqual(reviews.active_count(), 0)
+        self.assertEqual(self.run_review(review)["state"], "failed")
+        self.engine.assert_not_called()
 
     def test_path_shaped_request_id_cannot_escape_task_artifacts(self):
         for identity in ("../escape", str(self.tmp / "escape"), "review/child", ".", ".."):
