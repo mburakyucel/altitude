@@ -619,7 +619,7 @@ def main(argv=None) -> None:
             rows = T.task_messages(p, args.slug, args.last)
             out(rows) if args.as_json else print(_messages_text(rows))
         elif tc == "list":
-            out([{**{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")}, "waiting": T.wait_label(t)}
+            out([{**{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")}, "waiting": T.wait_label(p, t)}
                  for t in S.list_tasks(p, include_archive=args.all)])
         return
     if c == "fyi":

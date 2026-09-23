@@ -206,7 +206,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         T.block(self.project, slug, "Build the retry dashboard next? Recommended: yes, after this fix.", actor="l2")
         rows = [row for row in self.request("/api/overview")["queue"] if row["slug"] == slug]
         self.assertEqual([(row["kind"], row.get("pr")) for row in rows], [("asks", None), ("review", 101)])
-        self.assertEqual(T.wait_label(S.load_task(self.project, waiting["slug"])), "paused · fault worker:export")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, waiting["slug"])), "paused · fault worker:export")
         self.assertIn(pull["url"], S.load_task(self.project, waiting["slug"])["blocked_reason"])
         self.tick()
         approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -113,10 +114,10 @@ class TestDecisions(AltitudeCase):
         task = self.blocked("Rollback", "How long should the old index stay?")
         slug, name = task["slug"], config.OPERATOR
         [row] = T.decisions(self.project)
-        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
         T.message(self.project, slug, "burak", "Could we roll back after day seven?")
         self.assertEqual(T.decisions(self.project), [], "sending anything hands the turn back")
-        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"L2 replying to {name}")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"L2 replying to {name}")
         self.assertEqual(T.question_views(self.project, slug)[-1]["status"], "open", "the record stays open")
         T.resume(self.project, slug)
         T.block(self.project, slug, "How long should the old index stay?", actor="l2")
@@ -138,7 +139,7 @@ class TestDecisions(AltitudeCase):
         T.block(self.project, slug, "system fault [worker:x]: died", actor="altd", updates={"fault": "worker:x"})
         self.assertEqual(T.decisions(self.project), [])
         self.assertNotIn("asked_again", S.load_task(self.project, slug)["questions"][-1])
-        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), "paused · fault worker:x")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "paused · fault worker:x")
 
     def test_a_held_review_ready_delivery_asks_for_review_beside_a_later_question(self):
         # #419: a later, unrelated proposal must not hide the merge decision, and neither reads "paused".
@@ -157,7 +158,7 @@ class TestDecisions(AltitudeCase):
                 S.save_task(self.project, {**S.load_task(self.project, slug), **blocker})
                 self.assertNotIn("review", [row["kind"] for row in T.decisions(self.project)])
                 S.save_task(self.project, {k: v for k, v in S.load_task(self.project, slug).items() if k not in blocker})
-        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question · review PR #42")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question · review PR #42")
         T.message(self.project, slug, "burak", "Approved: merge PR #42.")
         self.assertEqual(T.decisions(self.project), [])
         T.resume(self.project, slug)
@@ -176,7 +177,7 @@ class TestDecisions(AltitudeCase):
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"])
-        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
         T.resume(self.project, slug)
         T.block(self.project, slug, f"Merge the checkout fix now that the copy is clearer? {url}", actor="l2",
                 updates={"waiting_on": "burak"})
@@ -191,6 +192,41 @@ class TestDecisions(AltitudeCase):
         T.resolve_question(self.project, slug, question["id"], question["revision"], None, disposition="withdrawn",
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+
+    def test_an_approved_head_waiting_on_a_dependency_is_not_asked_again(self):
+        # #451: approving an unchanged head once is enough while the owner waits on something else;
+        # a changed head, a later word about the PR or a new hold asks again, and faults keep their label.
+        task = self.blocked("Export fix", "CI export access is missing.", waiting_on="l3")
+        slug, name = task["slug"], config.OPERATOR
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": "2026-01-01T00:00:00+00:00"})
+        S.save_task(self.project, held)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+        def approve_and_park(text):
+            T.message(self.project, slug, "burak", text)
+            T.resume(self.project, slug)
+            T.take_inbox(self.project, slug)
+            T.block(self.project, slug, "CI export access is still missing.", actor="l2", updates={"waiting_on": "l3"})
+        time.sleep(1.1)  # the task's hold starts at creation; records keep whole seconds
+        approve_and_park("Approved: merge PR #42 at aaaaaaa.")
+        self.assertEqual(T.decisions(self.project), [])
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
+        approve_and_park("Wait, only merge PR #42 after the export lands.")
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a later word about the PR re-asks")
+        approve_and_park("Approved: merge PR #42 at aaaaaaa.")
+        self.assertEqual(T.decisions(self.project), [])
+        moved = S.load_task(self.project, slug)
+        moved["delivery"] = {"number": 42, "head": "b" * 40, "at": "2026-01-01T00:00:00+00:00"}
+        S.save_task(self.project, moved)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a changed head asks again")
+        approve_and_park("Approved: merge PR #42 at bbbbbbb.")
+        time.sleep(1.1)  # records keep whole seconds
+        T.set_hold_merge(self.project, slug, "Operator review after the export change", actor="l3")
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a new hold asks again")
+        time.sleep(1.1)
+        approve_and_park("Approved: merge PR #42 at bbbbbbb.")
+        S.save_task(self.project, {**S.load_task(self.project, slug), "fault": "worker:x"})
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "paused · fault worker:x")
 
     def test_daemon_park_never_invents_operator_attention(self):
         for fields in ({}, {"waiting_on": None}):

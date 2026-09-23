@@ -186,7 +186,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   on your turn, running, planned, queued, waiting on L3 or paused by their owner. **Your turn ·
   N questions** or **Your turn · review PR #N** marks what waits for you; replying hands the task
   back to its L2 (**L2 replying to you**) until it asks again. A held review-ready PR asks for
-  review itself, with **Approve merge**, unless the owner's open question already links it. An unassigned pause reads **Paused** with a neutral dot;
+  review itself, with **Approve merge**, unless the owner's open question already links it. Once you
+approve the current head, a later wait on something else reads, for example, **Waiting on L3 · PR #N approved**
+instead of asking again; a new head, a new hold or a later message about the PR asks again. An unassigned pause reads **Paused** with a neutral dot;
   **Stopped by you** identifies an operator stop.
   **Planned · waits for …**
   keeps decided short-term work visible with one reason, without a worker or WIP slot.

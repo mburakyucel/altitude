@@ -210,7 +210,7 @@ def status(project: str, slug: str) -> dict:
         out["slug"] = task.get("slug") or slug
         for field in _TASK_FIELDS:
             out[field] = task.get(field)
-        out["waiting"] = T.wait_label(task)
+        out["waiting"] = T.wait_label(project, task)
 
     counts_path = S.counts_path(project, task)
     if counts_path is not None and counts_path.exists():
