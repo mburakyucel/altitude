@@ -833,21 +833,6 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     return True, (rows[0] if rows else None)
 
 
-@contextlib.contextmanager
-def _merge_lock(root: Path):
-    """#380: one final CI decision/merge across this repository's worktrees."""
-    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "merge lock directory")
-    with (Path(common) / ".altitude-merge.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise LandError("another Altitude merge is in progress; rerun landing after it finishes") from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-
-
 def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
                           preserve_history: bool = False) -> tuple[bool, dict | None, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
@@ -1121,18 +1106,17 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             merged, main_run, local_tests = _merge_on_local_suite(
                 root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption))
         elif checks == "pass":
-            with _merge_lock(root) if pair["required_pr_check"] else contextlib.nullcontext():
-                checks = _checks_value(root, number, pair)
-                if checks == "pass":
-                    before_merge()
-                    _assert_pair_current(root, pair)
-                    merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
-                                              preserve_history=bool(adoption))
-                    if pair["required_pr_check"]:
-                        commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
-                        if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
-                                                   "merged tree") != pair["tree"]:
-                            raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
+            checks = _checks_value(root, number, pair)
+            if checks == "pass":
+                before_merge()
+                _assert_pair_current(root, pair)
+                merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
+                                          preserve_history=bool(adoption))
+                if pair["required_pr_check"]:
+                    commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
+                    if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
+                                               "merged tree") != pair["tree"]:
+                        raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,

@@ -1745,9 +1745,9 @@ class TestRequiredPrCheck(AltitudeCase):
         import fcntl
         self.classify()
         common = Path(self.git("rev-parse", "--git-common-dir").strip())
-        with (common / ".altitude-merge.lock").open("w") as lock:
+        with (common / "altitude-land.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with self.assertRaises(land.LandError):
+            with mock.patch.object(land, "LAND_WAIT_TIMEOUT", 0), self.assertRaisesRegex(land.LandError, "landing wait timed out"):
                 land.land("another owner is merging", cwd=self.repo, wait=0, merge=True)
         self.assert_not_merged()
 
@@ -1796,7 +1796,7 @@ class TestRequiredPrCheck(AltitudeCase):
             if args[:3] == ["gh", "pr", "merge"] and cwd == self.repo:
                 # Yield at the external merge boundary while the first owner holds the real lock.
                 with mock.patch.dict(os.environ, second_env):
-                    with self.assertRaisesRegex(land.LandError, "another Altitude merge"):
+                    with mock.patch.object(land, "LAND_WAIT_TIMEOUT", 0), self.assertRaisesRegex(land.LandError, "landing wait timed out"):
                         land.land("second owner overlaps first merge", cwd=second, wait=0, merge=True)
                 competing_attempts.append(True)
             return real(args, cwd, timeout=timeout)
@@ -1809,16 +1809,16 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertNotEqual(merged_main, self.base)
         self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), self.pair["tree"])
 
-        # Fresh GitHub metadata still exposes the old green run; its head lacks the merged main.
+        # The next turn integrates current main; the old green run cannot authorize that new head.
         pull["baseRef"]["target"]["oid"] = merged_main
         S.write_json(second_gh / "check_evidence.json", second_evidence)
         with mock.patch.dict(os.environ, second_env):
-            with self.assertRaisesRegex(land.LandError, "head checks do not include"):
+            with self.assertRaisesRegex(land.LandError, "PR base or head moved while reading exact check evidence"):
                 land.land("second owner retries after first merge", cwd=second, wait=0, merge=True)
         second_calls = [json.loads(row) for row in (second_gh / "log.jsonl").read_text().splitlines()]
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in second_calls))
         self.assertEqual(git("rev-parse", "main", cwd=self.remote).strip(), merged_main)
-        self.assertEqual(S.load_task("demo", "fix-y")["delivery"]["head"], second_head)
+        self.assertNotEqual(S.load_task("demo", "fix-y")["delivery"]["head"], second_head)
 
     def test_new_failure_and_hold_during_final_recheck_refuse(self):
         real = land._checks_evidence
