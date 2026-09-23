@@ -15,7 +15,7 @@ const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`
 function optionsFor(question: Decision): Option[] {
   if (question.options) return question.options;
   const recommended = question.recommendation;
-  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Use recommendation", text: recommended.text }] : [];
+  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Accept", text: recommended.text }] : [];
 }
 function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
@@ -70,8 +70,6 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
     if (draft.option) return [answer(q, draft.option)];
     return draft.text?.trim() ? [{ question_id: q.id, revision: q.revision, text: draft.text.trim() }] : [];
   });
-  const recommendations = open.filter((q) => q.id && q.revision != null && optionsFor(q).some((o) => o.key === recommendedKey(q)))
-    .map((q) => answer(q, recommendedKey(q)!));
   const perform = (input: DecideInput) => {
     decide.mutate(input, {
       onSuccess: () => {
@@ -133,11 +131,15 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
             <Prose text={question.detail} />
           </details> : null}
           {actionable && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
-            {options.map((option) => <button key={option.key} className="btn btn-ghost" type="button"
-              aria-pressed={draft?.option === option.key} disabled={inputDisabled}
-              onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
-              {option.label}
-            </button>)}
+            {options.map((option) => {
+              // The recommendation is marked on its own choice; only the operator's pick is pressed.
+              const recommended = option.key === recommendedKey(question);
+              return <button key={option.key} className="btn btn-ghost" type="button" data-recommended={recommended || undefined}
+                aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} disabled={inputDisabled}
+                onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
+                {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">Recommended</span> : null}
+              </button>;
+            })}
             <button className="btn btn-ghost" type="button" aria-pressed={custom} disabled={inputDisabled}
               onClick={() => edit(question, custom ? {} : { text: "" })}>Other…</button>
           </div> : null}
@@ -154,10 +156,6 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
       })}
       {open.length ? <div className="question-batch">
         <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? "Sending…" : selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
-        {!Object.values(drafts).some((draft) => draft.option || draft.text !== undefined) && recommendations.length ? <button type="button" className="btn btn-ghost" disabled={unavailable} onClick={() => {
-          decide.reset();
-          setDrafts((old) => ({ ...old, ...Object.fromEntries(open.filter((q) => recommendations.some((a) => a.question_id === q.id)).map((q) => [draftKey(q), { option: recommendedKey(q)! }])) }));
-        }}>Use recommendations</button> : null}
         <p className="text-meta text-muted">{selected.length ? "Only these answers will be sent. You can answer the rest later." : "Choose an answer or write your own. Follow-up questions are welcome."}</p>
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">

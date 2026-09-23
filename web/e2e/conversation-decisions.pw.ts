@@ -351,7 +351,7 @@ test("Work rows retain running questions and partial answers, then keep the task
     visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for you", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
-  await list.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await list.getByRole("button", { name: "West", exact: true }).click();
   await submit(page, request, slug);
   await expect(list).toBeHidden();
   await park(request, slug);
@@ -741,7 +741,7 @@ test("one question stages an explicit alternative before sending it to its owner
   await walk.state("alternative-interpreted-by-owner", { visible: [card.getByText(resolution.text, { exact: true })], hidden: [card.getByRole("button")] });
 });
 
-test("grouped choices start unselected, submit only picked answers, and recommendations preserve an earlier alternative", async ({ page, request }, info) => {
+test("grouped choices start unselected, submit only picked answers, and the recommended choice is marked, not preselected", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const { slug, initial } = await createGroup(request);
@@ -757,20 +757,23 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   const card = groupCard(page, group);
   await expect(card.locator("..")).toBeFocused();
   await expect(card.locator('[aria-pressed="true"]')).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toBeVisible();
+  const west = questionCard(page, region).getByRole("button", { name: "West", exact: true });
+  await expect(west).toHaveAttribute("aria-description", "Recommended");
+  await expect(west.getByText("Recommended", { exact: true })).toBeVisible();
+  await expect(west).toHaveAttribute("aria-pressed", "false");
+  await walk.state("review-02b-group-recommended-marked", { visible: [west], hidden: [card.locator('[aria-pressed="true"]')] });
   const submissions: unknown[] = [];
   page.on("request", (row) => { if (row.url().endsWith("/api/decide")) submissions.push(row.postDataJSON()); });
   await questionCard(page, retention).getByRole("button", { name: "14 days", exact: true }).click();
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
   await expect(card.getByRole("button", { name: "Send 2 answers", exact: true })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toHaveCount(0);
   expect(submissions).toHaveLength(0);
   expect((await readTask(request, slug)).question_group.questions.every((q) => q.status === "open")).toBe(true);
   await card.locator("..").evaluate((node) => node.scrollIntoView({ block: "start" }));
   await expect(questionCard(page, retention).getByText(retention.question, { exact: true })).toBeInViewport();
   await walk.state("review-03-group", {
     visible: [card.getByText(owner.question, { exact: true }), card.getByRole("button", { name: "Send 2 answers", exact: true })],
-    hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })],
+    hidden: [card.locator('[data-recommended][aria-pressed="true"]')],
   });
   // Deselecting the region leaves an explicit one-answer batch, never a default for the other questions.
   await questionCard(page, region).getByRole("button", { name: "East", exact: true }).click();
@@ -784,7 +787,8 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   let after = await readTask(request, slug);
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
-  await card.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await west.click();
+  await expect(west).toHaveAttribute("aria-pressed", "true");
   await submit(page, request, slug);
   await handedBack(page, questionCard(page, region));
   await park(request, slug);
@@ -793,10 +797,9 @@ test("grouped choices start unselected, submit only picked answers, and recommen
   expect(after.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([owner.id]);
   expect(after.question_group.questions[0]!.response?.text).toBe("Keep the old index for fourteen days.");
   expect(after.question_group.questions[1]!.response?.text).toBe("Use the west region for backups.");
-  await expect(card.getByRole("button", { name: "Use recommendations", exact: true })).toHaveCount(0);
   await questionCard(page, owner).evaluate((node) => node.scrollIntoView({ block: "center" }));
   await expect(card.getByText(owner.question, { exact: true })).toBeInViewport();
-  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [card.getByRole("button", { name: "Use recommendations", exact: true })] });
+  await walk.state("review-05-partial", { visible: [card.getByText(owner.question, { exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })], hidden: [west] });
   await page.goBack();
   await expect(list.getByText(owner.question, { exact: true })).toBeVisible();
   await expect(list.getByText(retention.question, { exact: true })).toHaveCount(0);
@@ -926,7 +929,7 @@ test("a stale group rejects the whole batch, refresh retains unaffected picks, a
   expect(after.question_group.questions.filter((q) => q.status === "open" && !q.response)).toHaveLength(1);
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await (await request.get("/fixture/workers")).json()).calls).toHaveLength(1);
-  await walk.state("refreshed-answers-recorded-once-turn-handed-back", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true })], hidden: [card, page.getByRole("button", { name: "Use recommendations", exact: true })] });
+  await walk.state("refreshed-answers-recorded-once-turn-handed-back", { visible: [page.getByText("Sent · the L2 has your reply.", { exact: true })], hidden: [card] });
 });
 
 test("question loading, read failure, write failure and denied access retain recoverable conversation state", async ({ page, request }, info) => {

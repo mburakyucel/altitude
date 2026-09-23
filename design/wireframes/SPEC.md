@@ -496,8 +496,8 @@ walks empty, loading, saved/read errors, sending, sent, failed and denied states
 Mechanical truncation or hiding a necessary
 consequence does not satisfy concise presentation. Long questions still remain fully readable on
 phone and desktop, with the same answer and revision semantics.
-With no manual picks or open custom fields, **Use recommendations** stages only questions with an
-explicit recommendation; **Send N answers** submits them. It never overrides a picked alternative.
+Each explicitly recommended choice carries a small **Recommended** tag and accent border; it is never
+preselected, and the operator's pick keeps the separate pressed style. **Send N answers** submits picks.
 The task title and card background open the same chat destination. Reference links remain ordinary
 external links. Plain questions accept a typed answer in place; no inferred default exists. Operational stops and faults open the task's
 ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
@@ -721,7 +721,8 @@ and no generic Resume while the question is open. A held review-ready PR whose o
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N at <head>." and the L2 merges
 with it after a final check of that same head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
-unrelated question never hides that review. A fault retains a visible short cause and **L3 has been told**. Operational
+unrelated question never hides that review; an open operator question that links or names the PR
+is that review, so the separate card stays away until the question closes. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. Phone tab

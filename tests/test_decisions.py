@@ -166,6 +166,32 @@ class TestDecisions(AltitudeCase):
         T.report(self.project, slug, {"verdict": "ok", "delivery": S.load_task(self.project, slug)["delivery"]})
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
+    def test_a_written_merge_question_is_the_review_and_the_card_returns_without_it(self):
+        # One PR merge decision appears once: the owner's written question replaces the generated card,
+        # through a revision too; an unrelated question keeps the card, and withdrawing restores it.
+        url = "https://example.com/atlas/pull/42"
+        task = self.blocked("Checkout fix", f"Merge the checkout fix? {url}")
+        slug, name = task["slug"], config.OPERATOR
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+        S.save_task(self.project, held)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"])
+        self.assertEqual(T.wait_label(S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        T.resume(self.project, slug)
+        T.block(self.project, slug, f"Merge the checkout fix now that the copy is clearer? {url}", actor="l2",
+                updates={"waiting_on": "burak"})
+        [row] = T.decisions(self.project)
+        self.assertEqual((row["kind"], row["revision"]), ("asks", 2))
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "Build the export next? Merge PR #420 elsewhere first.", actor="l2",
+                updates={"waiting_on": "burak"})
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"],
+                         "a question about another PR does not answer this review")
+        question = S.load_task(self.project, slug)["questions"][-1]
+        T.resolve_question(self.project, slug, question["id"], question["revision"], None, disposition="withdrawn",
+                           reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+
     def test_daemon_park_never_invents_operator_attention(self):
         for fields in ({}, {"waiting_on": None}):
             with self.subTest(fields=fields):

@@ -431,7 +431,7 @@ send and reload. `reported-continuation.pw.ts` walks continuation and refusal; t
 and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
 A task's versioned dilemma remains open independently of that wake and its worker state. Sending
 it anything hands the turn back: its questions leave Needs you until the owner parks again, when
-still-open ones return as **asked again** and a held review-ready PR shows its own review item. Blocks and
+still-open ones return as **asked again** and a held review-ready PR shows its own review item unless an open question links it. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
 The owner or coordinator writes the actual choice in plain language with the task's user-facing
@@ -527,12 +527,10 @@ delivery evidence and local observations that the actual cause is gone, then req
 reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
 repair. Irretrievable historical evidence stays unknown: L3 records the next supported diagnostic
 action, a justified wait with a finite meaningful observation, or the exact capability/authority
-decision when no supported path can establish recovery. A changed operational contract for bounded
-diagnostic continuation requires that decision before execution. Within an authorized diagnostic
-scope, the same owner runs, inspects and adjusts relevant diagnostics without per-command approval,
-retaining evidence and reporting findings, uncertainty and a concrete next step at the agreed finite
-stop condition or scope/access boundary. Explicit restrictions, including one-run limits, still bind;
-machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
+decision when no supported path can establish recovery. The owner investigates as part of its task:
+non-invasive diagnosis iterates without approval rounds, and only missing access, a material machine
+or service change, unapproved spend, a live-provider test or an explicit restriction needs a decision.
+Machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
 The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
 and incident evidence, not a new lifecycle state or perpetual polling.
 Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave

@@ -186,7 +186,7 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   on your turn, running, planned, queued, waiting on L3 or paused by their owner. **Your turn ·
   N questions** or **Your turn · review PR #N** marks what waits for you; replying hands the task
   back to its L2 (**L2 replying to you**) until it asks again. A held review-ready PR asks for
-  review itself, with **Approve merge**. An unassigned pause reads **Paused** with a neutral dot;
+  review itself, with **Approve merge**, unless the owner's open question already links it. An unassigned pause reads **Paused** with a neutral dot;
   **Stopped by you** identifies an operator stop.
   **Planned · waits for …**
   keeps decided short-term work visible with one reason, without a worker or WIP slot.
@@ -525,10 +525,10 @@ and merge holds still apply.
 L3 keeps unfinished work actionable with an owned next step, a meaningful finite observation or a
 genuine decision. Legitimate waits name their dependency and follow-through; they need no continuously
 running worker. Irretrievable historical evidence stays unknown. When supported diagnosis cannot
-establish recovery, L3 exposes the actual capability or authority gap. Within an authorized diagnostic
-scope, the same L2 runs, inspects and adjusts diagnostics without per-command approval, retaining
-evidence and a concrete next step at the agreed stop or scope boundary. Explicit restrictions, access
-requirements, fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
+establish recovery, L3 exposes the actual capability or authority gap. Ordinary non-invasive
+investigation is part of the owner's task and iterates without approval rounds; only missing access,
+material machine changes, unapproved spend, live-provider tests or explicit restrictions need a
+question. Fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
 
 Recovery and recurrence prevention are separate responsibilities. L3 promptly reports/reuses a
 sanitized issue for actionable system or role defects and records

@@ -176,11 +176,16 @@ describe("Independent questions in one conversation", () => {
     expect(calls[1]![1]?.body).toEqual(calls[0]![1]?.body);
   });
 
-  it("stages explicit recommendations and requires Send before delivering them", async () => {
+  it("marks the recommended choice without selecting it, and picking it still requires Send", async () => {
     const { fetch } = setupGroup();
     const { user } = renderApp({ route: path });
-    await user.click(await screen.findByRole("button", { name: "Use recommendations" }));
-    expect(screen.getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "true");
+    const recommended = await screen.findByRole("button", { name: "7 days" });
+    expect(recommended).toHaveAttribute("aria-description", "Recommended");
+    expect(recommended).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "14 days" })).not.toHaveAttribute("aria-description");
+    expect(screen.queryByRole("button", { name: "Use recommendations" })).toBeNull();
+    await user.click(recommended);
+    expect(recommended).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Send 1 answer" })).toBeEnabled();
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
   });
@@ -209,7 +214,6 @@ describe("Independent questions in one conversation", () => {
     expect(screen.queryByText("This question has been replaced.")).toBeNull();
     await user.click(choice);
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: "Use recommendations" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
     await within(convo()).findByText("Sent · the L2 has your reply.");
     const call = fetch.mock.calls.find(([url]) => url === "/api/decide")!;

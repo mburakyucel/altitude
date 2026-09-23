@@ -395,28 +395,23 @@ irretrievable, record that limit, use retained evidence for specific remaining q
 any capability or authority gap through `alt task escalate <slug> --question '…'`. Escalation keeps
 the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
 correction follows the existing task/PR path. A changed operational contract requires its decision
-before execution. Needed diagnostic authorization names an investigation outcome, original owner,
-scope/access, finite execution, evidence, cleanup and stop conditions. Within that scope, the owner
-chooses and iteratively runs, inspects and adjusts relevant diagnostics without per-command approval
-or separate preparation/run checkpoints. Explicit restrictions, including one-run limits, bind unless
-superseded by the required authority. At a stop condition or scope/access boundary, retain commands,
-results and uncertainty in the task folder and report a concrete next step to L3. Diagnostic authority
-does not expand fix scope, machine access or merge permission. Unavailable history and unrelated
-successful checks never establish recovery.
+before execution. The owner investigates as part of its task: relevant, non-invasive diagnosis
+proceeds iteratively on its judgment without a plan to approve or per-round permission. A question
+arises only for access the owner lacks, a material machine or service change, unapproved spend, a
+live-provider test or an explicit restriction. Diagnosis does not expand fix scope, machine access or
+merge permission. Unavailable history and unrelated successful checks never establish recovery.
 
 For fictional Atlas tasks whose original worker units were collected, the procedure is:
 
 | Scenario | Evidence and executable next step |
 | --- | --- |
-| Launch failed before a session or worktree exists | Retain the original task and failed launch record. Inspect retained launch output and supported worker evidence for a specific unresolved question. If recovery cannot be established, L3 uses `alt task escalate` on that task for any required decision on a bounded launch investigation, naming evidence, cleanup and stop conditions. Any exception to verified-recovery-before-resume requires authorization; once authorized, diagnostic iteration stays within those bounds. Do not create a replacement owner. |
-| Validation failed on an existing session and held PR | Retain the exact failed candidate, check logs, session and hold. Review retained failures for an actionable cause. If supported reads cannot establish recovery, L3 uses `alt task escalate` for any required authority to investigate the failing check with the same owner, naming evidence, cleanup and stop conditions. Approved diagnostic iteration needs no per-run confirmation. A full validation rerun, machine changes or broader diagnostic access needs its applicable authority; prior passing checks and a collected owner unit do not explain failed descendants. |
+| Launch failed before a session or worktree exists | Retain the original task and failed launch record. Inspect retained launch output and supported worker evidence for a specific unresolved question. If recovery cannot be established, L3 escalates on that task only the concrete boundary, such as an exception to verified-recovery-before-resume. Do not create a replacement owner. |
+| Validation failed on an existing session and held PR | Retain the exact failed candidate, check logs, session and hold. Review retained failures for an actionable cause. If supported reads cannot establish recovery, the same owner investigates the failing check. Machine changes or access the owner lacks need their applicable authority; prior passing checks and a collected owner unit do not explain failed descendants. |
 
 Neither case has a meaningful timer merely because time can pass. `recheck-ci` can rerun a failed run;
-it is not passive host observation or a substitute for the missing diagnostic authority. After a
-decision, L3 verifies supported execution and reconciles findings at the investigation boundary;
-an inconclusive diagnostic command can inform the owner's next in-scope step. Automatic fault retries,
-sandbox bypass, service control, live-provider tests and check bypass gain no authority from diagnosis.
-Full delivery checks and all holds still apply.
+it is not passive host observation. L3 reconciles the owner's findings; an inconclusive result informs
+the owner's next step. Automatic fault retries, sandbox bypass, service control, live-provider tests
+and check bypass gain no authority from diagnosis. Full delivery checks and all holds still apply.
 
 ### Upstream Altitude defects
 
