@@ -1703,6 +1703,11 @@ class Handler(BaseHTTPRequestHandler):
                                      if row["id"] == image_args["request_id"]), None)
                     if not existing:
                         require_image_capability(project, slug)
+                elif "request_id" in o:
+                    try:
+                        image_args = {"request_id": uuid.UUID(o["request_id"]).hex}
+                    except (ValueError, TypeError, AttributeError):
+                        return self._json({"error": "Task messages require a valid submission identity."}, 400)
                 try:
                     message = T.message(project, slug, "burak", text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),

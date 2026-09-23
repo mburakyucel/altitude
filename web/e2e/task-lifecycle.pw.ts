@@ -137,13 +137,16 @@ test("accepted L2 input stays sent through a failed refresh and preserves the ne
   const retry = conversation.getByRole("button", { name: "Retry", exact: true });
   const pending = conversation.locator(".msg-row[data-pending]");
   const bubble = conversation.locator(".bubble").filter({ hasText: text });
+  let admit!: () => void;
+  const admissionGate = new Promise<void>((resolve) => { admit = resolve; });
   let release!: () => void;
   const responseGate = new Promise<void>((resolve) => { release = resolve; });
   let saved!: () => void;
   const savedGate = new Promise<void>((resolve) => { saved = resolve; });
   let receipt!: { id: string };
-  // Only response transport is delayed; the real handler writes the real task message/inbox.
+  // Gates expose the preview before admission and polling before the real handler's response.
   await page.route("**/api/l2/message", async (route) => {
+    await admissionGate;
     const response = await route.fetch();
     expect(response.ok()).toBe(true);
     receipt = (await response.json()).message;
@@ -162,23 +165,28 @@ test("accepted L2 input stays sent through a failed refresh and preserves the ne
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await field.fill(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  await savedGate;
   try {
     await expect(field).toHaveValue("");
-    await walk.state("01-message-stored-response-pending", { visible: [bubble, pending], hidden: [alert, retry] });
+    await walk.state("01-message-pending-before-save", { visible: [bubble, pending], hidden: [alert, retry] });
+    admit();
+    await savedGate;
+    // A real poll renders the saved row's Remove control while the POST is still held.
+    await expect(conversation.locator(".msg-row").filter({ hasText: text }).getByRole("button", { name: "Remove", exact: true })).toBeVisible();
+    await expect(bubble).toHaveCount(1);
+    await walk.state("02-message-polled-response-pending", { visible: [bubble], hidden: [pending, alert, retry] });
     expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
     await field.fill("A different instruction I have not sent.");
     offline = true;
-  } finally { release(); }
+  } finally { admit(); release(); }
   await refreshFailed;
-  await walk.state("02-accepted-refresh-failed-next-draft-retained", { visible: [bubble, field], hidden: [pending, alert, retry] });
+  await walk.state("03-accepted-refresh-failed-next-draft-retained", { visible: [bubble, field], hidden: [pending, alert, retry] });
   await expect(field).toHaveValue("A different instruction I have not sent.");
   const workers = await (await request.get("/fixture/workers")).json();
   expect(workers.pending[slug].filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
   expect(workers.calls).toHaveLength(0);
   offline = false;
   await page.reload();
-  await walk.state("03-reconnected-message-still-sent-once", { visible: [bubble, field], hidden: [pending, alert, retry] });
+  await walk.state("04-reconnected-message-still-sent-once", { visible: [bubble, field], hidden: [pending, alert, retry] });
   await expect(bubble).toHaveCount(1);
   await expect(field).toHaveValue("");
   expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);

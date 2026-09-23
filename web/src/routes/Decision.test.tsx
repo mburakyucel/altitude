@@ -221,7 +221,7 @@ describe("Independent questions in one conversation", () => {
     await user.click(within(convo()).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(fetch.mock.calls.some(([url]) => url === "/api/l2/message")).toBe(true));
     const call = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
-    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Why seven days, and which region is closest?", group_id: "rollout", group_revision: 1 });
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Why seven days, and which region is closest?", group_id: "rollout", group_revision: 1, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
     expect(convo()).toHaveTextContent("2 questions to answer");
   });
@@ -266,7 +266,7 @@ describe("Conversation-first decisions", () => {
     expect(within(convo()).getByRole("button", { name: "Use 7 days & resume" })).toBeEnabled();
     expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
     const sent = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
-    expect(JSON.parse(String(sent[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Can we roll back after day seven?", question_id: "q-index", revision: 1 });
+    expect(JSON.parse(String(sent[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Can we roll back after day seven?", question_id: "q-index", revision: 1, request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(queryClient.getQueryData<{ queue: unknown[] }>(["overview"])?.queue).toHaveLength(1);
   });
 

@@ -90,6 +90,22 @@ class TestL2Steering(AltitudeCase):
         self.assertEqual(settled["files"]["request"].strip(), "Keep the archived conversation readable.")
         self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
 
+    def test_text_submission_identity_reaches_receipt_conversation_and_inbox(self):
+        task = T.new(self.project, "Message identity", "Keep each accepted send visible once.")
+        identity = "12345678-1234-4234-8234-123456789abc"
+        with mock.patch.object(server, "require_image_capability", side_effect=AssertionError("Text needs no image capability")):
+            row = self.send(task, "Inspect the sample", request_id=identity)
+        self.assertEqual(row["id"], identity.replace("-", ""))
+        self.assertEqual([m["id"] for m in self.view(task)["messages"]], [row["id"]])
+        self.assertEqual([m["id"] for m in T.pending(self.project, task["slug"])], [row["id"]])
+        for invalid in (None, "not-a-uuid", 12, {}):
+            with self.subTest(identity=invalid):
+                self.request("/api/l2/message", {"project": self.project, "slug": task["slug"],
+                                                "text": "Invalid identity", "request_id": invalid}, status=400)
+        second = self.send(task, "Inspect the sample")
+        self.assertNotEqual(second["id"], row["id"])
+        self.assertEqual([m["id"] for m in self.view(task)["messages"]], [row["id"], second["id"]])
+
     def test_missing_task_is_not_found_but_corrupt_state_still_fails(self):
         with mock.patch.object(server, "log") as log:
             self.request(f"/api/task/{self.project}/missing-task", status=404)

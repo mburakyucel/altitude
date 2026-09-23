@@ -132,8 +132,8 @@ function stub(task: unknown, options: StubOptions = {}) {
     }
     if (url.includes("/api/l2/message")) {
       if (options.message) return options.message();
-      const body = JSON.parse(String(init?.body)) as { text: string };
-      const message = { id: `m-${sent.length + 9}`, at: new Date().toISOString(), role: running.messages[0]?.role, text: body.text };
+      const body = JSON.parse(String(init?.body)) as { text: string; request_id: string };
+      const message = { id: body.request_id, at: new Date().toISOString(), role: running.messages[0]?.role, text: body.text };
       sent.push(message);
       return jsonResponse({ ok: true, message });
     }
@@ -152,6 +152,34 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it.each([200, 500])("reconciles by identity before response %i without hiding repeated text or changing recovery", async (status) => {
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { finish = resolve; });
+    let record = running;
+    const fetchMock = stub(running, { message: () => response, task: () => jsonResponse(record) });
+    const { user, queryClient } = renderApp({ route });
+    const field = await screen.findByRole("textbox", { name: "Message the L2" });
+    const text = running.messages[0]!.text;
+    await user.type(field, text);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getAllByText(text, { exact: true })).toHaveLength(2);
+    expect(document.querySelectorAll("[data-pending]")).toHaveLength(1);
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
+    const input = JSON.parse(String(call?.[1]?.body));
+    const row = { ...running.messages[0]!, id: input.request_id };
+    record = { ...running, messages: [...running.messages, row] };
+    await act(() => queryClient.invalidateQueries({ queryKey: ["task", "altitude", "fix-timer"] }));
+    await waitFor(() => expect(document.querySelector("[data-pending]")).toBeNull());
+    expect(screen.getAllByText(text, { exact: true })).toHaveLength(2);
+    await user.type(field, "New draft");
+    await act(async () => finish(jsonResponse(status === 200 ? { message: row } : { error: "Response lost" }, status)));
+    expect(screen.getAllByText(text, { exact: true })).toHaveLength(2);
+    expect(field).toHaveValue(status === 200 ? "New draft" : `${text}\nNew draft`);
+    if (status === 500) expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+    else expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("keeps the reported open-PR owner reachable without releasing its merge hold", async () => {
     stub({ ...running, state: "reported", can_continue: true, hold_merge: "Operator review required", prs: [202] });
     const { user } = renderApp({ route });
@@ -505,7 +533,7 @@ describe("Task on desktop", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "prefer the smaller diff" });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "prefer the smaller diff", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     const row = await screen.findByText("prefer the smaller diff");
     await waitFor(() => expect(row.closest(".msg-row")).not.toHaveAttribute("data-pending"));
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
@@ -576,7 +604,7 @@ describe("Task on desktop", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Typed context. spoken detail" });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Typed context. spoken detail", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
   });
 
   it("voice Send retains its task question context when returning to a newer question before transcription finishes", async () => {
@@ -848,7 +876,7 @@ describe("L2 activity and steering", () => {
     await user.click(controls.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Keep this correction", stop_id: "stop-1" });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Keep this correction", stop_id: "stop-1", request_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(field).toHaveValue("");
   });
 
