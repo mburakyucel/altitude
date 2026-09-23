@@ -4,8 +4,8 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from tests.support import AltitudeCase
-from altitude import config, quota_codex, route, state
+from tests import support  # noqa: F401 — isolate runtime before importing Altitude
+from altitude import quota_codex
 
 _default_primary = object()
 
@@ -110,39 +110,6 @@ class TestRead(unittest.TestCase):
                     result = quota_codex.read()
                 self.assertFalse(result["known"])
                 self.assertIn("why", result)
-
-
-class TestRefresh(AltitudeCase):
-    def setUp(self):
-        super().setUp()
-        self.private_ledgers()
-
-    def test_refresh_writes_the_router_file(self):
-        reading = {"known": True, "primary_used": 1.0, "read_at": state.now()}
-        with patch.object(quota_codex, "read", return_value=reading):
-            result = quota_codex.refresh()
-        self.assertEqual(state.read_json(config.MONITOR_DIR / "quota-codex.json"), reading)
-        self.assertEqual(route.quota_codex(), reading)
-        self.assertEqual(result, reading)
-
-    def test_refresh_overwrites_stale_success_with_unknown(self):
-        stale = {"known": True, "primary_used": 1.0, "read_at": "2026-08-30T00:00:00+00:00"}
-        failed = {"known": False, "why": "Codex rate-limit read timed out"}
-        path = config.MONITOR_DIR / "quota-codex.json"
-        state.write_json(path, stale)
-        with patch.object(quota_codex, "read", return_value=failed):
-            result = quota_codex.refresh()
-        self.assertEqual(state.read_json(path), failed)
-        self.assertEqual(result, failed)
-
-    def test_refresh_if_due_throttles_attempts(self):
-        calls = []
-        with patch.object(quota_codex, "refresh", side_effect=lambda: calls.append(True) or {"known": False}):
-            quota_codex._last_refresh_at = None
-            quota_codex.refresh_if_due()
-            quota_codex.refresh_if_due()
-        self.assertEqual(calls, [True])
-        quota_codex._last_refresh_at = None
 
 
 if __name__ == "__main__":

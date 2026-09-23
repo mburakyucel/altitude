@@ -1168,6 +1168,25 @@ cache-creation tokens. Synthetic all-zero limit records are ignored. Codex task 
 `turn.completed.usage.input_tokens` measures cumulative consumption, not context occupancy. Its
 cache counters are part of the separate task token observation.
 
+The daemon refreshes both account quotas every five minutes, independently of interactive sessions
+and which engine Auto currently selects. Claude's native headless `/usage` emits structured
+`usage_report.rate_limits.limits` rows: `weekly_all` supplies the weekly percentage and `session`
+the five-hour percentage. Scoped model/surface rows do not become account allowances. CLI 2.1.277+
+is required: its [live-only row contract](https://github.com/anthropics/claude-agent-sdk-typescript/releases/tag/v0.3.277)
+omits rows when the server fetch fails. Altitude validates named percentages and records the successful
+observation time; it does not restamp cached scalar windows or parse presentation text. The CLI owns
+subscription authentication. Safe mode, empty tools and no session persistence keep the local usage
+command separate from task conversations. No inference prompt or credential extraction is involved.
+Codex retains its native `account/rateLimits/read` reader. Statusline snapshots remain session-display
+evidence, not account-quota inputs.
+
+Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
+or timeout yield unknown quota and replace the prior success. A partial response keeps only its
+reported windows. Unknown weekly evidence follows configured tie order, so collection failure can
+still favor one provider; it never claims successful balancing. The native usage-report shape remains
+experimental. Deterministic fixtures verify acquisition, storage, expiry and routing; live CLI/login
+compatibility remains unverified under the standing live-provider testing deferral.
+
 Every quota and session figure carries the time it was observed, and age is reported rather than
 hidden. Monitor displays each available usage window independently, including zero, and explicitly
 names an absent window. Partial readings keep their available figures and reset times; only a seat

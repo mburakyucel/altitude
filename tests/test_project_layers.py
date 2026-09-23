@@ -34,9 +34,9 @@ ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
 PROVIDER_BASELINE = {
     "altitude/dispatch.py": 2,
     "altitude/l3.py": 32,
-    "altitude/monitor.py": 6,
-    "altitude/quota_codex.py": 18,
-    "altitude/server.py": 6,
+    "altitude/monitor.py": 5,
+    "altitude/quota_codex.py": 15,
+    "altitude/server.py": 3,
     "altitude/tasks.py": 3,
 }
 

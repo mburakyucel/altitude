@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from tests.support import AltitudeCase
-from tests.test_monitor_view import write_snapshot
+from tests.test_monitor_view import write_quota
 from altitude import config, route, server, state as S, tasks as T
 
 
@@ -56,7 +56,7 @@ class TestOverview(AltitudeCase):
 
     def test_fresh_readings_carry_the_weekly_figure_and_their_time(self):
         at = int(time.time())
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at, seven=52)
+        write_quota(at, seven=52)
         (config.MONITOR_DIR / route.QUOTA_CODEX).write_text(json.dumps({
             "known": True, "primary_used": 71.0, "primary_window_minutes": route.WEEK_MINUTES,
             "primary_resets": "2026-09-07T02:27:31+00:00", "read_at": S.now()}))
@@ -67,7 +67,7 @@ class TestOverview(AltitudeCase):
 
     def test_an_aged_reading_keeps_its_figure_and_says_stale(self):
         at = int(time.time()) - route.FRESH_SECONDS - 60
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at, seven=52)
+        write_quota(at, seven=52)
         (config.MONITOR_DIR / route.QUOTA_CODEX).write_text(json.dumps({
             "known": True, "primary_used": 71.0, "primary_window_minutes": route.WEEK_MINUTES,
             "primary_resets": "2026-09-07T02:27:31+00:00", "read_at": "2026-09-03T00:00:00+00:00"}))

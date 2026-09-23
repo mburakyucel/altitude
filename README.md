@@ -256,6 +256,12 @@ it does not mean unavailable or imply a subscription entitlement. Explicit engin
 strict, and routing changes preserve running task attempts and their provider conversations.
 See [routing configuration and examples](docs/CLI.md#automatic-routing-preferences).
 
+Quota collection runs every five minutes without an interactive session. Native account readers
+supply current weekly evidence; failed or unavailable reads remain unknown, and readings expire
+after thirty minutes. The headless plan-usage reader requires CLI 2.1.277 or later and a subscription
+login; its experimental response format and deferred live verification are described in the
+[collection contract](docs/SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
+
 Choose task reasoning depth at creation with `alt task new --effort high|xhigh …`.
 New tasks on a supporting engine default to **High**; choose **Extra High** for selected difficult
 work. The launch choice overrides native effort configuration and persists across messages and
