@@ -194,7 +194,7 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
 
 Task token accounting reads existing local engine records without model calls. Input includes cache
 reads and writes once; output includes any reported reasoning subset. These are observed token
-counts, separate from context occupancy, quota percentages and billing. The task header and report
+counts, separate from context occupancy, quota percentages and billing. Task details and the report
 show coverage and freshness: missing records stay unknown or partial, and native helpers are counted
 only when local parentage supports attribution. Provider aggregates that cannot split helper usage
 say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
@@ -312,6 +312,10 @@ The real-Git automatic-GC regression also runs with open stdin and captured outp
 does not depend on the caller closing its input stream.
 
 ## Project conversations
+
+Desktop task chat has a compact navigation/title/actions row and visible state, model, PR and merge-hold
+chips. Long titles wrap; attempt, context and token usage open in Task details. Project headers use
+compact spacing, keeping their status and controls visible.
 
 Phone chat keeps project/task identity and a short activity status in one header, with text,
 microphone and send controls together in a compact composer. Last-answer time, engine selection,

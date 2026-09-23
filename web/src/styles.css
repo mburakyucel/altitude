@@ -883,11 +883,8 @@
   flex: none;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px 10px 24px;
+  padding: 6px 16px 6px 24px;
   border-bottom: 1px solid var(--border);
-}
-.shell[data-phone] .project-header {
-  padding: 6px 8px 6px 16px;
 }
 .project-body {
   display: flex;
@@ -1416,14 +1413,15 @@
   padding: 16px 24px 14px 28px;
   border-bottom: 1px solid var(--border);
 }
+.task-page:not([data-phone]) > .task-header { padding: 8px 24px 8px 28px; }
 .task-crumb-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 16px;
 }
 
-/* Task consumption stays folded beside the header facts; details fit phone and desktop. */
+/* Task consumption stays folded in task details on phone and desktop. */
 .token-usage { min-width: 0; font-size: var(--text-meta); }
 .token-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-height: var(--target-min); padding: 4px 0; text-align: left; color: var(--text-secondary); }
 .token-summary-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
@@ -1446,6 +1444,8 @@
 .token-session-label { font-weight: 500; }
 .token-session-id { color: var(--text-muted); overflow-wrap: anywhere; }
 .task-crumb {
+  max-width: 160px;
+  overflow-wrap: anywhere;
   font-size: var(--text-meta);
   color: var(--text-muted);
   text-decoration: none;

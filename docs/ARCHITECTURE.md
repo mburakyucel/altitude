@@ -1520,9 +1520,10 @@ and report reads. No session is one muted sentence. Loading is a
 skeleton in the page's shape, and a failed read is one sentence with Retry.
 
 The task page is the operator's conversation with the L2 beside the worker's live session
-(design spec §3.10). Its desktop header carries the crumb back to the project, Reject with an inline confirm,
-the title with its state dot, a muted
-line (attempt, when the task started or finished, context used), and chips: the state, the model on
+(design spec §3.10). Its compact desktop header puts the crumb back to the project, wrapping title
+with its state dot, Reject with an inline confirm, details and live-panel controls in one row.
+Attempt, when the task started or finished, context used and token usage open in Task details at
+both viewports. A second wrapping row keeps chips visible: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,

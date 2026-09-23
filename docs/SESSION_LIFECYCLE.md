@@ -1029,7 +1029,10 @@ history. Viewing, switching views, and leaving the page do not change the worker
 Phone Conversation and Live session tabs remain visible while typing hides the global bottom
 navigation. Keyboard dismissal restores that navigation without clearing the draft or selection;
 local view changes retain the draft, while leaving the task follows the existing discard rule.
-The compact header names L2 activity and Merge held independently. Full block/hold reasons,
+Desktop uses one navigation/title/actions row and a wrapping chip row; long titles remain readable.
+Attempt, context and token usage open in Task details at both viewports; desktop keeps direct
+Reject, operational Resume and live-panel controls. The compact phone header names L2 activity and
+Merge held independently. Full block/hold reasons,
 metadata, Reject with confirmation and operational Resume open in task details. Stop and Continue
 remain directly accessible in both views on phone and desktop. Faults retain a visible cause and
 the L3 notification. An open question stays at its conversation anchor with View question/Latest
@@ -1082,7 +1085,7 @@ never changes task or worker state.
 
 ## Task token accounting
 
-The task header and report retain cumulative **observed tokens** across recorded owner sessions,
+Task details and the report retain cumulative **observed tokens** across recorded owner sessions,
 resumes and engine handoffs. `token_usage` on the task holds the public accounting; the task folder's
 `token-usage.json` holds engine cursors and numeric deduplication evidence. Both travel into archive,
 so final accounting survives provider-log or worktree cleanup. Earlier attempts whose identities or
