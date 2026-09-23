@@ -358,9 +358,9 @@ in the task inbox for launch and do not release it or replace the original brief
 The state digest includes every planned task and its reason; no separate planning store,
 dependency graph or PR watcher exists.
 
-Dispatch-ready queued tasks wait for WIP and engine availability gates. The default caps are 8
-running tasks per project and 80 across the machine. Overlapping declared paths are information in task status and
-briefs; they do not hold dispatch or resume. One provider's quota does not
+Dispatch-ready queued tasks wait for machine capacity and engine availability gates. All projects
+share one cap, defaulting to 80 running tasks across the machine. Overlapping declared paths are
+information in task status and briefs; they do not hold dispatch or resume. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
 first, which answers from the record or escalates a dilemma to the operator. The durable dilemma
@@ -368,32 +368,31 @@ stays in Needs you while its answer is still needed, independently of the worker
 faulted tasks only after verifying that their actual cause is gone. Operator-decided short-term
 work waits as a planned task; GitHub issues hold the long-term backlog.
 
-Project registration stores `wip` only when explicitly supplied; the gate reads that override or
-`config.WIP_PER_PROJECT` (8). The aggregate gate reads `config.machine_wip()`, the persistent machine
-override or `config.WIP_PER_MACHINE` (80). Both dispatch and resume use these limits; status includes
-the effective aggregate cap and each project's cap. On the first registry load, a one-time migration removes stored caps equal
-to the legacy default of 3 and logs the affected projects, preserving approval and engine pins.
-`alt project set <name> --wip N --reason "…"` and `--unset-wip --reason "…"` are available to
-the operator and that project's L3; add and remove remain operator-only. Project caps are positive
-integers up to the effective configured machine cap at registration or request time.
-`alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the same settings request
+The aggregate gate reads `config.machine_wip()`, the persistent machine override or
+`config.WIP_PER_MACHINE` (80). Fresh and resumed launches share this cap; blocked tasks consume no
+capacity. One machine launch lock serializes admission through worker binding so simultaneous launches
+cannot overfill it. Eligible ready resumes across all registered projects precede fresh dispatch. Operator waits,
+faults without verified recovery, future due times and unavailable engines reserve no slots and do not
+hold eligible work. A resumed worker already launched and recorded in its recovery claim counts toward
+capacity while its task binding is recovered; it remains the same worker. Existing sessions, merge holds,
+planned dependencies and engine/quota gates remain authoritative. Status reports the machine limit and
+running counts per project, with no project caps.
+Stored project `wip` overrides impose no limit, and project registration and settings expose no cap.
+
+`alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the settings request
 and receipt implementation, with operator-only authority and a positive integer machine cap;
 80 is a default, not a fixed ceiling. The machine override lives in `$ALTITUDE_HOME/settings.json`;
 its `wip-request.json` and `events.jsonl` live alongside it. The machine event kind is `machine-set`.
 Altd drains machine requests before project ticks, including when no projects are registered.
-Altd applies each project's durable `wip-request.json` before task dispatch on its next tick,
-regardless of task capacity, and records one `project-set` event with project, actor, reason, request
-id and outcome in the project's `events.jsonl`. Identical pending requests and completed retries
-whose WIP receipt still matches reuse the request and event. CLI and HTTP registration, removal,
-engine pins and operational settings serialize registry writes under the project and registry locks.
+Identical pending requests and completed retries whose machine setting still matches reuse the
+request and event. CLI and HTTP registration, removal, engine pins and operational settings serialize
+registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
 
-Settings take effect without a PR, service restart or free WIP slot. Lowering a cap never terminates
-workers or rewrites explicit project overrides, including overrides above a subsequently lowered
-machine cap. Both gates must have capacity for a new launch; queued tasks and due resumes wait
-until running counts fall below both caps. Reset removes only the selected override and restores
-its default. `alt machine show` inspects active caps, defaults, overrides and request receipts;
-see [inspect/set/reset examples](CLI.md#concurrency-limits).
+Settings take effect without a PR, service restart or free task slot. Lowering the cap preserves
+running workers; launches wait until the machine running count falls below it. Reset removes the
+machine override and restores its default. `alt machine show` inspects the active cap, default,
+override and request receipt; see [inspect/set/reset examples](CLI.md#concurrency-limits).
 
 Auto preference tiers use the same reason-bearing operational path:
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`, or

@@ -110,7 +110,7 @@ class TestPlannedTasks(AltitudeCase):
         self.assertEqual(S.load_task(self.project, dependent["slug"])["state"], "running")
 
     def test_release_keeps_capacity_gate_and_dependency_can_lift_while_full(self):
-        self.register(self.project, wip=1)
+        self.patch(config, "WIP_PER_MACHINE", 1)
         prerequisite = self.create("Prerequisite")
         named = self.create("Z named wait", "--after", prerequisite["slug"])
         self.complete(prerequisite)

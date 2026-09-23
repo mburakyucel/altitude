@@ -169,7 +169,7 @@ source activation. Live-provider testing remains deferred.
 queued task
   ├─ planned wait: skip until the named task is archived done or explicitly released
   ├─ fetch origin/main and create the isolated worktree from its immutable SHA
-  ├─ WIP and Git isolation gates
+  ├─ machine capacity, eligible resume priority and Git isolation gates
   ├─ highest available preference tier, then weekly headroom (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
@@ -191,7 +191,11 @@ delivery records receipts with the worker binding; later inbox reads exclude tho
 Failed or unconfirmed input stays pending, and messages arriving during launch remain for the
 next checkpoint. Queued tasks before their first dispatch keep their composer available after release.
 
-WIP defaults to 8 running tasks per project and 80 across the machine. Shared planned files do not
+All projects share one machine limit, defaulting to 80 running tasks. Blocked tasks consume no
+capacity. Eligible ready resumes across projects receive available capacity before fresh launches;
+operator waits, faults without verified recovery, future due times and unavailable engines reserve
+no slot and do not prevent eligible work. A resumed worker already launched and recorded in its recovery
+claim still consumes capacity while task binding is recovered. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
 landing, and keeps shared-doc edits in that task's own sections. Status shows expected files and
 informational overlaps. Owners can edit newly needed files within the authorized objective without
@@ -238,24 +242,19 @@ retains the snapshot and fault. The owner receives the branch and SHA through st
 inspects and applies it in the isolated worktree,
 reviews the changes and delivers a PR. See [the recovery procedure](CLI.md#dirty-checkout-recovery).
 
-A project stores a WIP cap only when explicitly configured. The first registry load removes legacy
-stored caps of 3 once and logs the migration, preserving approval and engine pins; later explicit
-caps, including 3, persist. L3 can use `alt project set <name> --wip N --reason "…"` or
-`--unset-wip --reason "…"` for its own project, with N from 1 to the machine cap. The CLI persists
-the request and altd applies it on the next tick before capacity gates, with no task slot or restart
-needed. One project-level event records actor, reason and outcome; retries reuse the receipt and
-event while the configured WIP still matches. The operator sets the aggregate cap with
+Stored project WIP overrides impose no limit, and project registration and settings expose no cap.
+The operator sets the machine cap with
 `alt machine set --wip N --reason "…"` or resets it to 80 with
 `alt machine set --unset-wip --reason "…"`. Any positive integer is supported for the machine,
-including values above 80. The same daemon settings implementation stores machine overrides and
+including values above 80. The daemon settings implementation stores machine overrides and
 receipts persistently and drains them before project ticks. Machine changes and project add/remove
 are operator-only; an L2 cannot change scheduling limits. `alt machine show` displays active/default
-values, project overrides, and pending/completed receipts. See [concurrency commands](CLI.md#concurrency-limits).
+values, the machine override and pending/completed receipts. Identical retries reuse the receipt
+and audit event while the stored setting still matches. See [concurrency commands](CLI.md#concurrency-limits).
 
-Lowering a project or aggregate cap preserves running workers and explicit project settings.
-Dispatch and due resumes wait until the running counts are below both effective limits. A project
-cap can exceed a machine cap lowered later; the aggregate gate still applies. Resetting a project
-restores 8 even if the machine cap is lower. Changes need no task slot or service restart.
+Lowering the machine cap preserves running workers. Fresh and resumed launches wait until the
+aggregate running count falls below the effective limit. Reset restores 80. Changes need no task
+slot or service restart.
 
 For projects that deploy from their checkout, the daemon tick and delivery path separately advance
 clean main and report deployment failures. Backend, launch-source or tracked web input changes mark

@@ -12,7 +12,8 @@ def main():
         setattr(engines, name, getattr(fake, name))
     project = "atlas"
     repo = make_repo(config.PROJECT_ROOTS[0] / project)
-    with config.add_project(project, path=repo, wip=1):
+    S.write_json(config.ROOT / "settings.json", {"wip": 1})
+    with config.add_project(project, path=repo):
         pass
     dependency = T.new(project, "Migrate the index", "Complete the fictional index migration.")
     dispatch.run(project, dependency["slug"])

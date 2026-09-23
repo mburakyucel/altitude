@@ -14,11 +14,10 @@ def queue() -> list[dict]:
 def wip() -> dict:
     """The running counts and every task waiting for a slot, each with its hold (the queued task card names
     it, SPEC.md §3.5): the WIP limit, engine availability, a pending activation, or a resume checkpoint."""
-    per = {p: sum(1 for t in S.list_tasks(p) if t["state"] == "running") for p in config.load_projects()}
+    per = {p: sum(dispatch.occupies_slot(t) for t in S.list_tasks(p)) for p in config.load_projects()}
     restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
-    return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT,
+    return {"per_project": per, "machine": sum(per.values()),
             "limit_machine": config.machine_wip(),
-            "limits_per_project": {p: config.project_wip(p) for p in per},
             "waiting": [{"project": p, "slug": t["slug"], "why": "planned" if t.get("planned_wait") else "dispatch" if t["state"] == "queued" else "resume",
                          "hold": _waiting(p, t, restart)["reason"]}
                         for p in config.load_projects() for t in S.list_tasks(p)

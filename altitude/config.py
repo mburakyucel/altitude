@@ -91,7 +91,6 @@ AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_
 CODEX_EFFORT = {"l3": None}
 TASK_EFFORTS = ("high", "xhigh")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
-WIP_PER_PROJECT = 8
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
@@ -144,17 +143,11 @@ def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
 
 
-def project_wip(name: str) -> int:
-    return project(name).get("wip", WIP_PER_PROJECT)
-
-
-def validate_wip(value, *, project: bool = False) -> None:
+def validate_wip(value) -> None:
     if value is None:
         return
     if type(value) is not int or value < 1:
         raise ValueError("WIP must be a positive integer")
-    if project and value > machine_wip():
-        raise ValueError(f"project WIP must be between 1 and {machine_wip()} (the configured machine cap)")
 
 
 def parse_routing(value: str) -> list[list[dict]]:
@@ -242,7 +235,7 @@ def load_projects() -> dict:
 
 @contextmanager
 def projects_lock():
-    """Serialize registry edits across projects: simultaneous cap changes must not lose either edit."""
+    """Serialize registry edits across projects without losing concurrent changes."""
     ensure_root()
     with open(ROOT / ".projects.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -253,21 +246,13 @@ def projects_lock():
 
 
 def _load_projects() -> dict:
-    """Read under projects_lock; retire baked-in 3s once, preserving later explicit choices."""
+    """Read under projects_lock; project concurrency is not a setting."""
     try:
         projects = json.loads(PROJECTS_FILE.read_text() or "{}")
     except ValueError:
         return {}
-    marker = ROOT / ".project-wip-default-migrated"
-    if not marker.exists():
-        migrated = [name for name, entry in projects.items() if entry.get("wip") == 3]
-        for name in migrated:
-            projects[name].pop("wip")
-        if migrated:
-            save_projects(projects)
-            logging.getLogger(__name__).warning("Removed legacy project WIP 3 override: %s", ", ".join(migrated))
-        from .state import atomic_write
-        atomic_write(marker, "Legacy WIP defaults migrated; explicit overrides now persist.\n")
+    for entry in projects.values():
+        entry.pop("wip", None)
     return projects
 
 
@@ -294,15 +279,14 @@ def _write_project(name: str, entry: dict | None) -> None:
 
 
 @contextmanager
-def add_project(name: str, *, path=None, approval="default", wip=None, **pins):
+def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_engine=None):
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
     path = Path(path or (PROJECT_ROOTS[0] / name)).expanduser()
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
-    validate_wip(wip, project=True)
-    entry = {"path": str(path), "approval": approval, **({"wip": wip} if wip is not None else {}),
-             **{key: value for key, value in pins.items() if value}}
+    entry = {"path": str(path), "approval": approval,
+             **{key: value for key, value in {"l2_engine": l2_engine, "l3_engine": l3_engine}.items() if value}}
     with S.project_lock(name):
         previous = load_projects().get(name)
         _write_project(name, entry)

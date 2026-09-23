@@ -219,7 +219,6 @@ export const WipSchema = z
   .object({
     per_project: z.record(z.string(), z.number()),
     machine: z.number(),
-    limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
     // why: "planned", "dispatch" (state queued) or "resume" (blocked with resume_after); hold: the queue's own
     // text for what the task waits on (the WIP limit, an engine hold, a pending activation, a resume
@@ -765,7 +764,6 @@ export interface ProjectAddInput {
   name: string;
   path?: string;
   approval?: string;
-  wip?: number;
 }
 
 export function useProjectAdd(onRegistered: (name: string) => void) {

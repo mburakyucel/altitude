@@ -1,4 +1,4 @@
-"""Operator decision: persistent 8/project, 80/machine defaults with live cap changes."""
+"""One persistent machine concurrency cap with operator-owned live changes."""
 import json
 import unittest
 from unittest import mock
@@ -30,7 +30,9 @@ class TestConcurrency(AltitudeCase):
 
     def test_persistent_machine_override_reset_audit_and_retry(self):
         initial = self.show()
-        self.assertEqual((initial["wip"], initial["default"], initial["default_project"]), (80, 80, 8))
+        self.assertEqual((initial["wip"], initial["default"]), (80, 80))
+        self.assertNotIn("default_project", initial)
+        self.assertNotIn("projects", initial)
         request = self.machine(120)["request"]
         self.assertEqual(self.show()["wip"], 80, "the CLI only queues the daemon request")
         self.assertEqual(self.show()["request"]["status"], "pending")
@@ -56,37 +58,19 @@ class TestConcurrency(AltitudeCase):
         self.assertNotIn("wip", config.machine_settings())
         self.assertFalse(self.machine(120)["idempotent"])
 
-    def test_validation_and_project_overrides_use_the_effective_machine_cap(self):
+    def test_machine_cap_validation_and_status(self):
         for value in (0, -1, True, 1.5, "8"):
-            for project in (None, self.project):
-                with self.subTest(value=value, project=project), self.assertRaisesRegex(T.TransitionError, "positive integer"):
-                    dispatch.request_setting(project, "wip", value, "test", actor="burak")
+            with self.subTest(value=value), self.assertRaisesRegex(T.TransitionError, "positive integer"):
+                dispatch.request_setting(None, "wip", value, "test", actor="burak")
         self.machine(120)
         dispatch.run_settings()
-        with config.add_project("explicit", path=self.repo, wip=110):
-            self.addCleanup(self._forget, "explicit")
-        dispatch.request_setting(self.project, "wip", 100, "more parallel work", actor="l3")
-        dispatch.run_settings(self.project)
-        self.assertEqual(self.show()["projects"][self.project]["wip"], 100)
+        self.assertEqual(digest.wip()["limit_machine"], 120)
         self.machine(4, "lower aggregate")
         dispatch.run_settings()
-        self.assertEqual(config.project_wip(self.project), 100, "lowering preserves explicit project choices")
-        self.assertEqual(config.project_wip("explicit"), 110)
-        self.assertTrue(dispatch.request_setting(self.project, "wip", 100, "more parallel work", actor="l3")["idempotent"],
-                        "an accepted retry retains its receipt after the machine cap is lowered")
-        with self.assertRaisesRegex(T.TransitionError, "between 1 and 4"):
-            dispatch.request_setting(self.project, "wip", 100, "new request", actor="l3")
-        with self.assertRaisesRegex(ValueError, "between 1 and 4"):
-            with config.add_project("too-large", path=self.repo, wip=5):
-                self.fail("registration must validate the effective cap")
-        with self.assertRaisesRegex(T.TransitionError, "between 1 and 4"):
-            dispatch.request_setting(self.project, "wip", 5, "too large", actor="l3")
-        dispatch.request_setting(self.project, "wip", None, "restore project default", actor="l3")
-        dispatch.run_settings(self.project)
-        self.assertEqual(self.show()["projects"][self.project]["wip"], 8)
-        self.assertIsNone(self.show()["projects"][self.project]["override"])
+        self.assertEqual(self.show()["wip"], 4)
         self.assertEqual(digest.wip()["limit_machine"], 4)
-        self.assertEqual(digest.wip()["limits_per_project"]["explicit"], 110)
+        self.assertNotIn("limits_per_project", digest.wip())
+        self.assertNotIn("limit_project", digest.wip())
 
     def test_machine_mutation_requires_operator_and_reason_at_cli_and_backend(self):
         for actor in ("l2", "l3"):
@@ -103,7 +87,7 @@ class TestConcurrency(AltitudeCase):
         self.assertNotEqual(result["returncode"], 0)
         self.assertFalse((config.ROOT / "wip-request.json").exists())
 
-    def test_lowering_caps_preserves_workers_and_gates_dispatch_and_resume(self):
+    def test_lowering_machine_cap_preserves_workers_and_gates_dispatch_and_resume(self):
         make_repo(self.repo)
         self.register("another", wip=8)
         launches = []
@@ -133,15 +117,10 @@ class TestConcurrency(AltitudeCase):
             for snapshot in snapshots:
                 self.assertEqual(S.load_task(self.project, snapshot["slug"]), snapshot)
 
-            self.machine(80, "restore capacity")
-            dispatch.run_settings()
-            dispatch.request_setting(self.project, "wip", 2, "reduce project load", actor="l3")
-            dispatch.run_settings(self.project)
-            server.dispatch_waiting(self.project)
-            self.assertEqual(len(launches), 3)
-            self.assertIsNone(dispatch.wip_hold("another"))
-            for snapshot in snapshots:
-                self.assertEqual(S.load_task(self.project, snapshot["slug"]), snapshot)
+            # The resume remains ineligible while the operator has asked it to wait.
+            paused = S.load_task("another", resumable["slug"])
+            paused.update(waiting_on="burak", resume_after=None)
+            S.save_task("another", paused)
             # Completion frees capacity only once the running count falls below the lowered cap.
             for snapshot in snapshots[:2]:
                 snapshot["state"] = "done"
@@ -149,6 +128,10 @@ class TestConcurrency(AltitudeCase):
                 server.dispatch_waiting(self.project)
             self.assertEqual(len(launches), 4)
             self.assertEqual(S.load_task(self.project, queued["slug"])["state"], "running")
+            self.assertEqual(digest.wip()["machine"], 2)
+            self.machine(80, "restore capacity")
+            dispatch.run_settings()
+            self.assertIsNone(dispatch.wip_hold("another"))
 
     def test_machine_request_is_applied_before_project_ticks_even_at_full_capacity(self):
         self.machine(1)

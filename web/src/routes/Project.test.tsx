@@ -13,7 +13,7 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 
 const project = {
   name: "altitude",
-  config: { approval: "ask", wip: 2 },
+  config: { approval: "ask" },
   l3: { session_id: "abcdef1234567890", turns: 12, context_percent: 33, last_turn: ago(7) },
   busy: false,
   tasks: [
@@ -263,7 +263,7 @@ describe("Project page", () => {
       overview: {
         ...overview,
         queue: [],
-        wip: { per_project: {}, machine: 1, waiting: [{ project: "altitude", slug: "later", why: "dispatch", hold: "WIP limit 1 reached for altitude (1 running)" }] },
+        wip: { per_project: {}, machine: 1, waiting: [{ project: "altitude", slug: "later", why: "dispatch", hold: "WIP limit: 1 running on this machine" }] },
       },
       project: { ...project, tasks: [runner, waitsL3, queued], archive: [done] },
     });
@@ -276,7 +276,7 @@ describe("Project page", () => {
     expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · Running · Opus on Alpha · started 2 min ago");
     expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waits for L3");
     expect(row(/^Ask L3/).querySelector(".dot")).toHaveAttribute("data-state", "running");
-    expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a slot · WIP limit 1 reached for altitude (1 running)");
+    expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a slot · WIP limit: 1 running on this machine");
     expect(within(panel).queryByRole("region", { name: "Needs you" })).toBeNull();
 
     const fold = within(panel).getByText("Done this week (1)");

@@ -212,21 +212,20 @@ total spawned. The same breakdown stays available in task and report details aft
 
 ## Configure concurrency
 
-Running tasks default to **8 per project and 80 across the machine**. Both limits are persistent
-settings. Inspect active limits, defaults, overrides and pending requests with `alt machine show`:
+All projects share one persistent concurrency limit, defaulting to **80 running tasks across the
+machine**. Blocked tasks free their capacity. Eligible ready resumes receive available slots before
+fresh tasks across all projects; operator waits, unresolved faults, future resume times and unavailable
+engines reserve no capacity. Inspect the limit and pending requests with `alt machine show`:
 
 ```sh
 alt machine show
-alt project set example --wip 12 --reason 'Allow more parallel tasks in this project'
 alt machine set --wip 120 --reason 'Allow more parallel tasks across this machine'
-alt project set example --unset-wip --reason 'Restore the project default of 8'
 alt machine set --unset-wip --reason 'Restore the machine default of 80'
 ```
 
-The operator can change both limits; a project's L3 can change its own project limit. Machine
-changes are operator-only. Altd applies requests on its next tick without a free task slot or
-service restart. Existing explicit project caps persist. Lowering either limit lets running work
-continue and holds new launches until capacity is available. The machine default of 80 is
+Only the operator changes this limit. Altd applies requests on its next tick without a free task
+slot or service restart. Stored project overrides impose no limit. Lowering the machine limit lets
+running work continue and holds launches until capacity is available. The default of 80 is
 configurable above 80. See [concurrency commands and validation](docs/CLI.md#concurrency-limits).
 
 ## Engines that can evolve with the work

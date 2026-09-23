@@ -392,7 +392,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
         authority = "the operator" if project is None else "L3 or the operator"
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
-    if setting not in (("wip",) if project is None else ("wip", "routing")):
+    if setting not in (("wip",) if project is None else ("routing",)):
         raise T.TransitionError(f"unknown {scope} setting")
     if setting == "wip":
         try:
@@ -409,11 +409,6 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
         if same and (previous.get("status") == "pending" or previous.get(f"result_{setting}") == entry.get(setting)):
             return {"idempotent": True, "request": previous}
-        if setting == "wip" and project is not None:
-            try:
-                config.validate_wip(value, project=True)
-            except ValueError as exc:
-                raise T.TransitionError(str(exc)) from exc
         if previous.get("status") == "pending":
             raise T.TransitionError(f"{scope} set already pending in altd")
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": f"{scope}-set", "project": project,
@@ -423,7 +418,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
 
 
 def run_settings(project: str | None = None) -> dict:
-    settings = ("wip",) if project is None else ("wip", "routing")
+    settings = ("wip",) if project is None else ("routing",)
     return {setting: _run_setting(project, setting) for setting in settings}
 
 
@@ -763,7 +758,7 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
-    with config.restart_lock() as ready:
+    with launch_lock(), config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             raise T.TransitionError("Altitude is restarting; retry shortly")
         return _run(project, slug, model)
@@ -921,7 +916,10 @@ def l2_env(project: str, slug: str, attempt: int) -> dict:
 
 
 def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
-    with config.restart_lock() as ready:
+    claim = S.load_task(project, slug).get("resume_claim") or {}
+    if claim and _claim_owner_live(claim):
+        return {"already_resuming": True}
+    with launch_lock(), config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             return {"held": "Altitude is restarting; retry shortly"}
         try:
@@ -968,7 +966,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
                   expected_block_id=task.get("block_id"), **daemon_fence)
         return {"requeued": True}
     window = engines.window_hold(l2_engine(task))
-    hold = f"usage limit: subscription window exhausted, resets {window}" if window else wip_hold(project, task)
+    hold = resume_engine_hold(task) or wip_hold(project, task)
     if hold:
         T.mark_resume_held(project, slug, hold, retry_at=window,
                            expected_daemon_request=daemon_request_id,
@@ -996,7 +994,10 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
     except project_setup.SetupBusy as exc:
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
-        T.mark_resume_held(project, slug, str(exc), expected_daemon_request=daemon_request_id,
+        retry_at = task.get("resume_after") or ""
+        if retry_at <= S.now():
+            retry_at = (datetime.now(timezone.utc) + timedelta(seconds=config.AGENT_POLL_SECONDS)).isoformat()
+        T.mark_resume_held(project, slug, str(exc), retry_at=retry_at, expected_daemon_request=daemon_request_id,
                            expected_block_id=task.get("block_id"), **daemon_fence)
         return {"held": str(exc)}
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
@@ -1113,6 +1114,33 @@ def stop(project: str, slug: str, *, by: str = "burak", reason: str | None = Non
     return S.load_task(project, slug)
 
 
+def resume_engine_hold(task: dict) -> str | None:
+    """Check the saved session's engine/model without changing its routing."""
+    engine = l2_engine(task)
+    if window := engines.window_hold(engine):
+        return f"usage limit: subscription window exhausted, resets {window}"
+    hold = route.resume_hold(engine, task.get("launch_model", task.get("engine_model")))
+    return f"engine hold: {hold}" if hold else None
+
+
+def resume_ready(project: str, task: dict) -> bool:
+    """A saved session has an authorized, due wake and an eligible provider."""
+    if task["state"] != "blocked" or not task.get("agent_id") or not task.get("session_id"):
+        return False
+    request = task.get("daemon_request") or {}
+    if request.get("status") in ("pending", "executing"):
+        if request.get("operation") != "resume" or any(
+                request.get(key) != task.get(key) for key in ("block_id", "agent_id", "session_id")):
+            return False
+    elif task.get("resume_claim"):
+        return False  # Recovery owns stale claims; an active launch holds launch_lock.
+    elif not task.get("resume_after"):
+        if (task.get("stop_id") or task.get("waiting_on") or task.get("fault") or task.get("resume_failed")
+                or not any(row.get("wake", True) for row in T.pending(project, task["slug"]))):
+            return False
+    return (task.get("resume_after") or "") <= S.now() and not resume_engine_hold(task)
+
+
 def resume_due(project: str) -> list[str]:
     """Blocked tasks with a due daemon request or a turn-boundary inbox.
 
@@ -1140,9 +1168,7 @@ def resume_due(project: str) -> list[str]:
         if not t.get("agent_id") or not t.get("session_id"):
             due.append(t["slug"])
             continue
-        if engines.window_hold(l2_engine(t)):
-            continue
-        if wip_hold(project, t):
+        if not resume_ready(project, t) or wip_hold(project, t):
             continue
         due.append(t["slug"])
     return due
@@ -1278,14 +1304,31 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
     return out
 
 
+@contextmanager
+def launch_lock():
+    """Serialize machine capacity admission through worker binding, across threads and processes."""
+    with open(config.ROOT / ".launch.lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
-    running = [t for t in S.list_tasks(project) if t["state"] == "running"]
-    if len(running) >= config.project_wip(project):
-        return f"WIP limit: {len(running)} running in {project}"
-    total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")
+    tasks = [(p, t) for p in config.load_projects() for t in S.list_tasks(p)]
+    total = sum(occupies_slot(t) for _, t in tasks)
     if total >= config.machine_wip():
         return f"WIP limit: {total} running on this machine"
+    if task and task["state"] == "queued" and any(resume_ready(p, t) for p, t in tasks):
+        return "WIP limit: ready resumes take the next machine slot"
     return None
+
+
+def occupies_slot(task: dict) -> bool:
+    """A launched resume awaiting crash-recovery binding already has a worker on the machine."""
+    worker = (task.get("resume_claim") or {}).get("worker") or {}
+    return task["state"] == "running" or bool(worker.get("id") and worker.get("sessionId"))
 
 
 def poll(project: str) -> list[dict]:

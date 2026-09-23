@@ -292,6 +292,8 @@ class TestL2Steering(AltitudeCase):
                 self.assertEqual(saved["delivery"]["state"], "queued")
                 self.assertEqual([m["id"] for m in T.task_messages(self.project, task["slug"])], [row["id"], saved["id"]])
                 self.assertIn(task["slug"], dispatch.resume_due(self.project))
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.view(task)["messages"][-1]["delivery"]["state"], "delivered")
 
     def test_answer_to_open_question_during_stop_stays_held(self):
         task = self.launch(config.ENGINES[0])
