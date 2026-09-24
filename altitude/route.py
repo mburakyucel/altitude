@@ -181,7 +181,8 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
         except ValueError as exc:
             return {"engine": None, "model": None, "why": str(exc)}
     return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
-                       project=project, excluded=excluded, effort=task.get("effort"))
+                       project=project, excluded=excluded, effort=task.get("effort") if
+                       "effort" in task or project.get("l2_effort") is not None else "native")
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
@@ -194,6 +195,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     """
     from . import engines
     project = project or {}
+    effort = effort if effort is not None else project.get(f"{role}_effort")
     pin = config.pinned_option(role, project, engine=forced, model=model)
     tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
     usage = _usage()
@@ -205,7 +207,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                       "model": configured.get("model") or config.default_model(role, configured["engine"]), "role": role}
             engine = option["engine"]
             try:
-                config.task_effort(engine, effort)
+                option["effort"] = config.task_effort(engine, effort, role=role)
+                option["requested_effort"] = effort
             except ValueError as exc:
                 skipped.append(f"{option_label(option)} unavailable: {exc}")
                 continue

@@ -248,3 +248,65 @@ class TestVerifyDelivery(AltitudeCase):
         self.assertEqual(task["state"], "reported")
         self.assertEqual(task["verified"]["verdict"], "contradicted")
         self.assertEqual([e["verdict"] for e in self.reverified()], ["contradicted", "contradicted"])
+
+    FINDING = "Queued-image viewer continuity across queue/history transition."
+
+    def report_open_finding(self, merge_sha=None):
+        """A merged delivery whose owner handed one out-of-scope observation back to coordination (#462)."""
+        report = self.report()
+        if merge_sha:
+            report["landed"]["prs"][0]["merge_sha"] = merge_sha
+        report["review"] = [{"summary": self.FINDING, "severity": "minor", "disposition": "open",
+                             "reason": "Distinct product observation outside this task's scope."}]
+        S.write_json(self.report_path, report)
+        self.task.update(state="reported", verified={
+            "verdict": "contradicted", "problems": [verify.OPEN_FINDINGS],
+            "delivery": self.task["delivery"], "owner": T.report_owner(self.task), "attempt": 1})
+        self.save()
+
+    def test_open_finding_still_blocks_plain_completion_of_a_merged_delivery(self):
+        self.publish(41)
+        self.report_open_finding()
+        with self.assertRaisesRegex(T.TransitionError, "open finding on an unblocked report"):
+            T.done(self.project, "continue", actor="l3", digest="closed")
+        self.assertEqual(S.load_task(self.project, "continue")["state"], "reported")
+
+    def test_tracked_open_finding_completes_a_merged_delivery_on_the_record(self):
+        self.publish(41)
+        self.report_open_finding()
+
+        task = T.done(self.project, "continue", actor="l3", digest="PR #41 merged.", findings_tracked="#461")
+
+        self.assertEqual(task["state"], "done")
+        self.assertEqual(task["verified"]["verdict"], "contradicted")
+        self.assertEqual(task["verified"]["problems"], [verify.OPEN_FINDINGS])
+        closing = [e for e in S.read_events(self.project, "continue") if e["kind"] == "state" and e["to"] == "done"]
+        self.assertEqual([e["findings_tracked"] for e in closing], [{"reference": "#461", "findings": [self.FINDING]}])
+        digest = (S.archive_dir(self.project) / "continue" / "digest.md").read_text()
+        self.assertEqual(digest, f"PR #41 merged.\n\nOpen review findings tracked at #461:\n- {self.FINDING}\n")
+
+    def test_tracking_reference_cannot_complete_an_unmerged_or_mismatched_delivery(self):
+        head, merge = self.publish(41)
+        self.report_open_finding(merge_sha=head[:7])
+        with self.assertRaisesRegex(T.TransitionError, "reported merge SHA differs from GitHub"):
+            T.done(self.project, "continue", actor="l3", findings_tracked="#461")
+        self.report_open_finding(merge_sha=merge)
+        self.pulls["41"].update(state="OPEN", mergeCommit=None)
+        self.save()
+        with self.assertRaisesRegex(T.TransitionError, "reported merged but GitHub says OPEN"):
+            T.done(self.project, "continue", actor="l3", findings_tracked="#461")
+        self.assertEqual(S.load_task(self.project, "continue")["state"], "reported")
+
+    def test_tracking_reference_needs_an_open_finding_and_a_coordinator(self):
+        self.publish(41)
+        self.report()
+        self.task.update(state="reported", verified={"verdict": "ok", "problems": [], "delivery": self.task["delivery"],
+                                                     "owner": T.report_owner(self.task), "attempt": 1})
+        self.save()
+        with self.assertRaisesRegex(T.TransitionError, "no open review findings to track"):
+            T.done(self.project, "continue", actor="l3", findings_tracked="#461")
+        self.task.update(state="running")
+        self.save()
+        with self.assertRaisesRegex(T.TransitionError, "coordination records where open review findings are tracked"):
+            T.done(self.project, "continue", actor="l2", expected_attempt=1, findings_tracked="#461")
+        self.assertEqual(S.load_task(self.project, "continue")["state"], "running")

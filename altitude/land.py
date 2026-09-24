@@ -670,16 +670,56 @@ def _assert_pair_current(root: Path, pair: dict) -> None:
                         "re-run alt land to classify, test and merge one current pair")
 
 
-def _has_ci(root: Path, pair: dict) -> bool:
-    """Whether either exact side of the pinned merge pair contains GitHub Actions workflows."""
+def _workflows(root: Path, pair: dict) -> dict[str, bool]:
+    """Whether each exact side of the merge pair (a commit or tree id) contains GitHub Actions workflows."""
+    sides = {}
     for label, sha in (("base", pair["base_sha"]), ("head", pair["head_sha"])):
         tree = _git(root, "ls-tree", "--name-only", sha, ".github/workflows")
         if tree.returncode != 0:
-            raise LandError(f"cannot inspect .github/workflows on the pinned {label} {sha[:12]}: "
+            raise LandError(f"cannot inspect .github/workflows on the {label} {sha[:12]}: "
                             f"{(tree.stderr or '').strip()[-200:] or f'exit {tree.returncode}'}")
-        if (tree.stdout or "").strip():
-            return True
-    return False
+        sides[label] = bool((tree.stdout or "").strip())
+    return sides
+
+
+def _has_ci(root: Path, pair: dict) -> bool:
+    """Workflows on either side keep the hosted gate: a head that deletes them cannot select the local suite."""
+    return any(_workflows(root, pair).values())
+
+
+def _test_argv(test_cmd: str) -> list[str]:
+    """`--test-cmd` is one command, split into argv without a shell; operators such as `&&` are literal arguments."""
+    try:
+        argv = shlex.split(test_cmd)
+    except ValueError as exc:
+        raise LandError(f"--test-cmd is not one shell-quoted command: {exc}") from exc
+    if not argv:
+        raise LandError("the local test command is empty")
+    return argv
+
+
+def _prospective(root: Path, base: str, changed: list[str], test_cmd: str) -> dict:
+    """What a real landing of this worktree would pin and judge, as far as a dry run can tell without
+    committing, pushing or reading the PR. Staged changes leave the head commit undetermined; its tree
+    is the staged index. Continuation after a merged PR, base integration under --merge and check
+    evidence already published on the PR are settled only by a real landing."""
+    base_sha = _need(_git(root, "rev-parse", f"origin/{base}"), f"origin/{base}")
+    head = _need(_git(root, "rev-parse", "HEAD"), "HEAD")
+    tree = _need(_git(root, "write-tree"), "the staged tree")
+    workflows = _workflows(root, {"base_sha": base_sha, "head_sha": tree})
+    required = _required_pr_check(root)
+    gate = "github-actions" if required or any(workflows.values()) else "local-suite"
+    undetermined = []
+    if changed:
+        undetermined.append(f"the head commit is created at landing from the {len(changed)} staged path(s); "
+                            "its tree is the staged index")
+    if _git(root, "merge-base", "--is-ancestor", base_sha, head).returncode != 0:
+        undetermined.append(f"HEAD does not include current origin/{base}: --merge integrates it into a new head "
+                            "first, and the required PR check needs a head that includes it")
+    return {"base": base_sha, "head": None if changed else head, "tree": tree, "gate": gate,
+            "required_pr_check": required, "workflows": workflows,
+            "local_suite": _test_argv(test_cmd) if gate == "local-suite" else None,
+            "undetermined": undetermined}
 
 
 def _checks_value(root: Path, number: int, pair: dict) -> str:
@@ -719,9 +759,7 @@ def _test_counts(output: str) -> tuple[int | None, int | None, int | None]:
 
 def _local_suite(cwd: Path, test_cmd: str) -> dict:
     """Run and count the full local suite in the synthetic merge candidate."""
-    argv = shlex.split(test_cmd)
-    if not argv:
-        raise LandError("the local test command is empty")
+    argv = _test_argv(test_cmd)
     _note(f"the merge candidate's local suite is the gate: {test_cmd}")
     result = {"command": test_cmd, "passed": False, "returncode": None, "tests": None, "skipped": None,
               "expected_failures": None, "error": None}
@@ -965,7 +1003,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             "the PR in the task chat, re-run with `--merge --approval <message-id>`; until then "
                             "re-run `alt land` without `--merge`")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
-              + ("the operator approval is applied before merge" if merge else "the PR will be opened but not merged"))
+              + ("the operator approval is applied before merge" if merge
+                 else "a dry run opens nothing" if dry_run else "the PR will be opened but not merged"))
     # This is deliberately before fetch, committing, or any GitHub call. Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
@@ -994,9 +1033,17 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if not changed:
         _note("nothing staged — no new commit")
     if dry_run:
+        prospective = _prospective(root, base, changed, test_cmd)
+        _note(f"dry run: nothing committed, pushed, opened, tested or merged; the candidate would be judged by "
+              f"{prospective['gate']} on base {prospective['base'][:12]}"
+              + (f", running one command without a shell: {prospective['local_suite']}"
+                 if prospective["local_suite"] else ""))
+        for reason in prospective["undetermined"]:
+            _note(f"dry run: {reason}")
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
-                "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption}
+                "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption,
+                "prospective": prospective}
     if not adoption:
         pr = _pr_view(root, branch)
         if pr:

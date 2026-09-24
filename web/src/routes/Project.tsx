@@ -12,6 +12,7 @@ import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import { L3EngineSelect } from "../components/L3EngineSelect";
+import { ProjectEffort } from "../components/ProjectEffort";
 import { decisionsFor, managedProjects } from "../shell/projects";
 import { ProjectSetup } from "./Setup";
 import Conversation from "./Conversation";
@@ -217,7 +218,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
   );
 
   const menu = (
-        <div role="menu" className={phone ? "project-details-actions" : "menu"} aria-label="Project actions">
+        <div role="menu" className="project-details-actions" aria-label="Project actions">
           {confirm === "reset" ? (
             confirmRow(
               "Reset the L3 conversation?",
@@ -276,9 +277,14 @@ function HeaderMenu({ name, designViewer, starting, details }: {
         <div className="sheet project-details">
           <div className="sheet-heading"><h2>{name}</h2><button type="button" className="btn btn-ghost" onClick={close} disabled={pending}>Close details</button></div>
           {details}
+          <ProjectEffort name={name} />
           {menu}
         </div>
-      </Overlay> : menu : null}
+      </Overlay> : <div className="menu project-settings" aria-label="Project details">
+        {details}
+        <ProjectEffort name={name} />
+        {menu}
+      </div> : null}
     </div>
   );
 }

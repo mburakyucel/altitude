@@ -61,7 +61,8 @@ checks and holds still stop delivery. See [landing contention](docs/CLI.md#concu
 
 Owners and helpers run relevant tests during development. This repository's self-hosted PR
 `check` runs the full suite; `alt land` requires it to pass for the current merge content.
-The branch includes current main, and each new head needs fresh PR checks. Altitude serializes
+The branch includes current main, and each new head needs fresh PR checks; `alt land --dry-run`
+previews the base, head and gate without publishing. Altitude serializes
 final validation and merges. Runner outages pause merges. Review and merge holds still apply,
 and merges outside Altitude remain unprotected. CI reports stay on the runner host with bounded
 retention and cleanup; GitHub supplies checks and logs without artifact uploads. Owners verify
@@ -284,12 +285,15 @@ after thirty minutes. The headless plan-usage reader requires CLI 2.1.277 or lat
 login; its experimental response format and deferred live verification are described in the
 [collection contract](docs/SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
 
-Choose task reasoning depth at creation with `alt task new --effort high|xhigh …`.
-New tasks on a supporting engine default to **High**; choose **Extra High** for selected difficult
-work. The launch choice overrides native effort configuration and persists across messages and
-resumes. Existing sessions retain their launch behavior. Task status distinguishes requested,
-launched and observed effort; [effort selection](docs/CLI.md#task-reasoning-effort) explains support
-and failure handling.
+Set independent **L3 effort** and **L2 effort** defaults in **Project details** (desktop More actions),
+or with `alt project set <project> --l3-effort medium --reason '…'` and `--l2-effort high`.
+Changing effort leaves model and engine pins intact. **Default** preserves existing behavior;
+**Native** requests no Altitude effort override. L3 changes apply next turn in its existing conversation.
+Fresh L2 attempts, including queued tasks, use the project default; `alt task new --effort xhigh …`
+overrides it for one task. Started tasks keep their saved effort on messages and resumes.
+Higher effort can use more time and tokens. Requested settings, launch overrides and observed
+provider effort remain distinct; [effort selection](docs/CLI.md#task-reasoning-effort) describes
+supported levels, precedence and native L1 controls.
 
 An exhausted model allowance excludes only that model. A reported reset schedules a retry;
 an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a

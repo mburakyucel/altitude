@@ -744,7 +744,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ## Task lifecycle
 
 ```text
-alt task new --title <title> [--wait <reason> | --after <task>] [--effort high|xhigh] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
+alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>]
 alt task reply <text>|- [--file <path>]
@@ -755,7 +755,7 @@ alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
-alt task done <slug> --digest <text>
+alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
 
@@ -822,20 +822,38 @@ are verified. Creating that planned task neither enables CI nor closes the issue
 
 ### Task reasoning effort
 
-`alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
-requests Extra High; `--effort high` requests High. Omitting the option defaults new tasks to High
-on supporting engines. The engine seam defines support; other engines retain native effort when
-the option is omitted. An explicit choice filters Auto to supporting engines and refuses a pin to
-an unsupported engine. If no configured supporting option is available, the queue
-explanation names the unavailable options. Effort does not create an engine/model pin.
+Set independent project defaults without changing engine/model selection:
 
-Precedence is explicit task effort, then the engine's task default, then native configuration only
-when no launch override exists. The launcher supplies the resolved value as a native command-line
-configuration override on the initial turn and every resume. The model stays provider-selected
-unless separately pinned. Model-specific effort compatibility is validated by the provider; an
-unsupported response remains a task-local launch/turn failure with its diagnostic, without silently
-lowering effort or switching engines. Existing tasks without an effort field keep native behavior;
-there is no migration and no effort editing control for existing sessions or L3 turns.
+```sh
+alt project set example --l3-effort medium --reason 'Use medium effort for coordination'
+alt project set example --l2-effort high --reason 'Use high effort for fresh task attempts'
+alt project set example --l2-effort native --reason 'Use native task configuration'
+alt project set example --unset-l3-effort --reason 'Restore the existing L3 default'
+alt project set example --unset-l2-effort --reason 'Restore the existing L2 default'
+alt project list
+```
+
+The operator and the project's L3 use these reason-bearing settings requests; L2 cannot change
+project defaults. Altd applies them on its next tick, without a free worker slot or service restart.
+Project details provides the same independent defaults with immediate saves (desktop: More actions).
+Default restores existing behavior: L3 native; L2 High on Codex and native on Claude. Native explicitly
+requests no Altitude override, including for L2 engines with a High default.
+
+Levels are `native`, `low`, `medium`, `high`, `xhigh` (Extra High), `max`, and `ultra`.
+The current adapters accept Low through Max on both engines and Ultra on Codex. Engine support
+does not guarantee support by every selected model/client or bypass provider-managed effort caps.
+Unsupported pins refuse; Auto excludes unsupported engines and explains unavailable candidates.
+Effort does not create an engine/model pin. Higher effort can use more time and tokens.
+
+`alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
+overrides the project L2 default for that task. Precedence is explicit task effort, project L2
+effort, existing engine default, then native configuration when no override exists. Fresh attempts
+resolve at dispatch, including queued tasks; messages/resumes reuse their saved launch override.
+L3 resolves its project default at each turn, including in its existing conversation. A turn already
+running finishes with its original selection. No existing L2 session is migrated or edited.
+Legacy tasks without an effort field keep native behavior unless a project default applies at a fresh
+launch; legacy resumes with no saved effort remain native. Model-specific incompatibility stays a
+launch/turn failure with its diagnostic, without an application-side downgrade or engine fallback.
 
 `alt task status <slug>` exposes `effort` (explicit request, null if omitted), `launch_effort`
 (the actual launch override, null for native configuration), and `engine_reasoning_effort`
@@ -844,6 +862,17 @@ as evidence. An observation may differ from the selection and never replaces it.
 preserves the attempt, owner conversation and saved override through provider configuration and
 routing changes. Deterministic fixtures verify arguments, state and failure behavior; live-provider
 compatibility remains deferred under the repository testing policy.
+
+L3 session records likewise separate requested `effort`, `launch_effort` and observed
+`engine_reasoning_effort`. A provider may cap a requested level without reporting the applied level;
+missing observations stay unknown.
+
+L1 helpers remain engine-native. Codex supports inherited effort, a native subagent default and
+spawn/custom-agent overrides ([native controls](https://learn.chatgpt.com/docs/agent-configuration/subagents)).
+Claude helpers inherit session effort unless their agent definition overrides it
+([agent effort](https://code.claude.com/docs/en/sub-agents)); provider caps still apply.
+Altitude supplies no global L1 effort selector or helper orchestration. These native settings are
+intent, not evidence that every helper used the requested level.
 
 ### Lifecycle requests
 
@@ -1049,6 +1078,54 @@ Reviews and live merge holds remain mandatory. Opening a held PR does not author
 GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 
+### Dry run and gate selection
+
+`alt land --dry-run` reports what a real landing of the worktree would pin and judge, and
+commits, pushes, opens, tests and merges nothing. It fetches the base and the branch tip as an
+ordinary landing does, keeps the staged index intact, records no adoption and releases no hold.
+The result keeps `checks: "dry-run"`, `head: null` and `local_tests: null`, because no head is
+pushed and no suite runs, and adds `prospective`:
+
+```json
+"prospective": {
+  "base": "<fetched origin/main commit>",
+  "head": "<HEAD commit, or null while changes are staged>",
+  "tree": "<the tree the head would carry: HEAD's, or the staged index>",
+  "gate": "github-actions | local-suite",
+  "required_pr_check": false,
+  "workflows": {"base": true, "head": false},
+  "local_suite": ["make", "test"],
+  "undetermined": ["..."]
+}
+```
+
+`gate` is `github-actions` when this repository's required PR check applies or either side
+carries `.github/workflows`; otherwise `local-suite`, and `local_suite` shows the exact argv
+the suite would run. `undetermined` names what only a real landing settles: with staged
+changes the head commit is created at landing and only its tree is known; a HEAD that lacks
+current main is integrated into a new head under `--merge` and cannot satisfy the required PR
+check as it is. Continuation after a merged PR and check evidence already published on the PR
+are also settled only when landing. A dry run never proves that tests passed or that a merge
+is authorized.
+
+Workflow detection inspects both pinned sides. Workflows on the base keep the hosted gate for
+every PR, so a branch that deletes `.github/workflows` shows `workflows.head: false` and still
+`gate: github-actions`; with no hosted run it lands as `skipped`, not through the local suite.
+Retiring a project's CI is a project decision made outside `alt land`; it does not arrive
+through a PR that removes the workflows.
+
+`--test-cmd` is one command. Landing splits it into argv with shell quoting rules and runs it
+without a shell on the merge candidate, so `&&`, `;` and redirections are literal arguments to
+the first program. Prefer one entry point that runs the full suite, or name the shell explicitly:
+
+```sh
+alt land --message "fix: describe the change" --merge --test-cmd "make check"
+alt land --message "fix: describe the change" --merge --test-cmd 'sh -c "pnpm typecheck && pnpm test"'
+```
+
+The command must exit 0 and print a readable passing-test count. It runs only under the
+`local-suite` gate and supplies no bypass for hosted checks.
+
 ### Continue after a PR merges
 
 An active task can deliver more than one PR. Its owner continues authorized work in the same
@@ -1090,7 +1167,13 @@ refused. Finish through the verified report path when all agreed work is done; a
 does not require a new task or complete the current one. `alt task done` verifies a reported
 delivery whose recorded verdict is not ok against GitHub again before completing, so a merged
 delivery whose report only abbreviated the merge SHA completes without resuming its owner; the
-refusal names the remaining problems.
+refusal names the remaining problems. A review finding the owner leaves `open` on an unblocked report
+is one such problem: it belongs to coordination, and L3 completes the task once the finding is tracked
+elsewhere with `alt task done <slug> --digest '…' --findings-tracked '#461'`. The reference must
+name a real tracking record such as the issue coordination filed; the done event and archived digest
+list every open finding with that reference, so nothing is dropped silently. The flag accepts only
+that one problem on a delivery whose merges and heads verify, refuses a report without open findings,
+and is not available to the owner.
 
 ### Task design previews
 
@@ -1225,7 +1308,8 @@ and pending checks still block, including nonrequired checks; pending checks use
 Unknown requiredness remains blocked. These rules apply to ordinary and adopted landing.
 At least one hosted check must actually succeed; entirely skipped CI cannot use the no-CI fallback.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
-default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
+default `make test` is unsuitable; it runs as [one argv command](#dry-run-and-gate-selection)
+on the exact two-parent merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
 pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
 branch deletion, so the repository must permit that merge method. Host-side branch deletion

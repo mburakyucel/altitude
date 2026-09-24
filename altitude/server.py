@@ -1540,6 +1540,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]))
+            if api == "effort" and len(parts) == 3:
+                try:
+                    return self._json(config.effort_view(parts[2]))
+                except KeyError:
+                    return self._json({"error": "Project is not managed."}, 404)
             if api == "task" and len(parts) > 3:
                 try:
                     return self._json(task_view(parts[2], parts[3]))
@@ -1622,6 +1627,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError) as exc:
                     return self._json({"error": str(exc)}, 409)
+            if parts == ["api", "effort"]:
+                try:
+                    setting = f"{o['role']}_effort"
+                    dispatch.request_setting(o["project"], setting, o["effort"], "Project details", actor=dispatch.OPERATOR_ACTOR)
+                    result = dispatch._run_setting(o["project"], setting)
+                    if result["status"] != "done":
+                        raise ValueError(result["note"])
+                    return self._json(config.effort_view(o["project"]))
+                except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
                 restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
@@ -1665,14 +1680,14 @@ class Handler(BaseHTTPRequestHandler):
                 reason = o.get("reason") or f"{action} by Burak"
                 try:
                     if action == "reject":
-                        request_daemon_task_operation(project, slug, "reject", reason, actor="burak")
+                        request_daemon_task_operation(project, slug, "reject", reason, actor=dispatch.OPERATOR_ACTOR)
                     elif action == "resume":
                         request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE,
                                                       stop_id=o.get("stop_id"))
                     elif action == "done":
-                        T.done(project, slug, actor="burak")
+                        T.done(project, slug, actor=dispatch.OPERATOR_ACTOR)
                     elif action == "stop":
-                        request_daemon_task_operation(project, slug, "stop", reason, actor="burak",
+                        request_daemon_task_operation(project, slug, "stop", reason, actor=dispatch.OPERATOR_ACTOR,
                                                       generation=o.get("generation"))
                     elif action == "dispatch":
                         spawn(f"dispatch:{project}", dispatch_waiting, project)
@@ -1732,7 +1747,10 @@ class Handler(BaseHTTPRequestHandler):
                 engine = o.get("engine") or None
                 if engine and engine not in config.ENGINES:
                     return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
-                config.set_l3_engine(o["project"], engine)
+                try:
+                    config.set_l3_engine(o["project"], engine)
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
                 return self._json({"ok": True, "engine": engine})
             if api == "chat" and len(parts) > 2 and parts[2] == "remove":
                 project = o["project"]

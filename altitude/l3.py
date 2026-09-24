@@ -1021,6 +1021,11 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     history = [row for row in chat_history(project, None if fresh else 60) if row.get("turn_id") != turn_id]
     handoff = _handoff(history, engine, session.get("last_turn"), fresh=fresh, project=project)
     turn_started_at = active_turn["started_at"]
+    selection = {"effort": choice.get("requested_effort"), "launch_effort": choice.get("effort"),
+                 "engine_reasoning_effort": None}
+    session.update(selection)
+    inf.update(selection)
+    save_info(project, inf)
     if engine == "codex":
         res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
                           handoff, model=choice.get("model"), on_start=on_start, slug=slug,
@@ -1034,7 +1039,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
-                model=choice.get("model"), on_text=on_text, on_start=on_start,
+                model=choice.get("model"), effort=choice.get("effort"), on_text=on_text, on_start=on_start,
                 **({"images": images} if images else {}),
                 timeout=_ci_turn_timeout(project, slug, trigger, config.L3_TURN_TIMEOUT),
                 **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
@@ -1110,7 +1115,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
         result = engines.codex_exec(
             body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
             **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
-            effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
+            effort=choice.get("effort"), resume=sid, on_start=on_start,
             **({"images": images} if images else {}),
             extra_env=_l3_env(project, runtime),
             sandbox_settings=engines.codex_l3_permissions(runtime, project=project),

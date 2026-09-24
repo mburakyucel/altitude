@@ -238,6 +238,9 @@ def main(argv=None) -> None:
     routing = x.add_mutually_exclusive_group(required=True)
     routing.add_argument("--routing", help="ordered engine[:model] tiers: comma ties, > lower priority")
     routing.add_argument("--unset-routing", action="store_true")
+    for role in ("l3", "l2"):
+        routing.add_argument(f"--{role}-effort", choices=config.TASK_EFFORTS, help=f"project {role.upper()} reasoning effort")
+        routing.add_argument(f"--unset-{role}-effort", action="store_true", help="restore the existing engine default")
     m = sub.add_parser("machine"); ms = m.add_subparsers(dest="mcmd", required=True)
     ms.add_parser("show", help="inspect active/default concurrency limits and pending changes")
     x = ms.add_parser("set"); x.add_argument("--reason", required=True)
@@ -246,7 +249,7 @@ def main(argv=None) -> None:
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
-    n.add_argument("--effort", choices=config.TASK_EFFORTS, help="task reasoning effort; supporting engines default to high")
+    n.add_argument("--effort", choices=config.TASK_EFFORTS, help="override the project L2 effort default for this task")
     n.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
     wait = n.add_mutually_exclusive_group()
     wait.add_argument("--wait", help="plan without dispatch until explicitly released; one short reason")
@@ -312,6 +315,8 @@ def main(argv=None) -> None:
     rn = ts.add_parser("run", help="current L2: run one command under the task's machine grant, outside the worker sandbox")
     rn.add_argument("slug"); rn.add_argument("command")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
+    dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
+                    help="where coordination tracks the report's open review findings, e.g. '#461'")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
@@ -332,7 +337,7 @@ def main(argv=None) -> None:
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
-    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--approval", help="with --merge on a held task: the operator's task-chat message approving this PR"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="full local suite used only when the pinned PR pair configures no CI"); ln.add_argument("--dry-run", action="store_true")
+    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--approval", help="with --merge on a held task: the operator's task-chat message approving this PR"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="one command split into argv without a shell, run as the full local suite on the merge candidate only when neither pinned side has hosted CI: 'make check', or an explicit wrapper such as 'sh -c \"pnpm typecheck && pnpm test\"'"); ln.add_argument("--dry-run", action="store_true", help="report the prospective base, head or staged tree and gate; commit, push, open, test and merge nothing")
     ln.add_argument("--adopt-pr", type=int, help="adopt an existing same-repository PR, preserving its branch and history")
     ln.add_argument("--closes-issue", type=int, action="append", default=[], help="require a GitHub closing link for this fully resolved issue in the project repository (repeatable)")
     ln.add_argument("--expected-head", help="full observed PR head SHA required with --adopt-pr")
@@ -467,7 +472,9 @@ def main(argv=None) -> None:
             from altitude import dispatch
             if ACTOR == "l3" and args.name != _project(args):
                 sys.exit("alt project set: the L3 socket fixes the project")
-            out(dispatch.request_setting(args.name, "routing", args.routing, args.reason, actor=ACTOR))
+            setting = next((key for key in config.EFFORT_SETTINGS
+                            if getattr(args, key) is not None or getattr(args, f"unset_{key}")), "routing")
+            out(dispatch.request_setting(args.name, setting, getattr(args, setting), args.reason, actor=ACTOR))
             return
         if args.pcmd == "discover":
             out(config.discover_projects())
@@ -607,7 +614,8 @@ def main(argv=None) -> None:
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):
                 sys.exit("alt task done: ALTITUDE_ATTEMPT is required for the L2")
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest,
-                       expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None))
+                       expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None,
+                       findings_tracked=args.findings_tracked))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "reply":
