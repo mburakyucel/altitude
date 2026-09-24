@@ -9,8 +9,10 @@ const healthy: Setup = { project: "atlas", status: "ready", checked_at: "2026-09
   { id: "coordinator", label: "Coordinator", status: "reused", detail: "Using existing conversation" },
 ] };
 function response(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
+let chat = [{ role: "assistant", text: "The existing conversation", at: "2026-09-14T12:00:00Z" }];
 function mockSetup(initial: Setup = healthy, refusal = false) {
   let setup = initial;
+  chat = [chat[0]];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/setup/atlas") return response(setup);
@@ -21,7 +23,7 @@ function mockSetup(initial: Setup = healthy, refusal = false) {
     }
     if (url.includes("/api/overview")) return response({ projects: [{ name: "atlas", managed: true }], queue: [], wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false }, engines: [] });
     if (url.includes("/api/project/atlas")) return response({ name: "atlas", tasks: [], l3: { session_id: "existing" } });
-    if (url.includes("/api/chat/atlas")) return response({ history: [{ role: "assistant", text: "The existing conversation", at: "2026-09-14T12:00:00Z" }], active: null, busy: false });
+    if (url.includes("/api/chat/atlas")) return response({ history: chat, active: null, busy: false });
     return response({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -45,7 +47,10 @@ describe("Project setup", () => {
     expect(trigger).toHaveFocus();
     expect(composer).toHaveValue("Keep this draft");
     await user.click(trigger);
+    // A reply saved while the idle conversation polls slowly appears when setup opens the conversation.
+    chat = [...chat, { role: "assistant", text: "The first reply", at: "2026-09-14T12:01:00Z" }];
     await user.click(screen.getByRole("button", { name: "Open conversation" }));
+    expect(await screen.findByText("The first reply")).toBeInTheDocument();
     expect(composer).toHaveValue("Keep this draft");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });

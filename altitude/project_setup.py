@@ -5,6 +5,7 @@ import argparse
 import fcntl
 import os
 import subprocess
+import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -134,9 +135,11 @@ def _coordinator(project: str, record: dict) -> dict:
         return _step("coordinator", "Coordinator", "input_needed", "The coordinator command connection needs setup.", action="repair")
     inf = l3.info(project)
     intro = record.get("intro") or {}
-    if l3.active(project):
-        if intro.get("state") == "running" or not inf.get("turns"):
-            return _step("coordinator", "Coordinator", "running", "The coordinator is preparing its first reply.")
+    with server._bg_guard:
+        starting = (server._bg.get(f"start:{project}") or threading.Thread()).is_alive()
+    # A live start workflow covers the saves around its turn, so Retry never reads as failed meanwhile.
+    if starting or l3.active(project) and (intro.get("state") == "running" or not inf.get("turns")):
+        return _step("coordinator", "Coordinator", "running", "The coordinator is preparing its first reply.")
     if intro.get("state") == "failed":
         return _step("coordinator", "Coordinator", "failed", intro.get("error") or "The first conversation failed.", action="repair")
     if intro.get("state") == "running":
@@ -274,17 +277,18 @@ def run(project: str) -> None:
                     result = git_policy.repair_hooks(checkout, combine=checkout == selected,
                                                     expected=operation.get("expected") if checkout == selected else None)
                     _save_guard(project, identity, result)
+            # Start before completing so no read observes a finished operation without its first reply.
+            if (read(project).get("start_requested") and (not l3.info(project).get("turns") or
+                    (read(project).get("intro") or {}).get("state") in ("failed", "running"))
+                    and not l3.active(project) and operation["action"] != "check"
+                    and (operation["actor"] != "altd" or not read(project).get("intro"))):
+                server.spawn(f"start:{project}", server.start_l3, project)
             operation.update(state="complete", finished_at=S.now())
             save(project, operation=operation)
             view = observe(project)
             problems = [s["detail"] for s in view["steps"] if s["status"] in ("failed", "input_needed") and s["id"] != "coordinator"]
             if problems:
                 _fault(project, "; ".join(problems))
-            if (read(project).get("start_requested") and (not l3.info(project).get("turns") or
-                    (read(project).get("intro") or {}).get("state") in ("failed", "running"))
-                    and not l3.active(project) and operation["action"] != "check"
-                    and (operation["actor"] != "altd" or not read(project).get("intro"))):
-                server.spawn(f"start:{project}", server.start_l3, project)
         except (git_policy.GitPolicyError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             operation.update(state="failed", error=str(exc)[:500], finished_at=S.now())
             save(project, operation=operation)
