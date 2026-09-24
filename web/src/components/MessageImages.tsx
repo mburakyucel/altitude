@@ -67,8 +67,8 @@ function ImageViewer({ image, onClose }: { image: ImagePreview; onClose: () => v
     onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="image-viewer-header">
       <span>{image.name}</span>
-      <button type="button" className="btn btn-ghost" aria-pressed={zoomed} onClick={() => setZoomed((value) => !value)}>{zoomed ? "Fit image" : "Zoom image"}</button>
-      <button type="button" className="btn btn-ghost" onClick={onClose}>Close image</button>
+      <button type="button" className="btn" aria-pressed={zoomed} onClick={() => setZoomed((value) => !value)}>{zoomed ? "Fit image" : "Zoom image"}</button>
+      <button type="button" className="btn" onClick={onClose}>Close image</button>
     </div>
     <div className="image-viewer-canvas" data-zoomed={zoomed || undefined}>
       <img src={image.url} alt={image.name} />

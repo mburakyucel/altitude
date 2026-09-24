@@ -651,7 +651,7 @@ function TaskPage({
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
-      {decision ? <Link className="btn btn-ghost" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
+      {decision ? <Link className="btn" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
       {phone ? <>
         <div className="task-actions"><ActionButtons facts={facts} actions={actions} /></div>
         <ConfirmRow actions={actions} />

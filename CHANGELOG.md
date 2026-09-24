@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Clickable controls read as clickable: the task menu's **Review proposal** and **Review changes**
+  entries, **View question**, **Discuss with L3**, the update banner's **Details** and the image
+  viewer's controls are bordered buttons instead of plain text. The design tenet names recognisable
+  affordance as a first-order requirement and the design review checklist checks it.
+
 - Voice input works out of the box through the browser's own speech recognition, with words
   appearing while you speak. `alt machine set --voice browser|local|<url>` selects the browser,
   the local speech service or an OpenAI-compatible transcription endpoint; the endpoint key comes
