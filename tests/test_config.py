@@ -5,7 +5,7 @@ from tests.support import AltitudeCase
 from altitude import config, dispatch, route, tasks as T
 
 
-MODEL_SETTINGS = tuple(config.model_setting("l2", engine) for engine in config.ENGINES)
+MODEL_SETTINGS = tuple(config.role_setting("l2", engine, "model") for engine in config.ENGINES)
 
 
 class TestProjectModel(AltitudeCase):
@@ -17,13 +17,13 @@ class TestProjectModel(AltitudeCase):
     def test_cli_sets_lists_and_unsets_each_engine_default_without_touching_effort(self):
         self.register(self.project, l2_effort="high")
         for engine in config.ENGINES:
-            flag = config.model_setting("l2", engine).replace("_", "-")
+            flag = config.role_setting("l2", engine, "model").replace("_", "-")
             result = self.alt("project", "set", self.project, f"--{flag}", "chosen-model", "--reason", "Set default model")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["request"]["status"], "pending")
-            self.assertNotIn(config.model_setting("l2", engine), config.project(self.project))
-            self.assertEqual(dispatch.run_settings(self.project)[config.model_setting("l2", engine)]["status"], "done")
-            self.assertEqual(config.project(self.project)[config.model_setting("l2", engine)], "chosen-model")
+            self.assertNotIn(config.role_setting("l2", engine, "model"), config.project(self.project))
+            self.assertEqual(dispatch.run_settings(self.project)[config.role_setting("l2", engine, "model")]["status"], "done")
+            self.assertEqual(config.project(self.project)[config.role_setting("l2", engine, "model")], "chosen-model")
             choice = route.pick_engine("l2", forced=engine, project=config.project(self.project))
             self.assertEqual((choice["engine"], choice["model"], choice["effort"]), (engine, "chosen-model", "high"))
         listing = self.alt("project", "list")
@@ -31,11 +31,11 @@ class TestProjectModel(AltitudeCase):
                          dict.fromkeys(MODEL_SETTINGS, "chosen-model"))
         self.assertFalse(route.pick_engine("l2", project=config.project(self.project))["pinned"])
         for engine in config.ENGINES:
-            flag = config.model_setting("l2", engine).replace("_", "-")
+            flag = config.role_setting("l2", engine, "model").replace("_", "-")
             result = self.alt("project", "set", self.project, f"--unset-{flag}", "--reason", "Restore the role default")
             self.assertEqual(result.returncode, 0, result.stderr)
             dispatch.run_settings(self.project)
-            self.assertNotIn(config.model_setting("l2", engine), config.project(self.project))
+            self.assertNotIn(config.role_setting("l2", engine, "model"), config.project(self.project))
             self.assertEqual(route.pick_engine("l2", forced=engine, project=config.project(self.project))["model"],
                              config.default_model("l2", engine))
         self.assertEqual(config.project(self.project)["l2_effort"], "high")

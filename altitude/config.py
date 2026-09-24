@@ -111,10 +111,6 @@ def model_family(name: str | None) -> str | None:
     return next((alias for alias in MODEL_ALIASES if alias in words), None)
 
 
-def model_setting(role: str, engine: str) -> str:
-    return role_setting(role, engine, "model")
-
-
 #: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
 DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
@@ -291,7 +287,7 @@ def parse_routing(value: str) -> list[list[dict]]:
 
 def default_model(role: str, engine: str, project: dict | None = None) -> str | None:
     """The project's default model on that engine, then the role default; Codex leaves it to its CLI."""
-    return (project or {}).get(model_setting(role, engine)) or (MODELS[role] if engine == "claude" else None)
+    return (project or {}).get(role_setting(role, engine, "model")) or (MODELS[role] if engine == "claude" else None)
 
 
 def default_effort(role: str, engine: str, project: dict | None = None) -> str | None:
