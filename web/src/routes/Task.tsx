@@ -47,6 +47,8 @@ function sentence(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** The idle phone view: laid out and retaining its state, invisible and untouchable (SPEC.md §3.10). */
+const idle = { visibility: "hidden" } as const;
 /** The rows that are not the L2's or the L3's are the operator's: right-aligned bubbles (SPEC.md §3.3). */
 const REPLIERS = new Set(["l2", "l3"]);
 
@@ -677,7 +679,8 @@ function TaskPage({
   });
   const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
 
-  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute} /></ProseScope>;
+  // A drag that reveals Live session starts its transcript, so the incoming view loads while it slides in.
+  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} /></ProseScope>;
   const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseScope>;
 
   if (phone) {
@@ -699,9 +702,12 @@ function TaskPage({
             Live session
           </NavLink>
         </nav>
-        <div className="task-views" ref={swipe}>
-          <div className="task-view" hidden={liveRoute}>{conversation}</div>
-          <div className="task-view" hidden={!liveRoute}>{panel}</div>
+        <div className="task-views">
+          {/* Both views stay laid out; the idle one is invisible until a drag reveals it (SPEC.md §3.10). */}
+          <div className="task-track" ref={swipe.track} data-live={liveRoute || undefined}>
+            <div className="task-view" style={liveRoute && !swipe.dragging ? idle : undefined}>{conversation}</div>
+            <div className="task-view" style={!liveRoute && !swipe.dragging ? idle : undefined}>{panel}</div>
+          </div>
         </div>
         {details}
       </div>
