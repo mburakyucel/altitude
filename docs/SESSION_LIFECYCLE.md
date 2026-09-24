@@ -216,7 +216,8 @@ exact original L2 proposal message in `alt task review run --proposal-message`. 
 prevents invocation. The service captures immutable inputs and reserves one additional machine
 slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
 pending for a later explicit run. It prefers an eligible alternate engine and otherwise
-uses a separate same-engine invocation under the same read-only contract. Engine/model, fallback reason
+uses a separate same-engine invocation under the same read-only contract, unless the request selects
+one engine/model, which is rechecked at run and fails rather than being substituted. Engine/model, fallback reason
 and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
 capacity or unavailable observation/cancellation. The synchronous command returns the complete
 result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;

@@ -235,8 +235,9 @@ the task conversation without invoking a reviewer; reviewing again is an explici
 Proposal review captures the exact original L2 proposal message and can proceed while its approval
 question stays open. It grants no implementation approval and never establishes acceptance of changes.
 One read-only reviewer uses an eligible alternate engine when available, otherwise a separate
-same-engine invocation with an explicit fallback reason. Engine/model and account-allowance uncertainty
-stay visible. The reviewer uses one additional machine slot and captured source and context.
+same-engine invocation with an explicit fallback reason. An owner can instead select the engine and
+model for one request; an unavailable selection is refused, never substituted, and project defaults stay
+unchanged. Engine/model and account-allowance uncertainty stay visible. The reviewer uses one additional machine slot and captured source and context.
 Focused scope replaces a duration cutoff; L2 observes the run and can cancel if it gets stuck or goes
 off scope. It cannot edit, run tests or approve merging. No automatic retry or engine switch follows launch.
 Review launches require working service inspection. Interruption stops the reviewer unit as well as

@@ -519,3 +519,35 @@ class ReviewRoutingTests(AltitudeCase):
         selected = route.pick_review({"l2_engine": "codex"}, {"routing": config.parse_routing("claude:opus")})
         self.assertIsNone(selected["engine"])
         self.capability.assert_called_once_with("claude")
+
+    def test_explicit_selection_is_the_only_candidate_and_is_never_substituted(self):
+        project = {"l2_engine": "codex", "l2_model": "sonnet", "routing": config.parse_routing("codex>claude:opus")}
+        selected = route.pick_review({"l2_engine": "claude"}, project, model="fable")
+        self.assertEqual((selected["engine"], selected["model"]), ("claude", "fable"))
+        self.assertTrue(selected["same_engine"])
+        self.assertEqual(selected["fallback_reason"], "Selected for this review.")
+        selected = route.pick_review({"l2_engine": "claude"}, project, engine="codex")
+        self.assertEqual(selected["engine"], "codex")
+        self.assertFalse(selected["same_engine"])
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "model", "why": "Model unavailable"})
+        selected = route.pick_review({"l2_engine": "codex"}, project, engine="claude", model="fable")
+        self.assertIsNone(selected["engine"])
+        self.assertIn("Model unavailable", selected["why"])
+        self.assertIn("selected reviewer is unavailable", selected["why"])
+
+    def test_selection_keeps_quota_capability_and_unknown_allowance_explicit(self):
+        selected = route.pick_review({"l2_engine": "codex"}, {}, engine="claude", model="fable")
+        self.assertFalse(selected["allowance_known"])
+        self.usage.return_value = {"claude": (100, 0), "codex": (0, 0)}
+        selected = route.pick_review({"l2_engine": "codex"}, {}, engine="claude", model="fable")
+        self.assertIsNone(selected["engine"])
+        self.assertIn("weekly window exhausted", selected["why"])
+        self.usage.return_value = {"claude": (0, 0), "codex": (0, 0)}
+        self.capability.return_value = {"available": False, "why": "Confinement unavailable"}
+        selected = route.pick_review({"l2_engine": "codex"}, {}, engine="claude")
+        self.assertIsNone(selected["engine"])
+        self.assertIn("Confinement unavailable", selected["why"])
+        with patch.object(config, "ENGINES", ("codex",)):
+            self.assertIsNone(route.pick_review({"l2_engine": "codex"}, {}, engine="claude")["engine"])
+        self.assertIn("requires --engine", route.pick_review({"l2_engine": "codex"}, {"l2_engine": "claude"}, model="custom")["why"])
+

@@ -381,8 +381,10 @@ no implementation authority, helper queue, provider handoff, owner session or ge
 The engine and routing seams prefer an eligible configured option different from the owner, respecting
 project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
 under the same captured-input/read-only contract, with its fallback reason recorded and shown alongside
-engine/model and account-allowance uncertainty before requesting and in saved evidence. No engine switch
-occurs after launch. Fallback cannot bypass unavailable observation, cancellation or capacity. Admission
+engine/model and account-allowance uncertainty before requesting and in saved evidence. An explicit
+per-request engine/model selection replaces that preference with a single candidate under the same
+eligibility, quota, rejection and capability checks; it is saved with the request, rechecked at run and
+never substituted, and project defaults are unchanged. No engine switch occurs after launch. Fallback cannot bypass unavailable observation, cancellation or capacity. Admission
 uses the existing machine launch lock: one reviewer machine-wide, with an additional machine slot,
 no reservation while waiting for preparation and no automatic retry. L2 and reviewer instructions
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.

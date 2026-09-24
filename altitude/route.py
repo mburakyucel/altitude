@@ -235,8 +235,12 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
                        project=project, excluded=excluded, effort=task.get("effort"))
 
 
-def pick_review(task: dict, project: dict) -> dict:
-    """Prefer an eligible alternate seat, then a separate invocation on the owner's seat."""
+def pick_review(task: dict, project: dict, *, engine: str | None = None, model: str | None = None) -> dict:
+    """Prefer an eligible alternate seat, then a separate invocation on the owner's seat.
+
+    An explicit ``engine``/``model`` selection is the only candidate: the same eligibility, quota and
+    rejection checks apply, and an unavailable selection is refused rather than substituted.
+    """
     from . import engines
     owner = task.get("l2_engine")
     empty = {"engine": None, "model": None, "label": None, "allowance_known": False,
@@ -244,6 +248,18 @@ def pick_review(task: dict, project: dict) -> dict:
     if owner not in config.ENGINES:
         return {**empty, "why": "The owner's actual engine is unavailable."}
     try:
+        if engine or model:
+            # The project's L2 engine pin never completes a review selection; a bare model must name its engine.
+            selected = config.pinned_option("l2", {k: v for k, v in project.items() if k != "l2_engine"},
+                                            engine=engine, model=model)
+            choice = pick_engine("l2", forced=selected["engine"], model=selected["model"], project=project, effort="native")
+            capability = engines.review_capability(choice["engine"]) if choice.get("engine") else {}
+            if not capability.get("available"):
+                return {**empty, "why": "The selected reviewer is unavailable: " + (capability.get("why") or choice["why"])}
+            same_engine = choice["engine"] == owner
+            return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
+                    "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
+                    "same_engine": same_engine, "fallback_reason": "Selected for this review." if same_engine else ""}
         pin = config.pinned_option("l2", project)
         tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
         options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"], project))

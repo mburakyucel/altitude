@@ -1282,6 +1282,16 @@ and can cancel if it gets stuck or goes off scope. No suitable engine or capacit
 unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
 unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
 owner effort setting does not change reviewer eligibility.
+`--engine` and `--model` select the reviewer for one request without changing project defaults or
+other launches. The selection is the only candidate: installation, account/model rejection, quota and
+captured-input capability checks still apply, unknown allowance stays explicit, and an unavailable
+selection refuses the request or fails the run instead of substituting another reviewer. A bare model
+name needs `--engine` unless the engine seam recognizes it. The saved review keeps the requested
+`selection` beside the effective engine/model. A selection belongs to one request: a retry or rerun
+without one routes automatically and shows that reviewer. A retry, rerun or replacement keeps the prior
+focus unless it names a new one; an operator request's focus always stays and owner focus is added to it. Naming a request that is still waiting to run with `--previous` and a different
+selection replaces it: the new request keeps an operator requester's authority and the replaced one is
+recorded as withdrawn with its replacement.
 Saved review receipts remain readable after a project is detached; new review is unavailable.
 Service inspection must work before launch; failure refuses the invocation without spending a review.
 Use the supported review endpoint so observation and cancellation remain available. Launcher exit alone
@@ -1304,6 +1314,9 @@ alt task review assess --review-id <proposal-review-id> --proposal-message <revi
 alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
+# Select the reviewer for one request, or re-select a request still waiting to run:
+alt task review request --subject proposal --engine <engine> --model <model> --focus "Challenge the wording"
+alt task review request --previous <waiting-id> --model <model>
 ```
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
