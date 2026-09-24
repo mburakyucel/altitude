@@ -1640,9 +1640,14 @@
 .cue-line { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; color: var(--text-muted); }
 .task-steering { flex: none; width: 104px; padding: 0 8px; white-space: nowrap; gap: 6px; }
 .task-steering kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
-.task-reading, .task-views, .task-view { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.task-reading, .task-views { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .task-reading { position: relative; }
-.task-view[hidden] { display: none; }
+/* Phone views sit side by side on a track (SPEC.md §3.10): the layout rests it on the current view and a
+ * drag slides it with the finger by transform, so fixed overlays keep the viewport at rest. */
+.task-views { overflow: hidden; }
+.task-track { display: flex; flex: none; width: 100%; min-height: 0; }
+.task-track[data-live] { margin-left: -100%; }
+.task-view { display: flex; flex: 0 0 100%; min-width: 0; min-height: 0; }
 .task-page .task-actions > .btn, .task-page .task-actions > .icon-btn,
 .task-page .live-tools > .btn, .task-page .conversation-jumps > .btn,
 .phone-header[data-task] .phone-title-button, .phone-header[data-task] .task-steering {
@@ -2401,6 +2406,7 @@
 }
 .task-page[data-phone] .live-panel {
   width: auto;
+  min-width: 0;
   flex: 1;
   border-left: 0;
   background: transparent;
