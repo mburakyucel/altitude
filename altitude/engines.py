@@ -186,7 +186,7 @@ def conversation_review(project: str, prompt: str, *, engine: str, model: str) -
                                   permission_mode="dontAsk", permission_prompts="none", restricted=True,
                                   add_dirs=(config.project_path(project), config.ROOT))
         else:
-            native = codex_exec(body, **common, effort=config.CODEX_EFFORT.get("l3"),
+            native = codex_exec(body, **common,
                                 sandbox_settings=codex_l3_permissions(runtime, project=project),
                                 ignore_user_config=True)
         result.update(text=native.get("final_text", native.get("text")) or "", usage=native.get("usage") or None,
@@ -642,6 +642,7 @@ def claude_settings() -> Path:
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
+                 effort: str | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
@@ -652,6 +653,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
     restarted server distinguish an in-flight turn from a dead one."""
+    config.task_effort("claude", effort, role="l3")
     image_args, prompt = _image_input("claude", prompt, images)
     held = usage_hold()
     if held:
@@ -677,6 +679,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--json-schema", Path(schema).read_text() if Path(schema).exists() else str(schema)]
     if model:
         cmd += ["--model", model]
+    if effort is not None:
+        cmd += ["--effort", effort]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
     cmd += ["--settings", str(settings or claude_settings())]
@@ -684,6 +688,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--resume", resume]
     env = clean_env()
     env.update(extra_env or {})
+    if effort is not None:
+        env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     if durable_timeout:
         cmd = _codex_service_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout)
         env = codex_env(env, retain_user_bus=True)
@@ -1790,6 +1796,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             cmd += ["--append-system-prompt-file", str(persona)]
         if model:
             cmd += ["--model", model]
+        if effort is not None:
+            cmd += ["--effort", effort]
         if resume:
             cmd += ["--resume", resume]
         text = prompt
@@ -1813,11 +1821,14 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False}
     S.write_json(paths["record"], record)
+    worker_env = codex_env(extra_env, retain_user_bus=True)
+    if engine == "claude" and effort is not None:
+        worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
-            proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
+            proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(worker_env)), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                    env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+                                    env=worker_env, start_new_session=True)
         input_written = False
         try:
             data = text.encode("utf-8")
