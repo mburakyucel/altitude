@@ -528,7 +528,9 @@ messages, oldest first, as labeled historical context. This includes discussion 
 provider before rotation. Server-triggered reports, restarts and other system events do not consume
 those slots; the current turn is excluded. Each message includes at most 800 characters of text,
 with longer text marked `[truncated]`. Resumed sessions keep native conversation history and receive
-only a bounded handoff of messages missed while another provider handled L3. No tool
+only a bounded handoff of human messages missed while another provider handled L3. The conversation
+view loads the latest human messages and system events as separate allowances, so a burst of system
+events never hides your recent messages. No tool
 transcripts or generated summaries are replayed.
 
 Owners and the coordinator share [project inspection commands](docs/CLI.md#inspection) for task records,

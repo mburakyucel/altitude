@@ -28,6 +28,8 @@ task's investigation, approach and relevant system implications within its autho
 with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
+Other reports wait quietly while L3 has no available engine and reach it once one is; a failed
+report turn retries after a growing delay instead of repeating into the conversation.
 
 An [increment's brief](CLI.md#incremental-issue-delivery) identifies its acceptance, parent issue and
 outstanding scope. Completing that increment completes the task; L2 supplies PR/acceptance evidence and
@@ -1066,9 +1068,9 @@ evidence under current instructions and authoritative task records. See
 [CLI semantics and limits](CLI.md#historical-evidence-search).
 
 A resumed session keeps native continuity. When another provider handled intervening turns,
-Altitude supplies only the cross-provider missed-message handoff: user/assistant rows
+Altitude supplies only the cross-provider missed-message handoff: human user/assistant rows
 newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
-log rows. It uses the same text bound and historical label. A fresh session receives only fresh
+human rows. Server-triggered turns never enter it. It uses the same text bound and historical label. A fresh session receives only fresh
 context, and a native resume with no missed rows receives neither block, avoiding duplicate
 injection. A limit or access rejection after text or tool activity never causes the same turn
 to be automatically replayed on another option because that could duplicate side effects. A confirmed

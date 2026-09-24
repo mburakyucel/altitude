@@ -227,18 +227,30 @@ def chat_log(project: str, role: str, text: str, **meta) -> dict:
     return row
 
 
+def human_chat(row: dict) -> bool:
+    """Operator conversation and L3's answers to it, as opposed to server-triggered turns and FYIs."""
+    return (row.get("trigger") or "chat") == "chat"
+
+
 def chat_history(project: str, limit: int | None = 60) -> list[dict]:
+    """Saved chat rows, oldest first. `limit` bounds human conversation and system rows separately, so a
+    burst of server-triggered rows never pushes the latest human messages out of view."""
     path = config.project_dir(project) / "chat.jsonl"
     if not path.exists():
         return []
-    result = []
-    lines = path.read_text().splitlines()
-    for line in (lines[-limit:] if limit is not None else lines):
+    result, counts = [], {True: 0, False: 0}
+    for line in reversed(path.read_text().splitlines()):
+        if limit is not None and min(counts.values()) >= limit:
+            break
         try:
-            result.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
-            pass
-    return result
+            continue
+        human = human_chat(row)
+        if limit is None or counts[human] < limit:
+            counts[human] += 1
+            result.append(row)
+    return result[::-1]
 
 
 SEARCH_EXCERPT_CHARS = 1200
@@ -302,7 +314,7 @@ def search(project: str, query: str, limit: int = 5) -> dict:
                 if not line.strip():
                     continue
                 row = json.loads(line)
-                if row.get("role") in ("user", "assistant") and (row.get("trigger") or "chat") == "chat":
+                if row.get("role") in ("user", "assistant") and human_chat(row):
                     rows.append(message_row(row, f"{project}/chat.jsonl#L{number}"))
     collect(rows)
 
@@ -896,11 +908,11 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
 
 def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool = False,
              project: str | None = None) -> str:
-    """Fresh sessions need recent human chat; resumed ones need only the other provider's missed rows."""
-    conversation = [item for item in history if item.get("role") in ("user", "assistant")]
+    """Fresh sessions need recent human chat; resumed ones need only the other provider's missed human chat."""
+    # #267: server turns also have user/assistant roles; select human chat before bounding it.
+    conversation = [item for item in history if item.get("role") in ("user", "assistant") and human_chat(item)]
     if fresh:
-        # #267: server turns also have user/assistant roles; select human chat before bounding it.
-        missed = [item for item in conversation if (item.get("trigger") or "chat") == "chat"]
+        missed = conversation
         label = "Recent human conversation"
     else:
         missed = [item for item in conversation if item.get("at") and (not since or item["at"] > since)
