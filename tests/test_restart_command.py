@@ -25,7 +25,7 @@ class TestRestartCommand(AltitudeCase):
         makefile = (REPO / "Makefile").read_text()
         restart = makefile.split("restart:", 1)[1].split("\ninstall-service:", 1)[0]
         self.assertIn("python3 scripts/restart_altitude.py", restart)
-        self.assertIn("`make restart`", (REPO / "README.md").read_text())
+        self.assertIn("`make restart`", (REPO / "docs" / "OPERATIONS.md").read_text())
         helper = SCRIPT.read_text()
         self.assertIn("fetch_and_require_exact_base", helper)
         self.assertIn("require_idle()", helper)
