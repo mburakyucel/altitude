@@ -173,3 +173,54 @@ test("a task message appears at once as a pending bubble and settles in place wh
   await expect(row).toHaveAttribute("data-walk", "pending");
   await expect(bubble).toHaveCount(1);
 });
+
+test("Send keeps focus in the field, so the phone keyboard and hidden navigation stay through each message", async ({ page, request }, info) => {
+  const phone = info.project.name === "phone";
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  await walk.open(`${project.path}/tasks/prepare-index-migration`);
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const send = conversation.getByRole("button", { name: "Send", exact: true });
+  const nav = page.getByRole("navigation", { name: phone ? "Primary" : "Rail" });
+  const text = "Keep the keyboard open between messages.";
+  await field.focus();
+  await field.fill(text);
+  await visualViewport(page, 510);
+  await walk.state("01-typing-keyboard-simulated", { visible: [field, send], hidden: phone ? [nav] : [] });
+  // A field blur is what closes a native software keyboard; it must not happen on Send.
+  await field.evaluate((el) => el.addEventListener("blur", () => el.setAttribute("data-blurred", ""), { once: true }));
+  await walk.state("02-sent-keyboard-kept", {
+    action: () => phone ? send.tap() : send.click(),
+    visible: [conversation.locator(".msg-row").filter({ hasText: text }), field],
+    hidden: phone ? [nav] : [],
+  });
+  await expect(field).toHaveValue("");
+  await expect(field).toBeFocused();
+  await expect(field).not.toHaveAttribute("data-blurred");
+  if (phone) await expect(page.locator(".shell")).toHaveAttribute("data-keyboard", "");
+  await visualViewport(page, phone ? 844 : 900);
+  await walk.state("03-keyboard-dismissed", { visible: [nav, field], hidden: [] });
+  await expect(field).toBeFocused();
+});
+
+test("phone text controls keep their line and answer taps across a 44px target @phone-only", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const targets = [
+    { path: project.path, control: page.locator(".sys-line").getByRole("button", { name: "Show", exact: true }).first() },
+    { path: "/", control: page.getByRole("button", { name: "Alert me about new decisions", exact: true }) },
+    { path: `${project.path}?tab=work`, control: page.locator(".wp-fold-summary").first() },
+    { path: `${project.path}/tasks/prepare-index-migration`, control: page.locator(".conversation-activity summary") },
+    { path: `${project.path}/tasks/document-search-contract/report`, control: page.locator(".report-page > .text-meta > a") },
+  ];
+  for (const [index, { path, control }] of targets.entries()) {
+    await walk.open(path);
+    await walk.state(`0${index + 1}-target-${path.split(/[/?=]/).filter(Boolean).pop() ?? "needs-you"}`, { visible: [control], hidden: [] });
+    const box = (await control.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    // The expanded edge belongs to the control itself, not to what sits beside it.
+    const hit = await control.evaluate((el, { x, y }) => el.contains(document.elementFromPoint(x, y)), { x: box.x + box.width / 2, y: box.y + 2 });
+    expect(hit).toBe(true);
+  }
+});
