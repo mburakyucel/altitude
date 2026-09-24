@@ -236,8 +236,10 @@ landing, and keeps shared-doc edits in that task's own sections. Status shows ex
 informational overlaps. Owners can edit newly needed files within the authorized objective without
 another permission or resume. L3 and the operator can update the advisory list with `alt task paths`.
 The owner selects files or hunks with `git add` and reviews `git diff --cached`; `alt land` commits
-that index and leaves unstaged and untracked work intact. Before publication, the owner reviews all
-outgoing commits and the complete PR diff for scope and privacy, including intermediate content.
+that index and leaves unstaged and untracked work intact. `alt land --dry-run` previews the base,
+head or staged tree and gate that landing would judge without publishing anything. Before publication,
+the owner reviews all outgoing commits and the complete PR diff for scope and privacy, including
+intermediate content.
 
 Deployment staged, working and untracked content remains untouched by dispatch and resume.
 Task CLI code, personas, hooks, templates and schemas come from the activated committed installation

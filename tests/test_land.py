@@ -1205,6 +1205,125 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.gh_log(), [])
 
+    def assert_dry_run_touched_nothing(self, result, commands, head_before, hold=None):
+        self.assertEqual((result["checks"], result["merged"], result["pr"], result["head"], result["local_tests"],
+                          result["hold"]), ("dry-run", False, None, None, None, hold))
+        self.assertEqual([args for args in commands if args[0] == "gh"], [])
+        self.assertEqual([args[1] for args in commands if args[0] == "git" and args[1] in
+                          {"commit", "push", "merge", "rebase", "worktree"}], [])
+        self.assertEqual([args[-1].split(":")[0] for args in commands if args[0] == "git" and args[1] == "fetch"],
+                         ["main", "+refs/heads/worktree-fix-x"], "the documented fetches of the base and branch tip")
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), head_before)
+        self.assertEqual(self.runner_log(), [])
+        self.assertNotIn("worktree-fix-x", self.remote_heads())
+        self.assertEqual(S.load_task("demo", "fix-x").get("hold_merge"), hold)
+        self.assertIsNone(S.load_task("demo", "fix-x").get("adopted_pr"))
+
+    def test_dry_run_without_staged_changes_names_the_exact_head_and_hosted_gate_under_a_hold(self):
+        # #413: the report used to stop at checks=dry-run, head=null before any gate classification.
+        hold = self.hold_merge()
+        self.configure_ci()
+        head = self.git("rev-parse", "HEAD").strip()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        commands = self.record_commands()
+        result = land.land("fix: prospective", cwd=self.repo, dry_run=True,
+                           test_cmd="pnpm typecheck && pnpm test")
+        self.assert_dry_run_touched_nothing(result, commands, head, hold=hold)
+        self.assertEqual(result["staged"], [])
+        prospective = result["prospective"]
+        self.assertEqual(prospective["base"], self.git("rev-parse", "origin/main").strip())
+        self.assertEqual(prospective["head"], head)
+        self.assertEqual(prospective["tree"], self.git("rev-parse", "HEAD^{tree}").strip())
+        self.assertEqual(prospective["gate"], "github-actions")
+        self.assertEqual(prospective["workflows"], {"base": False, "head": True})
+        self.assertFalse(prospective["required_pr_check"])
+        self.assertIsNone(prospective["local_suite"], "the hosted gate never consults --test-cmd")
+        self.assertEqual(prospective["undetermined"], [])
+
+    def test_dry_run_with_staged_changes_reports_the_staged_tree_and_no_head(self):
+        self.staged_change()
+        head = self.git("rev-parse", "HEAD").strip()
+        commands = self.record_commands()
+        result = land.land("fix: staged", cwd=self.repo, dry_run=True)
+        self.assert_dry_run_touched_nothing(result, commands, head)
+        self.assertEqual(result["staged"], ["src/thing.py"])
+        prospective = result["prospective"]
+        self.assertIsNone(prospective["head"])
+        self.assertEqual(prospective["tree"], self.selected_index.strip())
+        self.assertNotEqual(prospective["tree"], self.git("rev-parse", "HEAD^{tree}").strip())
+        self.assertEqual(self.git("write-tree"), self.selected_index)
+        self.assertEqual(len(prospective["undetermined"]), 1)
+        self.assertIn("1 staged path(s)", prospective["undetermined"][0])
+        self.assertIn("staged index", prospective["undetermined"][0])
+
+    def test_dry_run_names_a_head_that_lacks_current_main(self):
+        self.advance_base("docs/elsewhere.md")
+        self.staged_change()
+        result = land.land("fix: behind", cwd=self.repo, dry_run=True)
+        self.assertEqual(result["prospective"]["base"], self.git("rev-parse", "origin/main").strip())
+        self.assertEqual([r for r in result["prospective"]["undetermined"] if "origin/main" in r][1:], [])
+        self.assertIn("HEAD does not include current origin/main", result["prospective"]["undetermined"][1])
+
+    def test_workflows_deleted_on_the_head_keep_the_base_gate(self):
+        # #413: a branch cannot select the local suite by deleting .github/workflows; the base still has them.
+        self.advance_base(".github/workflows/ci.yml", "on: [push]\n")
+        self.git("fetch", "-q", "origin", "main")
+        self.git("merge", "-q", "--no-edit", "origin/main")
+        self.git("rm", "-q", "-r", ".github/workflows")
+        self.git("commit", "-q", "-m", "retire ci on the branch")
+        self.assertEqual(self.git("ls-tree", "--name-only", "HEAD", ".github/workflows"), "")
+        head = self.git("rev-parse", "HEAD").strip()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        commands = self.record_commands()
+        preview = land.land("fix: no local gate", cwd=self.repo, dry_run=True)
+        self.assert_dry_run_touched_nothing(preview, commands, head)
+        self.assertEqual(preview["prospective"]["workflows"], {"base": True, "head": False})
+        self.assertEqual(preview["prospective"]["gate"], "github-actions")
+        self.assertIsNone(preview["prospective"]["local_suite"])
+        self.no_checks()
+        result = land.land("fix: no local gate", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("skipped", False, None))
+        self.assertEqual(self.runner_log(), [])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_dry_run_without_ci_shows_the_local_suite_argv_a_compound_command_becomes(self):
+        head = self.git("rev-parse", "HEAD").strip()
+        commands = self.record_commands()
+        result = land.land("fix: argv", cwd=self.repo, dry_run=True, test_cmd="pnpm typecheck && pnpm test")
+        self.assert_dry_run_touched_nothing(result, commands, head)
+        self.assertEqual(result["prospective"]["gate"], "local-suite")
+        self.assertEqual(result["prospective"]["workflows"], {"base": False, "head": False})
+        self.assertEqual(result["prospective"]["local_suite"], ["pnpm", "typecheck", "&&", "pnpm", "test"])
+
+    def test_the_local_suite_runs_one_argv_command_without_a_shell(self):
+        # #413: `&&` reaches the first program as a literal argument; an explicit wrapper is the caller's choice.
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("pnpm", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        result = land.land("fix: literal", cwd=self.repo, wait=0, merge=True, test_cmd="pnpm typecheck && pnpm test")
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertEqual(self.runner_log(), [["pnpm", "typecheck", "&&", "pnpm", "test"]])
+        self.assertTrue(result["merged"])
+
+    def test_an_explicit_shell_wrapper_is_one_command_that_runs_the_full_suite(self):
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("pnpm", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        result = land.land("fix: wrapped", cwd=self.repo, wait=0, merge=True,
+                           test_cmd='sh -c "pnpm typecheck && pnpm test"')
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertEqual(self.runner_log(), [["pnpm", "typecheck"], ["pnpm", "test"]])
+        self.assertEqual({call["cwd"] for call in self.runner_calls()} - {os.path.realpath(self.repo)},
+                         {call["cwd"] for call in self.runner_calls()})
+        self.assertTrue(result["merged"])
+
+    def test_an_unbalanced_test_cmd_is_refused_before_anything_runs(self):
+        commands = self.record_commands()
+        with self.assertRaisesRegex(land.LandError, "not one shell-quoted command"):
+            land.land("fix: quotes", cwd=self.repo, dry_run=True, test_cmd="pnpm test 'unterminated")
+        self.assertEqual([args for args in commands if args[0] == "gh"], [])
+        self.assertEqual(self.runner_log(), [])
+
     def test_unresolved_task_refusal_preserves_selection(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
             self.setenv(key, None)

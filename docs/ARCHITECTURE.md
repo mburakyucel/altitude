@@ -599,8 +599,13 @@ interpreting workflow conditions. Failed, cancelled and pending checks still blo
 nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
 candidate association refuses delivery. At least one check must actually pass under the hosted gate.
 For other projects without CI, the full local suite runs on a clean merge candidate:
-one parent for squash delivery, two for adopted history. Adopted PRs use a
-GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
+one parent for squash delivery, two for adopted history. The suite is one `--test-cmd` argv
+command run without a shell. Workflows on either pinned side keep the hosted gate, so a head that
+deletes them cannot select the local suite. A dry run reports the fetched base, the exact head or
+the staged tree, per-side workflow detection and the gate it would use, and names what only a real
+landing settles; it commits, pushes, opens, tests and merges nothing. Adopted PRs use a
+GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr)
+and [dry run and gate selection](CLI.md#dry-run-and-gate-selection).
 
 Operator merge decisions originate in task chat, UI choices or project chat. The owner applies a
 task-chat approval with `alt land --merge --approval`; L3 applies a project-chat approval through

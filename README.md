@@ -61,7 +61,8 @@ checks and holds still stop delivery. See [landing contention](docs/CLI.md#concu
 
 Owners and helpers run relevant tests during development. This repository's self-hosted PR
 `check` runs the full suite; `alt land` requires it to pass for the current merge content.
-The branch includes current main, and each new head needs fresh PR checks. Altitude serializes
+The branch includes current main, and each new head needs fresh PR checks; `alt land --dry-run`
+previews the base, head and gate without publishing. Altitude serializes
 final validation and merges. Runner outages pause merges. Review and merge holds still apply,
 and merges outside Altitude remain unprotected. CI reports stay on the runner host with bounded
 retention and cleanup; GitHub supplies checks and logs without artifact uploads. Owners verify
