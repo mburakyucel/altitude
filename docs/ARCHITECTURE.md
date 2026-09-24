@@ -537,7 +537,10 @@ reconciled onto main after its merge also has no unpublished work. Pending work,
 a raced delivery cannot complete the task. Completion verifies a reported delivery whose recorded
 verdict is not ok against GitHub again and records the fresh verdict in a `report-reverified`
 event, so a merged delivery reaches `done` without a new owner turn; an unmerged or mismatched
-delivery still cannot complete. Recorded deliveries use the report
+delivery still cannot complete. A review finding left `open` on an unblocked report is the owner
+handing an observation to coordination: it blocks plain completion, and L3 completes the verified
+delivery by naming where the finding is tracked (`--findings-tracked`), which the done event and
+archived digest record for every open finding. Recorded deliveries use the report
 path even when the local branch has no remaining diff. Merges continue activating independently
 of owner completion through the existing deployment observation.
 
