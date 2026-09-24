@@ -1137,8 +1137,8 @@ workflow retains logs and candidate identity through the runner's local evidence
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
 GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
 with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
-when approaching the existing disk budget. See the
+diagnosis or on a reviewer's request; L3 coordinates cleanup of unneeded exports when the runner's
+budget refuses admission. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
