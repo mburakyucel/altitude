@@ -295,6 +295,8 @@ export default function Composer({
   const recorder = useRef<Capture | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
+  // A recorder reports its end later; only a cancel made in view takes focus back then (issue #495).
+  const focusAfterCancel = useRef(false);
   const stopRequested = useRef(false);
   const sendAfterTranscribing = useRef<VoiceSend | null>(null);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -557,7 +559,7 @@ export default function Composer({
       if (!mounted.current && !sending) return;
       if (cancelled.current || sending?.controller.signal.aborted) {
         setPhase("idle");
-        focusField();
+        if (!cancelled.current || focusAfterCancel.current) focusField();
         return;
       }
       if (finished instanceof RecognitionCapture) {
@@ -752,6 +754,7 @@ export default function Composer({
     const sending = voiceSends.get(conversation);
     if (sending) { sending.cancel(); return; }
     cancelled.current = true;
+    focusAfterCancel.current = visible.current;
     setLive(null);
     if (capTimer.current) clearTimeout(capTimer.current);
     capTimer.current = null;

@@ -610,6 +610,26 @@ describe("Composer", () => {
     expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
   });
 
+  it.each([["a view change", false], ["visible Cancel", true]])("a late recorder stop after %s focuses the field only for a cancel made in view", async (_label, visibleCancel) => {
+    installVoiceBrowser();
+    const deferredStop = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementationOnce(function (this: FakeMediaRecorder) { this.state = "inactive"; });
+    const { user, field, rerender } = mount();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    const recording = FakeMediaRecorder.instances[0]!;
+    if (visibleCancel) await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    else {
+      rerender(<Harness active={false} />);
+      rerender(<Harness active />);
+    }
+    act(() => field.blur());
+    // Issue #495: the stop event arrives after the view has returned.
+    await act(async () => { recording.onstop?.(); });
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    if (visibleCancel) await waitFor(() => expect(field).toHaveFocus());
+    else expect(field).not.toHaveFocus();
+    deferredStop.mockRestore();
+  });
+
   it("Cancel before recorder completion releases that microphone and isolates a restarted recording", async () => {
     const { track } = installVoiceBrowser();
     const deferredStop = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementationOnce(function (this: FakeMediaRecorder) { this.state = "inactive"; });
