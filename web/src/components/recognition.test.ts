@@ -16,6 +16,32 @@ describe("RecognitionCapture", () => {
 
   const stream = { getTracks: () => [] } as unknown as MediaStream;
 
+  it("requests native punctuation when supported and preserves the recognizer's text", () => {
+    class PunctuatingRecognition extends FakeSpeechRecognition {
+      unspokenPunctuation = false;
+    }
+    vi.stubGlobal("SpeechRecognition", PunctuatingRecognition);
+    const capture = new RecognitionCapture(stream, "en-US");
+    capture.start();
+    const recognizer = FakeSpeechRecognition.instances[0] as PunctuatingRecognition;
+    expect(recognizer.unspokenPunctuation).toBe(true);
+    recognizer.hear(["Hello, world!"], "Is this");
+    expect(capture.text).toBe("Hello, world! Is this");
+    recognizer.hear(["Hello, world!", "Is this ready?"]);
+    capture.stop();
+    expect(capture.text).toBe("Hello, world! Is this ready?");
+  });
+
+  it("keeps dictation unchanged when native punctuation is unavailable", () => {
+    const capture = new RecognitionCapture(stream, "en-US");
+    capture.start();
+    const recognizer = FakeSpeechRecognition.instances[0]!;
+    expect("unspokenPunctuation" in recognizer).toBe(false);
+    recognizer.hear(["a fragment", "of one sentence"]);
+    capture.stop();
+    expect(capture.text).toBe("a fragment of one sentence");
+  });
+
   it("Stop that the recognizer never answers still ends within three seconds with the words so far", () => {
     const capture = new RecognitionCapture(stream, "en-US");
     const stopped = vi.fn();

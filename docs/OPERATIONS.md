@@ -244,7 +244,11 @@ or replaced CA needs explicit new trust on every device. External certificate pa
 or overwritten. Existing configured TLS paths and exposure remain operator choices.
 
 With the `browser` backend, recognized words appear in the draft while you speak, and the field keeps
-the latest words in view. With `local`
+the latest words in view. Altitude enables the browser's automatic punctuation when its recognizer
+exposes `unspokenPunctuation`; browsers without it retain their own formatting. This requires no
+extra installation or service. [Chrome documents support from version 151](https://developer.chrome.com/release-notes/151#web_speech_api_unspoken_punctuation);
+this is not a guarantee of punctuation on Safari or other browsers. Altitude does not insert periods
+at recognition-fragment boundaries or replace spoken words with punctuation. With `local`
 or an endpoint, the browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where
 available and uploads the recording when you stop; raw audio is deleted after every success or
 failure and is never part of task or chat state. Either way a recording becomes text through

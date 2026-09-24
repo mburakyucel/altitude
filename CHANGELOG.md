@@ -19,6 +19,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   the local speech service or an OpenAI-compatible transcription endpoint; the endpoint key comes
   from a file or stdin and stays in the private settings file. The desktop recording controls sit together at the right of the
   composer row with a crisp waveform; the phone row is unchanged (#317).
+  Browser dictation requests automatic punctuation where supported; other browsers retain their
+  own transcript formatting. No model download or extra service is needed.
 
 - While listening, the composer field follows the recognized words once they pass its height, so
   the latest words stay in view on phone and desktop (#317).
