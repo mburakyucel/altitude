@@ -1155,6 +1155,8 @@ altd is down. The daemon reads durable completion and inbox records at the next 
 
 Conversation and Live session are local views of one L2 task. On phone, left swipes open Live session
 and right swipes return to Conversation, with no wrapping; labeled tabs remain directly accessible.
+The swipe tracks the finger and settles or springs back on release; a drag that reveals Live session
+starts its transcript, which otherwise pauses while the view is inactive.
 Swipes leave vertical scrolling, browser-edge gestures, selection, form controls, the composer,
 recording, dialogs and horizontally scrollable content alone. Phone tab and swipe changes replace the
 current browser entry while retaining navigation state; the desktop panel toggle is local state.
