@@ -216,10 +216,17 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         rows = task.setdefault("reviews", [])
         prior = _find(task, previous) if previous else None
         subject = subject if subject is not None else (prior.get("subject", "changes") if prior else "changes")
-        # A retry, rerun or replacement keeps the prior focus and explicit selection unless it names new ones.
-        focus = focus or (prior.get("focus", "") if prior else "")
-        selection = ({"engine": engine, "model": model} if engine or model else
-                     prior.get("selection") if prior else None)
+        # A retry, rerun or replacement keeps the prior focus; an operator's focus stays and owner text only adds to it.
+        kept = prior.get("focus", "") if prior else ""
+        operator_scope = bool(prior and prior.get("requested_by") == T.OPERATOR_MESSAGE_ROLE
+                              and (prior["state"] != "withdrawn" or prior.get("replaced_by")))
+        if operator_scope and kept and focus != kept and not focus.startswith(kept + "\n"):
+            focus = kept + ("\n" + focus if focus else "")
+        focus = focus or kept
+        if len(focus) > 4000:
+            raise T.TransitionError("Review focus must be text of at most 4000 characters.")
+        # A selection belongs to one request; a retry without one routes automatically and shows that reviewer.
+        selection = {"engine": engine, "model": model} if engine or model else None
         if subject not in ("proposal", "changes") or prior and prior.get("subject", "changes") != subject:
             raise T.TransitionError("A review must name the same proposal or changes subject as its prior request.")
         repeated = next((r for r in rows if r["id"] == request_id or source_id and r.get("source_id") == source_id and r.get("subject", "changes") == subject), None)
@@ -274,7 +281,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                            + (f"Selected reviewer: {route.option_label(choice)}. " if selection else "") + focus}}
         rows.append(row)
         if reselect:
-            latest.update(state="withdrawn", withdrawn_by=actor, finished_at=S.now(),
+            latest.update(state="withdrawn", withdrawn_by=actor, finished_at=S.now(), replaced_by=request_id,
                           withdrawal_reason=f"Replaced by review {request_id} with reviewer {route.option_label(choice)}.")
         if task["state"] == "reported":
             task = T.continue_report(project, task, actor=actor, reason="Cross-engine review requested")

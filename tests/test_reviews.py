@@ -867,9 +867,9 @@ class TestReviews(AltitudeCase):
         self.assertIn("no longer available", failed["error"])
         self.engine.assert_not_called()
         with self.assertRaisesRegex(T.TransitionError, "Model exhausted"):
-            self.request(previous=review["id"])
+            self.request(previous=review["id"], model="chosen-model")
         self.pick.side_effect = lambda task, project, **selection: chosen if selection else self.choice
-        retry = self.request(previous=review["id"])
+        retry = self.request(previous=review["id"], model="chosen-model")
         self.assertEqual(retry["selection"], review["selection"])
         completed = self.run_review(retry)
         self.assertEqual(completed["state"], "completed")
@@ -897,6 +897,14 @@ class TestReviews(AltitudeCase):
         self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["id"], "selected")
         with self.assertRaises(T.TransitionError):
             reviews.withdraw(self.project, self.slug, "selected", actor="l2", expected_attempt=1, reason="Skip")
+        # The owner cannot narrow the operator's scope by replacing or retrying; it can only add focus.
+        narrowed = self.request(previous="selected", model="other-model", focus="Typos only", request_id="narrowed")
+        self.assertEqual(narrowed["focus"], "Wording\nTypos only")
+        self.assertEqual(self.request(previous="selected", model="other-model", focus="Typos only",
+                                      request_id="narrowed")["id"], "narrowed")
+        self.assertEqual(reviews._find(S.load_task(self.project, self.slug), "selected")["replaced_by"], "narrowed")
+        automatic = self.request(previous="narrowed", request_id="automatic")
+        self.assertEqual(automatic["id"], "narrowed")
         self.engine.assert_not_called()
 
 
