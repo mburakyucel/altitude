@@ -1286,8 +1286,8 @@ other launches. The selection is the only candidate: installation, account/model
 captured-input capability checks still apply, unknown allowance stays explicit, and an unavailable
 selection refuses the request or fails the run instead of substituting another reviewer. A bare model
 name needs `--engine` unless the engine seam recognizes it. The saved review keeps the requested
-`selection` beside the effective engine/model. A retry or rerun keeps the prior selection unless it
-names a new one. Naming a request that is still waiting to run with `--previous` and a different
+`selection` beside the effective engine/model. A retry, rerun or replacement keeps the prior focus and
+selection unless it names new ones. Naming a request that is still waiting to run with `--previous` and a different
 selection replaces it: the new request keeps an operator requester's authority and the replaced one is
 recorded as withdrawn with its replacement.
 Saved review receipts remain readable after a project is detached; new review is unavailable.
@@ -1314,7 +1314,7 @@ alt task review withdraw --review-id <id> --reason "Why this L2-requested review
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
 # Select the reviewer for one request, or re-select a request still waiting to run:
 alt task review request --subject proposal --engine <engine> --model <model> --focus "Challenge the wording"
-alt task review request --previous <waiting-id> --model <model> --focus "Challenge the wording"
+alt task review request --previous <waiting-id> --model <model>
 ```
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to

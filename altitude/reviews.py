@@ -216,7 +216,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         rows = task.setdefault("reviews", [])
         prior = _find(task, previous) if previous else None
         subject = subject if subject is not None else (prior.get("subject", "changes") if prior else "changes")
-        # A retry or rerun keeps the prior explicit selection unless it names a new one.
+        # A retry, rerun or replacement keeps the prior focus and explicit selection unless it names new ones.
+        focus = focus or (prior.get("focus", "") if prior else "")
         selection = ({"engine": engine, "model": model} if engine or model else
                      prior.get("selection") if prior else None)
         if subject not in ("proposal", "changes") or prior and prior.get("subject", "changes") != subject:

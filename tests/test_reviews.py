@@ -886,8 +886,8 @@ class TestReviews(AltitudeCase):
             self.request(subject="proposal", model="chosen-model")
         self.assertEqual(self.request(subject="proposal")["id"], review["id"])
         replaced = self.request(previous=review["id"], model="chosen-model", request_id="selected")
-        self.assertEqual((replaced["requested_by"], replaced["subject"], replaced["model"]),
-                         (T.OPERATOR_MESSAGE_ROLE, "proposal", "chosen-model"))
+        self.assertEqual((replaced["requested_by"], replaced["subject"], replaced["model"], replaced["focus"]),
+                         (T.OPERATOR_MESSAGE_ROLE, "proposal", "chosen-model", "Wording"))
         self.assertEqual(self.request(previous=review["id"], model="chosen-model", request_id="selected")["id"], "selected")
         task = S.load_task(self.project, self.slug)
         prior = reviews._find(task, review["id"])
