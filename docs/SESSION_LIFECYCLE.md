@@ -708,8 +708,8 @@ the resolved live record has moved; subsequent reads use the archived conversati
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
 `daemon_request`; the CLI process performs no Git or worker operation. One `daemon-request` event names
-the task, operation, actor (`l3` or `burak`), reason, and request id. Altd executes the request, refuses
-a changed state or worker/session identity, and makes a retry with the same reason and actor idempotent
+the task, operation, actor (`l3` or `config.OPERATOR_ACTOR`), reason, and request id. Altd executes the
+request, refuses a changed state or worker/session identity, and makes a retry with the same reason and actor idempotent
 while its terminal state/worker receipt still matches. A later lifecycle receives a new request and event.
 The inbox and `resume_after` are the coordinator-to-daemon boundary: they survive coordinator exit and daemon
 restart. The keyed runner is the in-process fast path; a durable claim is the cross-process fence. Its
@@ -767,7 +767,7 @@ the replacement worker. Failed sends restore their text alongside newer draft ed
 the operator switches to Live session before the response arrives. Accepted sends remain sent.
 `alt task resume --reason …` is also an explicit continuation; Reject ends the task and removes its
 worker in altd. Stop does not undo completed external effects. An L2 that blocks with
-`--fault` takes the system-fault path instead of asking Burak: the task, incident, FYI and L3
+`--fault` takes the system-fault path instead of asking the operator: the task, incident, FYI and L3
 notification all stay in its project. Incidents use the source project and kind for a 24-hour window;
 another task newly blocked by that kind or changed same-kind details still notify its L3 with the
 same incident reference within the window. Each task retains its full fault reason, so unchanged
@@ -776,9 +776,10 @@ resume based on older evidence; an unchanged observation preserves a supported r
 Repair-task faults (`--source recovery`) never wake L3
 again. Faults without a project notify registered `altitude`, or only update the machine fault
 ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
-conversation to its project's L3. Every incident becomes one sanitized
-[incident issue](CLI.md#incident-issues) at the daemon's configured product target; local
-incidents and project-local recovery work stay with the affected project. An incident from another
+conversation to its project's L3. When a publication target is configured, every incident becomes
+one sanitized [incident issue](CLI.md#incident-issues) there; without one, it stays local with an
+explicit pending-publication reason. Local incidents and project-local recovery work stay with
+the affected project. An incident from another
 managed project sends one fixed public issue-link notification to registered local `altitude` when
 its Git origin matches that target. Without a matching project, the issue stands alone. The
 notification moves no evidence and creates, reuses, resumes, or coordinates no receiving-project
@@ -1045,7 +1046,7 @@ Leaving a voice composer releases microphone tracks and cancels recording or Sto
 An explicit voice Send completes for its original project or task despite navigation; pending status
 and any recoverable failure stay in that source conversation. Outstanding microphone permissions and
 transcription results cannot populate a different conversation.
-L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
+L3 runs headless, so its only checkpoint is the turn boundary: a message the operator
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns

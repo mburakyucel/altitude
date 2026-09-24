@@ -46,6 +46,15 @@ eligible resumes across all projects take available slots before fresh work. Pla
 guide coordination; overlapping files do not hold dispatch.
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
+Inspect routing, usage windows and observed sessions in **Monitor**. Missing or stale readings
+remain explicit. **Settings → This project**, opened from the project's three dots, sets independent
+model and effort defaults for L3 and L2 on each engine. These settings preserve running task attempts;
+L3 defaults apply on its next turn, while L2 defaults apply on fresh dispatch. Unset effort is native
+except High for a Codex L2; **Native** explicitly requests no effort override. Higher effort can use more
+time and tokens. The CLI reference covers [routing preferences](CLI.md#automatic-routing-preferences),
+[model defaults](CLI.md#default-models) and [effort selection](CLI.md#task-reasoning-effort),
+including the same settings from the terminal.
+
 L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
 PR closing links; when an already merged delivery lacks its link, L3 verifies the issue's full
@@ -56,6 +65,16 @@ L3 does not select or clean up unrelated backlog autonomously. L2 routes direct 
 through its task reply and report follow-ups and cannot mutate issues directly. See
 [GitHub issues](CLI.md#github-issues) for arguments and the rule excluding home paths and private
 incident evidence from published text.
+
+## Remove a project
+
+In the project's **More actions** menu, **Remove project** detaches its coordinator and stops
+Altitude management. Finish or reject unfinished tasks, then wait for their workers and any
+coordinator turn. The repository, remaining worktrees, history, provider sessions and queued
+messages stay on disk. Add the same folder and project name again to restore the history and
+resume waiting messages. Removing the last project opens First run; otherwise a remaining
+project is selected. `alt project remove <name>` uses the same checks. See
+[project lifecycle](CLI.md#project-lifecycle).
 
 ## Incident publication
 

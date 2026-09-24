@@ -55,6 +55,24 @@ select absolute paths. [Configuration](#configuration-and-limits) describes save
 For nvm installations, Altitude discovers the installed default when Node is absent from PATH;
 enable its Corepack pnpm shim for project builds. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
 
+### Installation with a coding agent
+
+An agent running on your machine can help follow this guide, check prerequisites and run the
+installer. This is assisted setup, not a validated unattended installation. Use the instructions
+shipped with the version you select; the repository's current guide may describe a newer version.
+Have the agent check your normal engine and project-tool environment before installing, since
+the service saves that PATH. Missing preview artifacts or failed checks need resolution, not a
+workaround that disables a safeguard.
+
+Complete authentication in your own terminal or browser; do not paste credentials into the agent
+conversation or let it copy credential files. Review any proposed privileged changes or replacement
+of existing settings. Certificate trust is your decision: compare the printed fingerprint and
+follow the device instructions below. Keep localhost HTTPS and the documented authority settings.
+Finish with `alt doctor`, then register your chosen project yourself. Installation help does not
+authorize discovering repositories or starting work in them.
+
+The [README prompt](../README.md#get-started) provides a short starting point for this assistance.
+
 ### Trust HTTPS on each device
 
 Trusting Altitude's own certificate authority (CA) once on each device removes the browser warning

@@ -45,8 +45,12 @@ try {
     await context.route('**/api/**', async route => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
+      if (path === '/api/changes') return route.fulfill({ status: 204 });
       let body;
       if (path === '/api/overview') body = data.overview;
+      else if (path === '/api/setup/atlas') body = data.setup;
+      else if (path === '/api/images/atlas') body = data.images;
+      else if (path === '/api/voice') body = data.voice;
       else if (path === '/api/project/atlas') body = data.project;
       else if (path === '/api/chat/atlas') body = data.chat;
       else if (path.startsWith('/api/task/atlas/')) body = data.tasks.find(t => t.slug === path.split('/').at(-1));
