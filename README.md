@@ -393,7 +393,8 @@ Phone chat keeps project/task identity and a short activity status in one header
 microphone and send controls together in a compact composer. Last-answer time, engine selection,
 task metadata and operational actions open in details. Blocked and merge-held status stay distinct;
 full reasons are available there, while actionable failures and the original question remain visible.
-Bottom navigation hides during detected software keyboard use and returns on dismissal. Drafts,
+Bottom navigation hides during detected software keyboard use and returns on dismissal; sending
+keeps the keyboard open. Drafts,
 selection and older-message reading position survive the change; task Conversation/Live session
 tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
 
@@ -654,8 +655,8 @@ Python module processes run alongside the ordered web phases; CI browser workers
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 CI retains small logs and tested commit identity on the runner host; failed runs also retain the
 self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
-failure or on a reviewer's request. Unneeded completed exports are cleaned up after three days or
-when disk capacity is tight. No GitHub artifact upload is required.
+failure or on a reviewer's request. When the retained evidence reaches the runner's budget, L3
+coordinates a measured cleanup of exports no open work needs. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).

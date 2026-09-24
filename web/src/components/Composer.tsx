@@ -976,6 +976,9 @@ export default function Composer({
             className="composer-icon composer-send"
             aria-label={busy ? "Queue" : "Send"}
             disabled={!canSend}
+            // Pressing Send leaves focus in the field, so a phone keyboard stays open instead of closing
+            // and reopening with the bottom navigation around every message.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => phase === "listening" ? stop(true) : void submit(value)}
           >
             <SendIcon />

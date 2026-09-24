@@ -108,6 +108,8 @@ small group; a question link names its durable ID and revision and focuses the o
   Hardware keyboards retain navigation. When viewport evidence is unavailable, navigation remains.
   Hidden navigation leaves focus and screen-reader traversal; a nonzero Needs you count remains
   reachable from the header. Draft, selection and reading position survive keyboard dismissal.
+  Inline text controls (Show, fold summaries, the alerts switch, back links) keep their line and
+  reach 44px touch targets.
 - Ordinary use never changes page scale: focusing, typing, switching fields, sending and dismissing the
   keyboard keep the zoom level, so touch layouts render fields at 16px. Manual pinch zoom stays
   available everywhere, including mocks and design previews.
@@ -428,6 +430,7 @@ transcribing) sit in one row beneath it, in every state. Phone fields and messag
 never moves beside the text. No routine hint or engine toolbar adds a row on phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
 announced. A draft starts at 44px and grows to the lesser of 120px and 25% of the usable visual
 viewport, with a 44px minimum, then scrolls internally. The control row stays under the field as it grows.
+Pressing Send leaves focus in the field, so an open phone keyboard stays open with navigation hidden.
 
 Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
 a newline while editing, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels voice input.
