@@ -310,17 +310,17 @@ support and installable distribution.
 
 ## Get started
 
-**Early private preview for invited engineers.** The versioned Linux x86_64 archive includes the
+**Early preview software.** The versioned Linux x86_64 archive includes the
 CLI, daemon and built UI. Ubuntu 24.04 is the initial target; native macOS and clean-machine
 acceptance remain pending. Installation needs Python 3.12+, Git, authenticated GitHub CLI,
 OpenSSL, a systemd user manager and one authenticated coding CLI. Node and a source checkout are
 only needed for development. Managed projects use `main`, `origin/main` and GitHub PR delivery.
 
-Follow [setup](docs/SETUP.md) to install a privately supplied archive, trust its local HTTPS
+Follow [setup](docs/SETUP.md) to install the release archive, trust its local HTTPS
 certificate and start your first project conversation. Fresh installs bind to localhost; phone
 access requires an explicitly configured private network and certificate trust on that device.
-Updates preserve configuration and user data. No open-source license has been selected; public
-release and compatibility claims require separate evidence and approval.
+Updates preserve configuration and user data. The [license decision](CONTRIBUTING.md#license) is
+pending. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
 
 Each project's **Setup** status opens a revisitable checklist of its folder, repository,
 instructions, Git guards and coordinator. Altitude performs routine setup automatically and
@@ -639,11 +639,11 @@ and the remaining repository-presentation work.
 
 ## Feedback
 
-Invited collaborators can [open an issue](https://github.com/mburakyucel/altitude/issues/new/choose)
-with what they tried, expected behavior, actual behavior, and a small reproducible example.
-Setup friction and confusing product language are useful feedback too. Keep examples fictional
-or redacted; send security-sensitive details privately to the maintainer through your invitation
-channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
+[Open an issue](https://github.com/mburakyucel/altitude/issues/new/choose) with what you tried,
+expected behavior, actual behavior, and a small reproducible example; an idea template covers
+proposals. Setup friction and confusing product language are useful feedback too. Keep examples
+fictional or redacted. Report vulnerabilities privately as the [security policy](SECURITY.md)
+describes. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
 Altitude reports its own failures the same way: every incident becomes a sanitized issue in the
 repository altd resolves from its installation origin or the operator's
