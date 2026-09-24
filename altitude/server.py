@@ -1934,6 +1934,8 @@ def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
                if t.get("dispatching") or t.get("resume_claim")]
     waiting += [f"{p} L3" for p in projects if l3.busy(p)]
+    if reviews.busy():
+        waiting.append("adversarial review in flight")
     if check_activity:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
@@ -1946,7 +1948,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (operator, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Activation: only dispatch, L3 and report handling
+    until the deployed service and bundle contain it). Activation: dispatch, L3, review and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
     if not status or status.get("failed"):
@@ -1989,7 +1991,7 @@ def restart_service() -> dict:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
-            raise RestartBusy("restart waits for dispatch, L3 turn or report verification")
+            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review or report verification")
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pend = S.read_json(flag, {}) or {}
         if pend.get("requested_at") and not pend.get("failed"):

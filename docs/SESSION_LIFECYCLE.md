@@ -211,7 +211,8 @@ L2 dispositions without invocation. Review again, Review latest and Retry are ex
 The owner commits the chosen checkpoint, supplies original context and, for proposals, names the
 exact original L2 proposal message in `alt task review run --proposal-message`. Missing proposal input
 prevents invocation. The service captures immutable inputs and reserves one additional machine
-slot atomically, with one reviewer machine-wide. It prefers an eligible alternate engine and otherwise
+slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
+pending for a later explicit run. It prefers an eligible alternate engine and otherwise
 uses a separate same-engine invocation under the same read-only contract. Engine/model, fallback reason
 and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
 capacity or unavailable observation/cancellation. The synchronous command returns the complete
@@ -1101,7 +1102,7 @@ consumption, steering, resume and explicit exits; they do not establish live-pro
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
-marker or resume claim, L3 turn, or report verification in flight. Running and blocked workers do not
+marker or resume claim, L3 turn, adversarial review, or report verification in flight. Running and blocked workers do not
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is

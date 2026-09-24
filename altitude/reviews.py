@@ -68,6 +68,12 @@ def active_count():
                for task in S.list_tasks(project, include_archive=True) for r in task.get("reviews", []))
 
 
+def busy():
+    """A daemon-bound review must return its result before planned activation."""
+    with _inflight_lock:
+        return bool(_inflight)
+
+
 def _capacity(task):
     from . import dispatch
     if active_count():
@@ -352,7 +358,9 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
     if context_ids is not None and (not isinstance(context_ids, list) or any(not isinstance(item, str) for item in context_ids)):
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
     key = (project, slug, review_id)
-    with dispatch.launch_lock(), S.project_lock(project):
+    with config.restart_lock() as quiet, dispatch.launch_lock(), S.project_lock(project):
+        if not quiet or config.restart_in_progress():
+            raise T.TransitionError("Altitude is activating an update. Run the accepted review after activation.")
         task = S.load_task(project, slug)
         task["project"] = project
         _owner(task, actor, expected_attempt, required=True)
@@ -365,8 +373,10 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
             raise T.TransitionError(why)
         if review["owner"] != {k: task.get(k) for k in ("attempt", "l2_engine")}:
             raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")
+        if why := _capacity(task):
+            raise T.TransitionError(why)
         choice = route.pick_review(task, config.project(project))
-        why = _capacity(task) or (None if choice.get("engine") == review["engine"] and choice.get("model") == review["model"]
+        why = (None if choice.get("engine") == review["engine"] and choice.get("model") == review["model"]
                                   else "The selected reviewer is no longer available. Explicitly retry to select another.")
         if why:
             review.update(state="failed", error=why, finished_at=S.now())

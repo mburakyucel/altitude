@@ -373,7 +373,9 @@ uses the existing machine launch lock: one reviewer machine-wide, with an additi
 no reservation while waiting for preparation and no automatic retry. L2 and reviewer instructions
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
-Owner changes, cancellation and caller disconnect stop the run. Restart reconciliation cancels an
+Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
+reviews to return their results; review admission shares the restart fence. Capacity contention leaves
+an accepted request pending for a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
 on interruption, including keyboard interruption and process exit, before reaping the launcher.
@@ -398,7 +400,7 @@ Review records retain original findings and separate owner dispositions for each
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
 Proposal assessment records the proposal identity and dispositions, including an explicitly selected
-revised proposal when relevant. Later proposal/context changes require L2 assessment or deliberate review.
+revised proposal when relevant. Later proposal/source/context changes require L2 assessment or deliberate review.
 The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an
 implementation. Request admission and final merge share a task lock. Landing checks every accepted
 request for assessment or authorized withdrawal after other pre-merge checks, including changes requests

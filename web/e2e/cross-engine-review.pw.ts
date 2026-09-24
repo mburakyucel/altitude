@@ -86,7 +86,7 @@ test("cross-engine review stays in task chat through request, result and failure
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
     ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null, fault: null, blocked_reason: "", hold_merge: "Operator review of the finished feature.",
     messages: [...messages, ...(existing ? [{ id: "review-anchor", role: "system", text: "Review requested", at: review.requested_at, review_id: review.id }] : [])],
-    review: { available, why: available ? "" : "A second engine is unavailable.", engine_label: "Engine B", model: "Default", allowance_known: false, subjects: { proposal: { available: false, why: "No proposal is recorded.", latest: null }, changes: { available, why: available ? "" : "A second engine is unavailable.", latest: existing ? review : null } }, latest: existing ? review : null, history: existing ? [review] : [] },
+    review: { available, why: available ? "" : "A second engine is unavailable.", engine_label: "Engine B", model: "Default", allowance_known: false, subjects: { proposal: { available, why: available ? "" : "A second engine is unavailable.", latest: null }, changes: { available, why: available ? "" : "A second engine is unavailable.", latest: existing ? review : null } }, latest: existing ? review : null, history: existing ? [review] : [] },
   } }));
   await page.route("**/api/task/review", async (route) => {
     posts++;
@@ -154,7 +154,9 @@ test("cross-engine review stays in task chat through request, result and failure
   await expect(field).toHaveValue("Keep the existing pagination contract.");
   existing = false; available = false;
   await expect(row).toBeHidden(); await openMenu();
-  await walk.state("14-unavailable", { visible: [menu.getByText("A second engine is unavailable.")], hidden: [row] });
+  await expect(menu.getByText("A second engine is unavailable.")).toHaveCount(2);
+  await expect(menu.getByRole("button", { name: "Review proposal" })).toBeDisabled();
+  await walk.state("14-unavailable", { visible: [menu.getByText("A second engine is unavailable.").first()], hidden: [row] });
   await expect(menu.getByRole("button", { name: "Review changes" })).toBeDisabled();
   available = true; denied = true;
   await expect(menu.getByRole("button", { name: "Review changes" })).toBeEnabled();
@@ -177,7 +179,7 @@ test("review loading and uncertain receipt preserve listening and draft", async 
   let readGate: Promise<void> | null = new Promise((resolve) => { releaseRead = resolve; });
   const record = { ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null,
     messages: [{ id: "intro", role: "l2", text: "Checking pagination." }],
-    review: { available: true, why: "", engine_label: "Engine B", model: "Default", allowance_known: true, subjects: { proposal: { available: false, why: "No proposal is recorded.", latest: null }, changes: { available: true, why: "", latest: null } }, latest: null, history: [] } };
+    review: { available: true, why: "", engine_label: "Engine B", model: "Default", allowance_known: true, subjects: { proposal: { available: true, why: "", latest: null }, changes: { available: true, why: "", latest: null } }, latest: null, history: [] } };
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, async (route) => {
     if (readGate) await readGate;
     await route.fulfill({ json: record });

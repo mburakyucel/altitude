@@ -134,9 +134,10 @@ describe("Review in task chat", () => {
   });
 
   it("shows unavailable and denied requests without claiming a review started", async () => {
-    const app = setup({ ...empty, review: { ...empty.review!, available: false, why: "No reviewer is available.", subjects: { proposal: { available: false, why: "No proposal is recorded.", latest: null }, changes: { available: false, why: "No reviewer is available.", latest: null } } } }, () => json({ error: "denied" }, 403));
+    const app = setup({ ...empty, review: { ...empty.review!, available: false, why: "No reviewer is available.", subjects: { proposal: { available: false, why: "No reviewer is available.", latest: null }, changes: { available: false, why: "No reviewer is available.", latest: null } } } }, () => json({ error: "denied" }, 403));
     await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    expect(screen.getByText("No reviewer is available.")).toBeVisible();
+    expect(screen.getAllByText("No reviewer is available.")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Review proposal" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
     await app.update(empty);
     await app.user.click(screen.getByRole("button", { name: "Review changes" }));

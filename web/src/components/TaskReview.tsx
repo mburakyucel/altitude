@@ -95,7 +95,7 @@ export function ReviewRow({ review, controls, availability, onRead }: { review: 
   const [withdraw, setWithdraw] = useState(false);
   const [reason, setReason] = useState("");
   const details = useRef<HTMLDetailsElement>(null);
-  const coverage = review.subject === "proposal" ? (review.coverage === "assessed" ? "Reviewed an earlier proposal; L2 assessed the later version." : review.coverage === "earlier" ? "The proposal or context changed. L2 still needs to assess the later version." : review.coverage === "unknown" ? "Current proposal coverage is unknown." : "Review covers the captured proposal.") : review.coverage === "assessed" ? "Reviewed an earlier revision; L2 assessed the later edits."
+  const coverage = review.subject === "proposal" ? (review.coverage === "assessed" ? "Reviewed an earlier proposal; L2 assessed the later version." : review.coverage === "earlier" ? "The proposal, source or context changed. L2 still needs to assess the later version." : review.coverage === "unknown" ? "Current proposal coverage is unknown." : "Review covers the captured proposal.") : review.coverage === "assessed" ? "Reviewed an earlier revision; L2 assessed the later edits."
     : review.coverage === "earlier" ? "Work changed after review. L2 still needs to assess the later edits before merging."
     : review.coverage === "unknown" ? "Current revision coverage is unknown."
     : "Review covers the current revision.";

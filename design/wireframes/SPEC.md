@@ -364,7 +364,7 @@ the operator sees its link and version, with no message-ID form. Missing proposa
 before invoking a reviewer. Review can continue L2 while an approval question is open solely to prepare,
 run and assess the proposal review; the original question stays open. Captured text and committed source
 define coverage; images require a textual account and remain explicitly outside text review coverage.
-Proposal findings never imply implementation acceptance. Later proposal/context changes show their
+Proposal findings never imply implementation acceptance. Later proposal/source/context changes show their
 coverage and need L2 assessment or a deliberate new review; pending changes requests remain visible.
 
 A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
@@ -959,7 +959,7 @@ Monitor says "Merged changes to <what changed> are waiting to activate.", naming
 web app, both, or Altitude, with file count and age (exact time on hover). The next line says
 "Altitude restarts at the next quiet moment." and appends "Waiting for <list>." when needed.
 
-The quiet point has no dispatch or resume claim, L3 turn, or report verification in flight; running
+The quiet point has no dispatch or resume claim, L3 turn, adversarial review, or report verification in flight; running
 workers do not hold activation. **Restart** appears when the waiting list is empty and no restart
 is under way. Pressing it or receiving a recorded restart request removes the button and changes
 the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not

@@ -108,6 +108,51 @@ class TestReviews(AltitudeCase):
         stop.assert_called_once()
         self.engine.assert_not_called()
 
+    def test_planned_restart_waits_for_review_result_or_failure(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                def during_run(prompt, **kwargs):
+                    self.assertIn("adversarial review in flight", server.restart_waiting_for(check_activity=False))
+                    with mock.patch.object(server, "_request_restart_unit") as restart:
+                        with self.assertRaises(server.RestartBusy):
+                            server.restart_service()
+                        restart.assert_not_called()
+                    if fail:
+                        return {"error": "Fixture failure", "termination_confirmed": True}
+                    return self.success(prompt, **kwargs)
+                self.engine.side_effect = during_run
+                previous = S.load_task(self.project, self.slug).get("reviews", [])
+                requested = self.request(previous=previous[-1]["id"] if previous else None)
+                result = self.run_review(requested)
+                self.assertEqual(result["state"], "failed" if fail else "completed")
+                self.assertNotIn("adversarial review in flight", server.restart_waiting_for(check_activity=False))
+                if not fail:
+                    self.assess(result)
+
+    def test_capacity_contention_preserves_accepted_request_for_later_run(self):
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        before = S.load_task(self.project, self.slug)["reviews"]
+        with mock.patch.object(config, "machine_wip", return_value=1):
+            with self.assertRaisesRegex(T.TransitionError, "No machine capacity"):
+                self.run_review(requested)
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"], before)
+        self.engine.assert_not_called()
+        result = self.run_review(requested)
+        self.assertEqual(result["id"], requested["id"])
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(self.engine.call_count, 1)
+
+    def test_restart_admission_preserves_request_without_launch(self):
+        requested = self.request()
+        for exclusive in (False, True):
+            with self.subTest(exclusive=exclusive):
+                with config.restart_lock(exclusive=exclusive), mock.patch.object(config, "restart_in_progress", return_value=not exclusive):
+                    with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+                        self.run_review(requested)
+                self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
+        self.engine.assert_not_called()
+        self.assertEqual(self.run_review(requested)["state"], "completed")
+
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):
             reviews.request(self.project, self.slug, actor="l2", request_id=uuid.uuid4().hex, expected_attempt=0)
@@ -718,6 +763,27 @@ class TestReviews(AltitudeCase):
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
         self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"])
         self.assertIsNone(reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"])
+        self.assertEqual(self.engine.call_count, 1)
+        task = T.block(self.project, self.slug, "Use this pagination design?", actor="l2", expected_attempt=1)
+        self.assertEqual(task["state"], "blocked")
+        self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
+
+    def test_proposal_source_and_merge_approval_require_owner_reassessment(self):
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: preserve the public result")
+        review = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
+        self.assess(review)
+        self.commit("value.py", "VALUE = 2\n")
+        latest = reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]
+        self.assertEqual(latest["coverage"], "earlier")
+        self.assertEqual(latest["snapshot"]["proposal"]["text"], proposal["text"])
+        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assess(review)
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Approve merging this feature")
+        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assess(review)
+        reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
 
     def test_proposal_input_and_revisions_bind_freshness_without_code_changes(self):

@@ -1234,8 +1234,10 @@ Assessment JSON contains `reason` and `dispositions`, one entry per finding:
 `{"finding_id":"F1","disposition":"fixed","reason":"Evidence for the fix"}`; `dismissed` also
 requires evidence. With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; post the outcome explanation before assessment so it is included in the final context.
+For a held PR, reassess after reading the operator's merge approval, including any conditions.
+This updates L2's assessment without another reviewer invocation.
 Code, base or subsequent conversation changes require changes reassessment before merge. Later
-proposal/context changes require proposal assessment or deliberate new review; optional
+proposal/source/context changes require proposal assessment or deliberate new review; optional
 `assess --proposal-message` identifies a deliberately revised proposal. Every accepted request must be
 assessed or authorized for withdrawal before merge, including earlier changes requests. Later L2
 assessment stays separate from original findings; proposal evidence never establishes implementation

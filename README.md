@@ -238,7 +238,8 @@ stay visible. The reviewer uses one additional machine slot and captured source 
 Focused scope replaces a duration cutoff; L2 observes the run and can cancel if it gets stuck or goes
 off scope. It cannot edit, run tests or approve merging. No automatic retry or engine switch follows launch.
 Review launches require working service inspection. Interruption stops the reviewer unit as well as
-its launcher; uncertain termination retains capacity for recovery.
+its launcher; uncertain termination retains capacity for recovery. Planned activation waits for the
+review result. Capacity contention keeps an accepted request pending for a later explicit run.
 Every accepted request waits for L2 assessment or authorized withdrawal before merge. Later proposal,
 code or context changes are labelled separately; proposal evidence never substitutes for changes review.
 See [requesting and assessing review](docs/CLI.md#cross-engine-review).

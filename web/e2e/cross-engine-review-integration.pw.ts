@@ -36,7 +36,7 @@ test("proposal review preserves its approval question and captured version along
   await expect(row.getByText(initial.proposal.text, { exact: true })).toBeVisible();
   await walk.state("02-proposal-result-before-approval", { visible: [row.getByText(/Implementation is not reviewed/), page.getByText("Use this pagination approach?", { exact: true })], hidden: [] });
   await fixture("revise-proposal");
-  await expect(row.getByText(/The proposal or context changed/)).toBeVisible();
+  await expect(row.getByText(/The proposal, source or context changed/)).toBeVisible();
   await fixture("assess");
   expect((await status()).questions).toEqual(initial.questions);
   await walk.state("03-revised-proposal-assessed", { visible: [row.getByText("Reviewed an earlier proposal; L2 assessed the later version."), row.getByText(initial.proposal.text, { exact: true })], hidden: [] });
