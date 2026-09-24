@@ -107,8 +107,9 @@ os.execv({json.dumps(real_journalctl)}, [{json.dumps(real_journalctl)}, *args])
     broker = verb_socket_path(project).resolve()
     _write_executable(bindir / "alt", f'''#!{python}
 import json, socket, sys
-request = {{"kind": "alt", "args": sys.argv[1:],
-           "stdin": sys.stdin.read(2 << 20)}}
+args = sys.argv[1:]
+# I-20260924-054556: the tool harness can leave stdin open; only a "-" body reads it, so other verbs never wait.
+request = {{"kind": "alt", "args": args, "stdin": sys.stdin.read(2 << 20) if "-" in args else ""}}
 try:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(130)
