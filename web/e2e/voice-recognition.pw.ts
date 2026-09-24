@@ -123,7 +123,8 @@ test("browser recognition: words appear while listening, Stop lands them, Send a
   expect(await page.evaluate("window.fixtureRecognizer.started")).toBe(1);
   const row = await v.main.locator(".composer-row").boundingBox();
   expect(row).not.toBeNull();
-  // Desktop keeps the recording cluster bounded at the right; the phone lets the waveform fill the row.
+  // The row sits under the field on both widths; desktop keeps the recording cluster bounded at the right and the phone lets the waveform fill the row.
+  expect(row!.y).toBeGreaterThanOrEqual((await v.field.boundingBox())!.y + (await v.field.boundingBox())!.height - 1);
   if (v.phone) expect((await v.wave.boundingBox())!.width).toBeGreaterThan(row!.width / 3);
   else await expect(v.wave).toHaveCSS("width", "168px");
   const canvas = await v.wave.evaluate((node) => ({ dpr: window.devicePixelRatio, width: (node as HTMLCanvasElement).width, css: node.getBoundingClientRect().width }));

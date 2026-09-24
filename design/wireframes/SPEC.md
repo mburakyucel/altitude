@@ -420,11 +420,13 @@ field (`--radius-composer`), placeholder naming the owner ("Message L3 about <pr
 "Message the L2"); a left pill (engine pin on L3 chat: Auto or an engine name; none on the task
 conversation, and in project details on phone); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
-12px muted on desktop. Phone fields and messages are 16px; text, mic and send share one row with
-44px control targets and a 70px single-line dock. No routine hint or engine toolbar adds a row on
-phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
+12px muted on desktop. The structure is the same on both widths: the field spans the box on top
+and the controls (pill, Add images, microphone, send, and the recording cluster while listening or
+transcribing) sit in one row beneath it, in every state. Phone fields and messages are 16px with
+44px control targets; the row keeps its place through recording and landing, so the send control
+never moves beside the text. No routine hint or engine toolbar adds a row on phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
 announced. A draft starts at 44px and grows to the lesser of 120px and 25% of the usable visual
-viewport, with a 44px minimum, then scrolls internally. Mic and send remain at the field's bottom.
+viewport, with a 44px minimum, then scrolls internally. The control row stays under the field as it grows.
 
 Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
 a newline while editing, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels voice input.
@@ -1240,7 +1242,7 @@ for the operator when they come up. Project removal (L3 detachment) uses the ove
 ## 8. Compact mobile chat
 
 The rules in §2.2/3.2/3.3/3.6/3.10/3.13/4.2 combine the phone's identity and status in a
-compact header, use one 70px composer dock with integrated 44px mic/send controls, disclose routine
+compact header, stack the composer's field over one row of 44px controls, disclose routine
 metadata and engine selection, and remove routine hints on phone. Hide the 84px bottom navigation
 only during detected software-keyboard use; restore it on dismissal, retaining draft and selection.
 Task Conversation/Live session tabs remain visible. A long draft grows to 120px or 25% of the

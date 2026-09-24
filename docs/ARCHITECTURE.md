@@ -1394,8 +1394,8 @@ with a live waveform and timer, transcribing, landed, denied, unavailable, refus
 phone and desktop widths in `web/e2e/conversation.pw.ts` (upload backends) and
 `web/e2e/voice-recognition.pw.ts` (browser recognition). While listening, desktop keeps Cancel, a
 168px waveform drawn at device pixel ratio, the timer, Stop and the arrow together at the right of
-the control row; the phone waveform fills its row. On phone text, mic and send share one row
-with 44px controls in a 70px single-line dock. Drafts grow from 44px to the lesser of 120px and
+the control row; the phone waveform fills its row. Both widths stack the field over one control
+row; phone controls are 44px and the row keeps its place in every state. Drafts grow from 44px to the lesser of 120px and
 25% of the usable visual viewport (at least 44px), then scroll internally. Routine phone hints
 consume no row; relevant voice, permission and send errors remain visible. Desktop retains its
 shortcut and delivery hints. Keyboard, draft and streaming changes keep bottom-follow when already

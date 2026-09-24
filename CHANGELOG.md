@@ -9,6 +9,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   for every project. The compact overview opens a separate voice page; endpoint credentials stay
   write-only. Changes apply to the next recording, and a changed destination cannot reroute an
   unfinished upload (#317).
+- The phone composer stacks like desktop and standard chat apps: the text field spans the top and
+  Add images, microphone, send and the recording controls sit in their own row beneath it, in every
+  state, so the send button no longer jumps beside the text when dictation lands.
 
 - Clickable controls read as clickable: the task menu's **Review proposal** and **Review changes**
   entries, **View question**, **Discuss with L3**, the update banner's **Details** and the image
