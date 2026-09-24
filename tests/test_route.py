@@ -47,7 +47,7 @@ class TestPickEngine(AltitudeCase):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
         self.codex = codex(80, short=20)
         choice = route.pick_engine("l2")
-        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude:fable unavailable", choice["why"])
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude:opus unavailable", choice["why"])
 
     def test_opus_only_with_unknown_quota_and_missing_second_engine(self):
         self.installation.side_effect = lambda engine: {"available": False if engine == "codex" else None,
@@ -123,10 +123,51 @@ class TestPickEngine(AltitudeCase):
     def test_missing_installation_falls_through_default_tiers_and_pins_never_do(self):
         self.installation.side_effect = lambda engine: {"available": False if engine == "codex" else None,
                                                         "why": "executable missing"}
-        self.assertEqual(route.pick_engine("l2")["model"], "fable")
+        self.assertEqual(route.pick_engine("l2")["model"], "opus")
         self.assertIsNone(route.pick_engine("l2", forced="codex")["engine"])
         self.installation.side_effect = lambda engine: {"available": False, "why": "executable missing"}
         self.assertIsNone(route.pick_engine("l2")["engine"])
+
+    def test_default_tiers_give_l2_opus_and_l3_fable_with_opus_below_fable_only(self):
+        self.installation.side_effect = lambda engine: {"available": engine != "codex" and None, "why": "executable missing"}
+        l2, l3 = route.pick_engine("l2"), route.pick_engine("l3")
+        self.assertEqual(((l2["engine"], l2["model"], l2["pinned"]), (l3["engine"], l3["model"])), (("claude", "opus", False), ("claude", "fable")))
+        self.assertEqual(l2["why"].count("claude:opus"), 1, "the lower Opus tier repeats L2's resolved default and is not re-explained")
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "model", "why": "fable rejected"})
+        self.assertEqual(route.pick_engine("l3")["model"], "opus")
+        self.assertEqual(route.pick_engine("l2")["model"], "opus")
+        self.claude = {"known": True, "five_hour": 0, "seven_day": 100}
+        self.assertIsNone(route.pick_engine("l2")["engine"])
+        self.assertEqual(route.pick_engine("l2")["why"].count("claude:opus"), 1)
+
+    def test_fable_l2_only_by_explicit_task_model_or_project_default(self):
+        pinned = route.pick_engine("l2", model="fable")
+        self.assertEqual((pinned["engine"], pinned["model"], pinned["pinned"]), ("claude", "fable", True))
+        preferred = route.pick_engine("l2", project={"l2_model": "fable"}, excluded=(("codex", None),))
+        self.assertEqual((preferred["engine"], preferred["model"], preferred["pinned"]), ("claude", "fable", False))
+        self.assertEqual(route.pick_engine("l2", project={"l2_model": "fable"})["engine"], config.PRIMARY_DEFAULT_ENGINE,
+                         "a project default model is a preference for its engine, never an engine pin")
+        self.assertIsNone(config.pinned_option("l2", {"l2_model": "fable", "l2_codex_model": "chosen"}))
+
+    def test_project_default_model_fills_only_unqualified_options_per_engine(self):
+        project = {"l2_model": "fable", "l2_codex_model": "chosen-model"}
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "chosen-model")
+        self.assertEqual(route.pick_engine("l2", project=project, excluded=(("codex", "chosen-model"),))["model"], "fable")
+        self.assertIsNone(route.pick_engine("l3", project=project)["model"], "L2 defaults never reach L3 options")
+        self.assertEqual(route.pick_engine("l3", project=project, excluded=(("codex", None),))["model"], "fable")
+        project["routing"] = config.parse_routing("claude:opus>codex")
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "opus")
+        self.assertEqual(route.pick_engine("l2", forced="codex", project=project)["model"], "chosen-model")
+        self.assertEqual(config.pinned_option("l2", {**project, "l2_engine": "claude"}), {"engine": "claude", "model": "fable"})
+
+    def test_l3_model_keys_are_preferences_too_and_only_the_engine_key_pins(self):
+        for project in ({"l3_model": "opus"}, {"l3_codex_model": "chosen-model"}):
+            with self.subTest(project=project):
+                self.assertIsNone(config.pinned_option("l3", project))
+                choice = route.pick_engine("l3", project=project)
+                self.assertEqual((choice["engine"], choice["pinned"]), (config.PRIMARY_DEFAULT_ENGINE, False))
+        pinned = route.pick_engine("l3", project={"l3_engine": "claude", "l3_model": "opus"})
+        self.assertEqual((pinned["engine"], pinned["model"], pinned["pinned"]), ("claude", "opus", True))
 
     def test_both_exhausted_returns_no_engine(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}

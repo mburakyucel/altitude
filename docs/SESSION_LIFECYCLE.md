@@ -348,8 +348,9 @@ L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them wi
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`; commas tie
 options, and `>` starts a lower-priority tier. The operator and project's L3 can change or unset this
 operational setting; altd applies it on the next tick and records the reason without a restart.
-The default ties Codex's default model and Claude Fable, with Opus as a lower-tier fallback;
-`ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order.
+The default ties Codex and Claude on their role defaults (a Claude L2 on Opus, L3 on Fable), with
+Opus as L3's lower-tier fallback; an option that names no model takes the project's default L2 model
+for that engine first. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order.
 
 Auto selects from the highest tier with an eligible option. Within that tier it compares only named
 seven-day Claude data with a Codex window whose reported duration is exactly seven days. A five-hour

@@ -387,13 +387,13 @@ class ReviewRoutingTests(AltitudeCase):
 
     def test_project_engine_and_model_pins_remain_strict_for_same_engine_review(self):
         task = {"l2_engine": "claude"}
-        for project in ({"l2_engine": "claude"}, {"l2_model": "opus"},
+        for project in ({"l2_engine": "claude"}, {"l2_engine": "claude", "l2_model": "sonnet"},
                         {"routing": config.parse_routing("claude:opus>claude:fable")}):
             with self.subTest(project=project):
                 selected = route.pick_review(task, project)
                 self.assertEqual(selected["engine"], "claude")
                 self.assertTrue(selected["same_engine"])
-                self.assertEqual(selected["model"], config.default_model("l2", "claude") if project.get("l2_engine") else "opus")
+                self.assertEqual(selected["model"], project.get("l2_model") or "opus")
         self.usage.return_value = {"claude": (100, 0), "codex": (0, 0)}
         self.assertIsNone(route.pick_review(task, {"l2_engine": "claude"})["engine"])
 

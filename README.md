@@ -307,7 +307,10 @@ login; its experimental response format and deferred live verification are descr
 
 Set independent **L3 effort** and **L2 effort** defaults in **Project details** (desktop More actions),
 or with `alt project set <project> --l3-effort medium --reason '…'` and `--l2-effort high`.
-Changing effort leaves model and engine pins intact. **Default** preserves existing behavior;
+Set the default **L2 model** per engine the same way: `--l2-model fable` for Claude or
+`--l2-codex-model <id>` for Codex, with `--unset-…` restoring Opus or the Codex CLI default. Auto
+routes a Claude L2 to Opus unless the project default or a task `--model` names another model; L3
+keeps Fable. Changing effort leaves model and engine pins intact. **Default** preserves existing behavior;
 **Native** requests no Altitude effort override. L3 changes apply next turn in its existing conversation.
 Fresh L2 attempts, including queued tasks, use the project default; `alt task new --effort xhigh …`
 overrides it for one task. Started tasks keep their saved effort on messages and resumes.

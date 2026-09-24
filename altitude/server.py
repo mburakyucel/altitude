@@ -1609,7 +1609,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(project_view(parts[2]))
             if api == "effort" and len(parts) == 3:
                 try:
-                    return self._json(config.effort_view(parts[2]))
+                    return self._json(config.defaults_view(parts[2]))
                 except KeyError:
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "task" and len(parts) > 3:
@@ -1763,14 +1763,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError) as exc:
                     return self._json({"error": str(exc)}, 409)
-            if parts == ["api", "effort"]:
+            if parts in (["api", "effort"], ["api", "model"]):
                 try:
-                    setting = f"{o['role']}_effort"
-                    dispatch.request_setting(o["project"], setting, o["effort"], "Project details", actor=config.OPERATOR_ACTOR)
+                    setting, value = ((f"{o['role']}_effort", o["effort"]) if parts[1] == "effort" else
+                                      (config.model_setting("l2", o["engine"]), o["model"]))
+                    dispatch.request_setting(o["project"], setting, value, "Project details", actor=config.OPERATOR_ACTOR)
                     result = dispatch._run_setting(o["project"], setting)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
-                    return self._json(config.effort_view(o["project"]))
+                    return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":

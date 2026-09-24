@@ -196,7 +196,7 @@ def pick_review(task: dict, project: dict) -> dict:
     try:
         pin = config.pinned_option("l2", project)
         tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
-        options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"]))
+        options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"], project))
                    for tier in tiers for o in tier]
         fallback_reason = ""
         for same_engine in (False, True):
@@ -235,12 +235,15 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     pin = config.pinned_option(role, project, engine=forced, model=model)
     tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
     usage = _usage()
-    skipped = []
+    skipped, considered = [], set()
     for priority, tier in enumerate(tiers, 1):
         available = []
         for configured in tier:
             option = {"engine": configured["engine"],
-                      "model": configured.get("model") or config.default_model(role, configured["engine"]), "role": role}
+                      "model": configured.get("model") or config.default_model(role, configured["engine"], project), "role": role}
+            if option_key(option) in considered:
+                continue  # a lower tier never repeats an option a higher tier already resolved
+            considered.add(option_key(option))
             engine = option["engine"]
             try:
                 option["effort"] = config.task_effort(engine, effort, role=role)

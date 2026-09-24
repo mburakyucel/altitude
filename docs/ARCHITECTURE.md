@@ -158,7 +158,10 @@ when available. An unknown Monitor model is an absent key rather than null.
 
 Project registry fields `l3_effort` and `l2_effort` store independent requested defaults; absence
 preserves existing engine defaults and `native` requests no override. `config.task_effort` owns
-engine support and resolution. Task `effort` overrides the project L2 default. Routing resolves
+engine support and resolution. `l2_model` and `l2_codex_model` store the requested default L2 model
+per engine; `config.default_model` resolves an Auto option that names no model to the project default
+for that engine, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model on
+Codex). They are preferences: only `l2_engine`/`l3_engine` and a task model pin force an engine. Task `effort` overrides the project L2 default. Routing resolves
 effort with the chosen engine/model, excludes unsupported Auto candidates and keeps pins strict.
 Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
 reuses it without resolving current project defaults or copying observed provider values.
@@ -303,9 +306,10 @@ setup is supported today. A new engine may
 have different session, authentication, capability and usage-reporting models. Adapt the boundary
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 
-Auto uses the highest-priority configured tier with an eligible option. The default ties Codex's
-default model with Claude Fable, followed by Opus; `ALTITUDE_PRIMARY_ENGINE` chooses only the default
-tie order. Named, comparable seven-day account readings select within a tie. Unknown readings use
+Auto uses the highest-priority configured tier with an eligible option. The default ties Codex and
+Claude on their role defaults, so a Claude L2 launches on Opus and L3 on Fable, with Opus below as
+L3's fallback when Fable is rejected; a lower tier never repeats an option a higher tier already
+resolved. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. Named, comparable seven-day account readings select within a tie. Unknown readings use
 configured order, and L3 retains its current engine/model within that tier unless a competitor has
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;

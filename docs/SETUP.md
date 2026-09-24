@@ -124,8 +124,8 @@ Open the project's **Setup** checklist to inspect its results. Altitude automati
 missing or stale guards that it owns. If another hook system is present, **Review integration**
 offers a supported way to use both sets or leaves the current setup intact for discussion.
 Auto skips missing CLIs and known exhausted or rejected options.
-Its default ties Codex's default model and Claude Fable, with Claude Opus in the next tier. One
-installed engine is enough. Availability of a model is unverified until supported evidence says
+Its default ties Codex and Claude on their role defaults (a Claude L2 on Opus, L3 on Fable), with
+Claude Opus in the next tier as L3's fallback. One installed engine is enough. Availability of a model is unverified until supported evidence says
 otherwise; a subscription's plan name is not evidence of model access.
 
 For an account with only Claude Opus, set that preference from another terminal using the same PATH

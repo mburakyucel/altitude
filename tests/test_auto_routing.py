@@ -123,14 +123,18 @@ class TestAutoIntegration(AltitudeCase):
         retry.assert_not_called()
         self.assertEqual(S.load_task(self.project, task["slug"])["model"], "fable")
 
-    def test_project_model_pin_remains_strict_despite_auto_preferences(self):
-        self.policy("codex > claude:opus", l2_model="fable")
+    def test_project_default_model_is_an_auto_preference_and_not_a_pin(self):
+        self.policy("codex > claude", l2_model="fable")
         task = self.task()
-        with mock.patch.object(engines, "start_l2", side_effect=self.rejected) as launch:
-            with self.assertRaisesRegex(T.TransitionError, "forced claude:fable is unavailable"):
-                dispatch.run(self.project, task["slug"])
-        self.assertEqual(launch.call_count, 1)
-        self.assertEqual((launch.call_args.args[0], launch.call_args.kwargs["model"]), ("claude", "fable"))
+        def launch(*args, **kwargs):
+            return self.rejected() if args[0] == "codex" else self.launched(*args, **kwargs)
+        with mock.patch.object(engines, "start_l2", side_effect=launch) as execute:
+            dispatch.run(self.project, task["slug"])
+        self.assertEqual([(call.args[0], call.kwargs["model"]) for call in execute.call_args_list],
+                         [("codex", None), ("claude", "fable")])
+        saved = S.load_task(self.project, task["slug"])
+        self.assertEqual((saved["l2_engine"], saved["launch_model"], saved["routing_pinned"]), ("claude", "fable", False))
+        self.assertFalse(saved.get("engine"))
 
     def test_unsafe_startup_failure_does_not_replay_work_on_fallback(self):
         self.policy("claude:fable > claude:opus")
