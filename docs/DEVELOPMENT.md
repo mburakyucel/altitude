@@ -319,7 +319,8 @@ All main updates must use `alt land` for its guarantee.
 Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
 completed nonrequired skips without parsing workflow conditions; failed or pending checks still
 block, and at least one hosted check must actually pass. Requiredness and candidate association
-must be established. Projects without CI retain the full local candidate suite and `--test-cmd`;
+must be established. Projects without CI retain the full local candidate suite and `--test-cmd`
+(one argv command, see [dry run and gate selection](CLI.md#dry-run-and-gate-selection));
 neither provides an outage bypass for this repository.
 
 CI retains evidence on the runner host without GitHub artifact uploads. The workflow writes

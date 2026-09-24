@@ -1125,6 +1125,54 @@ Reviews and live merge holds remain mandatory. Opening a held PR does not author
 GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 
+### Dry run and gate selection
+
+`alt land --dry-run` reports what a real landing of the worktree would pin and judge, and
+commits, pushes, opens, tests and merges nothing. It fetches the base and the branch tip as an
+ordinary landing does, keeps the staged index intact, records no adoption and releases no hold.
+The result keeps `checks: "dry-run"`, `head: null` and `local_tests: null`, because no head is
+pushed and no suite runs, and adds `prospective`:
+
+```json
+"prospective": {
+  "base": "<fetched origin/main commit>",
+  "head": "<HEAD commit, or null while changes are staged>",
+  "tree": "<the tree the head would carry: HEAD's, or the staged index>",
+  "gate": "github-actions | local-suite",
+  "required_pr_check": false,
+  "workflows": {"base": true, "head": false},
+  "local_suite": ["make", "test"],
+  "undetermined": ["..."]
+}
+```
+
+`gate` is `github-actions` when this repository's required PR check applies or either side
+carries `.github/workflows`; otherwise `local-suite`, and `local_suite` shows the exact argv
+the suite would run. `undetermined` names what only a real landing settles: with staged
+changes the head commit is created at landing and only its tree is known; a HEAD that lacks
+current main is integrated into a new head under `--merge` and cannot satisfy the required PR
+check as it is. Continuation after a merged PR and check evidence already published on the PR
+are also settled only when landing. A dry run never proves that tests passed or that a merge
+is authorized.
+
+Workflow detection inspects both pinned sides. Workflows on the base keep the hosted gate for
+every PR, so a branch that deletes `.github/workflows` shows `workflows.head: false` and still
+`gate: github-actions`; with no hosted run it lands as `skipped`, not through the local suite.
+Retiring a project's CI is a project decision made outside `alt land`; it does not arrive
+through a PR that removes the workflows.
+
+`--test-cmd` is one command. Landing splits it into argv with shell quoting rules and runs it
+without a shell on the merge candidate, so `&&`, `;` and redirections are literal arguments to
+the first program. Prefer one entry point that runs the full suite, or name the shell explicitly:
+
+```sh
+alt land --message "fix: describe the change" --merge --test-cmd "make check"
+alt land --message "fix: describe the change" --merge --test-cmd 'sh -c "pnpm typecheck && pnpm test"'
+```
+
+The command must exit 0 and print a readable passing-test count. It runs only under the
+`local-suite` gate and supplies no bypass for hosted checks.
+
 ### Continue after a PR merges
 
 An active task can deliver more than one PR. Its owner continues authorized work in the same
@@ -1307,7 +1355,8 @@ and pending checks still block, including nonrequired checks; pending checks use
 Unknown requiredness remains blocked. These rules apply to ordinary and adopted landing.
 At least one hosted check must actually succeed; entirely skipped CI cannot use the no-CI fallback.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
-default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
+default `make test` is unsuitable; it runs as [one argv command](#dry-run-and-gate-selection)
+on the exact two-parent merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
 pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
 branch deletion, so the repository must permit that merge method. Host-side branch deletion
