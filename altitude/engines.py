@@ -38,7 +38,7 @@ def _claude_quota() -> dict:
             [config.CLAUDE_BIN, "--print", "/usage", "--output-format", "stream-json", "--verbose",
              "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config"],
             capture_output=True, text=True, timeout=20, check=True, env=clean_env(), cwd=config.HOME)
-        reading = {}
+        reading, models = {}, {}
         for event in map(json.loads, result.stdout.splitlines()):
             if event.get("type") == "result" and event.get("is_error"):
                 return unknown
@@ -46,16 +46,24 @@ def _claude_quota() -> dict:
                 continue
             rows = (event["usage_report"].get("rate_limits") or {}).get("limits") or []
             for row in rows:
+                label = ((row.get("scope") or {}).get("model") or {}).get("display_name") \
+                    if row.get("kind") == "weekly_scoped" else None
                 window = {"session": "five_hour", "weekly_all": "seven_day"}.get(row.get("kind"))
-                if window is None:
-                    continue
+                if window is None and not isinstance(label, str):
+                    continue  # surface-scoped and unknown meters are neither account nor model allowances
                 used = route._number(row.get("percent"))
-                if (used is None or isinstance(row.get("percent"), bool) or window in reading
+                if (used is None or isinstance(row.get("percent"), bool) or window in reading or label in models
                         or "severity" not in row or "is_active" not in row):
                     return unknown
                 reset = row.get("resets_at")
-                reading.update({window: used, f"{window}_resets":
-                                datetime.fromisoformat(reset).timestamp() if reset else None})
+                reset = datetime.fromisoformat(reset).timestamp() if reset else None
+                if window:
+                    reading.update({window: used, f"{window}_resets": reset})
+                else:
+                    models[label] = {"model": config.model_family(label), "label": label,
+                                     "seven_day": used, "seven_day_resets": reset}
+        if models:
+            reading["models"] = list(models.values())
         return {"known": True, "at": time.time(), **reading} if reading else unknown
     except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
         return unknown

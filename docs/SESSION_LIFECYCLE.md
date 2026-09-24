@@ -365,7 +365,11 @@ explanations.
 A missing executable or exhausted short/weekly window excludes only affected options. Unknown
 authentication, model access or quota remains eligible and is described as unverified. Altitude does
 not infer subscription entitlement from a plan name or separate Fable and Opus allowances from an
-account-wide meter. An explicit unavailable-model rejection excludes that model for thirty minutes;
+account-wide meter. A current (under thirty minutes old) model-specific reading at 100% excludes only
+that model until its reported reset passes, and a pinned model stays strict, so a pinned L3 on an exhausted model finds no engine
+and leaves queued events queued rather than spending them on failing turns. An explicit
+unavailable-model rejection excludes that model for thirty minutes; a usage limit that names a model
+family applies to every configured id of that family.
 an authentication rejection excludes the engine for thirty minutes. Retrying configured alternatives
 is bounded and requires confirmation that no response output or tool effects occurred. A rejection
 after work starts cannot silently replay the turn. If no option is eligible, the task stays queued
@@ -1309,7 +1313,11 @@ cache counters are part of the separate task token observation.
 The daemon refreshes both account quotas every five minutes, independently of interactive sessions
 and which engine Auto currently selects. Claude's native headless `/usage` emits structured
 `usage_report.rate_limits.limits` rows: `weekly_all` supplies the weekly percentage and `session`
-the five-hour percentage. Scoped model/surface rows do not become account allowances. CLI 2.1.277+
+the five-hour percentage. A `weekly_scoped` row naming a model is kept as that model's own weekly
+allowance (label, percentage, reset), matched to a configured model by its family name. It never
+becomes an account allowance, and account rows never stand in for a model: there is no
+model-specific five-hour row, so a model without its own row has unknown availability until a
+rejection says otherwise. Surface-scoped rows are ignored. CLI 2.1.277+
 is required: its [live-only row contract](https://github.com/anthropics/claude-agent-sdk-typescript/releases/tag/v0.3.277)
 omits rows when the server fetch fails. Altitude validates named percentages and records the successful
 observation time; it does not restamp cached scalar windows or parse presentation text. The CLI owns
@@ -1328,7 +1336,9 @@ compatibility remains unverified under the standing live-provider testing deferr
 Every quota and session figure carries the time it was observed, and age is reported rather than
 hidden. Monitor displays each available usage window independently, including zero, and explicitly
 names an absent window. Partial readings keep their available figures and reset times; only a seat
-without any usage figure says "No reading." A quota snapshot older than thirty minutes — the age
+without any usage figure says "No reading." Each model the seat's routing can launch is listed under
+**Model allowances** with its own weekly figure and reset, "No reading for this model", or an
+active rejection. A quota snapshot older than thirty minutes — the age
 at which the router stops routing on it — is stale: its figures are still shown and labelled, not
 replaced by "unknown", which is reserved for having no reading at all. A session snapshot older than
 five minutes while its worker is live is stale in the same way; an idle or finished worker is simply

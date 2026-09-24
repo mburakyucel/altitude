@@ -301,7 +301,9 @@ See [routing configuration and examples](docs/CLI.md#automatic-routing-preferenc
 
 Quota collection runs every five minutes without an interactive session. Native account readers
 supply current weekly evidence; failed or unavailable reads remain unknown, and readings expire
-after thirty minutes. The headless plan-usage reader requires CLI 2.1.277 or later and a subscription
+after thirty minutes. Monitor lists each routed model's own weekly allowance when the provider
+reports one, and says plainly when it does not: shared account headroom never shows that a
+specific model is available. The headless plan-usage reader requires CLI 2.1.277 or later and a subscription
 login; its experimental response format and deferred live verification are described in the
 [collection contract](docs/SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
 
@@ -318,7 +320,7 @@ Higher effort can use more time and tokens. Requested settings, launch overrides
 provider effort remain distinct; [effort selection](docs/CLI.md#task-reasoning-effort) describes
 supported levels, precedence and native L1 controls.
 
-An exhausted model allowance excludes only that model. A reported reset schedules a retry;
+An exhausted model allowance, from a rejection or the model's own reading, excludes only that model. A reported reset schedules a retry;
 an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a
 fresh attempt from their saved work. For owners already blocked by an exited worker, L3 can
 request an explicit [provider handoff](docs/CLI.md#explicit-provider-handoff). The same task keeps

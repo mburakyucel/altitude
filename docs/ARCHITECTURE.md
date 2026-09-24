@@ -316,13 +316,15 @@ configured order, and L3 retains its current engine/model within that tier unles
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
 unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. The router never derives model allowances from an
+exclude only that model for thirty minutes. A current model-specific weekly reading at 100% also
+excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
 attempt's engine, session and launch model. See [routing lifecycle](SESSION_LIFECYCLE.md#fresh-dispatch).
 
 The engine boundary refreshes both seat readings every five minutes before dispatch. Native
-headless `/usage` supplies live account rows; the other native reader uses `account/rateLimits/read`.
+headless `/usage` supplies live account rows and any model-specific weekly rows; the other native
+reader uses `account/rateLimits/read`.
 Statusline snapshots supply session display data, not routing quota. Failed reads replace previous
 success with unknown; successful observations expire after thirty minutes. Collection neither
 resumes task sessions nor changes routing preferences. See the [quota source and compatibility

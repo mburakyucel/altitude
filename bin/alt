@@ -750,7 +750,8 @@ def main(argv=None) -> None:
     if c == "decisions":
         from altitude import digest; out(digest.queue()); return
     if c == "monitor":
-        from altitude import monitor; out({"quota": monitor.quota(), "sessions": monitor.sessions()}); return
+        from altitude import monitor, route
+        out({"seats": route.seats(), "routing": monitor.routing(), "sessions": monitor.sessions()}); return
     if c == "queue":
         from altitude import digest
         record = digest.queue_status(); out(record) if args.as_json else print(_queue_text(record)); return
