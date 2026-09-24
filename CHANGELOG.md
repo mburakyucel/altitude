@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The coordinator's runtime `alt` shim reads stdin only when an argument is `-`, so a verb whose
+  text is an argument returns immediately even when the tool harness leaves stdin open
+  (I-20260924-054556).
+
 - `alt task status` names the merged commit's own push-triggered main run or none; the
   `alt land --merge` result no longer carries a `main_run` field, which named GitHub's latest main
   run or a hand-dispatched workflow instead (#476).
