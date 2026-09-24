@@ -9,6 +9,8 @@ import sys
 
 
 SERVICE = "altitude.service"
+#: What First run shows for a missing command-line tool, run in the operator's own terminal.
+INSTALL = {"gh": "sudo apt install gh", "git": "sudo apt install git"}
 
 
 def require_supported() -> None:

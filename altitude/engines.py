@@ -165,6 +165,9 @@ def installation(engine: str) -> dict:
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
 
+#: The command that installs each engine CLI, shown by First run while it is missing.
+INSTALL = {"claude": "npm install -g @anthropic-ai/claude-code", "codex": "npm install -g @openai/codex"}
+
 #: The engine CLI's local sign-in status and the command the operator runs in their own terminal to sign in.
 SIGN_IN = {"claude": (("auth", "status"), "claude auth login"), "codex": (("login", "status"), "codex login")}
 

@@ -5,7 +5,7 @@ import subprocess
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, incidents, installation, server, tasks as T
+from altitude import config, engines, incidents, installation, platform, server, tasks as T
 
 
 class OnboardingCase(AltitudeCase):
@@ -60,6 +60,13 @@ class TestOperatorName(OnboardingCase):
         server.save_operator_name({"name": "Ada Fixture"})
         self.assertNotIn("Ada Fixture", incidents.sanitize("Ada Fixture approved the retry"))
 
+    def test_a_name_ending_in_punctuation_is_scrubbed_and_refused_in_public_text(self):
+        server.save_operator_name({"name": "Ada F."})
+        self.assertEqual(incidents.sanitize("Ada F. approved the retry"), "the operator approved the retry")
+        with self.assertRaisesRegex(ValueError, "operator's name stays on this machine"):
+            incidents.check_public("Ada F. approved the retry")
+        self.assertEqual(incidents.sanitize("Adam F.x"), "Adam F.x")
+
     def test_git_name_reads_the_global_config_once(self):
         self.git_name.stop()
         config._git_name.cache_clear()
@@ -106,7 +113,7 @@ class TestIncidentReports(OnboardingCase):
 
 class TestPrerequisites(OnboardingCase):
     def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True) -> dict:
-        which = {"gh": "/fixture/gh" if gh else None, "git": "/fixture/git" if git else None}
+        which = {"gh": "/fixture/gh", "git": "/fixture/git" if git else None}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
              mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
              mock.patch.object(engines, "installation",
@@ -119,6 +126,14 @@ class TestPrerequisites(OnboardingCase):
         items = self.items(gh=False, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": True})
         self.assertEqual(list(items)[0], "github")
         self.assertEqual((items["github"]["state"], items["github"]["command"]), ("unmet", "gh auth login"))
+
+    def test_a_missing_tool_shows_the_command_that_installs_it(self):
+        with mock.patch.object(installation.shutil, "which", return_value=None), \
+             mock.patch.object(engines, "installation", return_value={"available": False, "why": ""}):
+            items = {item["key"]: item for item in installation.prerequisites()}
+        self.assertEqual({key: (item["state"], item["command"]) for key, item in items.items()},
+                         {"github": ("unmet", platform.INSTALL["gh"]), "git": ("unmet", platform.INSTALL["git"]),
+                          **{engine: ("unmet", engines.INSTALL[engine]) for engine in config.ENGINES}})
 
     def test_one_signed_in_agent_is_enough_and_others_become_optional(self):
         items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})

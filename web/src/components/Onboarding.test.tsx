@@ -116,7 +116,8 @@ describe("First run onboarding", () => {
   it("skips each step and goes back without saving", async () => {
     const fetchMock = mockFetch();
     const { user, router } = renderApp({ route: "/projects" });
-    await user.click(await screen.findByRole("button", { name: "Skip" }));
+    await screen.findByLabelText("Your name");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
     await user.click(await screen.findByRole("button", { name: "Continue anyway" }));
     await user.click(await screen.findByRole("button", { name: "Skip" }));
     await screen.findByRole("heading", { name: "Add your projects" });
@@ -124,6 +125,17 @@ describe("First run onboarding", () => {
     await user.click(screen.getByRole("button", { name: "‹ Back" }));
     expect(router.state.location.search).toBe("?step=incidents");
     expect(posted(fetchMock, "/api/operator-name")).toEqual([]);
+  });
+
+  it("keeps Skip when the machine settings cannot be read", async () => {
+    mockFetch();
+    const fetchMock = vi.mocked(fetch);
+    const answer = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/machine") ? response({ error: "unavailable" }, 503) : answer(input, init));
+    const { user } = renderApp({ route: "/projects" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load this setting.");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    await screen.findByRole("heading", { name: "What the agents need" });
   });
 });
 

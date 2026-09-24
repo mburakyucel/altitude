@@ -177,19 +177,20 @@ def _gh_signed_in() -> bool:
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
     with the command the operator runs in their own terminal. Nothing here takes a password or token."""
-    from . import config, engines
+    from . import config, engines, platform
     gh = shutil.which("gh")
-    items = [{"key": "github", "label": "GitHub CLI signed in" if gh else "GitHub CLI",
+    items = [{"key": "github", "label": "GitHub CLI signed in" if gh else "GitHub CLI not installed",
               "state": "met" if gh and _gh_signed_in() else "unmet",
               "detail": "Agents push branches and open pull requests through the GitHub CLI."
-              + ("" if gh else " Install it from https://cli.github.com first."),
-              "command": "gh auth login"}]
+              + ("" if gh else " Install it, then sign in with gh auth login."),
+              "command": "gh auth login" if gh else platform.INSTALL["gh"]}]
     agents = []
     for engine in config.ENGINES:
         label = config.ENGINE_LABELS[engine]
         if engines.installation(engine)["available"] is False:
             agents.append({"key": engine, "label": f"{label} not installed", "state": "unmet",
-                           "detail": f"Install {label}, or set its binary in the service environment.", "command": None})
+                           "detail": f"Install {label} (or set its binary in the service environment), then sign in.",
+                           "command": engines.INSTALL[engine]})
             continue
         signed = engines.sign_in(engine)
         agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
@@ -201,9 +202,9 @@ def prerequisites() -> list[dict]:
             if agent["state"] == "unmet":
                 agent.update(state="optional", detail=f"Optional: Altitude works with any one coding agent. {agent['detail']}")
     items += agents
-    items.append({"key": "git", "label": "Git installed" if shutil.which("git") else "Git not installed",
-                  "state": "met" if shutil.which("git") else "unmet",
-                  "detail": None if shutil.which("git") else "Install Git and put it on the service PATH.", "command": None})
+    git = shutil.which("git")
+    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
+                  "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.INSTALL["git"]})
     return items
 
 

@@ -247,6 +247,11 @@ def _names() -> str | None:
     return "|".join(re.escape(n) for n in names) or None
 
 
+def _standalone(name: str) -> str:
+    """`name` not inside a longer word; unlike `\\b`, this also matches a name ending in punctuation (“Ada F.”)."""
+    return rf"(?<!\w){re.escape(name)}(?!\w)"
+
+
 def sanitize(text: str) -> str:
     """Plain words for a public issue: paths, ids, addresses, credentials, task and project names and the
     operator's name never leave. Encoded text is decoded first so `%2Fhome` cannot slip past."""
@@ -260,7 +265,7 @@ def sanitize(text: str) -> str:
         text = re.sub(rf"\b(?:{names}|altitude)/[\w.-]+", "[task]", text)
         text = re.sub(rf"\b(?:{names})\b", "[project]", text)
     if operator := config.operator_name():
-        text = re.sub(rf"\b{re.escape(operator)}\b", "the operator", text, flags=re.I)
+        text = re.sub(_standalone(operator), "the operator", text, flags=re.I)
     return text
 
 
@@ -275,7 +280,7 @@ def check_public(text: str) -> None:
         raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
     if _CREDENTIAL.search(text):
         raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
-    if (operator := config.operator_name()) and re.search(rf"\b{re.escape(operator)}\b", text, re.I):
+    if (operator := config.operator_name()) and re.search(_standalone(operator), text, re.I):
         raise ValueError("Private incident evidence boundary: an issue is public; the operator's name stays on this machine")
 
 

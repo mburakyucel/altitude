@@ -47,7 +47,7 @@ export function NameForm({ onSaved, actions, save: label }: FormProps) {
   const machine = useMachine();
   const [name, setName] = useState<string | null>(null);
   const [save, run, reset] = useMachineSave();
-  if (!machine.data) return <Loading machine={machine} />;
+  if (!machine.data) return <><Loading machine={machine} />{actions(null)}</>;
   const value = name ?? machine.data.operator ?? "";
   const submit = async () => {
     if (await run(() => saveOperatorName(value))) onSaved?.();
@@ -114,7 +114,7 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
   const [on, setOn] = useState<boolean | null>(null);
   const [repository, setRepository] = useState<string | null>(null);
   const [save, run, reset] = useMachineSave();
-  if (!machine.data) return <Loading machine={machine} />;
+  if (!machine.data) return <><Loading machine={machine} />{actions(null)}</>;
   const publishing = on ?? !!machine.data.incident_repository;
   const target = repository ?? machine.data.incident_repository ?? machine.data.altitude_repository;
   const changed = publishing !== !!machine.data.incident_repository || (publishing && target.trim() !== machine.data.incident_repository);

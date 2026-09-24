@@ -1197,7 +1197,8 @@ page, and with no managed project every project route shows First run: the steps
 agents need, incident reports and projects, held in `?step=`, each skippable and a Settings row
 afterwards. What the agents need reads `GET /api/prerequisites`, `installation.prerequisites()`: the
 doctor's GitHub CLI check, each engine's local sign-in status through the engine seam
-(`engines.sign_in`) and Git, as met, unmet with the terminal command to run, or optional once one
+(`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
+`platform.INSTALL` or `engines.INSTALL` for a missing tool, else its sign-in command), or optional once one
 engine is signed in. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
