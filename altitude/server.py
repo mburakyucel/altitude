@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1683,6 +1683,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(overview())
             if api == "voice":
                 return self._json(voice_view())
+            if api == "machine":
+                return self._json(machine_view())
+            if api == "prerequisites":
+                return self._json({"items": installation.prerequisites()})
             if api == "folders":
                 try:
                     return self._json(folders((q.get("path") or [None])[0]))
@@ -1872,6 +1876,11 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "projects-folder"]:
                 try:
                     return self._json(save_projects_folder(o))
+                except (ValueError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts in (["api", "operator-name"], ["api", "incident-reports"]):
+                try:
+                    return self._json((save_operator_name if parts[1] == "operator-name" else save_incident_reports)(o))
                 except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "voice"]:
@@ -2232,7 +2241,7 @@ def overview() -> dict:
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
-            "operator": config.OPERATOR, "restart": restart_status(), "now": S.now()}
+            "operator": config.operator_name(), "restart": restart_status(), "now": S.now()}
 
 
 def home_relative(path: Path) -> str:
@@ -2289,11 +2298,54 @@ def save_projects_folder(body: dict) -> dict:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
     value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
-    dispatch.request_setting(None, "projects_folder", value, "Projects folder", actor=config.OPERATOR_ACTOR)
-    result = dispatch._run_setting(None, "projects_folder")
+    _save_machine("projects_folder", value, "Projects folder")
+    return {"roots": [home_relative(r) for r in config.project_roots()]}
+
+
+def machine_view() -> dict:
+    """The operator's name and incident publication, as First run and Settings show them."""
+    return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
+            "altitude_repository": config.ALTITUDE_REPOSITORY}
+
+
+def _save_machine(setting: str, value, reason: str) -> dict:
+    dispatch.request_setting(None, setting, value, reason, actor=config.OPERATOR_ACTOR)
+    result = dispatch._run_setting(None, setting)
     if result["status"] != "done":
         raise ValueError(result["note"])
-    return {"roots": [home_relative(r) for r in config.project_roots()]}
+    return machine_view()
+
+
+def save_operator_name(body: dict) -> dict:
+    if body.keys() - {"name"}:
+        raise ValueError("Unsupported name fields.")
+    name = body.get("name")
+    value = " ".join(name.split()) or None if isinstance(name, str) else name
+    return _save_machine("operator_name", value, "Operator name")
+
+
+def save_incident_reports(body: dict) -> dict:
+    """Turn incident publication off, or on for a GitHub repository the signed-in GitHub CLI can see."""
+    if body.keys() - {"repository"}:
+        raise ValueError("Unsupported incident report fields.")
+    repository = body.get("repository")
+    if repository is None:
+        return _save_machine("incident_repository", False, "Incident reports off")
+    if not isinstance(repository, str):
+        raise ValueError("Name a GitHub repository as owner/name.")
+    text = repository.strip()
+    url = repository_url(text) or (repository_url("https://github.com/" + text) if "/" in text else None)
+    if not url:
+        raise ValueError("Name a GitHub repository as owner/name, for example your fork of Altitude.")
+    name = url.removeprefix("https://github.com/")
+    try:
+        seen = subprocess.run(["gh", "repo", "view", name, "--json", "nameWithOwner"], capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Could not check {name} with the GitHub CLI: {exc}") from exc
+    if seen.returncode != 0:
+        raise ValueError(f"The signed-in GitHub CLI cannot see {name}. Check the name, or sign in with gh auth login.")
+    return _save_machine("incident_repository", name, "Incident reports on")
 
 
 def repository_url(origin: str) -> str | None:
@@ -2439,19 +2491,18 @@ def issue_parser() -> argparse.ArgumentParser:
 def issue_repository() -> str:
     """Where incident issues go: the operator's explicit choice, never a repository this installation did not name.
 
-    The maintainer's repository is in the release metadata and in the source checkout's origin, so either one as a
-    default would publish a stranger's incidents there; unset keeps incidents on this machine.
+    Publication is off until the operator turns it on in Settings or sets ALTITUDE_UPSTREAM_ISSUE_REPOSITORY;
+    Altitude's own repository is only the value the form fills in, never an unconsented default.
     """
-    target = config.UPSTREAM_ISSUE_REPOSITORY
+    target = config.incident_repository()
     if target is None:
-        raise ValueError("incidents stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd's "
-                         "environment names the GitHub owner/repository that receives them")
+        raise ValueError("incidents stay on this machine until incident reports are turned on in Settings "
+                         "(or ALTITUDE_UPSTREAM_ISSUE_REPOSITORY names the GitHub owner/repository that receives them)")
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", target):
         target = "https://github.com/" + target
     repository = repository_url(target)
     if not repository:
-        raise ValueError("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd's environment must name a GitHub "
-                         "owner/repository or GitHub repository URL")
+        raise ValueError("the incident repository must name a GitHub owner/repository or GitHub repository URL")
     return repository
 
 

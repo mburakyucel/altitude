@@ -186,7 +186,7 @@ class TestHTTPSServer(AltitudeCase):
         with mock.patch.object(config, "RELEASE", {"repository": "fictional/altitude"}), \
              mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", None), \
              mock.patch.object(server.subprocess, "run", side_effect=AssertionError("no git origin lookup")):
-            with self.assertRaisesRegex(ValueError, "stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY"):
+            with self.assertRaisesRegex(ValueError, "stay on this machine until incident reports are turned on"):
                 server.issue_repository()
             with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "other/product"):
                 self.assertEqual(server.issue_repository(), "https://github.com/other/product")

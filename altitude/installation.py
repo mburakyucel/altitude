@@ -165,6 +165,49 @@ def _probe(version: str, *, prefix: Path, timeout: float = 30) -> None:
         time.sleep(0.25)
 
 
+def _gh_signed_in() -> bool:
+    if not shutil.which("gh"):
+        return False
+    try:
+        return subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def prerequisites() -> list[dict]:
+    """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
+    with the command the operator runs in their own terminal. Nothing here takes a password or token."""
+    from . import config, engines, platform
+    gh = shutil.which("gh")
+    items = [{"key": "github", "label": "GitHub CLI signed in" if gh else "GitHub CLI not installed",
+              "state": "met" if gh and _gh_signed_in() else "unmet",
+              "detail": "Agents push branches and open pull requests through the GitHub CLI."
+              + ("" if gh else " Install it, then sign in with gh auth login."),
+              "command": "gh auth login" if gh else platform.INSTALL["gh"]}]
+    agents = []
+    for engine in config.ENGINES:
+        label = config.ENGINE_LABELS[engine]
+        if engines.installation(engine)["available"] is False:
+            agents.append({"key": engine, "label": f"{label} not installed", "state": "unmet",
+                           "detail": f"Install {label} (or set its binary in the service environment), then sign in.",
+                           "command": engines.INSTALL[engine]})
+            continue
+        signed = engines.sign_in(engine)
+        agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
+                       "state": "met" if signed["signed_in"] else "unmet",
+                       "detail": None if signed["signed_in"] else f"{label} is installed but not signed in.",
+                       "command": None if signed["signed_in"] else signed["command"]})
+    if any(agent["state"] == "met" for agent in agents):
+        for agent in agents:
+            if agent["state"] == "unmet":
+                agent.update(state="optional", detail=f"Optional: Altitude works with any one coding agent. {agent['detail']}")
+    items += agents
+    git = shutil.which("git")
+    items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
+                  "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.INSTALL["git"]})
+    return items
+
+
 def doctor() -> dict:
     from . import config, engines, platform
     checks = [{"name": "Python", "state": "tested" if sys.version_info >= (3, 12) else "unavailable",
@@ -178,12 +221,7 @@ def doctor() -> dict:
         checks.append({"name": "user service", "state": "tested", "detail": native})
     except RuntimeError as exc:
         checks.append({"name": "user service", "state": "unavailable", "detail": str(exc)})
-    authenticated = False
-    if shutil.which("gh"):
-        try:
-            authenticated = subprocess.run(["gh", "auth", "status"], capture_output=True, timeout=15).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            pass
+    authenticated = _gh_signed_in()
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",
                    "detail": "Authentication check passed; repository permissions are checked during project setup."
                    if authenticated else "Run gh auth login, then gh auth status; repository access remains unverified."})

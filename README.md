@@ -352,6 +352,15 @@ Updates preserve configuration and user data. Altitude is source-available under
 but do not offer it as a competing product; each version becomes Apache-2.0 two years after its
 release. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
 
+While no project is managed, Altitude opens with First run on phone and desktop: four skippable
+steps, each also a row in **Settings → This machine**. **Your name** comes filled in from
+`ALTITUDE_OPERATOR` or Git's `user.name`; screens and agents use it where they would say “the
+operator”. **What the agents need** reuses the doctor checks (GitHub CLI and coding agents signed in,
+Git installed) and shows the command to run in your own terminal with **Check again**; the browser
+never takes a password or token. **Report Altitude’s own faults?** keeps incidents on this computer
+by default; turning publishing on fills in Altitude's repository, which you can replace with a fork.
+**Add your projects** shows the projects folder with **Change…** and offers **Add all**.
+
 First run and **Add a folder** list the folders directly inside your projects folder (`~/Projects`
 unless changed), each with **Add project**. **Choose a folder elsewhere…** browses the computer
 running Altitude, not the phone or laptop showing the page: it starts at your home folder, lists one
@@ -693,6 +702,7 @@ proposals. Setup friction and confusing product language are useful feedback too
 fictional or redacted. Report vulnerabilities privately as the [security policy](SECURITY.md)
 describes. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
-Altitude records its own failures as incidents. They stay on your machine unless you set
-`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment to a GitHub repository you choose;
-every incident then becomes a sanitized issue there. See [incident issues](docs/CLI.md#incident-issues).
+Altitude records its own failures as incidents. They stay on your machine until you turn on
+incident reports in First run or **Settings → Incident reports** (or set
+`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment); every incident then becomes a
+sanitized issue in the repository named there, Altitude's own unless you choose a fork. See [incident issues](docs/CLI.md#incident-issues).

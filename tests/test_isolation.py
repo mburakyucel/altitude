@@ -51,7 +51,7 @@ for key in ('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_RUNTIME_DIR'):
 for key in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GH_TOKEN', 'DBUS_SESSION_BUS_ADDRESS', 'ALTITUDE_ACTOR', 'ALTITUDE_TASK'):
     assert key not in os.environ, key
 assert config.ROOT.is_relative_to(SUITE)
-assert config.OPERATOR == 'Operator'
+assert config.OPERATOR is None and config.operator_name() is None
 assert 'ALTITUDE_PRIMARY_ENGINE' not in os.environ
 from altitude import server
 assert Path(server.VOICE_SOCKET).is_relative_to(SUITE)

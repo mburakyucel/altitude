@@ -856,7 +856,7 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None, *, running_
 
 def _sender(row: dict) -> str:
     by = row.get("by") or OPERATOR_MESSAGE_ROLE
-    return config.OPERATOR if by == OPERATOR_MESSAGE_ROLE else by.capitalize()
+    return config.operator_label() if by == OPERATOR_MESSAGE_ROLE else by.capitalize()
 
 
 def render_inbox(rows: list[dict]) -> str:
@@ -2053,7 +2053,7 @@ def review_pr(project: str, task: dict) -> int | None:
 
 def block_status(project: str, task: dict) -> tuple[str, str]:
     """One wait label for the CLI, queue and restart notice; "paused" never hides an operator decision."""
-    name = config.OPERATOR
+    name = config.operator_label()
     if task.get("fault"):
         return "fault", f"paused · fault {task['fault']}"
     if task.get("stop_id"):

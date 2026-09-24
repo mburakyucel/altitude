@@ -112,7 +112,7 @@ class TestDecisions(AltitudeCase):
 
     def test_a_reply_hands_the_turn_back_until_the_owner_parks_again(self):
         task = self.blocked("Rollback", "How long should the old index stay?")
-        slug, name = task["slug"], config.OPERATOR
+        slug, name = task["slug"], config.operator_label()
         [row] = T.decisions(self.project)
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
         T.message(self.project, slug, "burak", "Could we roll back after day seven?")
@@ -144,7 +144,7 @@ class TestDecisions(AltitudeCase):
     def test_a_held_review_ready_delivery_asks_for_review_beside_a_later_question(self):
         # #419: a later, unrelated proposal must not hide the merge decision, and neither reads "paused".
         task = self.blocked("Checkout fix", "Build the export next?")
-        slug, name = task["slug"], config.OPERATOR
+        slug, name = task["slug"], config.operator_label()
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
@@ -172,7 +172,7 @@ class TestDecisions(AltitudeCase):
         # through a revision too; an unrelated question keeps the card, and withdrawing restores it.
         url = "https://example.com/atlas/pull/42"
         task = self.blocked("Checkout fix", f"Merge the checkout fix? {url}")
-        slug, name = task["slug"], config.OPERATOR
+        slug, name = task["slug"], config.operator_label()
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
@@ -197,7 +197,7 @@ class TestDecisions(AltitudeCase):
         # #451: approving an unchanged head once is enough while the owner waits on something else;
         # a changed head, a later word about the PR or a new hold asks again, and faults keep their label.
         task = self.blocked("Export fix", "CI export access is missing.", waiting_on="l3")
-        slug, name = task["slug"], config.OPERATOR
+        slug, name = task["slug"], config.operator_label()
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": "2026-01-01T00:00:00+00:00"})
         S.save_task(self.project, held)

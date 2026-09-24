@@ -497,6 +497,14 @@ registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
 `alt machine set --projects-folder PATH` and `--unset-projects-folder` use the same operator-only
 request path for `projects_folder`, an existing absolute directory; `machine show` reports it.
+The web app's machine settings write through the same request and `machine-set` event and answer
+from `GET /api/machine` (`operator`, `incident_repository`, `altitude_repository`):
+`POST /api/projects-folder`, `POST /api/operator-name` for `operator_name` (one line of at most 80
+characters; empty clears it) and `POST /api/incident-reports` for `incident_repository` (`null`
+stores `false`, publishing off; a repository is normalized to `owner/name` and saved only after
+`gh repo view` in the signed-in GitHub CLI sees it). The operator seam is `config.operator_name()`:
+the saved name, else `ALTITUDE_OPERATOR`, else Git's global `user.name` read once, else none, where
+screens say “you” and records use `config.operator_label()`.
 
 Settings take effect without a PR, service restart or free task slot. Lowering the cap preserves
 running workers; launches wait until the machine running count falls below it. Reset removes the
@@ -944,8 +952,10 @@ stalled work. Repeated observations stay quiet; terminal evidence promises no fu
 Project-local repairs remain owned by the affected project. Every incident is published as one
 GitHub issue by `incidents.publish_issue`: system faults publish after the fault lock is released,
 and `alt incident new` publishes after the record is written. The daemon owns the product target
-seam, `server.issue_repository`: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment, and
-nothing else; unset keeps every incident on the machine as a pending record with that reason. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
+seam, `server.issue_repository`: `config.incident_repository()`, the machine setting
+`incident_repository` when saved (`false` is off), else `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in
+altd's environment, and nothing else; off keeps every incident on the machine as a pending record
+with that reason. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
 the sanitized cause, a reproduction line that reads pending triage until L3 comments one, the
 Altitude version and the incident marker (incident id plus an opaque project digest). Evidence,
 task, project, logs and conversations never supply public content.
@@ -1185,10 +1195,16 @@ compact cards in one column, answered through `POST /api/decide`), the project p
 `/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
 the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
-page, and with no managed project every project route shows First run, which lists the folders under
-the projects folder (`config.project_roots()`: the machine setting `projects_folder`, else
-`ALTITUDE_ROOTS`) and starts L3 for one through `POST /api/project/add`, staying up until L3's
-first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
+page, and with no managed project every project route shows First run: the steps name, what the
+agents need, incident reports and projects, held in `?step=`, each skippable and a Settings row
+afterwards. What the agents need reads `GET /api/prerequisites`, `installation.prerequisites()`: the
+doctor's GitHub CLI check, each engine's local sign-in status through the engine seam
+(`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
+`platform.INSTALL` or `engines.INSTALL` for a missing tool, else its sign-in command), or optional once one
+engine is signed in. The projects step lists the folders under the projects folder
+(`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
+that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
+staying up until L3's first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
 narrower is the phone: one 54px identity/activity header and an 84px tab bar (Chat, Work, Needs you,
 Monitor). The shell follows visual viewport height and offset, hiding bottom navigation during

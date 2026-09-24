@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import fcntl
 import logging
+import functools
 import os
 import re
 import shutil
@@ -37,8 +38,10 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
 REPO = SOURCE.parent.parent if RELEASE is None and SOURCE.parent.name == ".altitude-source" else SOURCE
 if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
     SOURCE = (REPO / ".altitude-source/current").resolve()
-# Incident issue target, set only in altd's environment. Unset keeps incidents on this machine.
+# Incident issue target's initial value; the `incident_repository` machine setting replaces it (incident_repository()).
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
+#: Altitude's own repository: the destination First run fills in when the operator turns incident publishing on.
+ALTITUDE_REPOSITORY = "mburakyucel/altitude"
 # A repository whose base commit ships this workflow requires its PR `check` on the exact candidate head.
 PR_CHECK_WORKFLOW = ".github/workflows/self-hosted-checks.yml"
 PR_CHECK_NAME = "check"
@@ -84,8 +87,8 @@ CONVERSATION_AUDIT_PROJECT = "altitude"
 CONVERSATION_AUDIT_REVIEWER = {"engine": "claude", "model": "claude-sonnet-5"}
 #: Display names, the way the shell shows an engine; nothing outside the seam spells one.
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
-#: The operator seam: the one configured name the UI shows where a name is shown.
-OPERATOR = os.environ.get("ALTITUDE_OPERATOR") or "Operator"
+#: The operator seam's initial display name; the `operator_name` machine setting replaces it (operator_name()).
+OPERATOR = os.environ.get("ALTITUDE_OPERATOR")
 #: The persisted authority identity in task records, events and messages, independent of the display name.
 OPERATOR_ACTOR = "burak"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
@@ -206,6 +209,52 @@ def project_roots() -> list[Path]:
     """The folders First run lists the immediate subfolders of: the chosen projects folder, else ALTITUDE_ROOTS."""
     folder = machine_settings().get("projects_folder")
     return [Path(folder)] if folder else PROJECT_ROOTS
+
+
+@functools.cache
+def _git_name() -> str | None:
+    try:
+        name = subprocess.run(["git", "config", "--global", "user.name"], capture_output=True, text=True,
+                              timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return name[:OPERATOR_NAME_LIMIT] or None
+
+
+def operator_name() -> str | None:
+    """The operator seam: the chosen name, else ALTITUDE_OPERATOR, else Git's user.name; None when none is known."""
+    return machine_settings().get("operator_name") or OPERATOR or _git_name()
+
+
+def operator_label() -> str:
+    return operator_name() or "Operator"
+
+
+OPERATOR_NAME_LIMIT = 80
+
+
+def validate_operator_name(value) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip() or value != value.strip() or "\n" in value:
+        raise ValueError("the name must be nonempty text on one line")
+    if len(value) > OPERATOR_NAME_LIMIT:
+        raise ValueError(f"the name must be at most {OPERATOR_NAME_LIMIT} characters")
+
+
+def incident_repository() -> str | None:
+    """Where system incidents become GitHub issues: the operator's choice (False keeps them here), else the environment."""
+    settings = machine_settings()
+    if "incident_repository" in settings:
+        return settings["incident_repository"] or None
+    return UPSTREAM_ISSUE_REPOSITORY
+
+
+def validate_incident_repository(value) -> None:
+    if value is None or value is False:
+        return
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
+        raise ValueError("the incident repository must be a GitHub owner/name")
 
 
 def validate_projects_folder(value) -> None:
