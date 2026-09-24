@@ -135,6 +135,18 @@ CODEX_PATCH_NOTE = (
     "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
     "sandbox and its configured writable roots."
 )
+BROWSER_VERIFICATION_NOTE = (
+    "[altitude] Browser capability: worker launch does not establish browser-sandbox availability. "
+    "Before deployment verification requiring a browser sandbox, preflight the intended browser in this "
+    "worker with that sandbox enabled, blank/local fictional content, a finite timeout, and disposable writable "
+    "profile/config/cache directories; clean up afterwards. Playwright requires explicit chromiumSandbox:true. "
+    "If launch fails, report browser sandbox capability unavailable with the launch evidence and block "
+    "with --fault before proceeding with dependent verification. Preserve required browser protections and "
+    "worker confinement; a project's sandbox-disabled fictional test harness is not deployment authorization. "
+    "Namespace-visible SUID helper ownership does not establish host ownership; do not chmod/chown the helper "
+    "or bypass either sandbox. Host diagnostics require the existing purpose/question/machine-grant workflow; "
+    "a grant for diagnostics does not authorize verification outside worker confinement.\n\n"
+)
 
 
 def installation(engine: str) -> dict:
@@ -1707,7 +1719,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
                   images: list[dict] | tuple = ()) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
     config.task_effort(engine, effort)
-    prompt = (repository_rule_prompt(cwd) +
+    prompt = (repository_rule_prompt(cwd) + BROWSER_VERIFICATION_NOTE +
               f'[altitude] Begin each native helper assignment with: "You are an L1 helper. Read '
               f'`{config.PERSONAS / "l1.md"}` before working. Your assigned repository is '
               f'`{cwd.resolve()}`." Then give the task-specific assignment; do not copy the persona '
