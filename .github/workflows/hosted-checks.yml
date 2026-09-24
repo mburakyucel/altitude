@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 60
     env:
       CI: 'true'
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/browsers
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,6 +33,8 @@ jobs:
       - name: Verify exact commit and install frozen dependencies
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           corepack enable
           python3 --version
           node --version
