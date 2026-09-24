@@ -329,6 +329,12 @@ class ReviewRoutingTests(AltitudeCase):
         self.assertFalse(selected["same_engine"])
         self.assertEqual(selected["fallback_reason"], "")
 
+    def test_owner_effort_does_not_exclude_native_default_reviewer(self):
+        selected = route.pick_review({"l2_engine": "codex"}, {"l2_effort": "ultra"})
+        self.assertEqual(selected["engine"], "claude")
+        self.assertFalse(selected["same_engine"])
+        self.assertIsNone(selected["effort"])
+
     def test_single_configured_engine_supports_separate_review_with_unknown_allowance(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine), patch.object(config, "ENGINES", (engine,)):

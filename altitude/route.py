@@ -203,7 +203,7 @@ def pick_review(task: dict, project: dict) -> dict:
             excluded = tuple(option for option in options if (option[0] == owner) != same_engine)
             failures = []
             while True:
-                choice = pick_engine("l2", project=project, excluded=excluded)
+                choice = pick_engine("l2", project=project, excluded=excluded, effort="native")
                 if not choice.get("engine"):
                     why = " ".join([*failures, choice["why"]])
                     break

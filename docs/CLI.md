@@ -1191,7 +1191,8 @@ uses one additional machine slot. L2 names acceptance criteria and key risks for
 review; the reviewer reports findings and coverage gaps without a duration cutoff. L2 observes the run
 and can cancel if it gets stuck or goes off scope. No suitable engine or capacity means explicitly
 unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
-unavailable observation or cancellation.
+unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
+owner effort setting does not change reviewer eligibility.
 Service inspection must work before launch; failure refuses the invocation without spending a review.
 Use the supported review endpoint so observation and cancellation remain available. Launcher exit alone
 does not prove reviewer termination. If inspection fails, preserve the receipt and block for recovery.
