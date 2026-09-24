@@ -45,7 +45,6 @@ def run_owner(project, slug, worktree, fixture, output, options):
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
     if options.pop('required_check', False):
-        land.config.PR_CHECK_REPOSITORY = 'team/demo'
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
         (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
@@ -392,8 +391,20 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertIn('task is not running', self.finish(second)['error'])
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
 
+    def ship_check_workflow(self):
+        """The base ships the check workflow, so both owners' landings require the PR `check`."""
+        workflow = self.repo / land.config.PR_CHECK_WORKFLOW
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text('on: [pull_request]\njobs:\n  check:\n    runs-on: self-hosted\n')
+        git('add', land.config.PR_CHECK_WORKFLOW, cwd=self.repo)
+        git('commit', '-q', '-m', 'require the PR check', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        for worktree, _ in self.owners.values():
+            git('merge', '-q', '--ff-only', 'main', cwd=worktree)
+
     def test_required_checks_started_together_run_one_after_the_other(self):
         # I-20260923-062538: two candidate `make check` runs on one machine timed out each other's walkthroughs.
+        self.ship_check_workflow()
         first = self.start('first', merge=False, required_check=True)
         self.checked('first')
         second = self.start('second', merge=False, required_check=True)

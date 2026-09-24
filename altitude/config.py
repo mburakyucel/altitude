@@ -37,8 +37,7 @@ if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is
     SOURCE = (REPO / ".altitude-source/current").resolve()
 # Incident issue target, set only in altd's environment. Unset keeps incidents on this machine.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
-# Operator decision 2026-09-17: enforce PR CI without a paid repository plan.
-PR_CHECK_REPOSITORY = "mburakyucel/altitude"
+# A repository whose base commit ships this workflow requires its PR `check` on the exact candidate head.
 PR_CHECK_WORKFLOW = ".github/workflows/self-hosted-checks.yml"
 PR_CHECK_NAME = "check"
 PERSONAS = SOURCE / "personas"

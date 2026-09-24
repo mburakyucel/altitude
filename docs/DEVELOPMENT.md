@@ -294,12 +294,23 @@ and Python harnesses replace image capability checks and native execution at the
 
 ## CI and candidate identity
 
-The self-hosted `.github/workflows/self-hosted-checks.yml` runs `make check` for owner-initiated
-private pull requests, pushes to main and manual dispatches on the dedicated ephemeral-container
-runner (label `altitude-ci-docker`). Its PR `check` is required by `alt land`; owners and helpers
-run relevant tests during development instead of repeating a full local suite at every landing.
+The self-hosted `.github/workflows/self-hosted-checks.yml` runs `make check` for the repository
+owner's pull requests from branches in this repository, pushes to main and manual dispatches on
+the dedicated ephemeral-container runner (label `altitude-ci-docker`). Its PR `check` is required
+by `alt land` in every repository whose base commit ships that workflow; owners and helpers run
+relevant tests during development instead of repeating a full local suite at every landing.
 Python, web unit tests, typecheck/build and both browser viewports must execute and pass.
 No unrun or failed phase is green; live-provider validation stays deferred.
+
+Every other pull request, from a fork or from an author other than the repository owner, runs the
+same `make check` through `.github/workflows/hosted-checks.yml` on a GitHub-hosted runner with a
+read-only token and no secrets, so untrusted code never executes on the owner's machine. A failed
+hosted run uploads its browser HTML report as a seven-day artifact. That job is contributor
+feedback, not the landing gate: after review, Altitude integrates the contribution on a
+repository branch, where the required self-hosted `check` runs before the merge. GitHub's
+fork-workflow approval setting (require approval for first-time contributors) stays on once the
+repository is public. A fork of this repository without its own self-hosted runner leaves the
+self-hosted job queued for its own owner's pull requests and relies on the hosted workflow.
 
 CI records its event base, head, candidate SHA and tree, verifying that the head includes that base
 and that the tested merge tree equals the head tree. Landing requires the specific successful PR
