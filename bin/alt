@@ -278,13 +278,14 @@ def main(argv=None) -> None:
     routing = x.add_mutually_exclusive_group(required=True)
     routing.add_argument("--routing", help="ordered engine[:model] tiers: comma ties, > lower priority")
     routing.add_argument("--unset-routing", action="store_true")
-    for role in ("l3", "l2"):
-        routing.add_argument(f"--{role}-effort", choices=config.TASK_EFFORTS, help=f"project {role.upper()} reasoning effort")
-        routing.add_argument(f"--unset-{role}-effort", action="store_true", help="restore the existing engine default")
-    for engine in config.ENGINES:
-        flag = config.model_setting("l2", engine).replace("_", "-")
-        routing.add_argument(f"--{flag}", metavar="MODEL", help=f"default L2 model on {config.ENGINE_LABELS[engine]} (alias or model id) for fresh attempts Auto routes there")
-        routing.add_argument(f"--unset-{flag}", action="store_true", help=f"restore the {config.ENGINE_LABELS[engine]} default model: the role default or the CLI's own configuration")
+    for key, (role, engine, kind) in config.DEFAULT_SETTINGS.items():
+        flag, where = key.replace("_", "-"), f"{role.upper()} on {config.ENGINE_LABELS[engine]}"
+        if kind == "model":
+            routing.add_argument(f"--{flag}", metavar="MODEL", help=f"default {where} model (alias or model id) for fresh launches routed there")
+            routing.add_argument(f"--unset-{flag}", action="store_true", help="restore the role default model or the CLI's own configuration")
+        else:
+            routing.add_argument(f"--{flag}", choices=config.ENGINE_EFFORTS[engine], help=f"default {where} reasoning effort")
+            routing.add_argument(f"--unset-{flag}", action="store_true", help="restore the existing engine default")
     m = sub.add_parser("machine"); ms = m.add_subparsers(dest="mcmd", required=True)
     ms.add_parser("show", help="inspect active/default concurrency limits and pending changes")
     x = ms.add_parser("set"); x.add_argument("--reason", required=True)
@@ -299,7 +300,7 @@ def main(argv=None) -> None:
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
-    n.add_argument("--effort", choices=config.TASK_EFFORTS, help="override the project L2 effort default for this task")
+    n.add_argument("--effort", choices=config.TASK_EFFORTS, help="override the project L2 effort defaults for this task")
     n.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
     wait = n.add_mutually_exclusive_group()
     wait.add_argument("--wait", help="plan without dispatch until explicitly released; one short reason")

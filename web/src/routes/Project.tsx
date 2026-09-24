@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
@@ -11,8 +11,6 @@ import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
-import { L3EngineSelect } from "../components/L3EngineSelect";
-import { ProjectEffort } from "../components/ProjectEffort";
 import { decisionsFor, managedProjects } from "../shell/projects";
 import { ProjectSetup } from "./Setup";
 import Conversation from "./Conversation";
@@ -153,26 +151,45 @@ export function statusParts(
   return parts;
 }
 
-function HeaderMenu({ name, designViewer, starting, details }: {
-  name: string; designViewer: string; starting: boolean; details?: ReactNode;
-}) {
-  const { phone } = useViewport();
+function HeaderMenu({ name, designViewer, starting }: { name: string; designViewer: string; starting: boolean }) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState<"" | "reset" | "remove">("");
   const [error, setError] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const shown = useRef<typeof confirm>("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const reset = useL3Reset(name);
   const remove = useProjectRemove();
   const pending = reset.isPending || remove.isPending || starting;
 
-  const close = useCallback(() => {
+  const close = useCallback((refocus = false) => {
     if (pending) return;
     setOpen(false);
     setConfirm("");
     setError("");
+    if (refocus) opener.current?.focus();
   }, [pending]);
+
+  // Menu-button focus: opening enters the first item, a confirmation takes focus and Cancel returns it to its item.
+  useEffect(() => {
+    const menu = ref.current?.querySelector<HTMLElement>('[role="menu"]');
+    if (!open || !menu) { shown.current = ""; return; }
+    const target = confirm ? menu.querySelector<HTMLElement>('[role="group"] button')
+      : menu.querySelector<HTMLElement>(shown.current ? `[data-action="${shown.current}"]` : '[role="menuitem"]');
+    target?.focus();
+    shown.current = confirm;
+  }, [open, confirm]);
+
+  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (next === undefined || !items.length) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]!.focus();
+  };
 
   const choose = (action: typeof confirm) => {
     setError("");
@@ -191,7 +208,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
       if (!ref.current?.contains(event.target as Node)) close();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") close(ref.current?.contains(document.activeElement) ?? false);
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -218,7 +235,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
   );
 
   const menu = (
-        <div role="menu" className="project-details-actions" aria-label="Project actions">
+        <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
           <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate("/settings", { state: { settingsFrom: window.location.pathname + window.location.search } })}>Settings…</button>
           {confirm === "reset" ? (
             confirmRow(
@@ -228,7 +245,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
               () => reset.mutate(undefined, { onSuccess: completed, onError: failed }),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("reset")}>
+            <button type="button" role="menuitem" className="menu-item" data-action="reset" disabled={pending} onClick={() => choose("reset")}>
               Reset L3 conversation
             </button>
           )}
@@ -245,7 +262,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
                 }).catch(failed),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("remove")}>
+            <button type="button" role="menuitem" className="menu-item" data-action="remove" disabled={pending} onClick={() => choose("remove")}>
               Remove project
             </button>
           )}
@@ -262,8 +279,9 @@ function HeaderMenu({ name, designViewer, starting, details }: {
       <button
         type="button"
         className="icon-btn"
+        ref={opener}
         aria-label="More actions"
-        aria-haspopup={phone ? "dialog" : "menu"}
+        aria-haspopup="menu"
         aria-expanded={open}
         disabled={pending}
         onClick={() => (open ? close() : setOpen(true))}
@@ -274,18 +292,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
           <circle cx="16" cy="10" r="1.6" fill="currentColor" />
         </svg>
       </button>
-      {open ? phone ? <Overlay label="Project details" side="bottom" onClose={close}>
-        <div className="sheet project-details">
-          <div className="sheet-heading"><h2>{name}</h2><button type="button" className="btn btn-ghost" onClick={close} disabled={pending}>Close details</button></div>
-          {details}
-          <ProjectEffort name={name} />
-          {menu}
-        </div>
-      </Overlay> : <div className="menu project-settings" aria-label="Project details">
-        {details}
-        <ProjectEffort name={name} />
-        {menu}
-      </div> : null}
+      {open ? menu : null}
     </div>
   );
 }
@@ -315,8 +322,6 @@ function ProjectHeader({
 }) {
   const start = useL3Start(name);
   const sessionId = str(dict(project.data?.l3).session_id);
-  const sessionEngine = engines.find((e) => e.engine === str(project.data?.l3?.engine))?.label;
-  const model = str(project.data?.l3?.engine_model);
   const neverStarted =
     project.isSuccess && chat.isSuccess && !sessionId && chat.data.history.length === 0 && !chat.data.active;
   const status = project.isError
@@ -330,11 +335,7 @@ function ProjectHeader({
   const startButton = neverStarted ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
     {start.isPending ? "Starting…" : "Start L3"}
   </button> : null;
-  const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} details={<>
-    <p className="text-meta text-muted">{status}</p>
-    {sessionEngine || model ? <p className="text-meta text-muted">Session: {[sessionEngine, model].filter(Boolean).join(" · ")}</p> : null}
-    <label className="project-engine">L3 engine <L3EngineSelect name={name} engine={chat.data?.engine ?? ""} engines={engines} /></label>
-  </>} />;
+  const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />;
 
   if (!showName) return <>
     <PhoneHeader overview={overview} status={`${compactStatus}${engine ? ` · ${engine}` : ""}`}>

@@ -823,16 +823,8 @@
   border-radius: var(--radius-pill);
   background: var(--border);
 }
-.sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.sheet-heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-card-title); font-weight: 600; }
-.project-details { padding: 16px; gap: 16px; }
-.project-details-actions { display: flex; flex-direction: column; }
-.project-engine { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.project-details .composer-pill-select { min-height: 44px; }
-.project-effort, .project-effort-fields { display: flex; flex-direction: column; gap: 12px; }
-.project-effort-fields { padding: 0; margin: 0; border: 0; min-width: 0; }
-.project-effort .composer-pill-select { max-width: 100%; min-height: 44px; }
-.menu.project-settings { width: 360px; max-height: calc(100dvh - 100px); overflow-y: auto; padding: 16px; gap: 16px; }
+.menu.project-menu { width: min(320px, calc(100vw - 24px)); }
+.shell[data-phone] .project-menu .menu-item { min-height: 44px; }
 .queued-status { display: block; font-size: var(--text-meta); }
 .shell[data-phone] .queued-row > .link { min-width: 44px; min-height: 44px; }
 .shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }

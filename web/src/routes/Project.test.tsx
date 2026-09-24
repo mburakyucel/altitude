@@ -84,8 +84,6 @@ function mockFetch(fixtures: Fixtures = {}) {
     if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
-    if (url.includes("/api/effort/")) return jsonResponse({ l3: null, l2: null,
-      defaults: { l3: "Native", l2: "High" }, choices: [{ value: "native", label: "Native" }, { value: "high", label: "High" }] });
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true });
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/l3/")) return jsonResponse({ ok: true });
@@ -389,6 +387,29 @@ describe("Project page", () => {
     await user.click(screen.getByRole("button", { name: "More actions" }));
     await screen.findByRole("menuitem", { name: "Reset L3 conversation" });
     expect(screen.queryByRole("menuitem", { name: "Design boards" })).toBeNull();
+  });
+
+  it("moves keyboard focus through the menu, its confirmation and back to More actions", async () => {
+    mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("heading", { name: "altitude" });
+    const more = screen.getByRole("button", { name: "More actions" });
+    await user.click(more);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Settings…" })).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Reset L3 conversation" })).toHaveFocus();
+    await user.keyboard("{ArrowUp}{ArrowUp}");
+    expect(screen.getByRole("menuitem", { name: "Remove project" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Remove project" })).toHaveFocus());
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(more).toHaveFocus();
+    await user.click(more);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Settings…" })).toHaveFocus());
   });
 
   it("resets the L3 conversation after an inline confirm", async () => {

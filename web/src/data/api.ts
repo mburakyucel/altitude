@@ -982,36 +982,62 @@ export function useChatDequeue(project: string) {
  * stays until changed.
  */
 export function useL3Engine(project: string) {
+  const client = useQueryClient();
   return useOptimisticMutation<string | null, unknown, ChatView>({
-    mutationFn: (engine) => post("/api/l3/engine", { project, engine }),
+    mutationFn: async (engine) => {
+      const result = await post("/api/l3/engine", { project, engine });
+      await client.invalidateQueries({ queryKey: ["defaults", project] });
+      return result;
+    },
     queryKey: ["chat", project],
     update: (cached, engine) => cached && { ...cached, engine },
     failureMessage: "Couldn't change the L3 engine.",
   });
 }
 
-const EffortSchema = z.object({
-  l3: z.string().nullable(), l2: z.string().nullable(),
-  defaults: z.object({ l3: z.string(), l2: z.string() }),
-  choices: z.array(z.object({ value: z.string(), label: z.string() })),
+/** config.defaults_view(): the project's requested model/effort per role and engine, in the seam's order. */
+const DefaultFieldSchema = z.object({
+  setting: z.string(), value: z.string().nullable(), default: z.string(),
 });
+const ProjectDefaultsSchema = z.object({
+  l3_engine: z.string().nullish(),
+  roles: z.array(z.object({
+    role: z.enum(["l3", "l2"]),
+    engines: z.array(z.object({
+      engine: z.string(), label: z.string(),
+      model: DefaultFieldSchema.extend({ choices: z.array(z.string()) }),
+      effort: DefaultFieldSchema.extend({ choices: z.array(z.object({ value: z.string(), label: z.string() })) }),
+    })),
+  })),
+});
+export type ProjectDefaults = z.infer<typeof ProjectDefaultsSchema>;
 
-export function useEffort(project: string) {
+export function useProjectDefaults(project: string) {
   return useQuery({
-    queryKey: ["effort", project],
-    queryFn: async () => EffortSchema.parse(await api(`/api/effort/${project}`)),
+    queryKey: ["defaults", project],
+    queryFn: async () => ProjectDefaultsSchema.parse(await api(`/api/defaults/${project}`)),
     retry: false,
     refetchOnMount: "always",
   });
 }
 
-export function useSetEffort(project: string) {
+/** One saved default; each field owns its mutation so its Saving/Saved/error state stays beside it. */
+export function useSetDefault(project: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { role: "l3" | "l2"; effort: string | null }) =>
-      EffortSchema.parse(await post("/api/effort", { project, ...input })),
-    onMutate: () => client.cancelQueries({ queryKey: ["effort", project] }),
-    onSuccess: (result) => client.setQueryData(["effort", project], result),
+    mutationFn: async (input: { setting: string; value: string | null }) =>
+      ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
+    onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
+    // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
+    onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
+      if (!old) return result;
+      const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
+      return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
+        ...e,
+        model: e.model.setting === setting ? { ...e.model, value: saved?.value ?? null } : e.model,
+        effort: e.effort.setting === setting ? { ...e.effort, value: saved?.value ?? null } : e.effort,
+      })) })) };
+    }),
   });
 }
 

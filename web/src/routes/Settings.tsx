@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { ApiError, readVoiceSettings, saveProjectsFolder, saveVoiceSettings, useOverview } from "../data/api";
+import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
@@ -96,6 +97,21 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   </>;
 }
 
+/** The project Settings was opened from, or every managed project on a direct visit. */
+function ProjectRows({ from, state }: { from?: string; state: unknown }) {
+  const overview = useOverview();
+  const names = managedProjects(overview.data).map((row) => row.name);
+  const current = decodeURIComponent(/^\/projects\/([^/?]+)/.exec(from ?? "")?.[1] ?? "");
+  const shown = names.includes(current) ? [current] : names;
+  if (!shown.length) return null;
+  return <section className="settings-section" aria-label={current && shown[0] === current ? "This project" : "Projects"}>
+    <div><h2>{current && shown[0] === current ? "This project" : "Projects"}</h2><p className="text-meta text-muted">Applies only to that project.</p></div>
+    {shown.map((name) => <Link key={name} className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
+      <span><strong>{name}</strong>{" "}<small>L3 engine, models and reasoning effort</small></span><span aria-hidden>›</span>
+    </Link>)}
+  </section>;
+}
+
 /** The projects folder: First run offers the folders directly inside it. */
 function ProjectsFolderForm({ roots }: { roots: string[] }) {
   const client = useQueryClient();
@@ -121,7 +137,7 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
 
 const titles = { voice: "Voice input", "projects-folder": "Projects folder" } as const;
 
-/** Machine settings, with an overview that stays compact after setup. */
+/** Machine settings, then project settings, each as a compact row that opens its page. */
 export default function Settings({ page }: { page?: keyof typeof titles }) {
   const { phone } = useViewport();
   const location = useLocation();
@@ -161,6 +177,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           <h2>Network</h2><p className="text-meta text-muted">Connection details · view only</p>
           <dl className="settings-network"><dt>Address</dt><dd>{window.location.origin}</dd><dt>HTTPS</dt><dd>{window.location.protocol === "https:" ? "On" : "Off"}</dd><dt>Operator</dt><dd>{overview.data?.operator || "The operator"}</dd></dl>
         </section> : null}
+        {!voice ? <ProjectRows from={state?.settingsFrom} state={state} /> : null}
       </>}
     </div>
   </>;
