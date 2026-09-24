@@ -78,6 +78,35 @@ make check
 This validates the selected source. It does not create a release, switch a deployment to that
 source or prove live provider compatibility.
 
+## Pre-publication history audit
+
+Before the repository or an archive becomes visible to anyone new, scan everything Git can reach for
+material that belongs to a machine or a runtime rather than a repository: credentials, private keys,
+home paths, email addresses, private network addresses, transcript-like records, runtime state,
+build artifacts, large blobs and a private word list such as the names of other managed projects.
+The scan is offline and Git-native; it validates nothing, sends nothing and rewrites nothing.
+
+```sh
+make audit-history AUDIT_WORDS="$HOME/.altitude/altitude/history-audit/words.txt"
+make audit-history AUDIT_SINCE="$HOME/.altitude/altitude/history-audit/<previous>.json"   # delta only
+```
+
+Every blob reachable from any local ref (remote, tag, local, archive, quarantine, review and stash)
+is read once, then every commit message. The console prints the sanitized summary: scanned refs by
+namespace, the cutoff (`origin/main` and `HEAD`), commit and blob counts, the rule names and counts
+by category with how many hits published refs reach. Exact refs, blobs, paths, lines and matches go
+only to the findings file, mode 0600, under the runtime home; the script refuses a path inside the
+repository. The private word list stays outside the repository as well.
+
+A delta run takes the previous findings file and scans only objects and commits that none of its
+recorded ref heads reach, so re-checking shortly before publication costs seconds. Inspect the
+findings file directly; the audit record (task report, issue #233) carries the cutoff, the rules, the
+counts and the conclusion, never the matches. Regular expressions and a word list find shaped and
+known material, binary blobs get only path and size checks, and objects no ref reaches are not
+scanned: a clean run is evidence within that coverage, not a guarantee. Bring any remediation
+(history rewrite, credential rotation, file removal, visibility change) to the operator as a
+decision; the audit itself changes nothing.
+
 ## Build a private archive
 
 From the clean, committed candidate checkout, with the locked web build tools available:
