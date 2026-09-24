@@ -71,7 +71,9 @@ alt l3 search <literal-text> [--limit N] [--json]
 
 `alt task status <slug> --brief` prints at most ten orientation lines. `alt task status <slug>` and
 its explicit `--json` form return the complete status record. `alt task show <slug>` is an alias for
-that same record. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
+that same record. Its `main_run` is the push-triggered main run of the newest merged commit, or null
+with a recorded error while that run does not exist yet; a hand-dispatched run on the same commit
+never qualifies. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
 turn (open questions or a held review-ready PR), `L2 replying to <operator>` after they wrote,
 `paused · fault …`, `stopped by <operator>`, `waiting on L3` or `paused`. `alt monitor` reports quota
 and live provider sessions; `alt decisions` reports what waits for the operator, including held
@@ -1168,6 +1170,8 @@ continuation. Failures after reconciliation or push can be retried with `alt lan
 
 Task `prs` and delivery events preserve earlier PR/head/merge evidence. The current `delivery`
 receipt is recorded before waiting for checks; an unpublished delivery cannot complete the task.
+The landing result names no main run: the merged commit's push-triggered run rarely exists at that
+moment, and `alt task status` resolves the run for the merged commit itself once it does.
 The final `report.json` includes every delivery in `landed.prs` and current validation evidence.
 Reports predating the current delivery, omitting earlier PRs or leaving unpublished work are
 refused. Finish through the verified report path when all agreed work is done; a merge alone

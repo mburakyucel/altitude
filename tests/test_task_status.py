@@ -18,10 +18,14 @@ PRS = {
            "mergeCommit": {"oid": "merge-new"}, "headRefName": "worktree-new",
            "headRefOid": "head-new", "statusCheckRollup": []},
 }
-RUNS = [{"databaseId": 9, "headSha": "merge-new", "conclusion": "success", "status": "completed", "workflowName": "CI"},
-        {"databaseId": 6, "headSha": "merge-old", "conclusion": "success", "status": "completed", "workflowName": "CI"}]
-UNRELATED_RUNS = [{"databaseId": 2, "headSha": "other-sha", "conclusion": "success",
+RUNS = [{"databaseId": 9, "headSha": "merge-new", "event": "push", "conclusion": "success",
+         "status": "completed", "workflowName": "CI"},
+        {"databaseId": 6, "headSha": "merge-old", "event": "push", "conclusion": "success",
+         "status": "completed", "workflowName": "CI"}]
+UNRELATED_RUNS = [{"databaseId": 2, "headSha": "other-sha", "event": "push", "conclusion": "success",
                    "status": "completed", "workflowName": "CI"}]
+DISPATCHED_RUN = {"databaseId": 8, "headSha": "merge-new", "event": "workflow_dispatch", "conclusion": "failure",
+                  "status": "completed", "workflowName": "Hosted"}
 
 
 class TestTaskStatus(AltitudeCase):
@@ -149,7 +153,23 @@ class TestTaskStatus(AltitudeCase):
         result = task_status.status("demo", "task-one")
         self.assertIsNone(result["main_run"])
         self.assertEqual(result["gate"], "github-actions")
-        self.assertIn("no main run found for merge-new", result["errors"])
+        self.assertIn("no push-triggered main run found for merge-new", result["errors"])
+        run_list = next(call for call in self.calls() if call[:2] == ["run", "list"])
+        self.assertEqual(run_list[run_list.index("--commit") + 1], "merge-new")
+        self.assertEqual(run_list[run_list.index("--event") + 1], "push")
+
+    def test_hand_dispatched_run_on_the_merged_commit_is_not_the_main_run(self):
+        """Issue #476: a workflow_dispatch run of another workflow on the merge commit is listed first."""
+        (self.ghdir / "runs.json").write_text(json.dumps([DISPATCHED_RUN, *RUNS]))
+        result = task_status.status("demo", "task-one")
+        self.assertEqual(result["main_run"]["id"], 9)
+        self.assertEqual(result["main_run"]["head_sha"], "merge-new")
+        self.assertEqual(result["errors"], [])
+
+        (self.ghdir / "runs.json").write_text(json.dumps([DISPATCHED_RUN]))
+        result = task_status.status("demo", "task-one")
+        self.assertIsNone(result["main_run"])
+        self.assertIn("no push-triggered main run found for merge-new", result["errors"])
 
     def test_repo_without_workflows_uses_local_suite_without_main_run_error(self):
         shutil.rmtree(self.repo / ".github")
