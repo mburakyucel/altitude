@@ -12,7 +12,7 @@ _TASK_FIELDS = (
     "checkout_archive", "adopted_pr", "effort", "launch_effort", "launch_model", "machine_access",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup,files"
-_RUN_FIELDS = "databaseId,headSha,conclusion,status,workflowName"
+_RUN_FIELDS = "databaseId,headSha,event,conclusion,status,workflowName"
 _PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 _FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
 
@@ -299,19 +299,22 @@ def status(project: str, slug: str) -> dict:
     if out["gate"] == "local-suite":
         return out
     newest_sha = max(merge_candidates)[2]
+    # The merged commit's main run is the one its push created (issue #476): a run listed for the previous
+    # merge or a hand-dispatched workflow on the same commit is never the delivery's run.
     try:
-        run_list = verify.gh(["run", "list", "--branch", "main", "--limit", "100",
-                              "--json", _RUN_FIELDS], repo)
+        run_list = verify.gh(["run", "list", "--branch", "main", "--commit", newest_sha, "--event", "push",
+                              "--limit", "100", "--json", _RUN_FIELDS], repo)
         if run_list is not None and not isinstance(run_list, list):
             raise verify.VerifierFault("gh run list returned a non-list result")
         match = next((run for run in (run_list or [])
-                      if isinstance(run, dict) and run.get("headSha") == newest_sha), None)
+                      if isinstance(run, dict) and run.get("headSha") == newest_sha
+                      and run.get("event") == "push"), None)
         if match:
             out["main_run"] = {"id": match.get("databaseId"), "workflow": match.get("workflowName"),
                                "status": match.get("status"), "conclusion": match.get("conclusion"),
                                "head_sha": match.get("headSha")}
         else:
-            errors.append(f"no main run found for {newest_sha}")
+            errors.append(f"no push-triggered main run found for {newest_sha}")
     except verify.VerifierFault as e:
         _error(errors, "main_run", e)
     return out

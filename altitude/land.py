@@ -418,7 +418,7 @@ def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: di
                                 number=pr["number"], head=pr["headRefOid"])
     _note(f"PR #{pr['number']} already merged — nothing to push")
     return {"pr": pr["number"], "url": pr.get("url"), "checks": "merged",
-            "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
+            "merged": True, "branch": branch, "commit": None, "head": None,
             "lease": lease, "staged": [], "hold": task.get("hold_merge"), "replaced": [], "local_tests": None}
 
 
@@ -840,10 +840,11 @@ def _candidate(root: Path, base_sha: str, head_sha: str, *, preserve_history: bo
 
 
 def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
-           *, preserve_history: bool = False) -> tuple[bool, dict | None]:
+           *, preserve_history: bool = False) -> bool:
     """Merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
     local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
-    PR head changed after the candidate this invocation validated."""
+    PR head changed after the candidate this invocation validated. The receipt names no main run: the merged
+    commit's push-triggered run rarely exists yet, and `alt task status` resolves it by commit once it does."""
     method = ["--merge"] if preserve_history else ["--squash", "--delete-branch"]
     m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
@@ -856,20 +857,11 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     f = _git(root, "fetch", "origin", base, timeout=120)
     if f.returncode != 0:
         _note(f"git fetch origin {base} failed: {(f.stderr or '').strip()[-160:]}")
-    rl = _run(["gh", "run", "list", "--branch", base, "--limit", "1", "--json", "databaseId,status,conclusion"], root)
-    if rl.returncode != 0 or not (rl.stdout or "").strip():
-        _note(f"gh run list --branch {base} gave nothing: {(rl.stderr or '').strip()[-160:] or 'no output'}")
-        return True, None
-    try:
-        rows = json.loads(rl.stdout)
-    except ValueError:
-        _note(f"gh run list --branch {base}: unparseable output")
-        return True, None
-    return True, (rows[0] if rows else None)
+    return True
 
 
 def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
-                          preserve_history: bool = False) -> tuple[bool, dict | None, dict]:
+                          preserve_history: bool = False) -> tuple[bool, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
     base_sha, head_sha = pair["base_sha"], pair["head_sha"]
     identity = {"base": base_sha, "head": head_sha}
@@ -880,19 +872,18 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
             tests = _local_suite(path, test_cmd)
     except LandError as exc:
         _note(f"not merging: {exc}")
-        return False, None, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
-                             "skipped": None, "expected_failures": None, "error": str(exc),
-                             **identity}
+        return False, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
+                       "skipped": None, "expected_failures": None, "error": str(exc), **identity}
     tests.update(identity)
     if not tests["passed"]:
         _note(f"not merging: the local suite ({test_cmd}) is not green on the merge candidate")
-        return False, None, tests
+        return False, tests
     try:
         _assert_pair_current(root, pair)
     except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
-        return False, None, tests
+        return False, tests
     after_checks = _checks_state(root, pair["number"])
     if after_checks == "none":
         after_checks = _checks_evidence(root, pair)
@@ -901,15 +892,15 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     except LandError:
         tests["error"] = "the base or the head moved while final checks were being read"
         _note(f"not merging: {tests['error']}")
-        return False, None, tests
+        return False, tests
     if after_checks != "none":
         tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
-        return False, None, tests
+        return False, tests
     with before_merge() if before_merge else contextlib.nullcontext():
-        merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
-                                  preserve_history=preserve_history)
-    return merged, main_run, tests
+        merged = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
+                        preserve_history=preserve_history)
+    return merged, tests
 
 
 def _required_pr_check(root: Path, base_sha: str) -> bool:
@@ -1041,7 +1032,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                  if prospective["local_suite"] else ""))
         for reason in prospective["undetermined"]:
             _note(f"dry run: {reason}")
-        return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
+        return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "branch": branch,
                 "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
                 "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption,
                 "prospective": prospective}
@@ -1119,7 +1110,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
         checks = _checks_value(root, number, pair)
     _require_closing_issues(root, number, closes_issues)
-    merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
+    merged, local_tests = pr.get("state") == "MERGED", None
     def check_before_merge():
         current_pr = _pr_view(root, str(number)) or {}
         if (current_pr.get("isDraft") is True
@@ -1166,14 +1157,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
 
     if merge and not merged:
         if checks == "none-configured":
-            merged, main_run, local_tests = _merge_on_local_suite(
+            merged, local_tests = _merge_on_local_suite(
                 root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption))
         elif checks == "pass":
             checks = _checks_value(root, number, pair)
             if checks == "pass":
                 with before_merge():
-                    merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
-                                              preserve_history=bool(adoption))
+                    merged = _merge(root, publish_branch, number, base, pushed_head,
+                                    preserve_history=bool(adoption))
                 if pair["required_pr_check"]:
                     commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
                     if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
@@ -1181,6 +1172,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
         else:
             _note(f"not merging: checks are {checks!r}")
-    return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
+    return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
             "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption}

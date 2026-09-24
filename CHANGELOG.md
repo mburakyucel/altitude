@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- `alt task status` names the merged commit's own push-triggered main run or none; the
+  `alt land --merge` result no longer carries a `main_run` field, which named GitHub's latest main
+  run or a hand-dispatched workflow instead (#476).
+
 - Altitude is licensed under the Functional Source License (`FSL-1.1-ALv2`): any use except a
   competing commercial product, converting to Apache-2.0 two years after each release. The release
   archive ships the license and third-party notices; contributions require the CLA (#219).
