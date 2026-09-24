@@ -21,7 +21,7 @@ interface Recognizer {
 }
 type RecognizerConstructor = new () => Recognizer;
 
-/** How long Stop waits for the recognizer to settle its last phrase before landing what it has. */
+/** How long Stop or Cancel waits for the recognizer to end before ending without it. */
 const SETTLE_MS = 3000;
 /** A session that ends this soon after starting produced nothing; MAX_QUICK_ENDS in a row is a failure. */
 const QUICK_END_MS = 1000;
@@ -38,6 +38,13 @@ export function recognitionAvailable(): boolean {
 }
 
 export class RecognitionCapture {
+  /** The latest capture asked to end; one recognizer per page, so the next one waits for it. */
+  private static ending: Promise<void> | null = null;
+  /** While a capture asked to stop or cancel has not yet ended (at most SETTLE_MS), its end; else null. */
+  static idle(): Promise<void> | null {
+    return RecognitionCapture.ending;
+  }
+
   state: RecordingState = "inactive";
   readonly stream: MediaStream;
   readonly mimeType = "";
@@ -49,10 +56,12 @@ export class RecognitionCapture {
   private finals: string[] = [];
   private interim = "";
   private ending = false;
+  private aborting = false;
   private startedAt = 0;
   private quickEnds = 0;
   private settleTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly recognizer: Recognizer;
+  private ended: () => void = () => undefined;
 
   constructor(stream: MediaStream, lang = typeof navigator === "undefined" ? "" : navigator.language) {
     const Constructor = recognizerConstructor();
@@ -120,10 +129,7 @@ export class RecognitionCapture {
   stop() {
     if (this.state !== "recording" || this.ending) return;
     this.ending = true;
-    this.settleTimer = setTimeout(() => {
-      try { this.recognizer.abort(); } catch { /* already gone */ }
-      this.end();
-    }, SETTLE_MS);
+    this.endWithin();
     try {
       this.recognizer.stop();
     } catch {
@@ -131,12 +137,34 @@ export class RecognitionCapture {
     }
   }
 
-  /** Discard everything at once: no waiting for the recognizer's last phrase. */
+  /**
+   * Discard everything: no waiting for the last phrase. The recognizer lets go of the microphone
+   * later; the capture ends with its own end, and `idle()` holds the next capture until then.
+   */
   cancel() {
-    if (this.state !== "recording") return;
-    this.ending = true;
-    try { this.recognizer.abort(); } catch { /* already gone */ }
-    this.end();
+    if (this.state !== "recording" || this.aborting) return;
+    this.ending = this.aborting = true;
+    this.endWithin();
+    try {
+      this.recognizer.abort();
+    } catch {
+      this.end();
+    }
+  }
+
+  private endWithin() {
+    if (this.settleTimer) return;
+    const ending = new Promise<void>((resolve) => {
+      this.ended = () => {
+        if (RecognitionCapture.ending === ending) RecognitionCapture.ending = null;
+        resolve();
+      };
+    });
+    RecognitionCapture.ending = ending;
+    this.settleTimer = setTimeout(() => {
+      try { this.recognizer.abort(); } catch { /* already gone */ }
+      this.end();
+    }, SETTLE_MS);
   }
 
   private end() {
@@ -144,6 +172,10 @@ export class RecognitionCapture {
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = null;
     this.state = "inactive";
-    this.onstop?.();
+    try {
+      this.onstop?.();
+    } finally {
+      this.ended();
+    }
   }
 }

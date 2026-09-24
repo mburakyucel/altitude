@@ -77,8 +77,6 @@ describe("Composer", () => {
 
   it.each(["resolve", "reject"])("ignores cancelled microphone acquisition %s after a new recording starts", async (result) => {
     const { getUserMedia } = installVoiceBrowser();
-    const audioSession = { type: "playback" };
-    Object.defineProperty(navigator, "audioSession", { value: audioSession });
     const stopOld = vi.fn();
     let open!: (stream: MediaStream) => void;
     let reject!: (error: Error) => void;
@@ -89,7 +87,6 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     await act(async () => result === "resolve" ? open({ getTracks: () => [{ stop: stopOld }] } as unknown as MediaStream) : reject(new DOMException("Late denial", "NotAllowedError")));
     expect(stopOld).toHaveBeenCalledTimes(result === "resolve" ? 1 : 0);
-    expect(audioSession.type).toBe("play-and-record");
     expect(FakeMediaRecorder.instances).toHaveLength(1);
     expect(field).toHaveValue("Draft");
     expect(field).toHaveAttribute("readonly");
@@ -625,8 +622,8 @@ describe("Composer", () => {
     // Issue #495: the stop event arrives after the view has returned.
     await act(async () => { recording.onstop?.(); });
     await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
-    if (visibleCancel) await waitFor(() => expect(field).toHaveFocus());
-    else expect(field).not.toHaveFocus();
+    if (visibleCancel) await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toHaveFocus());
+    expect(field).not.toHaveFocus();
     deferredStop.mockRestore();
   });
 
@@ -720,18 +717,21 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
   });
 
-  it("Denied: the mic shows disabled and the hint says typing works", async () => {
+  it("Denied: the hint says typing works and the mic asks the browser again", async () => {
     installVoiceBrowser();
-    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
     const { user, field } = mount({ initial: "still here", busy: true });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     expect(await screen.findByText("Microphone blocked in the browser. Typing works.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Microphone blocked in the browser. Typing works.");
     expect(screen.queryByText("L3 is mid-turn · runs next")).toBeNull();
     expect(field).toHaveValue("still here");
     await user.type(field, " and typing");
     expect(field).toHaveValue("still here and typing");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    expect(screen.queryByText("Microphone blocked in the browser. Typing works.")).toBeNull();
   });
 
   it("Unavailable: no mic and Voice needs HTTPS on an insecure origin; no mic and no hint without recording", () => {
@@ -910,7 +910,176 @@ describe("Composer", () => {
     act(() => FakeSpeechRecognition.instances[2]!.fail("not-allowed"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Microphone blocked in the browser. Typing works.");
     expect(field).toHaveValue("still here two minutes of dictation");
-    expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+    // A refusal can be transient (Safari's speech service briefly unavailable): the next tap asks again.
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[3]!.hear(["works again"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("still here two minutes of dictation works again"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("browser recognition: Cancel returns at once; a restart waits for the cancelled recognizer to end, over repeated cycles, keeping the draft", async () => {
+    const { getUserMedia, track } = installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(cycle + 1));
+      const recognizer = FakeSpeechRecognition.instances[cycle]!;
+      recognizer.answersAbort = false;
+      act(() => recognizer.hear([`discard ${cycle}`], "and this"));
+      await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+      expect(field).toHaveValue("Keep this");
+      expect(field).not.toHaveAttribute("readonly");
+      expect(recognizer.aborted).toBe(1);
+      // The recognizer still holds the microphone: its stream stays open, and a restart waits.
+      expect(track.stop).toHaveBeenCalledTimes(cycle);
+      await user.click(screen.getByRole("button", { name: "Start voice input" }));
+      expect(await screen.findByText("Opening microphone…")).toBeInTheDocument();
+      expect(getUserMedia).toHaveBeenCalledTimes(cycle + 1);
+      expect(FakeSpeechRecognition.instances).toHaveLength(cycle + 1);
+      act(() => recognizer.onend?.());
+      expect(track.stop).toHaveBeenCalledTimes(cycle + 1);
+    }
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(4));
+    act(() => FakeSpeechRecognition.instances[3]!.hear(["kept words"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Keep this kept words"));
+    expect(field).not.toHaveAttribute("readonly");
+  });
+
+  it("browser recognition: a cancelled recognizer that never ends holds a restart at most three seconds; its late words, refusal and end cannot touch the next capture", async () => {
+    const { track } = installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep this", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    const old = FakeSpeechRecognition.instances[0]!;
+    old.answersAbort = false;
+    vi.useFakeTimers();
+    try {
+      await act(async () => { screen.getByRole("button", { name: "Cancel voice input" }).click(); });
+      await act(async () => { screen.getByRole("button", { name: "Start voice input" }).click(); });
+      expect(screen.getByText("Opening microphone…")).toBeInTheDocument();
+      expect(track.stop).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(track.stop).toHaveBeenCalledOnce();
+      expect(FakeSpeechRecognition.instances).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const next = FakeSpeechRecognition.instances[1]!;
+    act(() => { old.hear(["stale words"]); old.fail("not-allowed"); });
+    act(() => next.hear(["new words"]));
+    expect(field).toHaveValue("Keep this new words");
+    expect(field).toHaveAttribute("readonly");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Keep this new words", expect.any(Function)));
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("browser recognition: cancelling a restart that waits for a cancelled recognizer leaves its microphone to that recognizer's end", async () => {
+    const { getUserMedia, track } = installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    const old = FakeSpeechRecognition.instances[0]!;
+    old.answersAbort = false;
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText("Opening microphone…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Keep this");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(track.stop).not.toHaveBeenCalled();
+    act(() => old.onend?.());
+    expect(track.stop).toHaveBeenCalledOnce();
+    await act(async () => undefined);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(FakeSpeechRecognition.instances).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it.each(["browser", "local"] as const)("%s backend: the X returns focus to the microphone, never the field, so no phone keyboard opens; Escape returns to the field", async (backend) => {
+    installVoiceBrowser({ backend });
+    stubTranscribe("never used");
+    const { user, field } = mount({ initial: "Keep this" });
+    const mic = () => screen.getByRole("button", { name: "Start voice input" });
+    for (const cancelBy of ["X", "X", "Escape"]) {
+      await user.click(mic());
+      await screen.findByRole("button", { name: "Stop voice input" });
+      if (backend === "browser") await waitFor(() => expect(FakeSpeechRecognition.instances.at(-1)?.running).toBe(true));
+      if (cancelBy === "X") await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+      else await user.keyboard("{Escape}");
+      await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+      if (cancelBy === "X") {
+        await waitFor(() => expect(mic()).toHaveFocus());
+        expect(field).not.toHaveFocus();
+      } else await waitFor(() => expect(field).toHaveFocus());
+      expect(field).toHaveValue("Keep this");
+    }
+  });
+
+  it("browser recognition: the X on a voice Send restores the draft and focuses the microphone, not the field", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    FakeSpeechRecognition.instances[0]!.answersStop = false;
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Keep"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toHaveFocus());
+    expect(field).not.toHaveFocus();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("browser recognition: Send right after Cancel sends the typed draft once, not the discarded words", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Typed only", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    const recognizer = FakeSpeechRecognition.instances[0]!;
+    recognizer.answersAbort = false;
+    act(() => recognizer.hear(["discarded words"]));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSubmit).toHaveBeenCalledWith("Typed only", expect.any(Function));
+    act(() => recognizer.onend?.());
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(field).toHaveValue("");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("browser recognition: cancelling a voice Send while the recognizer settles restores the draft, and a restart waits for that recognizer", async () => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    const old = FakeSpeechRecognition.instances[0]!;
+    old.answersStop = false;
+    old.answersAbort = false;
+    act(() => old.hear(["unsent words"]));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Keep"));
+    expect(old.aborted).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText("Opening microphone…")).toBeInTheDocument();
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    act(() => old.onend?.());
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(2));
+    act(() => FakeSpeechRecognition.instances[1]!.hear(["fresh"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Keep fresh"));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("browser recognition: Send with a recognizer error lands the words in the draft instead of sending", async () => {

@@ -1428,8 +1428,15 @@ typed draft while listening (the field scrolls to keep the latest words in view 
 height), the last phrase may change until final, the recognizer restarts when
 the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
 and Stop waits at most three seconds for the recognizer's last phrase before landing the words; no
-upload follows. A recognizer refusal is the denied state; any other recognizer error is the failed
-state and keeps the words already shown. Cancel aborts the recognizer at once. The microphone
+upload follows. A recognizer refusal is the denied state, and because a refusal can be temporary, the
+next tap asks again; any other recognizer error is the failed state and keeps the words already shown.
+Cancel, including cancelling a voice Send or leaving the composer, discards the words and restores
+editing at once while it aborts the recognizer. That capture's microphone stream is released when
+the recognizer reports its end, or after at most three seconds. Speech recognition is
+one per page, so the next capture in any composer shows "Opening microphone…" until then instead
+of starting on top of a recognizer that is still shutting down. The browser manages the device audio
+session for capture; Altitude does not override it. Cancel with the X returns focus to the microphone
+button, so a phone keyboard does not open; Escape returns focus to the field. The microphone
 stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
 endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
 server whose backend or endpoint URL changed shows the server's words and reads the backend again.

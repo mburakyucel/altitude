@@ -664,7 +664,10 @@ and an L2 message follows the same checkpoint/resume rules. Cancel, permission d
 transcription failure create no conversation or queue record and preserve the typed draft.
 During microphone startup, listening and transcription, the shared text field is read-only and keeps
 existing text visible, with an indeterminate activity indicator and status inside the composer box.
-Cancel and timeout restore editing. Navigation cancels ordinary unsent voice input. An explicit Send
+Cancel and timeout restore editing. Cancel discards recognized words at once without opening the
+phone keyboard; dictation can be restarted immediately and repeatedly. The restart waits in its opening state, for at most three
+seconds, until the cancelled recognizer has ended. After a denial, the next tap asks the browser
+again. Navigation cancels ordinary unsent voice input. An explicit Send
 retains its original conversation, text and images while transcription completes; leaving a project
 or task does not cancel that requested send. Returning shows its pending state or recovered failure.
 Late cancelled results cannot fill or send to another conversation, including after a new recording starts.

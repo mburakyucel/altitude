@@ -820,7 +820,8 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
     visible: [v.main.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.mic],
     hidden: [v.stop],
   });
-  await expect(v.mic).toBeDisabled();
+  // The next tap asks the browser again; a real block shows the same hint.
+  await expect(v.mic).toBeEnabled();
   await expect(v.field).toHaveValue("Typing still works");
   await expect(v.field).toBeEditable();
   await expect(v.send).toBeEnabled();
