@@ -480,6 +480,39 @@ class ProjectSetup(AltitudeCase):
             self.assertEqual(self.step("coordinator")["status"], "complete")
             self.assertEqual(l3.info(self.project)["session_id"], "repaired-session")
 
+    def test_retry_reads_as_checking_until_the_first_reply_is_saved(self):
+        self.perform()
+        setup.save(self.project, start_requested=True, intro={"state": "failed", "error": "Authentication rejected"})
+        release, reads = threading.Event(), []
+        def answer(_prompt, **options):
+            reads.append(setup.observe(self.project))
+            release.wait(10)
+            return {"text": "Ready", "session_id": "repaired-session"}
+        def start(project):
+            reads.append(setup.observe(project))
+            server.start_l3(project)
+            reads.append(setup.observe(project))
+        real_spawn = server.spawn
+        def spawn(key, fn, *args):
+            return real_spawn(key, start if fn is server.start_l3 else fn, *args)
+        with mock.patch.object(server, "spawn", side_effect=spawn), \
+             mock.patch.object(engines, "installation", side_effect=lambda engine: {"available": engine == "claude", "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", side_effect=answer):
+            setup.request(self.project, "repair", actor="operator")
+            setup.run(self.project)
+            reads.append(setup.observe(self.project))
+            release.set()
+            with server._bg_guard:
+                worker = server._bg[f"start:{self.project}"]
+            worker.join(10)
+        # Every read after Retry is checking until the saved first reply completes the coordinator.
+        self.assertEqual([r["status"] for r in reads], ["checking"] * 4)
+        self.assertEqual(self.step("coordinator")["status"], "complete")
+        self.assertEqual(setup.observe(self.project)["status"], "ready")
+        # A read that captured the failed intro before the workflow saved its reply and exited is current.
+        stale = {**setup.read(self.project), "intro": {"state": "failed", "error": "Authentication rejected"}}
+        self.assertEqual(self.step("coordinator", setup._observe(self.project, stale))["status"], "complete")
+
     def test_http_registration_keeps_failed_setup_visible_and_retry_completes_it(self):
         name = "new-folder"
         folder = self.tmp / name

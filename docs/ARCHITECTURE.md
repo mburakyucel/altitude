@@ -271,7 +271,10 @@ without sending a message or launching another repair agent. L3 investigates wit
 tools and can request project-scoped daemon repair through `alt project setup`, independently of
 worker dispatch. An agent's claim of repair does not complete a step: current checks verify it.
 Failed or interrupted introductory calls wait for an explicit Retry, including during routine
-guard maintenance; timer checks do not repeat model calls.
+guard maintenance; timer checks do not repeat model calls. The runner starts the introductory
+workflow before completing its operation, and the coordinator reads as running while that workflow
+is alive, so setup stays checking, and polls quickly, until the saved reply completes it. Opening the
+conversation from Setup rereads its history.
 
 Custom hooks remain intact. The operator can explicitly choose **Use both hook sets** for a
 supported ordinary hook directory; the choice binds to the inspected hook configuration.

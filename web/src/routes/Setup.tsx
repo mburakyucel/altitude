@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { ApiError, useSetup, useSetupAction } from "../data/api";
@@ -26,8 +27,11 @@ export function ProjectSetup({ name }: { name: string }) {
   const action = useSetupAction(name);
   const [search, setSearch] = useSearchParams();
   const [integration, setIntegration] = useState<string | null>(null);
+  const client = useQueryClient();
   const open = search.get("setup") === "1";
   const close = (conversation = false) => {
+    // The conversation polls slowly while idle; a first reply saved meanwhile appears on arrival.
+    if (conversation) void client.invalidateQueries({ queryKey: ["chat", name] });
     setSearch((current) => {
       const next = new URLSearchParams(current);
       next.delete("setup");
