@@ -653,8 +653,8 @@ Python module processes run alongside the ordered web phases; CI browser workers
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 CI retains small logs and tested commit identity on the runner host; failed runs also retain the
 self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
-failure or on a reviewer's request. Unneeded completed exports are cleaned up after three days or
-when disk capacity is tight. No GitHub artifact upload is required.
+failure or on a reviewer's request. When the retained evidence reaches the runner's budget, L3
+coordinates a measured cleanup of exports no open work needs. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).

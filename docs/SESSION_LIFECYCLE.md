@@ -819,8 +819,8 @@ owners, and the merged tree must equal the tested tree. GitHub updates outside A
 A passing required check with its GitHub console log is sufficient delivery evidence. The runner
 retains small logs and identity receipts; failed runs also retain browser reports and traces, which
 owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
-when the export is unreadable. Unneeded completed exports are cleaned up after three days or when
-disk capacity is tight. GitHub artifact storage is unused. A bounded CI wait
+when the export is unreadable. When the runner's evidence budget refuses admission, L3 coordinates
+a measured cleanup of exports no open work needs. GitHub artifact storage is unused. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
 L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
 recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
