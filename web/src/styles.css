@@ -2399,6 +2399,7 @@
 }
 .task-page[data-phone] .live-panel {
   width: auto;
+  min-width: 0;
   flex: 1;
   border-left: 0;
   background: transparent;

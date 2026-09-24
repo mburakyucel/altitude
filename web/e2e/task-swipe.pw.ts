@@ -129,6 +129,16 @@ test("@phone-only vertical scrolling, selected text, composer, screen edges and 
   const wrappedBox = (await code.boundingBox())!;
   await swipe(page, 100, wrappedBox.y + 30, 160);
   await expect(live).toBeVisible();
+  // A long command truncates in its row and never widens the Live session past the screen; the
+  // fixture's command is short, so this names a longer one on the rendered row.
+  await control("long-call");
+  const call = live.locator(".session-call").last();
+  await expect(call).toBeVisible();
+  await call.evaluate((node) => { node.textContent = `rg -n "cursor|generation" ${"src/search/pagination/".repeat(4)}`; });
+  const viewport = page.viewportSize()!.width;
+  const edge = await live.getByRole("button", { name: "Raw events", exact: true }).boundingBox();
+  expect(edge!.x + edge!.width).toBeLessThanOrEqual(viewport);
+  expect(await call.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeGreaterThan(0);
   // The app wraps prose code today. This named presentation variant exercises the browser's
   // horizontal overflow behavior as well as the ordinary pre gesture exclusion.
   await code.evaluate((node) => {
