@@ -517,7 +517,9 @@ validates the current worker, registered checkout and repository, and excludes P
 owned by other active tasks. Protected branches require the guarded landing path. Landing
 fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
-when requested and allowed. A task may carry an explicit merge hold for operator review.
+when requested and allowed. After the push, the fetched branch tip must equal the pushed head;
+a different tip refuses immediately. A lagging PR view is re-read every two seconds within a
+30-second polling window before pinning that head. A task may carry an explicit merge hold for operator review.
 Invocations that merge or target this repository’s required PR check hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
 fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,

@@ -842,7 +842,9 @@ The local task branch stays unchanged in identity while fast-forward pushes upda
 PR branch. Merging landings incorporate main while preserving the adopted
 commits. No adopted push uses force, and adoption never expands to a later external head.
 Checks bind to the current authoritative base/head and candidate, tolerating stale `baseRefOid`
-metadata while refusing actual movement. Missing or skipped required checks remain blocked;
+metadata while refusing actual movement. After its own push, landing re-reads a lagging PR head
+view within a 30-second polling window while requiring the fetched branch tip to match the pushed
+head. Missing or skipped required checks remain blocked;
 nonrequired skipped checks are ignored without interpreting workflow conditions. Failed, cancelled
 and pending checks still block, including nonrequired checks. Unknown requiredness and ambiguous
 candidate evidence refuse delivery; at least one hosted check must actually pass.
