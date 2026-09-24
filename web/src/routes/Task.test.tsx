@@ -854,7 +854,7 @@ describe("Task on the phone", () => {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });
     let record = running;
-    stub(running, { message: () => response, task: () => jsonResponse(record) });
+    const fetchMock = stub(running, { message: () => response, task: () => jsonResponse(record) });
     const { user } = renderApp({ route });
     const field = await screen.findByLabelText("Message the L2");
     await user.type(field, "Original message");
@@ -862,7 +862,8 @@ describe("Task on the phone", () => {
     await user.type(field, "New thought");
     await user.click(screen.getByRole("link", { name: "Live session" }));
     expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
-    const message = { id: "after-view-switch", at: new Date().toISOString(), role: running.messages[0]!.role, text: "Original message" };
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
+    const message = { id: JSON.parse(String(call?.[1]?.body)).request_id, at: new Date().toISOString(), role: running.messages[0]!.role, text: "Original message" };
     if (status === 200) record = { ...running, messages: [...running.messages, message] };
     await act(async () => { finish(jsonResponse(status === 200 ? { ok: true, message } : { error: "Send failed" }, status)); });
     await user.click(screen.getByRole("link", { name: "Conversation" }));
