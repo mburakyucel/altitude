@@ -85,7 +85,7 @@ for (const index of [0, 1]) {
     const header = page.locator(info.project.name === "phone" ? ".phone-header" : ".task-header");
     await expect(header.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
     const reading = (await convo.locator(".convo-scroll").boundingBox())!;
-    expect(reading.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 591 : 663);
+    expect(reading.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 547 : 663);
     await info.attach("compact-layout-measurements", { body: JSON.stringify({ viewport: page.viewportSize(), reading, actionBox }), contentType: "application/json" });
     expect(await convo.locator('[data-role="l2"]').count()).toBe(1);
     await preview.getByRole("button", { name: "Expand" }).click();

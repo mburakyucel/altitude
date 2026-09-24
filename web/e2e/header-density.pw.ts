@@ -26,7 +26,7 @@ test("chat headers leave room for reading with long task titles", async ({ page,
     measurements.push({ viewport, task: header, reading });
     // Reading budgets include this long title and a merge hold; no clipped titles or smaller controls.
     expect(header!.height).toBeLessThanOrEqual(phone ? 54 : viewport.width < 1280 ? 120 : 96);
-    expect(reading!.height).toBeGreaterThanOrEqual(phone ? 590 : viewport.height === 900 ? 650 : 500);
+    expect(reading!.height).toBeGreaterThanOrEqual(phone ? 546 : viewport.height === 900 ? 650 : 500);
     await expect(field).toBeInViewport();
     expect(await page.locator("body").evaluate((node) => node.scrollWidth)).toBeLessThanOrEqual(viewport.width);
     if (!phone) {
