@@ -1061,7 +1061,7 @@ bind to their original backend/destination and refuse a changed selection before
 | Saved browser/local | Chosen radio, Saved.; endpoint form absent. |
 | Endpoint editing | URL required, optional model/key; explicit save; overview still reflects persisted choice. |
 | Saving | Saving… and disabled controls until the request answers. |
-| Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. Stale settings offer Reload settings. |
+| Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
 | Saved endpoint | Saved.; key entry clears and becomes Key set when configured. Returning shows Custom endpoint summary. |
 
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.

@@ -24,6 +24,13 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [model, setModel] = useState(saved.model);
   const [key, setKey] = useState("");
   const [keepKey, setKeepKey] = useState(saved.key_set);
+  useEffect(() => {
+    setChoice(saved.backend);
+    setUrl(saved.url);
+    setModel(saved.model);
+    setKey("");
+    setKeepKey(saved.key_set);
+  }, [saved]);
   const save = useMutation({
     mutationFn: saveVoiceSettings,
     onMutate: () => client.cancelQueries({ queryKey }),

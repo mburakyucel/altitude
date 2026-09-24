@@ -1631,8 +1631,9 @@ the three backend choices. Project three-dot menus and the desktop operator row 
 `POST /api/voice` saves through the same durable request/apply path as the CLI, with no restart or
 provider probe. Browser/local save immediately; endpoint fields use Save endpoint. Its key is
 write-only, retained only for an unchanged URL; editing the URL clears retention, and a blank
-replacement removes the key. Failed saves leave the persisted choice unchanged. Selection conflicts
-ask the person to reload settings. Concurrent writes keep the existing last-writer semantics.
+replacement removes the key. Failed saves leave the persisted choice unchanged. A changed backend
+or URL asks the person to reload settings; concurrent model/key edits keep last-writer semantics.
+Fresh settings reads update the form as well as the composer's selection.
 
 `POST /api/transcribe` is a bounded adapter for the two upload backends. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers)

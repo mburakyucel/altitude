@@ -159,3 +159,37 @@ test("Voice settings loading, denied save and retry keep the persisted selection
     await page.unrouteAll({ behavior: "wait" });
   }
 });
+
+test("Reopening voice settings replaces the cached form with a fresh machine choice", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  await walk.open("/settings/voice");
+  await expect(page.getByRole("radio", { name: "Local speech service", exact: true })).toBeChecked();
+  await page.getByRole("link", { name: "Needs you", exact: true }).click();
+  const current = await savedVoice(request);
+  const changed = await request.post("/api/voice", { data: {
+    backend: "endpoint", selection: current.selection,
+    url: "https://fresh.example.test/transcribe", model: "fresh-model",
+  } });
+  expect(changed.ok()).toBe(true);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/voice", async (route) => {
+    if (route.request().method() === "GET") await gate;
+    return route.continue();
+  });
+  try {
+    await page.goBack();
+    await expect(page.getByRole("radio", { name: "Local speech service", exact: true })).toBeChecked();
+    release();
+    await expect(page.getByRole("radio", { name: "Custom endpoint", exact: true })).toBeChecked();
+    await expect(page.getByLabel("Endpoint URL")).toHaveValue("https://fresh.example.test/transcribe");
+    await expect(page.getByLabel("Model (optional)")).toHaveValue("fresh-model");
+    await walk.state("01-fresh-choice-replaces-cached-form", {
+      visible: [page.getByLabel("Endpoint URL"), page.getByRole("button", { name: "Save endpoint" })],
+      hidden: [page.getByRole("alert")],
+    });
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
