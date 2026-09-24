@@ -761,17 +761,17 @@ Owners and helpers run relevant tests during development. This repository's self
 local full run. The branch includes current main; a branch missing it needs reconciliation
 and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
 owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
-Owners verify the runner's completed local log/identity export; failed runs also retain browser
-reports and traces. Needed evidence is copied into the task through review; unneeded completed
-exports are cleaned up after three days or when disk capacity is tight. Missing export blocks
-delivery even with green GitHub checks. GitHub artifact storage is unused. A bounded CI wait
+A passing required check with its GitHub console log is sufficient delivery evidence. The runner
+retains small logs and identity receipts; failed runs also retain browser reports and traces, which
+owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
+when the export is unreadable. Unneeded completed exports are cleaned up after three days or when
+disk capacity is tight. GitHub artifact storage is unused. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
-L3 owns the existing finite `recheck-ci` for GitHub execution; local export recovery requires
-verified retrieval from the runner. Missing runs need trigger/runner recovery. Runner or local
-storage outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
+L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
+recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
-activation does not establish evidence retrieval or release an operator hold.
+activation does not release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
