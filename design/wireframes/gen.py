@@ -149,9 +149,9 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .mcol{display:flex;flex-direction:column;gap:16px;margin-top:auto;padding-bottom:12px}
 .m .me{max-width:82%;font-size:16px;padding:10px 14px}
 .m .l3{font-size:16px;line-height:1.6}
-.m .composer,.compact .composer{display:flex;align-items:flex-end;gap:2px;border-radius:26px;padding:4px;max-width:none}
-.m .composer .ph2,.m .composer .draft,.compact .composer .ph2,.compact .composer .draft{font-size:16px;flex:1;min-width:0;min-height:44px;max-height:120px;overflow:auto;padding:10px 8px;line-height:24px}
-.m .crow,.compact .crow{display:contents}.m .crow>.pillbtn,.m .crow>span[style],.compact .crow>.pillbtn,.compact .crow>span[style]{display:none}
+.m .composer,.compact .composer{border-radius:22px;padding:4px;max-width:none}
+.m .composer .ph2,.m .composer .draft,.compact .composer .ph2,.compact .composer .draft{font-size:16px;min-height:44px;max-height:120px;overflow:auto;padding:10px 8px;line-height:24px}
+.m .crow,.compact .crow{margin-top:0}.m .crow>.pillbtn,.compact .crow>.pillbtn{display:none}
 .m .icb,.compact .icb{width:44px;height:44px}.m .hint.routine,.compact .hint.routine{display:none}
 .mcomp{padding:8px 12px}
 .phone-details>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:44px;height:44px;cursor:pointer}
@@ -240,8 +240,7 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .wave.bounded{flex:none;width:168px;padding:0}
 .wave.frozen i{background:var(--text-muted)}
 .spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);display:inline-block;flex:none}
-.compact .composer.voice{flex-wrap:wrap}.compact .composer.voice .draft,.compact .composer.voice .ph2{flex-basis:100%;min-height:24px;padding-bottom:0}
-.compact .composer.voice .crow{display:flex;width:100%;align-items:center;gap:2px;margin-top:0}.compact .composer.voice .gap{flex:1}.compact .composer.voice .crow>span[style]{display:none}
+.compact .gap{flex:1}
 .route-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 28px 28px}
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
 .route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}
@@ -602,18 +601,18 @@ def arrow(disabled=False):
     return f'<span class="icb send{" disabled" if disabled else ""}" aria-label="Send">{I("up","i lg")}</span>'
 
 def compose_state(phase):
-    """One send control in every state; 358px examples also prove the phone row."""
+    """One send control in every state; 358px examples also prove the phone's stacked field and control row."""
     draft = phase in ("Typing", "Busy", "Landed", "Failed")
     top = '<div class="draft">Both phone and desktop need to land.</div>' if draft else '<div class="ph2">Message L3 about altitude</div>'
     pin = ""
     mic = f'<span class="icb">{I("mic","i lg")}</span>'
     hint = ""
     if phase == "Listening":
-        return comp_custom('', f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>{wave(W[:6])}<span class="status">0:07</span><span class="icb" aria-label="Stop">{I("stop","i lg")}</span>' + arrow(), "Listening · Stop to edit, or send")
+        return comp_custom(top, f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>{wave(W[:6])}<span class="status">0:07</span><span class="icb" aria-label="Stop">{I("stop","i lg")}</span>' + arrow(), "Listening · Stop to edit, or send")
     if phase == "Transcribing":
         top = '<div class="draft">Both phone and desktop need to land.</div>'
         mic = f'<span class="icb dim">{I("mic","i lg")}</span>'
-        return comp_custom(top, mic + arrow(True), "Transcribing…")
+        return comp_custom(top, '<span style="flex:1"></span>' + mic + arrow(True), "Transcribing…")
     elif phase == "Busy":
         hint = ""
     elif phase == "Denied":
@@ -640,16 +639,16 @@ states = ''.join(state(label, note, '<div class="statebox compact">' + compose_s
 ]) + state("Sending refused", "bubble leaves; the draft returns", '<div class="statebox compact">' + composer(draft="Both phone and desktop need to land.", hint='<span class="danger">Not sent. Retry.</span>') + '</div>')
 sheet_inner = (
     '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Composer states</h1>'
-    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">One composer for project chat and task conversation. Each field below is phone-width, with 16px text and 44px controls on one row. Only relevant voice and error hints add height. Busy status stays in the header; queued rows name their run order and retain Remove. The accent arrow is the only send control.</p></div>'
+    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">One composer for project chat and task conversation. Each field below is phone-width, with 16px text and 44px controls in one row under the field. Only relevant voice and error hints add height. Busy status stays in the header; queued rows name their run order and retain Remove. The accent arrow is the only send control.</p></div>'
     f'<div class="sheetgrid">{states}</div>'
 )
 board("ComposerStates", 1200, 1380, sheet_inner)
 
 # Voice states sheet: the same three controls at both widths; only the desktop waveform is bounded.
 LIVE = "Keep the draft and the words appear while you speak"
-def vcomposer(draft, row, hint="", phone=False, hint_danger=False, wrap=False):
+def vcomposer(draft, row, hint="", phone=False, hint_danger=False):
     top = f'<div class="draft">{draft}</div>' if draft else '<div class="ph2">Message L3 about altitude</div>'
-    body = f'<div class="composer{" voice" if wrap else ""}">{top}<div class="crow">{row}</div></div>'
+    body = f'<div class="composer">{top}<div class="crow">{row}</div></div>'
     if hint:
         body += f'<div class="hint">{"<span class=danger>" + hint + "</span>" if hint_danger else hint}</div>'
     return f'<div class="statebox compact">{body}</div>' if phone else f'<div class="vdesk">{body}</div>'
@@ -668,13 +667,13 @@ def vrow(label, note, draft, phase, hint="", danger=False):
         hint = '<span class="spin"></span> ' + hint
     elif phase == "unavailable":
         desk = pill + arrow(not draft)
-        phone = arrow(not draft)
+        phone = '<span class="gap"></span>' + arrow(not draft)
     else:
         desk = pill + mic + arrow(not draft)
-        phone = mic + arrow(not draft)
+        phone = '<span class="gap"></span>' + mic + arrow(not draft)
     return (f'<div class="vlab">{label}<span>{note}</span></div>'
             + vcomposer(draft, desk, hint, hint_danger=danger)
-            + vcomposer(draft, phone, hint, phone=True, hint_danger=danger, wrap=phase in ("listening", "transcribing")))
+            + vcomposer(draft, phone, hint, phone=True, hint_danger=danger))
 
 voice_rows = "".join([
     vrow("Listening · browser recognition", "words land in the field as they are recognized; the last phrase may still change", LIVE, "listening", "Listening… Stop to add text, or Send."),

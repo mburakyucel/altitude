@@ -85,6 +85,16 @@ function views(page: Page, info: TestInfo) {
   };
 }
 
+/** §3.6 structure on both widths: the field spans the box and the control row sits beneath it. */
+async function expectStacked(v: ReturnType<typeof views>) {
+  const box = (await v.main.locator(".composer-box").boundingBox())!;
+  const field = (await v.field.boundingBox())!;
+  const row = (await v.main.locator(".composer-row").boundingBox())!;
+  expect(row.y).toBeGreaterThanOrEqual(field.y + field.height - 1);
+  expect(Math.abs(row.width - field.width)).toBeLessThanOrEqual(1);
+  expect(field.width).toBeGreaterThan(box.width * 0.9);
+}
+
 /** Show the row's time: hover on a desktop, a long press on the phone (SPEC.md §3.3). */
 async function revealTime(row: Locator, phone: boolean) {
   if (!phone) {
@@ -600,6 +610,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
     hidden: [transcribing],
   });
   await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  await expectStacked(v);
   await page.evaluate("window.releaseFixtureMic()");
   await walk.state("01-listening-three-controls-overlay", {
     visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field],
@@ -613,6 +624,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   await expect(v.field).toHaveAttribute("placeholder", "");
   await expect(timer).toHaveText(/^0:0\d$/);
   await expect(v.send).toBeEnabled();
+  await expectStacked(v);
   const row = await v.main.locator(".composer-row").boundingBox();
   await expect(v.send).toHaveText("");
   await expect(v.send.locator("svg")).toBeVisible();
@@ -649,6 +661,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   await expect(v.mic).toBeDisabled();
   await expect(v.send).toBeDisabled();
   await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  await expectStacked(v);
   await page.keyboard.press("Enter");
   expect(posts).toEqual([]);
   release();
@@ -658,6 +671,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
     hidden: [transcribing, wave, timer, v.main.getByText("and walk every state", { exact: true }), v.main.getByRole("region", { name: /transcript/i }), ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.send).toBeEnabled();
+  await expectStacked(v);
   await expect(v.mic).toBeEnabled();
   await expect(v.field).toBeEditable();
   expect(await v.main.locator(".composer button").allInnerTexts()).not.toContain("Undo");
@@ -841,8 +855,9 @@ test("multiline draft grows within its cap, scrolls internally, and preserves bo
   const longDraft = Array.from({ length: 24 }, (_, index) => `Draft line ${index + 1}`).join("\n");
   await walk.state("01-one-line-empty", { visible: [v.field, v.send], hidden: [] });
   await expect(v.field).toHaveCSS("height", v.phone ? "44px" : "24px");
+  await expectStacked(v);
   if (v.phone) {
-    await expect(v.main.locator(".composer-box")).toHaveCSS("height", "54px");
+    await expect(v.main.locator(".composer-box")).toHaveCSS("height", "98px");
     await expect(v.hint).toBeHidden();
   }
   await scroll.evaluate((node) => { node.scrollTop = node.scrollHeight; });
@@ -850,6 +865,7 @@ test("multiline draft grows within its cap, scrolls internally, and preserves bo
     action: () => v.field.fill(longDraft), visible: [v.field, v.send], hidden: [],
   });
   await expect(v.field).toHaveCSS("height", v.phone ? "120px" : "360px");
+  await expectStacked(v);
   await expect.poll(bottomGap).toBeLessThanOrEqual(1);
   expect(await v.field.evaluate((node) => node.scrollHeight)).toBeGreaterThan(await v.field.evaluate((node) => node.clientHeight));
   await v.field.evaluate((node) => { node.scrollTop = node.scrollHeight; });

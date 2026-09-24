@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The phone composer stacks like desktop and standard chat apps: the text field spans the top and
+  Add images, microphone, send and the recording controls sit in their own row beneath it, in every
+  state, so the send button no longer jumps beside the text when dictation lands.
+
 - Clickable controls read as clickable: the task menu's **Review proposal** and **Review changes**
   entries, **View question**, **Discuss with L3**, the update banner's **Details** and the image
   viewer's controls are bordered buttons instead of plain text. The design tenet names recognisable
