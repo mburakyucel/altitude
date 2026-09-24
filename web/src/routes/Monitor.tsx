@@ -187,13 +187,14 @@ function ModelRow({ model, stale }: { model: SeatModel; stale: boolean }) {
 }
 
 function SeatCard({ seat, label }: { seat: Seat; label: string }) {
+  const figures = seat.windows != null || seat.models.some((model) => model.percent != null);
   return (
     <section className="card monitor-card monitor-seat" aria-label={label}>
       <div className="monitor-row">
         <h3 className="monitor-seat-name">{label}</h3>
         {seat.plan ? <span className="chip">{capitalize(seat.plan)}</span> : null}
         {seat.stale ? <span className="chip chip-stale">Stale</span> : null}
-        {seat.windows ? (
+        {figures ? (
           <span className="monitor-age" title={exactTime(seat.at)}>
             {readingAge(seat.at)}
           </span>
@@ -201,6 +202,8 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
       </div>
       {seat.windows ? (
         seat.windows.map((window) => <Window key={window.name} window={window} stale={seat.stale} />)
+      ) : figures ? (
+        <p className="monitor-muted">No account windows reported.</p>
       ) : (
         <p className="monitor-muted">No reading. {seat.fix}</p>
       )}

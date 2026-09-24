@@ -241,8 +241,17 @@ test("Monitor separates each model's own allowance from the shared windows", asy
   });
   await expect(models.locator(".monitor-meter[data-stale]")).toHaveCount(1);
 
+  seat = { ...seat, quota: { known: true, at: now - 180 }, models: [{ ...exhausted, seven_day: 40 }, unread] };
+  await walk.state("05-model-only-reading", {
+    action: () => page.clock.fastForward(20_001),
+    visible: [card.getByText("No account windows reported.", { exact: true }), card.getByText(/^reading \d+m old$/),
+      models.getByText("40%", { exact: true })],
+    hidden: [card.getByText(/^No reading\. /), stale],
+  });
+  await fitsInViewport(page);
+
   seat = { ...seat, quota: { known: false, why: "the seat has not been read yet" }, models: [unread] };
-  await walk.state("05-no-reading-anywhere", {
+  await walk.state("06-no-reading-anywhere", {
     action: () => page.clock.fastForward(20_001),
     visible: [card.getByText(/^No reading\. /), noModelReading], hidden: [stale, models.locator(".monitor-meter")],
   });

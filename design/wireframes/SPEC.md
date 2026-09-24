@@ -1001,7 +1001,8 @@ Below a hairline, **Model allowances** lists each model the seat's routing can l
 "<model> · 7-day": its own meter, percentage and reset ("reset time not reported" when absent) when
 the provider sends a model-specific row, otherwise "No reading for this model. The shared windows
 don't show whether it is available." An active rejection adds "Unavailable: <reason>" in `--danger`.
-Model rows share the seat's age and stale treatment; a seat without named models shows no list.
+Model rows share the seat's age and stale treatment; a seat without named models shows no list, and
+a reading with model rows but no account windows says "No account windows reported." instead of "No reading."
 
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"

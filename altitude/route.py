@@ -4,6 +4,7 @@ Preference tiers choose eligible engine/model options; named weekly allowance
 chooses within a tied tier. Short windows only rule exhausted seats out.
 """
 from __future__ import annotations
+import time
 from datetime import datetime, timezone
 
 from . import config, state as S
@@ -151,9 +152,9 @@ def _model_exhausted(option: dict, readings: dict[str, dict]) -> str | None:
     reading = readings[option["engine"]]
     row = model_reading(reading, option.get("model")) if reading.get("known") else None
     used = _number(row.get("seven_day")) if row else None
-    if used is None or used < 100:
+    reset = row.get("seven_day_resets") if row else None
+    if used is None or used < 100 or isinstance(reset, (int, float)) and reset <= time.time():
         return None
-    reset = row.get("seven_day_resets")
     return (f"{row['label']} weekly allowance exhausted; " +
             (f"resets {datetime.fromtimestamp(reset, timezone.utc).isoformat(timespec='seconds')}"
              if isinstance(reset, (int, float)) else "reset time unknown"))

@@ -223,6 +223,20 @@ describe("Monitor", () => {
     expect(screen.queryByRole("list", { name: "Codex models" })).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("keeps a model-only reading's age and names the missing account windows (stale=%s)", async (stale) => {
+    const models = [{ model: "fable", label: "Fable", seven_day: 40, seven_day_resets: inHours(30), rejected: null }];
+    const quota = { known: !stale, ...(stale ? { stale: true } : {}), at: agoEpoch(stale ? 120 : 3) };
+    mockFetch({ ...monitor, seats: [{ ...claudeSeat, quota, models }, codexSeat] });
+    renderApp({ route: "/monitor" });
+
+    const claude = within(await screen.findByRole("region", { name: "Claude" }));
+    expect(claude.getByText(stale ? "reading 2h old" : "reading 3m old")).toBeInTheDocument();
+    expect(claude.getByText("No account windows reported.")).toBeInTheDocument();
+    expect(claude.queryByText(/^No reading\./)).not.toBeInTheDocument();
+    expect(claude.getByText("40%")).toBeInTheDocument();
+    expect(claude.queryByText("Stale") != null).toBe(stale);
+  });
+
   it("dims an aged model reading with its seat", async () => {
     const models = [{ model: "fable", label: "Fable", seven_day: 100, seven_day_resets: inHours(30), rejected: null }];
     mockFetch({ ...monitor, seats: [{ ...claudeSeat, quota: { ...claudeSeat.quota, known: false, stale: true, at: agoEpoch(45) }, models }, codexSeat] });

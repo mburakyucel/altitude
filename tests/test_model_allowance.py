@@ -101,6 +101,10 @@ class TestModelRouting(AltitudeCase):
         self.assertIn("Fable weekly allowance exhausted; reset time unknown",
                       route.pick_engine("l3", project=self.policy())["why"])
 
+    def test_a_passed_reported_reset_ends_the_exclusion(self):
+        write_quota(fable=100, reset=time.time() - 60)
+        self.assertEqual(route.pick_engine("l3", project=self.policy())["model"], "fable")
+
     def test_zero_missing_and_stale_model_readings_do_not_exclude_the_model(self):
         for fable, at in ((0, None), (None, None), (100, time.time() - route.FRESH_SECONDS - 60)):
             with self.subTest(fable=fable, stale=at is not None):

@@ -363,8 +363,8 @@ explanations.
 A missing executable or exhausted short/weekly window excludes only affected options. Unknown
 authentication, model access or quota remains eligible and is described as unverified. Altitude does
 not infer subscription entitlement from a plan name or separate Fable and Opus allowances from an
-account-wide meter. A current model-specific reading at 100% excludes only that model until its
-reported reset, and a pinned model stays strict, so a pinned L3 on an exhausted model finds no engine
+account-wide meter. A current (under thirty minutes old) model-specific reading at 100% excludes only
+that model until its reported reset passes, and a pinned model stays strict, so a pinned L3 on an exhausted model finds no engine
 and leaves queued events queued rather than spending them on failing turns. An explicit
 unavailable-model rejection excludes that model for thirty minutes; a usage limit that names a model
 family applies to every configured id of that family.

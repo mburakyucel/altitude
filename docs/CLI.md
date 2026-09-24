@@ -756,7 +756,7 @@ comparable. See [source compatibility and verification limits](SESSION_LIFECYCLE
 A missing CLI, exhausted window or known access rejection excludes the affected options; unknown
 access or quota remains eligible. No plan name implies model entitlement, and a shared account
 meter does not supply separate Fable/Opus allowances. A model-specific weekly row from the native
-reader that shows 100% excludes only that model until its reset; `alt monitor` shows these rows
+reader that shows 100% excludes only that model while the reading is current and before its reported reset; `alt monitor` shows these rows
 under each seat's `models`. If L3's Fable rejects access while Codex is
 absent, the default policy tries Opus after confirming no output or tool effects occurred; an L2
 already on Opus has no lower Claude option. A model
