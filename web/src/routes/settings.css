@@ -1,0 +1,28 @@
+.page.settings-page { margin-left: 0; max-width: 48rem; gap: 14px; }
+.settings-page h1 { font-size: var(--text-card-title); font-weight: 600; margin-bottom: 10px; }
+.settings-page h2, .settings-page legend { font-weight: 600; margin-bottom: 6px; }
+.settings-card, .settings-row { padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; text-decoration: none; color: var(--text-primary); }
+.settings-row:hover, .settings-row:focus-visible { border-color: var(--accent); background: var(--accent-tint); }
+.settings-row strong, .settings-row small { display: block; }
+.settings-row small { color: var(--text-muted); margin-top: 3px; }
+.settings-back { align-self: flex-start; border: 1px solid var(--border); text-decoration: none; }
+.phone-header.settings-header { padding: 5px 16px; gap: 20px; }
+.settings-header h1 { font-weight: 600; }
+.settings-header .settings-back { min-height: 44px; }
+.settings-network { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin-top: 14px; font-size: var(--text-meta); }
+.settings-network dt { color: var(--text-muted); }
+.settings-network dd { overflow-wrap: anywhere; min-width: 0; }
+.voice-option { padding: 16px 0; }
+.voice-option + .voice-option { border-top: 1px solid var(--hairline); }
+.voice-choice { display: flex; gap: 12px; align-items: center; font-weight: 600; cursor: pointer; min-height: 44px; }
+.voice-choice input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+.voice-option > p, .voice-endpoint { margin-left: 30px; }
+.voice-endpoint { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.voice-endpoint label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
+.voice-endpoint input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); }
+.voice-endpoint .btn { align-self: flex-start; min-height: 44px; }
+.voice-key-set { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: var(--text-meta); color: var(--text-muted); }
+.voice-key-set .link { text-decoration: underline; }
+.settings-card fieldset:disabled { opacity: .6; }
+.settings-card > [role] { margin-top: 12px; }

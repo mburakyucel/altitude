@@ -47,7 +47,7 @@ function views(page: Page, info: TestInfo) {
 }
 
 async function browserBackend(page: Page) {
-  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser" } }));
+  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser", url: "", model: "", key_set: false, selection: "fixture-browser" } }));
 }
 
 const hear = (page: Page, finals: string[], interim = "") => page.evaluate(([f, i]) => (window as unknown as { fixtureRecognizer: { hear(f: string[], i: string): void } }).fixtureRecognizer.hear(f, i), [finals, interim] as const);

@@ -233,6 +233,18 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
 /* voice states sheet: one row per state, desktop composer beside the phone dock */
+/* settings page: option rows, the endpoint form, read-only network lines, entry points */
+.opt{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--hairline);align-items:flex-start}.opt:last-child{border-bottom:0}
+.opt .radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border);flex:none;margin-top:2px;position:relative}.opt .radio.on{border-color:var(--accent)}.opt .radio.on::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.opt b{display:block;font-size:14px;font-weight:600}.opt p{margin:2px 0 0;font-size:13px;color:var(--text-muted);line-height:1.5}
+.form{display:grid;gap:10px;margin-top:10px}.form label{display:grid;gap:4px;font-size:12px;color:var(--text-secondary);font-weight:500}
+.form .field{min-width:0;color:var(--text-primary)}.form .field.ph{color:var(--text-muted)}
+.form .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}.settings-saving .opt{opacity:.55}.settings-saving .btn{pointer-events:none}.form .save-error{color:var(--danger);flex-basis:100%}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;font-size:13px}.kv span{color:var(--text-muted)}.kv b{font-weight:500;overflow-wrap:anywhere}
+.sgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
+.sgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}.sgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
+.menu-mock{width:280px;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:8px;font-size:14px}.menu-mock div{padding:9px 12px;border-radius:8px}.menu-mock div.hi{background:var(--accent-tint);color:var(--accent)}.menu-mock hr{border:0;border-top:1px solid var(--hairline);margin:6px 0}
+.who.on{background:var(--accent-tint);border-radius:10px;color:var(--text-primary)}
 .vgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
 .vgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}
 .vgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
@@ -245,6 +257,9 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
 .route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}
 .route-content h3{font-size:15px;margin:0;font-weight:600}
+.setting-link{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--border);border-radius:var(--radius-card);color:var(--text-primary);background:var(--card);text-decoration:none}
+.setting-link:hover,.setting-link:focus-visible{border-color:var(--accent);background:var(--accent-tint);text-decoration:none}
+.setting-link b{display:block;font-weight:600}.setting-link small{display:block;margin-top:3px;color:var(--text-muted);font-size:13px}.setting-back{margin-bottom:20px}
 .route-content p{margin:8px 0}.route-content ul{padding-left:20px}
 .seats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .monitor-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.monitor-row .muted{margin-left:auto}
@@ -692,6 +707,82 @@ voice_inner = (
 )
 board("VoiceStates", 1200, 1420, voice_inner)
 
+# ---------- settings overview and nested voice settings ----------
+def voice_options(chosen="browser", endpoint_form=False, status=""):
+    opts = [
+        ("browser", "Browser recognition", "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies."),
+        ("local", "Local speech service", "Audio is transcribed on the computer running Altitude after you stop. Requires a configured local speech service and ffmpeg."),
+        ("endpoint", "Custom endpoint", "Audio goes to your chosen service after you stop. Its storage policy and any charges apply."),
+    ]
+    rows = ""
+    for key, title, note in opts:
+        rows += f'<div class="opt"><span class="radio{" on" if chosen == key else ""}"></span><div style="flex:1;min-width:0"><b>{title}</b><p>{note}</p>'
+        if key == "endpoint" and endpoint_form:
+            failed = status.startswith("Not saved")
+            endpoint = 'speech.example.test/transcribe' if failed else 'https://speech.example.test/v1/audio/transcriptions'
+            button = 'Saving…' if status == 'Saving…' else 'Retry' if failed else 'Save endpoint'
+            rows += ('<div class="form"><label>Endpoint URL<span class="field" style="display:block;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + endpoint + '</span></label>'
+                     '<label>Model (optional)<span class="field ph">Default: whisper-1</span></label>'
+                     '<label>API key (optional)<span class="field ph" style="display:flex;justify-content:space-between"><span>Key set · never shown</span><span style="color:var(--accent);text-decoration:underline">Replace</span></span></label>'
+                     '<p class="muted" style="font-size:12px">Changes are saved only with Save endpoint.</p>'
+                     '<div class="actions"><span class="btn primary">' + button + '</span>' + (f'<span class="save-error">{status}</span>' if failed else '') + '</div></div>')
+        rows += '</div></div>'
+    return rows
+
+def settings_content(phone=False):
+    target = "MobileVoiceSettings.html" if phone else "VoiceSettings.html"
+    return (
+        ('' if phone else '<h1>Settings</h1>')
+        + '<h2>This machine</h2><p class="muted" style="margin-top:-6px">Applies to every project in this Altitude installation.</p>'
+        + f'<a class="setting-link" href="{target}"><span><b>Voice input</b><small>Browser recognition</small></span>{I("chev-r")}</a>'
+        '<div class="card" style="margin-top:14px"><h3>Network</h3><p class="muted" style="margin:2px 0 10px">Connection details · view only</p>'
+        '<div class="kv"><span>Address</span><b>https://altitude.example.test</b><span>HTTPS</span><b>On</b><span>Operator</span><b>Operator</b></div></div>'
+    )
+
+def voice_settings_content(phone=False):
+    heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>Voice input</h1>'
+    return (heading + '<p class="muted" style="margin:0 0 18px">Choose how speech becomes text. Applies to every project.</p>'
+        '<div class="card"><h3>Transcription backend</h3>' + voice_options("browser") + '</div>'
+        '<p class="muted" style="font-size:12px">Changes apply to your next recording. Altitude deletes temporary recordings after transcription. External services control their own audio retention.</p>')
+
+def rail_settings():
+    return rail("settings").replace('<div class="who">', '<div class="who on">').replace('<span class="avatar">B</span>Burak', '<span class="avatar">O</span>Operator')
+
+board("Settings", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail_settings() + '<main class="pane"><div class="route-content" style="max-width:720px;width:100%">' + settings_content() + '</div></main></div>')
+settings_phone_header = '<header class="mh"><span class="btn" style="padding:0 8px">' + I("chev-l") + 'Back</span><h1 style="font-size:17px;margin:0 0 0 12px">Settings</h1></header>'
+board("MobileSettings", 390, 844, '<div class="m"><div></div>' + settings_phone_header + '<div class="route-content">' + settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
+board("VoiceSettings", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail_settings() + '<main class="pane"><div class="route-content" style="max-width:720px;width:100%">' + voice_settings_content() + '</div></main></div>')
+voice_settings_phone_header = '<header class="mh"><a class="btn" href="MobileSettings.html" style="padding:0 8px">' + I("chev-l") + 'Settings</a><h1 style="font-size:17px;margin:0 0 0 12px">Voice input</h1></header>'
+board("MobileVoiceSettings", 390, 844, '<div class="m"><div></div>' + voice_settings_phone_header + '<div class="route-content">' + voice_settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
+
+def desk_settings_card(chosen, endpoint_form=False, status=""):
+    return '<div class="vdesk" style="max-width:640px"><div class="card' + (' settings-saving' if status == 'Saving…' else '') + '">' + '<h3>Voice input</h3>' + voice_options(chosen, endpoint_form, status) + (f'<p class="muted" style="margin:6px 0 0">{status}</p>' if status and not endpoint_form else '') + '</div></div>'
+
+def phone_settings_card(chosen, endpoint_form=False, status=""):
+    return '<div class="compact" style="width:390px"><div class="card tight' + (' settings-saving' if status == 'Saving…' else '') + '">' + '<h3>Voice input</h3>' + voice_options(chosen, endpoint_form, status) + (f'<p class="muted" style="margin:6px 0 0">{status}</p>' if status and not endpoint_form else '') + '</div></div>'
+
+def srow(label, note, chosen, endpoint_form=False, status=""):
+    return (f'<div class="vlab">{label}<span>{note}</span></div>' + desk_settings_card(chosen, endpoint_form, status) + phone_settings_card(chosen, endpoint_form, status))
+
+entry_desktop = ('<div class="vdesk" style="display:flex;gap:28px;align-items:flex-start">'
+    '<div style="width:260px"><div class="muted" style="margin-bottom:8px">Rail, operator row</div><div class="who on" style="border:1px solid var(--border)"><span class="avatar">O</span>Operator<span style="margin-left:auto;color:var(--accent)">' + I("gear", "i sm") + '</span></div></div>'
+    '<div><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock"><div class="hi">Settings…</div><hr><div>Reset L3 conversation</div><div>Remove project</div><div>Design boards</div></div></div></div>')
+entry_phone = ('<div class="compact" style="width:390px"><div class="muted" style="margin-bottom:8px">Project details sheet, three dots</div><div class="menu-mock" style="width:100%"><div><b>altitude</b></div><div class="muted">L3 answered 12 min ago · 3 tasks in flight</div><div>Engine · Auto</div><hr><div class="hi">Settings…</div><div>Reset L3 conversation</div><div>Remove project</div></div></div>')
+
+settings_inner = (
+    '<div style="padding:28px 40px 8px"><h1 style="margin:0;font-size:18px">Settings: states and entry points</h1>'
+    '<p class="muted" style="margin:6px 0 18px">Settings opens a compact overview. These backend options live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
+    '<div class="sgrid">'
+    + srow("Entry points", "the rail gear and the project three dots on desktop; the details sheet on phone", "browser").split('<div class="vdesk"')[0] + entry_desktop + entry_phone
+    + srow("Default", "browser recognition, nothing to configure", "browser")
+    + srow("Local chosen", "saves at once; the composer switches on its next recording", "local", status="Saved.")
+    + srow("Endpoint form", "URL required; model and key optional; a stored key is never returned", "endpoint", endpoint_form=True)
+    + srow("Saving", "controls disabled; success returns to the selected option with Saved", "endpoint", endpoint_form=True, status="Saving…")
+    + srow("Failed save", "correct the URL and retry; the saved choice is unchanged", "endpoint", endpoint_form=True, status="Not saved: use a URL beginning with https:// or http://.")
+    + '</div>'
+)
+board("SettingsStates", 1200, 3700, settings_inner)
+
 
 # =====================================================================
 # Decisions use the current conversation boards below; obsolete standalone forms are removed.
@@ -906,6 +997,9 @@ ROUTES = [
     ("First run", "FirstRun", None),
     ("Composer states, voice included", "ComposerStates", None),
     ("Voice input states: desktop and phone", "VoiceStates", None),
+    ("Settings", "Settings", "MobileSettings"),
+    ("Settings · Voice input", "VoiceSettings", "MobileVoiceSettings"),
+    ("Settings states and entry points", "SettingsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),

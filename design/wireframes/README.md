@@ -59,6 +59,7 @@ Phone headers, composers and tab bars stay docked while content scrolls inside t
 
 | Board | Files | What it shows |
 | --- | --- | --- |
+| Settings | `Settings.html`, `MobileSettings.html`, `VoiceSettings.html`, `MobileVoiceSettings.html`, `SettingsStates.html` | Compact machine overview and nested voice choices, entry points, endpoint form and save states. Spec §3.15; application walkthroughs use ignored captures. |
 | Project | `Project.html`, `MobileProject.html` | The rail (global Needs you badge, projects with state dots, unmanaged folders, engine readout, Monitor, operator). L3 conversation with task cards and folded system lines beside compact Current rows and recent Done history. Phone combines identity/status in one header and stacks the composer field over its control row; engine selection and metadata open in details. Chat, Work, Needs you, Monitor return after keyboard dismissal. |
 | Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with state dots, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
 | Project work | `MobileWork.html` | The work panel as the phone's Work tab: all current tasks, including questions awaiting an answer, as status rows opening chat; folded recent Done history. |

@@ -1034,6 +1034,43 @@ including `helpers`; opening Monitor starts no provider collection. Archived tas
 breakdown on their task/report pages rather than appearing as live Monitor sessions.
 `GET /api/overview` `engines[]` supplies routing and session engine labels. Monitor derives no action.
 
+### 3.15 Settings and Voice input
+
+Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
+or the desktop rail's operator row. The row highlights on either Settings route; theme switching
+remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
+A direct overview visit returns to `/projects`; entry from another view returns there.
+
+Under **This machine**, one bordered **Voice input** row shows the saved backend and a chevron.
+Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.
+The overview also shows read-only address, HTTPS and operator details. Project settings belong to
+a separate increment. Voice input has a labelled **Settings** back button at both widths. It returns
+to the overview even on a direct visit; browser Back retains normal history. The phone header stays
+visible while the content scrolls. Opening either page does not change a setting or probe a service.
+
+The voice page offers Browser recognition (default), Local speech service and Custom endpoint.
+Descriptions state where audio goes and optional setup/charges. Browser/local save immediately;
+endpoint opens a URL plus optional model/key form with **Save endpoint**. Back discards unsaved
+endpoint edits. Saving stays on the page. Keys are write-only: **Key set · never shown** has a
+**Replace** control; a blank replacement removes it. Editing the URL clears retained-key selection;
+no stored key follows a new destination. A successful save updates only the next capture. Uploads
+bind to their original backend/destination and refuse a changed selection before forwarding audio.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Loading | Loading settings…; no selected default or editable controls. |
+| Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
+| Saved browser/local | Chosen radio, Saved.; endpoint form absent. |
+| Endpoint editing | URL required, optional model/key; explicit save; overview still reflects persisted choice. |
+| Saving | Saving… and disabled controls until the request answers. |
+| Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
+| Saved endpoint | Saved.; key entry clears and becomes Key set when configured. Returning shows Custom endpoint summary. |
+
+Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
+Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,
+typed draft preservation, all three choices, key replacement/removal and loading/saving/failure.
+Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
+
 ## 4. Behaviour rules
 
 ### 4.1 System turns fold
