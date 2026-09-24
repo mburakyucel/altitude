@@ -1084,19 +1084,25 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on the operator.")
-    hold = l3._select(project)
-    if not hold.get("engine"):
-        log(f"[{project}/{slug}] report waits for L3: {hold.get('why')}")  # stranded-report retry owns it
-        return
-    res = server_l3_turn(project, header, trigger="report-landed")
     key, identity = (project, slug), json.dumps(owner, sort_keys=True)
-    if not (res or {}).get("completed") or (res or {}).get("error"):
-        detail = (res or {}).get("error") or "L3 turn did not complete"
+
+    def unfinished(detail: str) -> None:  # not stamped: the stranded-report scan retries after the delay
         previous = _report_retries.get(key)
         failures = previous[1] + 1 if previous and previous[0] == identity else 1
         delay = REPORT_RETRY_DELAYS[min(failures, len(REPORT_RETRY_DELAYS)) - 1]
         _report_retries[key] = (identity, failures, time.monotonic() + delay)
-        log(f"[{project}/{slug}] report turn unfinished: {detail}; retry in {delay}s")  # not stamped
+        log(f"[{project}/{slug}] report turn unfinished: {detail}; retry in {delay}s")
+
+    try:
+        res = server_l3_turn(project, header, trigger="report-landed") or {}
+    except Exception as exc:
+        unfinished(str(exc))
+        raise
+    if res.get("held"):
+        log(f"[{project}/{slug}] report waits for L3: {res['error']}")  # the next scan retries it
+        return
+    if not res.get("completed") or res.get("error"):
+        unfinished(res.get("error") or "L3 turn did not complete")
         return
     _report_retries.pop(key, None)
     try:

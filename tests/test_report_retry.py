@@ -13,7 +13,17 @@ class TestReportRetry(AltitudeCase):
         self.private_ledgers()
         self.clock = [1000.0]
         self.patch(server, "time", new=SimpleNamespace(monotonic=lambda: self.clock[0]))
-        self.patch(server, "spawn", side_effect=lambda key, fn, *args: fn(*args) or True)
+        self.patch(server, "_report_retries", new={})
+        self.raised = []
+
+        def spawn(_key, fn, *args):
+            try:
+                fn(*args)
+            except RuntimeError as exc:  # server.spawn records a background failure and continues
+                self.raised.append(str(exc))
+            return True
+
+        self.patch(server, "spawn", side_effect=spawn)
         self.patch(server, "ensure_l3_verb_broker")
         self.patch(server, "request_l3_drain")
         self.logs = []
@@ -23,6 +33,8 @@ class TestReportRetry(AltitudeCase):
         def execute(text, **kwargs):
             self.prompts.append(text)
             if "Report landed" in text.rsplit("[altitude] End historical context.", 1)[-1] and self.provider_fault:
+                if self.provider_fault == "raise":
+                    raise RuntimeError("fixture provider crash")
                 return {"text": "", "session_id": "", "error": "fixture provider fault", "usage": {}}
             sid = kwargs.get("resume") or "fixture-session"
             return {"text": "Handled.", "session_id": sid, "reported_session_id": sid,
@@ -138,3 +150,27 @@ class TestReportRetry(AltitudeCase):
         self.assertEqual(len(l3.chat_history(self.project, None)), 307)
         self.assertEqual(path.read_text(), raw, "reading history never rewrites the saved log")
         self.assertEqual(json.loads(raw.splitlines()[0])["text"], "human-0")
+
+    def test_a_report_turn_that_raises_backs_off_like_a_failed_one(self):
+        self.provider_fault = "raise"
+
+        for _ in range(10):
+            server.resume_stranded_reports(self.project)
+
+        self.assertEqual(self.raised, ["fixture provider crash"])
+        self.assertEqual(sum(row["role"] == "user" for row in self.rows()), 1)
+        self.assertIsNone(self.task()["l3_handled"])
+        self.clock[0] += 61
+        server.resume_stranded_reports(self.project)
+        self.assertEqual(len(self.raised), 2)
+
+    def test_engine_exhaustion_at_admission_writes_no_report_rows(self):
+        self.availability(datetime.now(timezone.utc) + timedelta(hours=1))
+        # The report passed any earlier look at availability; admission under the turn lock decides.
+        result = server.server_l3_turn(self.project, "Report landed for fictional-report.", trigger="report-landed")
+
+        self.assertTrue(result["held"])
+        self.assertEqual(self.rows(), [])
+        chat = l3.turn(self.project, "Fictional operator question", trigger="chat")
+        self.assertIn("engine hold", chat["error"])
+        self.assertEqual([row["role"] for row in self.rows()], ["user", "error"], "human chat still reports the hold")
