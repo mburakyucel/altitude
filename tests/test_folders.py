@@ -66,6 +66,7 @@ class TestFolders(FolderCase):
         (self.home / "hidden-link").symlink_to(self.home / ".secrets")
         self.assertEqual([row["name"] for row in server.folders(str(self.home / "code"))["folders"]],
                          ["atlas", "notes", "shortcut"])
+        self.assertNotIn("hidden-link", [row["name"] for row in server.folders(None)["folders"]])
         for path in (self.home / "code" / "escape", self.home / "hidden-link"):
             with self.subTest(path=path), self.assertRaises(server.FolderError):
                 server.folders(str(path))
@@ -103,6 +104,22 @@ class TestProjectsFolder(FolderCase):
                 dispatch.request_setting(None, "projects_folder", value, "test", actor=config.OPERATOR_ACTOR)
         with self.assertRaises(ValueError):
             server.save_projects_folder({"path": str(self.home / "code"), "extra": 1})
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads every folder")
+    def test_an_unreadable_projects_folder_is_refused_and_never_breaks_discovery(self):
+        locked = self.home / "locked"
+        locked.mkdir()
+        locked.chmod(0o300)
+        self.addCleanup(locked.chmod, 0o700)
+        with self.assertRaisesRegex(dispatch.T.TransitionError, "not readable"):
+            dispatch.request_setting(None, "projects_folder", str(locked), "test", actor=config.OPERATOR_ACTOR)
+        dispatch.request_setting(None, "projects_folder", str(self.home / "code"), "test", actor=config.OPERATOR_ACTOR)
+        (self.home / "code").chmod(0o300)
+        self.addCleanup((self.home / "code").chmod, 0o700)
+        result = dispatch.run_settings()["projects_folder"]
+        self.assertEqual((result["status"], result["note"]), ("refused", f"{self.home / 'code'} is not readable"))
+        self.patch(config, "PROJECT_ROOTS", [locked])
+        self.assertIn(self.project, {row["name"] for row in config.discover_projects()})
 
     def test_cli_sets_through_altd_and_shows_the_folder(self):
         result = self.alt("machine", "set", "--projects-folder", str(self.home / "code"), "--reason", "test",

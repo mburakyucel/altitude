@@ -210,6 +210,8 @@ def validate_projects_folder(value) -> None:
         raise ValueError("the projects folder must be an absolute path")
     if not Path(value).is_dir():
         raise ValueError(f"{value} is not a directory")
+    if not os.access(value, os.R_OK | os.X_OK):
+        raise ValueError(f"{value} is not readable")
 
 
 def machine_wip() -> int:
@@ -492,9 +494,11 @@ def discover_projects() -> list[dict]:
     by_path = {str(Path(v["path"]).expanduser().resolve()): k for k, v in managed.items()}
     out, seen = [], set()
     for root in project_roots():
-        if not root.is_dir():
+        try:
+            children = sorted(root.iterdir())
+        except OSError:  # a missing or unreadable projects folder lists nothing; managed projects remain
             continue
-        for p in sorted(root.iterdir()):
+        for p in children:
             if not p.is_dir() or p.name.startswith("."):
                 continue
             key = str(p.resolve())

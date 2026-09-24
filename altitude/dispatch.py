@@ -450,6 +450,11 @@ def _run_setting(project: str | None, setting: str) -> dict:
                 config.validate_project_effort(entry, setting[:2], request[setting])
             except ValueError as exc:
                 request.update(status="refused", note=str(exc))
+        if setting == "projects_folder":  # the folder can vanish or lose access before altd drains the CLI request
+            try:
+                config.validate_projects_folder(request[setting])
+            except ValueError as exc:
+                request.update(status="refused", note=str(exc))
         if entry is None:
             request.update(status="refused", note="project is not registered")
         elif request["status"] == "pending":

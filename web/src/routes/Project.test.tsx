@@ -145,7 +145,7 @@ describe("Project page", () => {
     data.projects[0]!.managed = false;
     finish(jsonResponse({ ok: true }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
-    await screen.findByText("Altitude found 1 folder under ~/Projects");
+    await screen.findByText("Altitude found 1 folder in ~/Projects");
     await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
     expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
     expect(queryClient.getQueryData(["chat", "altitude"])).toBeUndefined();
@@ -438,8 +438,9 @@ describe("Project page", () => {
     });
     renderApp({ route: "/projects/altitude" });
 
-    await screen.findByText("Altitude found 2 folders under ~/Projects");
-    expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(3);
+    await screen.findByText("Altitude found 2 folders in ~/Projects");
+    expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Choose a folder elsewhere…" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
   });
 });

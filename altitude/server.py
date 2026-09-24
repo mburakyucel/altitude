@@ -2262,7 +2262,7 @@ def folders(raw: str | None) -> dict:
             resolved = Path(entry.path).resolve()
         except OSError:
             continue
-        if resolved.is_relative_to(home):
+        if resolved.is_relative_to(home) and not any(part.startswith(".") for part in resolved.relative_to(home).parts):
             view["folders"].append({"name": entry.name, "path": entry.path, "project": managed.get(str(resolved)),
                                     "git": os.path.exists(os.path.join(entry.path, ".git"))})
     return view
