@@ -79,6 +79,19 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(trust["ca_cert"], str(self.directory / "ca.crt"))
         self.assertEqual(trust["ca_sha256"], tls.info()["ca_sha256"])
         self.assertIn("Certificate Trust Settings", " ".join(trust["trust_steps"]))
+        with mock.patch.object(installation.shutil, "which", return_value=None), \
+             mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
+             mock.patch.object(tls, "info", side_effect=PermissionError("tls directory unreadable")):
+            report = installation.doctor()
+        self.assertEqual(report["certificate_trust"], {"state": "unavailable", "detail": "tls directory unreadable"})
+        self.assertTrue(report["checks"], "the remaining diagnostics are still reported")
+
+    def test_device_url_brackets_ipv6_and_names_localhost_for_a_wildcard_bind(self):
+        for host, expected in (("fd00::1", f"https://[fd00::1]:{config.PORT}"),
+                               ("0.0.0.0", f"https://localhost:{config.PORT}"),
+                               ("10.1.2.3", f"https://10.1.2.3:{config.PORT}")):
+            with self.subTest(host=host):
+                self.assertEqual(tls.url(host), expected)
 
     def test_missing_trust_and_wrong_host_fail_the_real_handshake(self):
         self.create()
@@ -95,6 +108,11 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(context, self.directory / "ca.crt"), b"typed conversation")
         with self.assertRaisesRegex(tls.TLSFailure, "other.example is outside it"):
             tls.check("other.example")
+        # A configured DNS name permits its own subtree, not its parent or siblings.
+        self.assertEqual(handshake(tls.check("www.trial.example"), self.directory / "ca.crt", "www.trial.example"),
+                         b"typed conversation")
+        with self.assertRaisesRegex(tls.TLSFailure, "example is outside it"):
+            tls.check("example")
 
     def test_changed_host_reissues_the_leaf_under_the_same_trusted_ca(self):
         self.create()
@@ -135,6 +153,9 @@ class TestTLS(unittest.TestCase):
 
     def test_private_names_and_wildcard_bind_are_covered(self):
         self.create()
+        self.assertEqual(handshake(tls.check("fd00::1"), self.directory / "ca.crt", "fd00::1"), b"typed conversation")
+        with self.assertRaisesRegex(tls.TLSFailure, "2001:db8::1 is outside it"):
+            tls.check("2001:db8::1")
         self.assertEqual(handshake(tls.check("studio.local"), self.directory / "ca.crt", "studio.local"),
                          b"typed conversation")
         self.assertEqual(handshake(tls.check("0.0.0.0"), self.directory / "ca.crt"), b"typed conversation")

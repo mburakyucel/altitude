@@ -67,8 +67,10 @@ file-transfer channel. Never transfer `ca.key` or `server.key`. Do not bypass a 
 use HTTP to obtain the first trusted certificate. Trust grants the CA authority to identify sites.
 A CA that Altitude generates covers only loopback, private-network addresses (10/8, 172.16/12,
 192.168/16, 100.64/10, IPv6 unique-local), the private names `localhost`, `.local`, `.internal` and
-`home.arpa`, and a DNS name configured when it was created. It cannot vouch for a public website;
-if its key leaked it could still impersonate other private-network devices, such as a router page.
+`home.arpa`, and a DNS name configured when it was created, including that name's subdomains. It
+cannot vouch for other public websites; if its key leaked it could still impersonate other
+private-network devices, such as a router page, or names under a configured public domain. A CA
+created without these limits, or supplied externally, keeps its original scope.
 
 - **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
   certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →

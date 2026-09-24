@@ -227,9 +227,9 @@ def doctor() -> dict:
                    if authenticated else "Run gh auth login, then gh auth status; repository access remains unverified."})
     try:
         identity = tls.info()
-        trust = {"state": "unknown", "url": f"https://{identity['host']}:{config.PORT}",
+        trust = {"state": "unknown", "url": tls.url(),
                  **{key: identity[key] for key in ("ca_cert", "ca_sha256", "trust_steps")}}
-    except tls.TLSFailure as exc:
+    except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
     return {"version": (config.RELEASE or {}).get("version"), "checks": checks, "engines": seats,
@@ -442,7 +442,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
                 time.sleep(0.25)
-            return {"version": release["version"], "prefix": str(prefix), "url": f"https://{config.HOST}:{config.PORT}",
+            return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
                     "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device, comparing the CA fingerprint, then open the URL."}
 

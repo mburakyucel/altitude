@@ -65,6 +65,12 @@ def _host(host: str | None) -> tuple[str, str]:
         return "DNS", value.lower()
 
 
+def url(host: str | None = None) -> str:
+    """The HTTPS address a device opens: the certified name, with an IPv6 literal bracketed."""
+    kind, name = _host(host)
+    return f"https://{f'[{name}]' if kind == 'IP' and ':' in name else name}:{config.PORT}"
+
+
 def _private(path: Path) -> None:
     try:
         stat = path.stat()
