@@ -57,7 +57,9 @@ and merge; other repositories serialize merging invocations. Each
 turn incorporates current main and validates a fresh candidate. Waiting is visible with its
 duration and bounded to one hour; failure or process exit releases the turn. Owners keep the
 command running without asking L3 for a landing window. Conflicts, external ref changes, failed
-checks and holds still stop delivery. See [landing contention](docs/CLI.md#concurrent-landings).
+checks and holds still stop delivery. After its own push, landing briefly re-reads a lagging PR
+view while requiring the remote branch to match the pushed head. See
+[landing contention](docs/CLI.md#concurrent-landings).
 
 Owners and helpers run relevant tests during development. This repository's self-hosted PR
 `check` runs the full suite; `alt land` requires it to pass for the current merge content.
