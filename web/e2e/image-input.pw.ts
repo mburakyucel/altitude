@@ -226,7 +226,7 @@ for (const scope of ["project", "task"] as const) {
     await expect(v.field).toHaveValue("");
     await page.evaluate(() => { Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
     await walk.state("06-microphone-denied", { action: () => start.click(), visible: [page.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.add], hidden: [v.strip] });
-    await expect(start).toBeDisabled(); await expect(v.field).toBeEnabled();
+    await expect(start).toBeEnabled(); await expect(v.field).toBeEnabled();
   });
 
   test(`${scope}: unavailable image input keeps text and ordinary sends usable`, async ({ page, request }, info) => {

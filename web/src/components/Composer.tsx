@@ -150,13 +150,15 @@ function recordingMimeType(): string {
   );
 }
 
-function audioSession(type: "play-and-record" | "playback") {
-  try {
-    const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
-    if (session) session.type = type;
-  } catch {
-    // Optional iOS hint only; capture still works without it.
-  }
+/**
+ * Discard a recognition capture without waiting for its last phrase. Its recognizer lets go of the
+ * microphone later, so the stream is released when it ends, and the next capture waits for that
+ * (`RecognitionCapture.idle`) instead of starting on top of it.
+ */
+function discardRecognition(capture: RecognitionCapture) {
+  capture.onupdate = null;
+  capture.onstop = () => capture.stream.getTracks().forEach((track) => track.stop());
+  capture.cancel();
 }
 
 export function formatTimer(ms: number): string {
@@ -295,8 +297,10 @@ export default function Composer({
   const recorder = useRef<Capture | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
-  // A recorder reports its end later; only a cancel made in view takes focus back then (issue #495).
-  const focusAfterCancel = useRef(false);
+  // Only a cancel made in view takes focus back, even when a recorder reports its end later (issue
+  // #495): the field after Escape, the microphone after the X, so a phone keyboard does not open.
+  const focusAfterCancel = useRef<"field" | "mic" | null>(null);
+  const mic = useRef<HTMLButtonElement>(null);
   const stopRequested = useRef(false);
   const sendAfterTranscribing = useRef<VoiceSend | null>(null);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -369,6 +373,10 @@ export default function Composer({
       if (!retained) abort.current?.abort();
       const active = recorder.current;
       if (!retained) recorder.current = null;
+      if (!retained && active instanceof RecognitionCapture && active.state !== "inactive") {
+        discardRecognition(active);
+        return;
+      }
       try {
         if (active && active.state !== "inactive") active.stop();
       } catch {
@@ -385,7 +393,13 @@ export default function Composer({
   }, [phase]);
 
   const focusField = useCallback((position?: number) => {
+    const target = focusAfterCancel.current;
+    focusAfterCancel.current = null;
     queueMicrotask(() => {
+      if (target === "mic") {
+        if (visible.current) mic.current?.focus({ preventScroll: true });
+        return;
+      }
       const node = field.current;
       if (!node || !visible.current) return;
       node.focus({ preventScroll: true });
@@ -454,7 +468,6 @@ export default function Composer({
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());
     setStream(null);
-    audioSession("playback");
   }, []);
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
@@ -653,7 +666,9 @@ export default function Composer({
         cancel: () => {
           sending.controller.abort();
           if (recorder.current === active) { recorder.current = null; chunks.current = []; }
-          active.stream.getTracks().forEach((track) => track.stop());
+          if (active instanceof RecognitionCapture && active.state !== "inactive") discardRecognition(active);
+          else active.stream.getTracks().forEach((track) => track.stop());
+          setLive(null);
           if (capTimer.current) clearTimeout(capTimer.current);
           endVoiceSend(sending);
         },
@@ -677,9 +692,11 @@ export default function Composer({
   }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, sendDisabled, stream]);
 
   const start = useCallback(async () => {
-    if (unavailable || denied || disabled || admitting.current || phase !== "idle") return;
+    if (unavailable || disabled || admitting.current || phase !== "idle") return;
     captureSelection.current = voice?.selection ?? "";
+    focusAfterCancel.current = null;
     setVoiceFailure("");
+    setDenied(false);
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
@@ -688,7 +705,11 @@ export default function Composer({
     setPhase("starting");
     const opening = new AbortController();
     abort.current = opening;
-    audioSession("play-and-record");
+    const ending = RecognitionCapture.idle();
+    if (ending) {
+      await ending;
+      if (!mounted.current || opening.signal.aborted) return;
+    }
     let opened: MediaStream | null = null;
     try {
       // Every backend opens the microphone: the waveform draws from it, and the browser backend's
@@ -747,26 +768,33 @@ export default function Composer({
       else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
-  }, [backend, voice, denied, disabled, finish, focusField, phase, releaseStream, unavailable]);
+  }, [backend, voice, disabled, finish, focusField, phase, releaseStream, unavailable]);
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
-  const cancel = useCallback(() => {
+  const cancel = useCallback((refocus: "field" | "mic" = "field") => {
+    focusAfterCancel.current = visible.current ? refocus : null;
     const sending = voiceSends.get(conversation);
     if (sending) { sending.cancel(); return; }
     cancelled.current = true;
-    focusAfterCancel.current = visible.current;
     setLive(null);
     if (capTimer.current) clearTimeout(capTimer.current);
     capTimer.current = null;
     abort.current?.abort();
     abort.current = null;
     const active = recorder.current;
+    if (active instanceof RecognitionCapture && active.state !== "inactive") {
+      recorder.current = null;
+      discardRecognition(active);
+      setStream(null);
+      setPhase("idle");
+      focusField();
+      return;
+    }
     if (active) {
       try {
         if (active.state !== "inactive") {
-          // Recognition discards at once; a recorder ends through its stop event.
-          if (active instanceof RecognitionCapture) active.cancel();
-          else active.stop();
+          // A recorder ends through its stop event.
+          active.stop();
           return;
         }
       } catch {
@@ -775,10 +803,11 @@ export default function Composer({
       recorder.current = null;
     }
     chunks.current = [];
-    releaseStream(stream);
+    // Only this composer's own capture: a discarded recognizer keeps its stream until it ends.
+    releaseStream(active?.stream ?? null);
     setPhase("idle");
     focusField();
-  }, [conversation, focusField, releaseStream, stream]);
+  }, [conversation, focusField, releaseStream]);
 
   useEffect(() => {
     if (!active && capturePhase !== "idle" && !voiceSend) cancel();
@@ -829,7 +858,7 @@ export default function Composer({
   const remaining = MAX_RECORDING_MS - elapsed;
   const canSend = !disabled && !sendDisabled && !admission && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
   const micShown = !unavailable;
-  const micDisabled = denied || disabled || transcribing || Boolean(admission);
+  const micDisabled = disabled || transcribing || Boolean(admission);
 
   let hintText: ReactNode = hint ?? null;
   let routineHint = false;
@@ -947,7 +976,7 @@ export default function Composer({
           </> : null}
           {listening || transcribing ? (
             <div className="composer-voice" data-frozen={transcribing || undefined}>
-              <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={cancel}>
+              <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={() => cancel("mic")}>
                 <CloseIcon />
               </button>
               <canvas ref={canvas} className="composer-wave" aria-hidden />
@@ -965,6 +994,7 @@ export default function Composer({
           {micShown ? (
             <button
               type="button"
+              ref={mic}
               className={`composer-icon composer-mic${listening ? " composer-stop" : ""}`}
               aria-label={listening ? "Stop voice input" : "Start voice input"}
               aria-keyshortcuts="Control+M Meta+M"

@@ -54,6 +54,8 @@ export class FakeSpeechRecognition {
   running = false;
   /** false: Stop never gets its `end` event, as a recognizer waiting on its service. */
   answersStop = true;
+  /** false: Cancel's abort gets no `end` event until the test sends one. */
+  answersAbort = true;
 
   constructor() {
     FakeSpeechRecognition.instances.push(this);
@@ -74,7 +76,7 @@ export class FakeSpeechRecognition {
   abort() {
     this.aborted += 1;
     this.running = false;
-    queueMicrotask(() => this.onend?.());
+    if (this.answersAbort) queueMicrotask(() => this.onend?.());
   }
 
   /** Deliver the session's results so far: settled phrases and the phrase still changing. */
