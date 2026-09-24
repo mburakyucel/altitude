@@ -211,20 +211,29 @@ def publish_and_restart(staging: Path) -> None:
         shutil.rmtree(backup)
 
 
-def record_failure(error: str) -> None:
-    """Reopen entry and file this unit's own reason at once (I-20260924-205802: altd learned of a 10-second
-    failure only at its ten-minute grace timeout, which now covers just a unit that dies without reporting)."""
+def requested_at() -> str | None:
+    return (S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}).get("requested_at")
+
+
+def record_failure(attempt: str | None, error: str) -> None:
+    """File this unit's own reason at once and reopen entry (I-20260924-205802: altd learned of a 10-second
+    failure only at its ten-minute grace timeout, which now covers just a unit that dies without reporting).
+    A replacement daemon that failed verification has already cleared the record; the fault is still filed."""
+    if not attempt:
+        return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
     pending = S.read_json(flag, {}) or {}
-    if not pending.get("requested_at") or pending.get("failed"):
-        return
-    pending.update(failed=S.now(), error=error)
-    S.write_json(flag, pending)
+    if pending.get("requested_at") == attempt:
+        if pending.get("failed"):
+            return
+        pending.update(failed=S.now(), error=error)
+        S.write_json(flag, pending)
     incidents.system_fault("restart", f"restart failed: {error}")
 
 
 def main() -> int:
     staging: Path | None = None
+    attempt = requested_at()
     try:
         print("Checking the deployed checkout...")
         require_deployed_checkout()
@@ -233,12 +242,13 @@ def main() -> int:
         require_deployed_checkout()
         print("Checking that Altitude is idle...")
         require_idle()
+        attempt = requested_at()
         print("Restarting Altitude and waiting for API/UI health...")
         publish_and_restart(staging)
         staging = None
     except RestartError as exc:
         print(f"Altitude restart failed: {exc}", file=sys.stderr)
-        record_failure(str(exc))
+        record_failure(attempt, str(exc))
         return 1
     finally:
         if staging and staging.exists():

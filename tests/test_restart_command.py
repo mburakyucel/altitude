@@ -128,5 +128,25 @@ class TestRestartCommand(AltitudeCase):
         self.assertFalse(config.restart_in_progress())
 
 
+    def test_verification_failure_after_the_replacement_cleared_the_record_is_still_reported(self):
+        restart = load_script()
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        S.write_json(flag, {"files": ["altitude/server.py"], "requested_at": S.now(), "unit": "u"})
+
+        def replacement_starts_then_fails(_staging):
+            flag.unlink()  # the replacement daemon clears the record once it binds
+            raise restart.RestartError("restart verification failed; restored the prior web bundle: unhealthy")
+
+        with mock.patch.object(restart, "require_deployed_checkout"), \
+                mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
+                mock.patch.object(restart, "require_idle"), \
+                mock.patch.object(restart, "publish_and_restart", side_effect=replacement_starts_then_fails), \
+                mock.patch.object(restart.incidents, "system_fault") as fault:
+            self.assertEqual(restart.main(), 1)
+        fault.assert_called_once()
+        self.assertIn("unhealthy", fault.call_args.args[1])
+        self.assertIsNone(S.read_json(flag))  # a running replacement's open entry is not reclosed
+
+
 if __name__ == "__main__":
     unittest.main()

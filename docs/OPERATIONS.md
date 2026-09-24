@@ -144,8 +144,9 @@ pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked we
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
 Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn, or report
 verification is in flight, `altd` runs the guarded restart script below as a transient user unit.
-A failing restart unit records its reason as `error` in `monitor/restart-pending.json`, marks it
-`failed` and files a system fault for L3 immediately; the hold lifts. A restart that has not happened
+A failing restart unit files a system fault naming its reason for L3 immediately. While its
+request is still pending it also records the reason as `error` in `monitor/restart-pending.json`
+and marks it `failed`, and the hold lifts. A restart that has not happened
 ten minutes after it was requested is the same fault, for a unit that died without reporting. The
 transient unit is collected once it exits, so `systemctl --user status` reports it not-found;
 `journalctl --user -u <unit>` keeps its output. A failed activation retries automatically after the

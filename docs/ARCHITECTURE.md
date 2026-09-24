@@ -998,9 +998,9 @@ pnpm-locked dependencies, builds and validates the latest bundle in staging, rec
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
 restores the prior bundle. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
-the notice leaves when the new process answers with nothing pending. A restart unit that fails marks
-the pending record `failed` with its `error` and files a system fault naming that reason at once, and the
-hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
+the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
+system fault naming its reason at once and, while its request is still pending, marks the record `failed`
+with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
 also waits, leaving reports durable for the next tick. A shared activity lock fences these short
