@@ -997,6 +997,11 @@ Anatomy: **Monitor** title; **Altitude update** (§3.13); **Seats**, one card pe
 its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
 plan when supplied, and "reading 3m old". Exact reading times appear on hover.
+Below a hairline, **Model allowances** lists each model the seat's routing can launch, as
+"<model> · 7-day": its own meter, percentage and reset ("reset time not reported" when absent) when
+the provider sends a model-specific row, otherwise "No reading for this model. The shared windows
+don't show whether it is available." An active rejection adds "Unavailable: <reason>" in `--danger`.
+Model rows share the seat's age and stale treatment; a seat without named models shows no list.
 
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
@@ -1028,7 +1033,7 @@ engine (one seat card, no empty column); no routing ("No roles to route."); no s
 sessions.").
 
 Data: `GET /api/monitor` `seats[]` identifies each seat by its configured engine and supplies its
-label, windows, plan and reading metadata; `routing[]` and `sessions[]` supply their rows.
+label, windows, plan and reading metadata, and `models[]` with each routed model's own reading and rejection; `routing[]` and `sessions[]` supply their rows.
 L2 `sessions[].token_usage` is the same persisted accounting snapshot as task/status/report reads,
 including `helpers`; opening Monitor starts no provider collection. Archived tasks retain the
 breakdown on their task/report pages rather than appearing as live Monitor sessions.

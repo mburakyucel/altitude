@@ -201,6 +201,38 @@ describe("Monitor", () => {
     expect(within(card).queryByText(/window reported/)).not.toBeInTheDocument();
   });
 
+  it("lists each model under its seat with its own reading, a rejection, or no reading", async () => {
+    const models = [
+      { model: "fable", label: "Fable", seven_day: 100, seven_day_resets: null, rejected: null },
+      { model: "opus", label: null, seven_day: null, seven_day_resets: null, rejected: null },
+      { model: "sonnet", label: "Sonnet", seven_day: 0, seven_day_resets: inHours(5), rejected: "sonnet allowance exhausted; reset time unknown" },
+    ];
+    mockFetch({ ...monitor, seats: [{ ...claudeSeat, models }, { ...codexSeat, models: [] }] });
+    renderApp({ route: "/monitor" });
+
+    const list = within(await screen.findByRole("list", { name: "Claude models" }));
+    // The shared windows keep headroom while the model's own row is full.
+    expect(seat("Claude").getByText("74%")).toBeInTheDocument();
+    expect(list.getByText("Fable · 7-day")).toBeInTheDocument();
+    expect(list.getByText("100%")).toBeInTheDocument();
+    expect(list.getByText("reset time not reported")).toBeInTheDocument();
+    expect(list.getByText("Opus 5 · 7-day")).toBeInTheDocument();
+    expect(list.getByText(/No reading for this model\. The shared windows don't show/)).toBeInTheDocument();
+    expect(list.getByText("Unavailable: sonnet allowance exhausted; reset time unknown")).toBeInTheDocument();
+    expect(list.getByText("0%")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Codex models" })).not.toBeInTheDocument();
+  });
+
+  it("dims an aged model reading with its seat", async () => {
+    const models = [{ model: "fable", label: "Fable", seven_day: 100, seven_day_resets: inHours(30), rejected: null }];
+    mockFetch({ ...monitor, seats: [{ ...claudeSeat, quota: { ...claudeSeat.quota, known: false, stale: true, at: agoEpoch(45) }, models }, codexSeat] });
+    renderApp({ route: "/monitor" });
+
+    const list = await screen.findByRole("list", { name: "Claude models" });
+    expect(seat("Claude").getByText("Stale")).toBeInTheDocument();
+    expect(list.querySelector(".monitor-window[data-stale]")).not.toBeNull();
+  });
+
   it("names the engine each role would get right now, with the router's reason", async () => {
     mockFetch();
     renderApp({ route: "/monitor" });

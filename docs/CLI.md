@@ -75,8 +75,8 @@ that same record. Its `main_run` is the push-triggered main run of the newest me
 with a recorded error while that run does not exist yet; a hand-dispatched run on the same commit
 never qualifies. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
 turn (open questions or a held review-ready PR), `L2 replying to <operator>` after they wrote,
-`paused · fault …`, `stopped by <operator>`, `waiting on L3` or `paused`. `alt monitor` reports quota
-and live provider sessions; `alt decisions` reports what waits for the operator, including held
+`paused · fault …`, `stopped by <operator>`, `waiting on L3` or `paused`. `alt monitor` reports each
+seat's quota and model allowances, the routing each role would get now and live provider sessions; `alt decisions` reports what waits for the operator, including held
 reviews.
 
 `alt l3 tools` groups the shell commands persisted with recent L3 turns. Commands outside the `alt`
@@ -755,7 +755,9 @@ comparable. See [source compatibility and verification limits](SESSION_LIFECYCLE
 
 A missing CLI, exhausted window or known access rejection excludes the affected options; unknown
 access or quota remains eligible. No plan name implies model entitlement, and a shared account
-meter does not supply separate Fable/Opus allowances. If L3's Fable rejects access while Codex is
+meter does not supply separate Fable/Opus allowances. A model-specific weekly row from the native
+reader that shows 100% excludes only that model until its reset; `alt monitor` shows these rows
+under each seat's `models`. If L3's Fable rejects access while Codex is
 absent, the default policy tries Opus after confirming no output or tool effects occurred; an L2
 already on Opus has no lower Claude option. A model
 rejection excludes that model for thirty minutes; an authentication rejection excludes the engine

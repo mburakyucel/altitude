@@ -192,3 +192,59 @@ test("Monitor retains each partial window through fresh, stale and missing readi
     hidden: [card.locator(".monitor-age"), card.locator(".monitor-meter"), card.getByText(/window reported/), card.getByText(/^resets in/), stale],
   });
 });
+
+test("Monitor separates each model's own allowance from the shared windows", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const baseline = await (await request.get("/api/monitor")).json();
+  const [first, ...rest] = baseline.seats as (Seat & { models?: Json[] })[];
+  expect(first, "the fixture supplies a configured seat").toBeTruthy();
+  const now = Math.floor(Date.now() / 1000);
+  const shared = { known: true, at: now - 180, five_hour: 55, seven_day: 55, five_hour_resets: now + 7200, seven_day_resets: now + 86400 * 2 };
+  const exhausted = { model: "alpha", label: "Alpha", seven_day: 100, seven_day_resets: now + 86400 * 3, rejected: null };
+  const unread = { model: "beta", label: "Beta", seven_day: null, seven_day_resets: null, rejected: null };
+  let seat: Json = { ...first, quota: shared, models: [exhausted, unread] };
+  await page.route("**/api/monitor*", (route) => route.fulfill({ json: { ...baseline, seats: [seat, ...rest] } }));
+  await page.clock.install();
+  const card = page.getByRole("region", { name: first!.label, exact: true });
+  const models = card.getByRole("list", { name: `${first!.label} models`, exact: true });
+  const noModelReading = models.getByText(/^No reading for this model\./);
+  const unavailable = models.getByText(/^Unavailable:/);
+  const stale = card.getByText("Stale", { exact: true });
+
+  await walk.open("/monitor");
+  await walk.state("01-shared-headroom-model-exhausted", {
+    visible: [card.getByText("55%", { exact: true }).first(), models.getByText("Alpha · 7-day", { exact: true }),
+      models.getByText("100%", { exact: true }), models.getByText(/^resets in 3d/), noModelReading],
+    hidden: [unavailable, stale],
+  });
+  await expect(models.locator(".meter-fill")).toHaveAttribute("style", "width: 100%;");
+  await fitsInViewport(page);
+
+  seat = { ...seat, models: [{ ...exhausted, seven_day_resets: null }, { ...unread, rejected: "beta allowance exhausted; reset time unknown" }] };
+  await walk.state("02-unknown-reset-and-rejection", {
+    action: () => page.clock.fastForward(20_001),
+    visible: [models.getByText("reset time not reported", { exact: true }), models.getByText("Unavailable: beta allowance exhausted; reset time unknown", { exact: true }), noModelReading],
+    hidden: [models.getByText(/^resets in/)],
+  });
+  await fitsInViewport(page);
+
+  seat = { ...seat, models: [{ ...exhausted, seven_day: 0 }, unread] };
+  await walk.state("03-zero-is-a-reading", {
+    action: () => page.clock.fastForward(20_001),
+    visible: [models.getByText("0%", { exact: true }), noModelReading], hidden: [unavailable, models.getByText("100%", { exact: true })],
+  });
+
+  seat = { ...seat, quota: { ...shared, known: false, stale: true, at: Math.floor(hoursAgo(2).getTime() / 1000) }, models: [exhausted, unread] };
+  await walk.state("04-stale-model-reading", {
+    action: () => page.clock.fastForward(20_001),
+    visible: [stale, card.getByText("reading 2h old", { exact: true }), models.getByText("100%", { exact: true })], hidden: [unavailable],
+  });
+  await expect(models.locator(".monitor-meter[data-stale]")).toHaveCount(1);
+
+  seat = { ...seat, quota: { known: false, why: "the seat has not been read yet" }, models: [unread] };
+  await walk.state("05-no-reading-anywhere", {
+    action: () => page.clock.fastForward(20_001),
+    visible: [card.getByText(/^No reading\. /), noModelReading], hidden: [stale, models.locator(".monitor-meter")],
+  });
+  await fitsInViewport(page);
+});

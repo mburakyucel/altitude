@@ -15,6 +15,10 @@ import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STA
  * either the two windows a statusline snapshot names or windows that name their own length, and the
  * card renders whichever it is given.
  *
+ * A seat also lists each model its routing can launch with that model's own evidence: a
+ * model-specific weekly row when the provider sends one, an active rejection, or plainly none. The
+ * shared windows never stand in for a model, so headroom above cannot read as a model being available.
+ *
  * Age is the point of the page. A figure with no data at all says "No reading" and what produces one;
  * a figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed,
  * labelled. `/api/monitor` session rows are passthrough, so the fields only some kinds carry (cwd,
@@ -79,6 +83,14 @@ interface SeatWindow {
   resets: string;
 }
 
+interface SeatModel {
+  name: string;
+  percent: number | null;
+  resets: string;
+  /** The router's reason this model is excluded now, from a provider rejection; empty when none. */
+  rejected: string;
+}
+
 interface Seat {
   plan: string;
   at: unknown;
@@ -86,6 +98,20 @@ interface Seat {
   /** Null when the seat has never been read; then `fix` says what produces a reading. */
   windows: SeatWindow[] | null;
   fix: string;
+  models: SeatModel[];
+}
+
+/** The seat's per-model rows, narrowed from the passthrough payload. */
+function modelsOf(value: unknown): SeatModel[] {
+  return (Array.isArray(value) ? value : []).map((item) => {
+    const row = dict(item);
+    return {
+      name: str(row.label) || modelName(str(row.model)),
+      percent: num(row.seven_day),
+      resets: resetText(row.seven_day_resets) || "reset time not reported",
+      rejected: str(row.rejected),
+    };
+  }).filter((model) => model.name);
 }
 
 /** The windows a reading names, in the order it names them; null when it carries no figure at all. */
@@ -109,12 +135,14 @@ function windowsOf(quota: MonitorSeat["quota"]): SeatWindow[] | null {
 function seatFor(row: MonitorSeat): Seat {
   const quota = row.quota;
   const windows = windowsOf(quota);
+  const models = modelsOf(dict(row)["models"]);
   return {
     plan: str(quota.plan_type),
     at: quota.at ?? quota.read_at,
-    stale: windows != null && !quota.known,
+    stale: (windows != null || models.some((model) => model.percent != null)) && !quota.known,
     windows,
     fix: capitalize(str(quota.why)) || "The seat has not been read yet.",
+    models,
   };
 }
 
@@ -143,6 +171,21 @@ function Window({ window, stale }: { window: SeatWindow; stale: boolean }) {
   );
 }
 
+function ModelRow({ model, stale }: { model: SeatModel; stale: boolean }) {
+  return (
+    <li className="monitor-window" data-stale={stale || undefined}>
+      <div className="monitor-window-row">
+        <span>{model.name} · 7-day</span>
+        {model.percent != null ? <span>{Math.round(model.percent)}%</span> : null}
+      </div>
+      {model.percent != null ? <Meter percent={model.percent} reserve stale={stale} /> : null}
+      {model.percent != null ? <p className="monitor-window-reset">{model.resets}</p> :
+        <p className="monitor-muted">No reading for this model. The shared windows don't show whether it is available.</p>}
+      {model.rejected ? <p className="m-0 text-[12px] text-danger">Unavailable: {model.rejected}</p> : null}
+    </li>
+  );
+}
+
 function SeatCard({ seat, label }: { seat: Seat; label: string }) {
   return (
     <section className="card monitor-card monitor-seat" aria-label={label}>
@@ -161,6 +204,14 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
       ) : (
         <p className="monitor-muted">No reading. {seat.fix}</p>
       )}
+      {seat.models.length ? (
+        <div className="grid gap-3 border-t border-hairline pt-3">
+          <p className="monitor-muted">Model allowances</p>
+          <ul className="grid gap-3" aria-label={`${label} models`}>
+            {seat.models.map((model) => <ModelRow key={model.name} model={model} stale={seat.stale} />)}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }
