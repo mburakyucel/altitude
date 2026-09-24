@@ -185,6 +185,42 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
                        "effort" in task or project.get("l2_effort") is not None else "native")
 
 
+def pick_review(task: dict, project: dict) -> dict:
+    """Prefer an eligible alternate seat, then a separate invocation on the owner's seat."""
+    from . import engines
+    owner = task.get("l2_engine")
+    empty = {"engine": None, "model": None, "label": None, "allowance_known": False,
+             "same_engine": False, "fallback_reason": ""}
+    if owner not in config.ENGINES:
+        return {**empty, "why": "The owner's actual engine is unavailable."}
+    try:
+        pin = config.pinned_option("l2", project)
+        tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
+        options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"]))
+                   for tier in tiers for o in tier]
+        fallback_reason = ""
+        for same_engine in (False, True):
+            excluded = tuple(option for option in options if (option[0] == owner) != same_engine)
+            failures = []
+            while True:
+                choice = pick_engine("l2", project=project, excluded=excluded, effort="native")
+                if not choice.get("engine"):
+                    why = " ".join([*failures, choice["why"]])
+                    break
+                capability = engines.review_capability(choice["engine"])
+                if capability["available"]:
+                    return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
+                            "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
+                            "same_engine": same_engine, "fallback_reason": fallback_reason}
+                failures.append(f"{config.ENGINE_LABELS[choice['engine']]}: {capability['why']}")
+                excluded += tuple(option for option in options if option[0] == choice["engine"])
+            if not same_engine:
+                fallback_reason = "No alternate engine is eligible. " + why
+        return {**empty, "why": "No reviewer is available. " + why, "fallback_reason": fallback_reason}
+    except ValueError as exc:
+        return {**empty, "why": str(exc)}
+
+
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
                 current_model: str | None = None, excluded: tuple = (), effort: str | None = None) -> dict:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -19,6 +19,8 @@ import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
+import { ReviewFeedback, ReviewMenu, ReviewRow, useTaskReview } from "../components/TaskReview";
+import type { ReviewControls } from "../components/TaskReview";
 import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
@@ -190,17 +192,19 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
 
-function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership }: {
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
   draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: Dispatch<SetStateAction<PendingMessage | null>>;
   steering: Steering; active: boolean; denied: boolean; setDenied: (denied: boolean) => void; questionVisit: number;
   selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
+  reviewControls: ReviewControls;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   const questionId = params.get("question");
   const revision = params.get("revision");
+  const reviewId = params.get("review");
   const questions = task.questions ?? (task.question ? [task.question] : []);
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
@@ -217,7 +221,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
   const followedAnchor = useRef("");
-  const following = useRef(!questionId);
+  const following = useRef(!questionId && !reviewId);
   const [latest, setLatest] = useState(false);
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
   const [questionAtLatest, setQuestionAtLatest] = useState(false);
@@ -268,6 +272,20 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     if (!active || !target || followedAnchor.current === anchorKey) return;
     if (jumpTo(target)) followedAnchor.current = anchorKey;
   }, [active, anchorKey, target, messages, jumpTo]);
+  useLayoutEffect(() => {
+    const key = `${location.key}:review:${reviewId}`;
+    if (!active || !reviewId || followedAnchor.current === key) return;
+    const node = document.getElementById(`review-${reviewId}`);
+    const container = scroller.current;
+    if (!node || !container) return;
+    following.current = false;
+    const details = node.querySelector("details");
+    if (details) details.open = true;
+    container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 32;
+    reading.current = container.scrollTop;
+    node.focus({ preventScroll: true });
+    followedAnchor.current = key;
+  }, [active, location.key, reviewId, task.review]);
   useEffect(() => {
     const node = scroller.current;
     const column = node?.firstElementChild;
@@ -365,6 +383,14 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
         <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
+    } else if (!question && message.review_id) {
+      const review = task.review?.history.find((entry) => entry.id === message.review_id);
+      // A review owns one durable conversation anchor; status updates reuse that row.
+      if (!messages.slice(0, messages.indexOf(message)).some((entry) => entry.review_id === message.review_id)) {
+        rows.push(review ? <ReviewRow key={key} review={review} controls={reviewControls} availability={task.review} onRead={() => { following.current = false; }} /> : <p key={key} className="text-meta text-muted">{message.text}</p>);
+      }
+    } else if (!question && message.role === "system") {
+      rows.push(<p key={key} className="text-meta text-muted"><InlineProse text={message.text} /></p>);
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
         images={message.delivery?.state !== "removed" ? <MessageImages project={project} images={message.images} /> : undefined}
@@ -405,6 +431,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
+          {task.review?.history.filter((review) => !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewRow key={review.id} review={review} controls={reviewControls} availability={task.review} onRead={() => { following.current = false; }} />)}
+          <ReviewFeedback controls={reviewControls} />
           {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
             group.questions.forEach((q) => {
               const id = `${q.id}:${q.revision}`;
@@ -595,6 +623,7 @@ function TaskPage({
   const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
   const steering = useTaskSteering(project, task, refresh);
   const actions = useTaskActions(project, task.slug);
+  const reviewControls = useTaskReview(project, task, refresh, readOnly || checking, closeDetails);
   const resumeError = facts.canResume && actions.error && !actions.confirm
     ? <p className="task-line text-danger" role="alert">Could not resume. Try again.</p> : null;
   // Inline at the panel width, open by default; below it an overlay the operator opens (SPEC.md §2.2 rule).
@@ -613,6 +642,12 @@ function TaskPage({
       <p className="task-details-title">{title}</p>
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
+      <ReviewMenu task={task} controls={reviewControls} view={(id) => {
+        closeDetails();
+        const search = new URLSearchParams(location.search);
+        search.delete("question"); search.delete("revision"); search.set("review", id);
+        void navigate(`${base}?${search}`, { replace: true, state: location.state });
+      }} />
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
@@ -643,7 +678,7 @@ function TaskPage({
   const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
 
   const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute} /></ProseScope>;
-  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseScope>;
+  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseScope>;
 
   if (phone) {
     return (

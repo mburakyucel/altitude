@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, route, state as S, tasks as T, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1578,6 +1578,40 @@ class Handler(BaseHTTPRequestHandler):
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
             return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else str(e)}, 500)
 
+    def _review_run(self, body):
+        streamed = False
+
+        def heartbeat():
+            nonlocal streamed
+            try:
+                if not streamed:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    streamed = True
+                # JSON whitespace keeps the wait connected without a review-duration deadline.
+                self.wfile.write(b" ")
+                self.wfile.flush()
+                return True
+            except OSError:
+                return False
+
+        try:
+            review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
+                                 expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
+                                 proposal_id=body.get("proposal_id"),
+                                 on_wait=heartbeat)
+            result, code = {"ok": True, "review": review}, 200
+        except (T.TransitionError, ValueError, KeyError) as exc:
+            result, code = {"ok": False, "error": str(exc)}, 409
+        if streamed:
+            self.wfile.write(json.dumps(result).encode())
+            return
+        return self._json(result, code)
+
     def do_POST(self) -> None:
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
@@ -1590,6 +1624,41 @@ class Handler(BaseHTTPRequestHandler):
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            if parts == ["api", "task", "review", "run"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
+                        raise ValueError("Unsupported review execution fields.")
+                    if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
+                        raise ValueError("The current L2 attempt is required.")
+                    return self._review_run(o)
+                except (T.TransitionError, ValueError, KeyError) as exc:
+                    return self._json({"error": str(exc)}, 409)
+            if parts == ["api", "task", "review"]:
+                try:
+                    if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus", "subject"}:
+                        raise ValueError("Unsupported review fields.")
+                    project, slug, action = o["project"], o["slug"], o["action"]
+                    if action in ("request", "retry", "rerun"):
+                        if not isinstance(o.get("request_id"), str) or not o["request_id"].strip():
+                            raise ValueError("A review request identity is required.")
+                        previous = o["review_id"] if action != "request" else None
+                        review = reviews.request(project, slug, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous,
+                                                 subject=o.get("subject"))
+                    elif action in ("cancel", "withdraw"):
+                        operation = reviews.cancel if action == "cancel" else reviews.withdraw
+                        review = operation(project, slug, o["review_id"], actor=T.OPERATOR_MESSAGE_ROLE,
+                                           reason=o.get("reason", ""))
+                    else:
+                        raise ValueError("Unknown review action.")
+                except (T.TransitionError, ValueError, KeyError) as exc:
+                    return self._json({"error": str(exc)}, 409)
+                try:
+                    if S.load_task(project, slug).get("state") == "blocked":
+                        request_task_resume(project, slug)
+                except Exception as exc:  # #298: a durable request survives an immediate wake failure.
+                    log(f"[{project}/{slug}] review wake deferred: {exc}")
+                return self._json({"ok": True, "review": review})
             if parts == ["api", "task", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command"}:
@@ -1865,6 +1934,8 @@ def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
                if t.get("dispatching") or t.get("resume_claim")]
     waiting += [f"{p} L3" for p in projects if l3.busy(p)]
+    if reviews.busy():
+        waiting.append("adversarial review in flight")
     if check_activity:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
@@ -1877,7 +1948,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (operator, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Activation: only dispatch, L3 and report handling
+    until the deployed service and bundle contain it). Activation: dispatch, L3, review and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
     if not status or status.get("failed"):
@@ -1920,7 +1991,7 @@ def restart_service() -> dict:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
-            raise RestartBusy("restart waits for dispatch, L3 turn or report verification")
+            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review or report verification")
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pend = S.read_json(flag, {}) or {}
         if pend.get("requested_at") and not pend.get("failed"):
@@ -2245,7 +2316,8 @@ def task_view(project: str, slug: str) -> dict:
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
             "files": files, "messages": T.message_views(project, slug, activity["delivered"]),
-            "events": events, "activity": activity, "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
+            "events": events, "activity": activity, "review": reviews.view(project, slug),
+            "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 

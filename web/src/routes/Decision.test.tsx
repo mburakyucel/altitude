@@ -1,9 +1,9 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
-import { DecisionSchema, QuestionGroupSchema, TaskMessageSchema, TaskViewSchema } from "../data/api";
+import { DecisionSchema, QuestionGroupSchema, TaskViewSchema } from "../data/api";
 
-const operator = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3")!;
+const operator = "operator";
 const at = "2026-09-08T02:00:00Z";
 /** Sending anything hands the turn back: the server records when, and earlier questions leave the queue. */
 const handed = "2026-09-08T02:05:00Z";

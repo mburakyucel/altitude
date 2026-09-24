@@ -225,7 +225,7 @@ def pinned_option(role: str, project: dict, *, engine: str | None = None,
 def restart_lock(*, exclusive: bool = False):
     """Fence the short activation windows (2026-09-07: running workers starved activation).
 
-    Shared holders are dispatch, L3 and report handling, never the detached workers. The exclusive
+    Shared holders are dispatch, review admission, L3 and report handling, never detached workers. The exclusive
     requester checks quiet and records requested_at before another holder can enter, across processes.
     """
     MONITOR_DIR.mkdir(parents=True, exist_ok=True)

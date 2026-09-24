@@ -154,7 +154,7 @@ An issue notification grants no cross-project task authority. New material choic
 follow the proposal, security and UX checkpoints above.
 
 Altitude restarts itself at the next narrow quiet point after a merged change to its own code (no
-dispatch or resume claim, report verification, or L3 turn in flight; running workers do not hold it).
+dispatch or resume claim, adversarial review, report verification, or L3 turn in flight; running workers do not hold it).
 New dispatches continue while activation is pending and wait only during the requested restart window.
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
 separate explicit authorization and post-change health verification; a recorded machine grant whose purpose

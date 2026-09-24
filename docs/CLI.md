@@ -682,7 +682,7 @@ Lowering the cap lets running work continue. Fresh and resumed launches wait unt
 running count falls below it. Blocked tasks consume no capacity. Eligible ready resumes take available
 capacity before fresh launches across all projects. Operator waits, faults without verified recovery,
 future due times, busy project setup and unavailable engines reserve no slots and do not hold eligible work. The limit
-counts running tasks, excluding engines' native helpers and L3 turns.
+counts running tasks and active cross-engine reviewers, excluding engines' native helpers and L3 turns.
 `alt task status` reports pending admission waits in `wip_hold`; running tasks have none.
 Its `hold` field stays empty because project queue observations are not individual task holds.
 `blocked_reason`, `waiting_on`, `fault` and `hold_merge` retain the task's actual recorded holds.
@@ -1177,6 +1177,71 @@ name a real tracking record such as the issue coordination filed; the done event
 list every open finding with that reference, so nothing is dropped silently. The flag accepts only
 that one problem on a delivery whose merges and heads verify, refuses a report without open findings,
 and is not available to the owner.
+
+### Cross-engine review
+
+L2 proactively requests independent adversarial review for complex proposals before code and complex
+implementations; simple work stays light by judgment. The task menu offers **Review proposal** and
+**Review changes**. Each existing entry opens saved status, findings and L2 dispositions without
+invocation. **Review again**, **Review latest** and **Retry** are deliberate detail actions.
+Requests prefer an eligible alternate configured engine; otherwise they use a separate same-engine
+invocation with the same captured-input/read-only contract. Engine/model, fallback reason and
+account-allowance uncertainty appear before requesting and in saved evidence. One reviewer machine-wide
+uses one additional machine slot. L2 names acceptance criteria and key risks for focused adversarial
+review; the reviewer reports findings and coverage gaps without a duration cutoff. L2 observes the run
+and can cancel if it gets stuck or goes off scope. No suitable engine or capacity means explicitly
+unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
+unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
+owner effort setting does not change reviewer eligibility.
+Saved review receipts remain readable after a project is detached; new review is unavailable.
+Service inspection must work before launch; failure refuses the invocation without spending a review.
+Use the supported review endpoint so observation and cancellation remain available. Launcher exit alone
+does not prove reviewer termination. If inspection fails, preserve the receipt and block for recovery.
+Live-provider testing requires a separate operator decision; no new live trial or retry is authorized.
+
+```sh
+alt task review status
+alt task review request --subject changes --focus "Challenge the changed task and landing journeys"
+alt task review request --subject proposal --focus "Challenge the proposed authority and failure handling"
+# For a request made in chat, retain its original authority and deduplicate it:
+alt task review request --source-message <message-id>
+# Commit the intended checkpoint first; uncommitted tracked changes cannot be captured.
+alt task review run --review-id <id>
+# A proposal review requires the exact original L2 proposal message:
+alt task review run --review-id <proposal-review-id> --proposal-message <message-id>
+alt task review assess --review-id <id> --file /tmp/assessment.json
+# Select a deliberately revised proposal when assessing its later version:
+alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
+alt task review cancel --review-id <id> --reason "The owner needs to stop"
+alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
+alt task review request --subject changes --previous <id> --focus "Review the later revision"
+```
+
+Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
+`changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
+skipped by the operator's UI action. A proposal request can continue an owner with an approval
+question solely to prepare, run and assess review, preserving that question and its approval requirement.
+L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
+`run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
+IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
+included. Default capture includes all L2 messages. The 64 KiB context limit fails explicitly.
+For image context, supply an L2 textual account and select that message explicitly; the capture
+records that original image bytes are not reviewed. The reviewer cannot run tests.
+The receipt retains selected message IDs, source/candidate identities and captured-input hashes;
+proposal evidence also binds the original proposal message and its exact captured text.
+
+Assessment JSON contains `reason` and `dispositions`, one entry per finding:
+`{"finding_id":"F1","disposition":"fixed","reason":"Evidence for the fix"}`; `dismissed` also
+requires evidence. With no findings, use an empty array and an assessment reason. Commit fixes before
+assessing; post the outcome explanation before assessment so it is included in the final context.
+For a held PR, reassess after reading the operator's merge approval, including any conditions.
+This updates L2's assessment without another reviewer invocation.
+Code, base or subsequent conversation changes require changes reassessment before merge. Later
+proposal/source/context changes require proposal assessment or deliberate new review; optional
+`assess --proposal-message` identifies a deliberately revised proposal. Every accepted request must be
+assessed or authorized for withdrawal before merge, including earlier changes requests. Later L2
+assessment stays separate from original findings; proposal evidence never establishes implementation
+acceptance, transfers ownership or access, or releases an approval question or merge hold.
 
 ### Task design previews
 

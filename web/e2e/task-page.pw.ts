@@ -350,9 +350,8 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
   await page.route((url) => url.pathname === "/api/l2/message", async (route) => {
     if (refuse) return route.fulfill({ status: 409, json: { error: "no active session" } });
     const body = route.request().postDataJSON() as { text: string; request_id: string };
-    const role = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3");
     // The stored row carries the submission id, as the server does; that id settles the pending bubble.
-    const message = { id: body.request_id, at: new Date().toISOString(), role, text: body.text };
+    const message = { id: body.request_id, at: new Date().toISOString(), role: "operator", text: body.text };
     sent.push(message);
     return route.fulfill({ json: { ok: true, message } });
   });

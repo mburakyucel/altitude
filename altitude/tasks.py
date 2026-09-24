@@ -587,6 +587,8 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
     rows.sort(key=lambda row: row["at"])
     if any(row.get("role") not in TASK_MESSAGE_ROLES for row in rows):
         raise ValueError(f"corrupt task conversation of {project}/{slug}: invalid role")
+    rows.extend(review["message"] for review in task.get("reviews", []))
+    rows.sort(key=lambda row: row["at"])
     if limit is not None:
         count = max(0, int(limit))
         rows = rows[-count:] if count else []
@@ -686,6 +688,12 @@ def _pending_rows(task: dict, path: Path) -> list[dict]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return rows  # historical receipts do not create new delivery work after the owner hands off
     seen = {row["id"] for row in rows}
+    for review in task.get("reviews", []):
+        message = review["message"]
+        if (review["state"] == "requested" and not review.get("delivered")
+                and message["id"] not in seen and message["id"] not in finished):
+            rows.append(message)
+            seen.add(message["id"])
     for message in task.get("image_messages", []):
         if (not message.get("delivered") and message["id"] not in seen
                 and message["id"] not in finished):
@@ -700,6 +708,9 @@ def _pending_rows(task: dict, path: Path) -> list[dict]:
 
 
 def _mark_acceptance_delivered(task: dict, ids: set[str]) -> None:
+    for review in task.get("reviews", []):
+        if review["id"] in ids:
+            review["delivered"] = True
     for message in task.get("image_messages", []):
         if message["id"] in ids:
             message["delivered"] = True

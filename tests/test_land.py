@@ -129,6 +129,48 @@ class TestLand(AltitudeCase):
     def remote_heads(self):
         return sorted(git("branch", "--format=%(refname:short)", cwd=self.remote).split())
 
+    def test_cross_engine_assessment_rechecks_context_after_final_merge_validation(self):
+        from altitude import config, engines, reviews, route, tasks as T
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        self.no_checks()
+        self.staged_change()
+        self.git("commit", "-q", "-m", "Committed review checkpoint")
+        self.set_current_l2()
+        task = S.load_task("demo", "fix-x")
+        task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner")
+        S.save_task("demo", task)
+        (S.task_dir("demo", "fix-x") / "request.md").write_text("Preserve the public API.")
+        choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
+        def review_engine(prompt, **kwargs):
+            self.assertTrue(kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"}))
+            return {"termination_confirmed": True, "text": "No findings", "findings": [], "limitations": []}
+        with mock.patch.object(route, "pick_review", return_value=choice), mock.patch.object(engines, "review", side_effect=review_engine):
+            request = reviews.request("demo", "fix-x", actor="l2", expected_attempt=1, request_id="review-final-check")
+            reviews.run("demo", "fix-x", request["id"], actor="l2", expected_attempt=1)
+            reviews.assess("demo", "fix-x", request["id"], actor="l2", expected_attempt=1,
+                           dispositions=[], reason="All findings and current candidate checked.")
+        original_view = land._pr_view
+        corrected = []
+        def correct_during_validation(root, target):
+            result = original_view(root, target)
+            if sys._getframe(1).f_code.co_name == "check_before_merge" and not corrected:
+                corrected.append(T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Correction: preserve empty results too."))
+            return result
+        with mock.patch.object(land, "_pr_view", new=correct_during_validation):
+            with self.assertRaisesRegex(land.LandError, "context changed"):
+                land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(len(corrected), 1, "The correction arrives during the final validation, after candidate tests")
+        self.assertTrue(any(call == ["make", "test"] for call in self.runner_log()))
+        self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
+        reviews.assess("demo", "fix-x", request["id"], actor="l2", expected_attempt=1,
+                       dispositions=[], reason="Checked the operator's correction against the complete candidate.")
+        (self.ghdir / "merge_git.txt").touch()
+        result = land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        merged_task = S.load_task("demo", "fix-x")
+        self.assertEqual(merged_task["review_merged_head"], result["head"])
+        self.assertEqual(merged_task["reviews"][-1]["merged_head"], result["head"])
+
     def test_refuses_on_main(self):
         with self.assertRaisesRegex(land.LandError, "main"):
             land.land("msg", cwd=self.project_repo)
@@ -1770,6 +1812,19 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertIsNone(result["local_tests"])
         self.assertEqual(self.runner_log(), [])
         self.assertEqual(self.git("rev-parse", "origin/main^{tree}").strip(), expected)
+
+    def test_successful_required_check_still_waits_for_requested_review(self):
+        from altitude import config, reviews, route
+        self.assertEqual(self.classify(), "pass")
+        task = S.load_task("demo", "fix-x")
+        task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner", attempt=1)
+        S.save_task("demo", task)
+        choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
+        with mock.patch.object(route, "pick_review", return_value=choice):
+            reviews.request("demo", "fix-x", actor="l2", expected_attempt=1, request_id="review-before-required-merge")
+        with self.assertRaisesRegex(land.LandError, "review|Review"):
+            land.land("green checks with pending review", cwd=self.repo, wait=0, merge=True)
+        self.assert_not_merged()
 
     def test_exact_merge_bound_check_lands_same_tree(self):
         candidate = self.merge_candidate()

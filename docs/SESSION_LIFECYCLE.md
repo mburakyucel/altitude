@@ -195,6 +195,48 @@ duplicating the persona. They do not prove live helper consumption, model compli
 Existing helpers retain their native context; changed instructions reach a new assignment after
 source activation. Live-provider testing remains deferred.
 
+## Cross-engine review
+
+L2 proactively seeks independent adversarial review of complex proposals before code and complex
+implementations, keeping simple work light by judgment. The operator's **Review proposal** and
+**Review changes** task-menu actions create attributed requests and pending owner inbox entries.
+Running owners receive them at the next message checkpoint; a reported owner with an open delivery
+uses the existing continuation path.
+Stopped, faulted, undispatched and finished owners explain why review is unavailable. A proposal
+request can continue an owner with an approval question solely to prepare, run and assess review;
+the question remains open and implementation still needs its approval. Changes review remains
+unavailable while question-blocked. Each subject's existing review opens saved status, findings and
+L2 dispositions without invocation. Review again, Review latest and Retry are explicit detail actions.
+
+The owner commits the chosen checkpoint, supplies original context and, for proposals, names the
+exact original L2 proposal message in `alt task review run --proposal-message`. Missing proposal input
+prevents invocation. The service captures immutable inputs and reserves one additional machine
+slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
+pending for a later explicit run. It prefers an eligible alternate engine and otherwise
+uses a separate same-engine invocation under the same read-only contract. Engine/model, fallback reason
+and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
+capacity or unavailable observation/cancellation. The synchronous command returns the complete
+result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;
+the reviewer returns material findings and coverage gaps without unrelated exploration. L2 observes
+the run and can cancel if it gets stuck or goes off scope. Authorized owner work can continue in
+parallel, but every accepted request prevents merge until L2 records finding dispositions and assesses
+its subject, or the requester is authorized to withdraw. A proposal request never supersedes a pending
+changes request. L2 replies in normal prose; original results remain in review details. Proposal review
+never establishes implementation acceptance or releases its approval question.
+
+Owner Stop/rejection, changed owner identity and caller disconnect cancel attached execution.
+Service inspection is checked before launch. Interruption stops the review unit before its launcher
+is reaped; an exited launcher is not evidence that the independent reviewer terminated.
+The waiting command has no review-duration timeout; whitespace heartbeats detect disconnects.
+Failure, invalid output and cancellation retain an unresolved request; retry is explicit. Restart
+reconciliation cancels orphaned invocations and never launches a replacement. Capacity
+is released only after termination is confirmed; uncertain termination follows task-local incident
+recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
+on the task, separate from native-helper usage attribution. Later proposal/code/base/context changes
+show their relevant staleness; L2 reconciliation does not claim the reviewer examined later revisions.
+The run neither switches engines after launch nor retries automatically.
+See [commands and evidence](CLI.md#cross-engine-review).
+
 ## Fresh dispatch
 
 ```text
@@ -1060,7 +1102,7 @@ consumption, steering, resume and explicit exits; they do not establish live-pro
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
-marker or resume claim, L3 turn, or report verification in flight. Running and blocked workers do not
+marker or resume claim, L3 turn, adversarial review, or report verification in flight. Running and blocked workers do not
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
