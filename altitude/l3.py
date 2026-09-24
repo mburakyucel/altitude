@@ -227,18 +227,30 @@ def chat_log(project: str, role: str, text: str, **meta) -> dict:
     return row
 
 
+def human_chat(row: dict) -> bool:
+    """Operator conversation and L3's answers to it, as opposed to server-triggered turns and FYIs."""
+    return (row.get("trigger") or "chat") == "chat"
+
+
 def chat_history(project: str, limit: int | None = 60) -> list[dict]:
+    """Saved chat rows, oldest first. `limit` bounds human conversation and system rows separately, so a
+    burst of server-triggered rows never pushes the latest human messages out of view."""
     path = config.project_dir(project) / "chat.jsonl"
     if not path.exists():
         return []
-    result = []
-    lines = path.read_text().splitlines()
-    for line in (lines[-limit:] if limit is not None else lines):
+    result, counts = [], {True: 0, False: 0}
+    for line in reversed(path.read_text().splitlines()):
+        if limit is not None and min(counts.values()) >= limit:
+            break
         try:
-            result.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
-            pass
-    return result
+            continue
+        human = human_chat(row)
+        if limit is None or counts[human] < limit:
+            counts[human] += 1
+            result.append(row)
+    return result[::-1]
 
 
 SEARCH_EXCERPT_CHARS = 1200
@@ -302,7 +314,7 @@ def search(project: str, query: str, limit: int = 5) -> dict:
                 if not line.strip():
                     continue
                 row = json.loads(line)
-                if row.get("role") in ("user", "assistant") and (row.get("trigger") or "chat") == "chat":
+                if row.get("role") in ("user", "assistant") and human_chat(row):
                     rows.append(message_row(row, f"{project}/chat.jsonl#L{number}"))
     collect(rows)
 
@@ -664,9 +676,12 @@ def queue_ci_recheck(project: str, slug: str) -> dict | None:
         return record
 
 
-def _ci_recheck_ready(project: str, row: dict) -> bool:
+NOTIFICATION_RETRY_DELAYS = (60, 300, 900, 3600)
+
+
+def _queue_ready(project: str, row: dict) -> bool:
     if row.get("trigger") != "ci-recheck":
-        return True
+        return (row.get("retry_at") or "") <= S.now()
     record = S.load_task(project, row["slug"]).get("ci_recheck") or {}
     delivery = record.get("delivery") or {}
     return (record.get("id") == row["id"] and record.get("status") == "notifying"
@@ -770,7 +785,7 @@ def deliver_queued(project: str) -> dict | None:
             return None
         while True:
             with S.project_lock(project):
-                rows = [row for row in _queue_rows(path) if _ci_recheck_ready(project, row)]
+                rows = [row for row in _queue_rows(path) if _queue_ready(project, row)]
             if not rows:
                 return None
             take = 1
@@ -785,7 +800,7 @@ def deliver_queued(project: str) -> dict | None:
             def claim(active_turn) -> bool:
                 with S.project_lock(project):
                     current = _queue_rows(path)
-                    eligible = [row for row in current if _ci_recheck_ready(project, row)]
+                    eligible = [row for row in current if _queue_ready(project, row)]
                     if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
                     if selected[0].get("images"):
@@ -841,6 +856,15 @@ def deliver_queued(project: str) -> dict | None:
                 result = {"completed": False, "error": str(exc)}
             if trigger == "ci-recheck":
                 queue_ci_recheck(project, slug)
+            elif trigger != "chat" and not selected[0].get("images") and (result or {}).get("undelivered"):
+                # Every option refused before any provider output: the notification keeps its place and id and
+                # waits a growing delay, so a refusal that leaves routing available cannot loop the drain.
+                refused = selected[0].get("refusals", 0) + 1
+                delay = NOTIFICATION_RETRY_DELAYS[min(refused, len(NOTIFICATION_RETRY_DELAYS)) - 1]
+                retry_at = (datetime.fromisoformat(S.now()) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+                with S.project_lock(project):
+                    _write_queue(path, [{**row, "refusals": refused, "retry_at": retry_at} for row in selected]
+                                 + [row for row in _queue_rows(path) if row.get("id") not in selected_ids])
             if selected[0].get("images"):
                 _finish_image_queue(project)
             return result
@@ -896,11 +920,11 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
 
 def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool = False,
              project: str | None = None) -> str:
-    """Fresh sessions need recent human chat; resumed ones need only the other provider's missed rows."""
-    conversation = [item for item in history if item.get("role") in ("user", "assistant")]
+    """Fresh sessions need recent human chat; resumed ones need only the other provider's missed human chat."""
+    # #267: server turns also have user/assistant roles; select human chat before bounding it.
+    conversation = [item for item in history if item.get("role") in ("user", "assistant") and human_chat(item)]
     if fresh:
-        # #267: server turns also have user/assistant roles; select human chat before bounding it.
-        missed = [item for item in conversation if (item.get("trigger") or "chat") == "chat"]
+        missed = conversation
         label = "Recent human conversation"
     else:
         missed = [item for item in conversation if item.get("at") and (not since or item["at"] > since)
@@ -952,6 +976,9 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         claimed = getattr(_turn_local, "claimed", None)
         claimed = claimed if claimed and claimed["turn"] is active_turn else None
         choice = claimed["choice"] if claimed else _select(project, requested, model=model)
+        if trigger == "report-landed" and not choice.get("engine"):
+            # A pending report waits for an available L3; its retry owns delivery, so the chat stays quiet.
+            return {"completed": False, "held": True, "error": f"engine hold: {choice['why']}", "turn_id": turn_id}
         turn_started_at = active_turn["started_at"]
         if not claimed or not claimed["logged"]:
             chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
@@ -981,14 +1008,15 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
                          trigger=trigger, engine=choice["engine"], turn_id=turn_id, **_slug_meta(slug))
-                return res
+                return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
         why = f"engine hold: {choice['why']}"
         chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
         return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                 "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
-                "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id}
+                "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id,
+                "undelivered": True}
 
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=()):

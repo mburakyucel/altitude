@@ -106,6 +106,20 @@ class TestL3Continuity(AltitudeCase):
                 self.assertNotIn("Cross-provider chat", text, "the watermark advances after handoff")
                 self.assertNotIn("Intervening discussion.", text)
 
+    def test_cross_provider_resume_carries_human_chat_not_the_other_providers_system_turns(self):
+        first, second = config.ENGINES[0], config.ENGINES[-1]
+        self.turn("Native discussion.", first)
+        self.turn("Other-provider discussion.", second)
+        for _ in range(80):
+            self.turn("Report landed for fictional-task.", second, trigger="report-landed")
+
+        text, resume = self.turn("Back again.", first)
+
+        self.assertIsNotNone(resume)
+        self.assertIn("Cross-provider chat", text)
+        self.assertEqual(text.count("Other-provider discussion."), 2, "one user and one assistant row")
+        self.assertNotIn("Report landed for fictional-task.", text)
+
     def test_latest_twenty_human_rows_precede_current_turn_despite_system_traffic(self):
         for index in range(24):
             meta = ({"trigger": "chat"}, {}, {"trigger": None}, {"trigger": ""})[index % 4]

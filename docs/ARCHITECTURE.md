@@ -117,8 +117,8 @@ limit and reads past system traffic. The current `turn_id` is excluded. This his
 contains only message text, limited to 800 characters per row with an explicit `[truncated]`
 marker; stored tool evidence is not replayed. `STATE.md` supplies task state separately.
 Resumed sessions rely on native history and receive only the cross-provider handoff:
-up to 20 user/assistant rows from the latest 60 log rows, handled by a different provider after
-that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
+up to 20 human user/assistant rows, selected by the same trigger filter from the latest 60 human rows,
+handled by a different provider after that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
 
 `alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
 transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
@@ -595,7 +595,10 @@ the action before saving its text; after acceptance, wake failures retain the sa
 `report_after` marks follow-up work, and verification carries its owner identity, worker start and
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
 messages return to the ordinary resume path. Report application, verifier faults, stranded-report
-recovery, automatic completion and report-turn receipts reject superseded work. The existing report
+recovery, automatic completion and report-turn receipts reject superseded work. A report that needs
+L3 waits, with no turn or chat row, while routing has no available L3 option; the stranded-report scan
+delivers it once one is. A report turn that runs and fails leaves `l3_handled` unset and retries after
+1, 5, 15, then 60 minutes; a changed report owner is delivered at once. The existing report
 file remains readable until replaced, but cannot verify a later continuation. The shared L2 persona
 and runtime resume prompt require fresh verified reporting even when guidance is already incorporated
 and no new work is needed. The owner preserves every delivery, exact remaining scope and holds;
@@ -1249,6 +1252,9 @@ first line names the turn (`{"turn": {id, started_at, trigger}}`) before any tex
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
 assistant or error row wins over a raced active snapshot.
 
+The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
+rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
+operator messages out of view; `chat.jsonl` keeps every row and `alt l3 search` reaches older ones.
 The conversation groups `chat.jsonl` rows by `turn_id` (rows without one, from before the id, by
 adjacency). The operator's rows are bubbles on the right, L3's prose on the left, under day
 dividers, with a row's time in the gutter on hover or a long press. A server-triggered turn (report
