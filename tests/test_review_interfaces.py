@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
-from altitude import reviews, server, state as S, tasks as T
+from altitude import config, reviews, server, state as S, tasks as T
 
 
 class TestReviewInterfaces(AltitudeCase):
@@ -42,7 +42,10 @@ class TestReviewInterfaces(AltitudeCase):
                 self.assertEqual(result, {"id": "review"})
                 request.assert_called_once_with(self.project, self.slug, actor="l2", expected_attempt=2,
                                                 request_id="submission", focus="Failure paths", source_id="chat-message",
-                                                previous="prior", subject=subject)
+                                                previous="prior", subject=subject, engine=None, model=None)
+        with mock.patch.object(reviews, "request", return_value={"id": "review"}) as request:
+            self.cli("task", "review", "request", "--previous", "prior", "--engine", config.ENGINES[-1], "--model", "chosen-model")
+        self.assertEqual((request.call_args.kwargs["engine"], request.call_args.kwargs["model"]), (config.ENGINES[-1], "chosen-model"))
 
     def test_owner_review_cannot_cross_task_project_or_missing_attempt(self):
         with mock.patch.object(reviews, "request") as request:

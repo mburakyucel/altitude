@@ -199,12 +199,16 @@ def view(project, slug):
             "latest": history[-1] if history else None, "history": history}
 
 
-def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None):
+def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
+            engine=None, model=None):
     from . import dispatch, route
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         raise T.TransitionError("A stable review request identity is required.")
     if not isinstance(focus, str) or len(focus) > 4000:
         raise T.TransitionError("Review focus must be text of at most 4000 characters.")
+    if any(value is not None and not (isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}", value))
+           for value in (engine, model)):
+        raise T.TransitionError("A selected review engine or model must be a plain name.")
     with merge_lock(project, slug, wait=False), dispatch.launch_lock(), S.project_lock(project):
         task = S.load_task(project, slug)
         task["project"] = project
@@ -212,19 +216,28 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         rows = task.setdefault("reviews", [])
         prior = _find(task, previous) if previous else None
         subject = subject if subject is not None else (prior.get("subject", "changes") if prior else "changes")
+        # A retry or rerun keeps the prior explicit selection unless it names a new one.
+        selection = ({"engine": engine, "model": model} if engine or model else
+                     prior.get("selection") if prior else None)
         if subject not in ("proposal", "changes") or prior and prior.get("subject", "changes") != subject:
             raise T.TransitionError("A review must name the same proposal or changes subject as its prior request.")
         repeated = next((r for r in rows if r["id"] == request_id or source_id and r.get("source_id") == source_id and r.get("subject", "changes") == subject), None)
         if repeated:
             if (repeated.get("focus", "") != focus or repeated.get("source_id") != source_id
-                    or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject):
-                raise T.TransitionError("That review request identity already has a different focus.")
+                    or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject
+                    or repeated.get("selection") != selection):
+                raise T.TransitionError("That review request identity already has a different focus or selection.")
             return _project_review(repeated, task, None)
         if why := _eligible(task, subject):
             raise T.TransitionError(why)
         latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
-        if latest:
+        # Naming a waiting request with a different explicit selection replaces it; nothing else re-selects.
+        reselect = bool(latest and previous == latest["id"] and latest["state"] == "requested"
+                        and (engine or model) and selection != latest.get("selection"))
+        if latest and not reselect:
             if previous != latest["id"] or latest["state"] in ("requested", "running"):
+                if (engine or model) and latest.get("selection") != selection:
+                    raise T.TransitionError("Another review request is open. Name it with --previous to select a different reviewer.")
                 return _project_review(latest, task, None)
             if latest["state"] == "completed" and not latest.get("reconciled"):
                 raise T.TransitionError("Assess the completed review before requesting another.")
@@ -232,7 +245,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             raise T.TransitionError(why)
         if why := _capacity(task):
             raise T.TransitionError(why)
-        choice = route.pick_review(task, config.project(project))
+        choice = route.pick_review(task, config.project(project), **(selection or {}))
         if not choice.get("engine"):
             raise T.TransitionError(choice.get("why") or "No second engine is available.")
         requester = actor
@@ -246,7 +259,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             requester = T.OPERATOR_MESSAGE_ROLE
         at = T._conversation_time()
         row = {"id": request_id, "requested_at": at, "requested_by": requester, "source_id": source_id,
-               "focus": focus, "subject": subject, "state": "requested", "engine": choice["engine"], "model": choice.get("model"),
+               "focus": focus, "subject": subject, "state": "requested", "selection": selection,
+               "engine": choice["engine"], "model": choice.get("model"),
                "engine_label": choice.get("label"), "same_engine": bool(choice.get("same_engine")),
                "fallback_reason": choice.get("fallback_reason", ""), "allowance_known": bool(choice.get("allowance_known")),
                "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
@@ -255,8 +269,12 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                            "review_id": request_id, "text": f"Adversarial {subject} review requested. Prepare a committed source checkpoint, "
                            f"then run alt task review run --review-id {request_id}"
                            + (" --proposal-message <original-L2-proposal-id>" if subject == "proposal" else "")
-                           + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. " + focus}}
+                           + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. "
+                           + (f"Selected reviewer: {route.option_label(choice)}. " if selection else "") + focus}}
         rows.append(row)
+        if reselect:
+            latest.update(state="withdrawn", withdrawn_by=actor, finished_at=S.now(),
+                          withdrawal_reason=f"Replaced by review {request_id} with reviewer {route.option_label(choice)}.")
         if task["state"] == "reported":
             task = T.continue_report(project, task, actor=actor, reason="Cross-engine review requested")
         if task["state"] == "blocked":
@@ -375,7 +393,7 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
             raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")
         if why := _capacity(task):
             raise T.TransitionError(why)
-        choice = route.pick_review(task, config.project(project))
+        choice = route.pick_review(task, config.project(project), **(review.get("selection") or {}))
         why = (None if choice.get("engine") == review["engine"] and choice.get("model") == review["model"]
                                   else "The selected reviewer is no longer available. Explicitly retry to select another.")
         if why:

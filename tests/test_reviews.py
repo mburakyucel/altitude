@@ -848,6 +848,57 @@ class TestReviews(AltitudeCase):
         self.assertTrue(view["latest"]["same_engine"])
         self.assertEqual(self.engine.call_count, 1)
 
+    def test_explicit_selection_routes_one_review_and_is_never_substituted(self):
+        chosen = {**self.choice, "engine": config.ENGINES[0], "model": "chosen-model", "same_engine": True,
+                  "fallback_reason": "Selected for this review."}
+        self.pick.side_effect = lambda task, project, **selection: chosen if selection else self.choice
+        review = self.request(model="chosen-model")
+        self.assertEqual(review["selection"], {"engine": None, "model": "chosen-model"})
+        self.assertEqual((review["engine"], review["model"]), (config.ENGINES[0], "chosen-model"))
+        self.assertEqual(self.pick.call_args.kwargs, {"engine": None, "model": "chosen-model"})
+        self.assertEqual(reviews.view(self.project, self.slug)["model"], "fixture-model")
+        with self.assertRaisesRegex(T.TransitionError, "different focus or selection"):
+            self.request(request_id=review["id"])
+        # The selected model becomes unavailable: the run fails instead of launching the automatic choice.
+        self.pick.side_effect = lambda task, project, **selection: ({"engine": None, "why": "Model exhausted"}
+                                                                   if selection else self.choice)
+        failed = self.run_review(review)
+        self.assertEqual(failed["state"], "failed")
+        self.assertIn("no longer available", failed["error"])
+        self.engine.assert_not_called()
+        with self.assertRaisesRegex(T.TransitionError, "Model exhausted"):
+            self.request(previous=review["id"])
+        self.pick.side_effect = lambda task, project, **selection: chosen if selection else self.choice
+        retry = self.request(previous=review["id"])
+        self.assertEqual(retry["selection"], review["selection"])
+        completed = self.run_review(retry)
+        self.assertEqual(completed["state"], "completed")
+        self.assertEqual(self.engine.call_args.kwargs["engine"], config.ENGINES[0])
+        self.assertEqual(self.engine.call_args.kwargs["model"], "chosen-model")
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["selection"], review["selection"])
+
+    def test_waiting_operator_request_can_be_reselected_without_losing_authority(self):
+        review = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal", focus="Wording")
+        self.assertEqual(review["model"], "fixture-model")
+        chosen = {**self.choice, "model": "chosen-model"}
+        self.pick.side_effect = lambda task, project, **selection: chosen if selection else self.choice
+        with self.assertRaisesRegex(T.TransitionError, "--previous to select"):
+            self.request(subject="proposal", model="chosen-model")
+        self.assertEqual(self.request(subject="proposal")["id"], review["id"])
+        replaced = self.request(previous=review["id"], model="chosen-model", request_id="selected")
+        self.assertEqual((replaced["requested_by"], replaced["subject"], replaced["model"]),
+                         (T.OPERATOR_MESSAGE_ROLE, "proposal", "chosen-model"))
+        self.assertEqual(self.request(previous=review["id"], model="chosen-model", request_id="selected")["id"], "selected")
+        task = S.load_task(self.project, self.slug)
+        prior = reviews._find(task, review["id"])
+        self.assertEqual(prior["state"], "withdrawn")
+        self.assertIn("Replaced by review selected", prior["withdrawal_reason"])
+        self.assertIn("chosen-model", reviews._find(task, "selected")["message"]["text"])
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["id"], "selected")
+        with self.assertRaises(T.TransitionError):
+            reviews.withdraw(self.project, self.slug, "selected", actor="l2", expected_attempt=1, reason="Skip")
+        self.engine.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
