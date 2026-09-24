@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, readVoiceSettings, saveVoiceSettings, useOverview } from "../data/api";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -16,6 +16,7 @@ const explanations: Record<VoiceBackend, string> = {
   endpoint: "Audio goes to your chosen service after you stop. Its storage policy and any charges apply.",
 };
 const queryKey = ["voice-settings"];
+type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; value: VoiceUpdate; error: Error };
 
 function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void }) {
   const client = useQueryClient();
@@ -34,10 +35,13 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     setKey("");
     setKeepKey(saved.key_set);
   }, [saved]);
-  const save = useMutation({
-    mutationFn: saveVoiceSettings,
-    onMutate: () => client.cancelQueries({ queryKey }),
-    onSuccess: (value) => {
+  const [save, setSave] = useState<SaveState>({ status: "idle" });
+  const reset = () => setSave({ status: "idle" });
+  const submit = async (update: VoiceUpdate) => {
+    setSave({ status: "saving" });
+    try {
+      await client.cancelQueries({ queryKey });
+      const value = await saveVoiceSettings(update);
       // Use the cache's structurally shared value so its later notification cannot reset a new edit.
       committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
       updateVoiceSettings(value);
@@ -46,21 +50,24 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       setModel(value.model);
       setKey("");
       setKeepKey(value.key_set);
-    },
-  });
+      setSave({ status: "saved" });
+    } catch (error) {
+      setSave({ status: "failed", value: update, error: error as Error });
+    }
+  };
   const choose = (backend: VoiceBackend) => {
-    save.reset();
+    reset();
     if (backend === "endpoint") setChoice(backend);
-    else save.mutate({ backend, selection: committed.current.selection });
+    else void submit({ backend, selection: committed.current.selection });
   };
   const endpoint = (): VoiceUpdate => ({
     backend: "endpoint", selection: committed.current.selection, url: url.trim(), model: model.trim(),
     ...(keepKey ? { keep_key: true } : { key }),
   });
-  const stale = save.error instanceof ApiError && save.error.status === 409;
+  const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
   return <>
-    <form className="settings-card" onSubmit={(event) => { event.preventDefault(); save.mutate(endpoint()); }}>
-      <fieldset disabled={save.isPending}>
+    <form className="settings-card" onSubmit={(event) => { event.preventDefault(); void submit(endpoint()); }}>
+      <fieldset disabled={save.status === "saving"}>
         <legend>Transcription backend</legend>
         {(["browser", "local", "endpoint"] as const).map((backend) => <div className="voice-option" key={backend}>
           <label className="voice-choice">
@@ -69,19 +76,19 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           </label>
           <p className="text-muted text-meta">{explanations[backend]}</p>
           {backend === "endpoint" && choice === "endpoint" ? <div className="voice-endpoint">
-            <label>Endpoint URL<input type="url" required value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" onChange={(event) => { setUrl(event.target.value); setKeepKey(false); save.reset(); }} /></label>
-            <label>Model (optional)<input value={model} placeholder="Default: whisper-1" onChange={(event) => { setModel(event.target.value); save.reset(); }} /></label>
-            {keepKey ? <div className="voice-key-set"><span>Key set · never shown</span><button type="button" className="link" onClick={() => { setKeepKey(false); save.reset(); }}>Replace</button></div>
-              : <label>API key (optional)<input type="password" autoComplete="new-password" value={key} onChange={(event) => { setKey(event.target.value); save.reset(); }} /></label>}
+            <label>Endpoint URL<input type="url" required value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" onChange={(event) => { setUrl(event.target.value); setKeepKey(false); reset(); }} /></label>
+            <label>Model (optional)<input value={model} placeholder="Default: whisper-1" onChange={(event) => { setModel(event.target.value); reset(); }} /></label>
+            {keepKey ? <div className="voice-key-set"><span>Key set · never shown</span><button type="button" className="link" onClick={() => { setKeepKey(false); reset(); }}>Replace</button></div>
+              : <label>API key (optional)<input type="password" autoComplete="new-password" value={key} onChange={(event) => { setKey(event.target.value); reset(); }} /></label>}
             {!keepKey && saved.key_set ? <p className="text-meta text-muted">Leave blank to remove the stored key. A stored key is never sent to a changed URL.</p> : null}
             <p className="text-meta text-muted">Changes are saved only with Save endpoint.</p>
             <button type="submit" className="btn btn-primary">Save endpoint</button>
           </div> : null}
         </div>)}
       </fieldset>
-      {save.isPending || save.isSuccess ? <p role="status" className="text-meta text-muted">{save.isPending ? "Saving…" : "Saved."}</p> : null}
-      {save.isError ? <p role="alert" className="text-meta text-danger">{save.error.message}{" "}
-        <button type="button" className="link" onClick={() => stale ? reload() : save.mutate(save.variables)}>{stale ? "Reload settings" : "Retry"}</button>
+      {save.status === "saving" || save.status === "saved" ? <p role="status" className="text-meta text-muted">{save.status === "saving" ? "Saving…" : "Saved."}</p> : null}
+      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{save.error.message}{" "}
+        <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
     <p className="text-meta text-muted">Changes apply to your next recording. Altitude deletes temporary recordings after transcription. External services control their own audio retention.</p>

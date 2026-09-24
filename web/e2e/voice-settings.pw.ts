@@ -58,12 +58,6 @@ test("Settings navigation keeps voice options nested and preserves the project d
 });
 
 test("Voice settings persist backend choices and write-only endpoint credentials", async ({ page, request }, info) => {
-  // Acknowledged saves must accept the next edit even while batched cache notifications lag.
-  // This exposes the post-merge key-clearing race without changing handlers or extending waits.
-  await page.addInitScript(() => {
-    const schedule = window.setTimeout.bind(window);
-    window.setTimeout = (handler, delay, ...args) => schedule(handler, delay === 0 ? 250 : delay, ...args);
-  });
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
   const browser = main.getByRole("radio", { name: "Browser recognition", exact: true });
