@@ -157,6 +157,48 @@ def installation(engine: str) -> dict:
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
 
+def session_timeout(engine: str) -> int:
+    return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
+
+
+def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
+    """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
+
+    The caller supplies the review assignment; this never resumes or publishes an L3 turn.
+    Native cost is API-equivalent telemetry, not cash charged or subscription quota consumed.
+    """
+    from . import l3
+    result = {"text": "", "usage": None, "cost": None, "engine_model": None,
+              "session_id": None, "error": None, "engine": engine, "model": model}
+    if engine not in config.ENGINES:
+        return {**result, "error": f"Unknown reviewer engine: {engine}"}
+    installed = installation(engine)
+    if installed.get("available") is False:
+        return {**result, "error": installed["why"]}
+    runtime = l3._l3_runtime(project, engine)
+    started = time.monotonic()
+    try:
+        body = repository_rule_prompt(config.project_path(project)) + prompt
+        common = {"cwd": runtime, "model": model, "timeout": session_timeout(engine), "durable_timeout": True,
+                  "resume": None, "extra_env": l3._l3_env(project, runtime)}
+        if engine == "claude":
+            native = claude_print(body, **common, allowed_tools=L3_ALLOWED_TOOLS, tools=l3.L3_TOOLS,
+                                  permission_mode="dontAsk", permission_prompts="none", restricted=True,
+                                  add_dirs=(config.project_path(project), config.ROOT))
+        else:
+            native = codex_exec(body, **common, effort=config.CODEX_EFFORT.get("l3"),
+                                sandbox_settings=codex_l3_permissions(runtime, project=project),
+                                ignore_user_config=True)
+        result.update(text=native.get("final_text", native.get("text")) or "", usage=native.get("usage") or None,
+                      cost=native.get("reported_cost"), engine_model=native.get("engine_model"),
+                      session_id=native.get("session_id"), error=native.get("error"), tools=native.get("tools", []))
+    except (OSError, subprocess.SubprocessError) as exc:
+        result["error"] = str(exc)
+    finally:
+        l3._remove_runtime(runtime)
+    return {**result, "duration_seconds": round(time.monotonic() - started, 3)}
+
+
 class ImageInputError(ValueError):
     """Image delivery is unavailable; retain the message rather than launch without its images."""
 
@@ -692,6 +734,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
             elif typ == "assistant":
                 out["turns"] += 1
                 msg = o.get("message") or {}
+                if msg.get("model") and msg["model"] != "<synthetic>":
+                    out["engine_model"] = msg["model"]
                 u = msg.get("usage") or {}
                 if u:
                     out["context_tokens"] = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
@@ -706,8 +750,12 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                 if isinstance(q, dict):
                     out["quota"] = q
             elif typ == "result":
+                if isinstance(o.get("result"), str):
+                    out["final_text"] = o["result"]
                 out["usage"] = o.get("usage") or {}
                 out["cost"] = float(o.get("total_cost_usd") or 0)
+                if o.get("total_cost_usd") is not None:
+                    out["reported_cost"] = float(o["total_cost_usd"])
                 if o.get("structured_output") is not None:
                     out["structured"] = o["structured_output"]
                 if o.get("is_error"):

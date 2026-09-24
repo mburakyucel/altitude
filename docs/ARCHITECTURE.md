@@ -937,6 +937,43 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+`audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
+it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,
+reviewed exchange identities and finding-supply receipts. Sessions wait twelve hours and four new
+exchanges mature for thirty minutes. Failed/unanswered exchanges also mature, with incomplete and
+in-flight evidence. Only human chat counts. Seven days or fourteen attempts ends the pilot.
+
+The tick's keyed background executor owns packet construction and provider IO outside ordinary L3
+locks and the timer thread. A short project lock reserves attempts before launch. Failures pause
+the pilot; interrupted execution becomes uncertain after the deadline without automatic replay.
+Stop prevents later sessions; an already claimed session can finish within its timeout. Project
+activity holds preserve the existing detach boundary. None of these states pauses ordinary work.
+
+Sampling reads at most 2 MiB of the original chat tail, selecting at most twenty unseen exchanges
+within forty-eight hours, never before September 22, 2026 07:00 UTC. Byte offsets, turn IDs and dates
+identify original rows. Complete fitting exchanges take precedence over oversized ones; omissions
+and truncation remain explicit. Later context and four directly referenced task records carry
+current ownership, decisions and canonical messages, including removal markers. The complete starting
+prompt stays within 64 KiB. Sparse/overflowing evidence can expire without review.
+
+`engines.conversation_review` uses a fresh native session, the ordinary coordinator tools/permissions,
+an explicit model and the engine's ordinary session timeout, enforced for the process tree. The
+attempt records that timeout so interrupted-run detection respects it. It does not resume or publish
+an L3 turn. The review assignment leaves implementation, publication and operational decisions with
+L3/L2. Tool reads and reasoning add usage within that deadline; byte/time bounds are not dollar caps.
+Available native model, usage and API-equivalent cost are recorded; missing values remain unknown.
+Provider options stay in the engine seam, with no fallback when the pinned reviewer is unavailable.
+
+Private `audits/<id>/packet.json` and `result.json` retain each attempt. A bounded JSON response carries
+at most three classified findings, expected/observed behavior, impact, uncertainty, corrections,
+ownership and an original selected source. Only unresolved candidates enter the next project chat
+turn, without another L3 queue event. Category/source fingerprints suppress repeated supply. The L3
+turn identity proves supply, not handling; interrupted supply remains inspectable without automatic
+replay. L3 verifies current tasks/issues and later evidence before action. No issue writer, task
+dispatcher or instruction editor belongs to the reviewer. Unavailable optional audit evidence never
+blocks ordinary conversation. Model-quality evaluation is separately authorized and reported;
+deterministic fixtures establish application behavior only.
+
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
 into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the

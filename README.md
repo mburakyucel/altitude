@@ -348,6 +348,14 @@ new activation failure can appear again. **Monitor → Altitude update** retains
 and the available **Restart** action. Dismissal never changes activation or fault handling.
 Every toast also has Close; inline errors and task questions retain their own recovery controls.
 
+An operator-started, seven-day conversation-audit pilot reviews recent Altitude exchanges at most
+twice daily, after four new exchanges. It uses a configurable reviewer, ordinary inspection tools
+and the ordinary session timeout. Private findings accompany L3's next project chat turn; L3 checks
+later corrections and existing ownership before deciding action. No new activity means no review,
+and unchanged findings produce no repeated notification. The pilot samples the last 48 hours,
+stops after seven days or fourteen attempts, and records observed usage separately from estimates.
+See [pilot controls and evidence limits](docs/CLI.md#conversation-audit-pilot).
+
 Desktop task chat has a compact navigation/title/actions row and visible state, model, PR and merge-hold
 chips. Long titles wrap; attempt, context and token usage open in Task details. Project headers use
 compact spacing, keeping their status and controls visible.
