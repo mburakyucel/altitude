@@ -25,4 +25,4 @@ Include the smallest steps or a fictional example project that shows the problem
 
 Include a short sanitized error or screenshot made with example data. Do not attach tokens,
 credentials, live private conversations, full runtime state, or incident evidence. Report
-security-sensitive details privately through the maintainer contact used for your invitation.
+security-sensitive details privately as described in [SECURITY.md](https://github.com/mburakyucel/altitude/blob/main/SECURITY.md).

@@ -17,8 +17,8 @@ delivery/acceptance links; selected work remains subject to proposal, security, 
 L3 routes subsequent issue intake using these priorities, recorded ownership, dependencies and
 verified remaining acceptance. Keep related work with its owner; do not start duplicate tasks or
 drain unrelated backlog. Pending implementation is not delivery. Parent issues remain open until
-their full acceptance, including required operator review, is verified. Public release, license,
-visibility, invitations and security-contact decisions remain separate. Private-trial readiness
+their full acceptance, including required operator review, is verified. Public release, license
+and visibility decisions remain separate. Private-trial readiness
 requires exact OS/architecture, application/engine versions and observed compatibility evidence;
 fixtures do not establish fresh-machine or live-provider success.
 
@@ -56,28 +56,34 @@ work and P1 backup/continuity remain separately sequenced above.
 
 ## Early-user onboarding and public release
 
-The repository is an early private preview for invited engineers. The README-first milestone of
-issue #219 provides positioning, a fictional [walkthrough](WALKTHROUGH.md),
-[setup](SETUP.md), [contributor guidance](../CONTRIBUTING.md), and a feedback entry point. It
-does not complete the entire issue or make the repository publicly available open-source software.
-The issue is linked from the [README](../README.md#documentation).
+The next milestone is making the repository public. The
+README-first milestone of issue #219 provides positioning, a fictional [walkthrough](WALKTHROUGH.md),
+[setup](SETUP.md), [contributor guidance](../CONTRIBUTING.md) and a feedback entry point, and the
+issue is linked from the [README](../README.md#documentation). The repository-hygiene milestone
+adds the [security policy](../SECURITY.md) with private vulnerability reporting and scope, a
+contribution process for fork contributors, bug and idea templates, and wording that stays true
+once the repository is public.
 
-Remaining repository-presentation work under #219:
+Remaining before public release:
 
-- The maintainer chooses a license; record that decision and add its license text before public
-  release. No license is selected by this documentation milestone.
-- The maintainer decides repository visibility and release timing separately.
-- Review the repository and history for material unsuitable for public release, and establish a
-  public security-reporting/contact path and contribution process.
+- The maintainer chooses a license; the `LICENSE` file, package metadata and third-party notices
+  for the shipped archive follow that decision. Nothing in the repository selects one implicitly.
+- Maintainer actions on release day, in this order: review the
+  [history audit](https://github.com/mburakyucel/altitude/issues/233) result, enable private
+  vulnerability reporting in the repository's security settings, review branch protection, apply
+  the repository description and topics below, then flip visibility.
+- Recommended description: **“Persistent project orchestration for coding agents: project direction,
+  directly reachable task owners, isolated worktrees and checked PRs.”** Recommended topics:
+  `ai-development`, `coding-agents`, `developer-tools`, `developer-workspace`, `git-worktrees`.
+  These are recommendations, not applied settings.
+- Required PR checks for a public repository, including fork PRs:
+  [#469](https://github.com/mburakyucel/altitude/issues/469). Installation-neutral defaults:
+  [#470](https://github.com/mburakyucel/altitude/issues/470).
 - Validate the documented path on a second clean machine, including engine authentication,
   sandbox/user-service support, Git guards, first conversation and one checked task delivery.
-- Apply repository metadata through an authorized maintainer operation. Recommended description:
-  **“Persistent project orchestration for coding agents: project direction, directly reachable task
-  owners, isolated worktrees and checked PRs.”** Recommended topics: `ai-development`, `coding-agents`, `developer-tools`,
-  `developer-workspace`, `git-worktrees`. These are recommendations, not applied settings.
 
 ## Engines, platforms and distribution
-Private-preview [release checkpoints](RELEASING.md) use versioned source snapshots, curated
+[Release checkpoints](RELEASING.md) use versioned source snapshots, curated
 [release notes](../CHANGELOG.md), full deterministic candidate checks and documented recovery.
 During active preview work, readiness is checked daily and useful fixes can release several times
 per day after validation; publication is explicit and does not gate source-deployment activation.

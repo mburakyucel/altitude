@@ -1,6 +1,6 @@
-# Private-preview release checkpoints
+# Release checkpoints
 
-Altitude uses private versioned archives and source checkpoints for invited collaborators. A release identifies a validated commit
+Altitude uses versioned archives and source checkpoints. A release identifies a validated commit
 and its notes. The operator decides when to publish it. No release or tag is created by running
 the test suite, merging a PR, or recording an Unreleased changelog entry.
 
@@ -60,7 +60,7 @@ preserves review and publication decisions; it does not establish hosted billing
    Approval names the version and SHA. Then deliver the dated changelog section through a PR
    and publish the immutable source tag/GitHub release only as authorized. If that PR changes
    the release SHA, repeat the deterministic gate on the final SHA before publishing it.
-   Use the same source for notes and tag; a private preview remains labeled as such.
+   Use the same source for notes and tag; an early preview remains labeled as such.
 
 The readiness record can be a small file attached to the task report; it needs no new daemon
 record or release service. Include: version, candidate SHA, included PRs, previous known-good
@@ -91,7 +91,7 @@ dependencies and builds the UI, then emits the application archive, `install.py`
 file. The manifest records source identity and every packaged file hash. The archive contains the
 CLI, Python daemon, built UI, personas, hooks, templates and schemas; users need no source build.
 Existing archive names are immutable. Building artifacts creates no tag, GitHub release or public
-publication. Deliver the installer and checksum through the approved private channel.
+publication. Publish the installer and checksum only as the operator authorizes.
 
 Record archive checksum and install/update/recovery evidence alongside candidate checks. The initial
 runtime target is Ubuntu 24.04 x86_64; macOS 15/26 Apple silicon remains pending native confinement
