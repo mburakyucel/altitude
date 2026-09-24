@@ -151,7 +151,7 @@ hard-codes one, and one configured engine means one row.
 | Project row | selected (tint background, `--text-primary`); unselected (`--text-secondary`); hover (tint at half) |
 | State dot | running (accent: a running L2, a task blocked waiting on L3, or a landed report L3 is handling); waits for the operator (`--data-claimed`: a decision in the queue); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
-| Unmanaged folders line | N folders found under the configured root; click opens First run for the picked folder; hidden at zero |
+| Unmanaged folders line | N folders found in the projects folder; click opens First run for the picked folder; hidden at zero |
 | Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
@@ -935,9 +935,21 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 ### 3.12 First run and project setup
 
 Shown on any project route when no project is managed: a centred card, "Altitude found N folders
-under <root>", one row per folder with **Add project**, and a path field for a folder elsewhere.
-States: scanning; none found (the path field alone); adding; failed (one sentence and Retry,
-shown when registration is refused). Successful registration opens the project's Setup checklist
+in <projects folder>", one row per folder directly inside it with **Add project**, and **Choose a
+folder elsewhere…**. States: looking for folders; none found ("No folders in <projects folder> yet",
+a link to change the projects folder in Settings, and the folder browser already open); adding;
+failed (one sentence and Retry, shown when registration is refused).
+
+The folder browser is an inline panel in the same card, the rail dialog or the phone switcher sheet,
+never a second dialog. It is labelled "Folders on the computer running Altitude", starts at **Home**
+and shows breadcrumbs whose earlier parts go back up. Rows are the current folder's visible
+subfolders, sorted by name, with **Project** and **git** tags; a row opens that folder. The footer has
+**Type a path instead**, **Cancel** (absent when the browser is the only way forward) and **Add
+"<folder>"** for the current folder, disabled at Home. States: loading (skeleton rows); empty ("No
+folders inside X", Add stays available); unreadable ("Altitude can't open X: your account can't read
+it", Add disabled, breadcrumbs work); listing failed (server explanation and Retry); adding (spinner
+and "Adding project…", then Setup). **Type a path instead** swaps the list for a path field with
+**Browse folders instead**. Walkthroughs: `web/e2e/folder-browser.pw.ts` at 390×844 and 1440×900. Successful registration opens the project's Setup checklist
 immediately. Closing the checklist never cancels accepted setup.
 For a removed project with retained history, `POST /api/project/add` reports `restored: true`.
 Its conversation and saved queue remain; setup reuses healthy configuration. Historical replies
@@ -1063,16 +1075,20 @@ breakdown on their task/report pages rather than appearing as live Monitor sessi
 ### 3.15 Settings and Voice input
 
 Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
-or the desktop rail's operator row. The row highlights on either Settings route; theme switching
+or the desktop rail's operator row. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
 A direct overview visit returns to `/projects`; entry from another view returns there.
 
 Under **This machine**, one bordered **Voice input** row shows the saved backend and a chevron.
 Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.
+A **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
+explanation that First run offers the folders directly inside it, the current value and the §3.12
+folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
+new folder; a failure shows the server explanation and Retry. First run reads the change at once.
 The overview also shows read-only address, HTTPS and operator details. Project settings belong to
 a separate increment. Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
-visible while the content scrolls. Opening either page does not change a setting or probe a service.
+visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
 The voice page offers Browser recognition (default), Local speech service and Custom endpoint.
 Descriptions state where audio goes and optional setup/charges. Browser/local save immediately;

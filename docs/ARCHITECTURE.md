@@ -485,6 +485,8 @@ Identical pending requests and completed retries whose machine setting still mat
 request and event. CLI and HTTP registration, removal, engine pins and operational settings serialize
 registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
+`alt machine set --projects-folder PATH` and `--unset-projects-folder` use the same operator-only
+request path for `projects_folder`, an existing absolute directory; `machine show` reports it.
 
 Settings take effect without a PR, service restart or free task slot. Lowering the cap preserves
 running workers; launches wait until the machine running count falls below it. Reset removes the
@@ -1172,7 +1174,8 @@ compact cards in one column, answered through `POST /api/decide`), the project p
 the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
 page, and with no managed project every project route shows First run, which lists the folders under
-the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
+the projects folder (`config.project_roots()`: the machine setting `projects_folder`, else
+`ALTITUDE_ROOTS`) and starts L3 for one through `POST /api/project/add`, staying up until L3's
 first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
 narrower is the phone: one 54px identity/activity header and an 84px tab bar (Chat, Work, Needs you,
@@ -1186,7 +1189,18 @@ selected project is browser state under `localStorage`, set by the rail, the swi
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
 rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
 display name the engine seam gives, so the web code names no provider; the same read carries the
-scan roots First run names and the operator's configured name.
+projects folder First run names and the operator's configured name.
+
+First run's folder browser reads `GET /api/folders?path=<absolute path>` (no path means the home
+folder), one folder per request and only when the operator opens it; nothing is scanned, indexed or
+kept. `server.folders` resolves the path and refuses one outside the home folder or through a hidden
+(dot) folder, then returns `path`, `parts` (relative to home) and `readable`, plus one row per visible
+subfolder whose resolved target stays inside home: `name`, `path`, the registered `project` for that
+folder and whether it holds `.git`. It never returns file names, sizes or contents, and an unreadable
+folder returns `readable: false`. The browser adds through the existing `POST /api/project/add`;
+**Type a path instead** covers folders outside home. `POST /api/projects-folder` applies the
+operator's choice through the machine settings request, like `alt machine set --projects-folder`;
+TLS and installation location checks read the same `config.project_roots()`.
 
 Task, decision and project reads refresh through one change stream per browser app. The shell opens
 `GET /api/changes`, a server-sent event stream: once a second altd compares the identity, size and

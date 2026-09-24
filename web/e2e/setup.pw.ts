@@ -146,7 +146,7 @@ test("loading, empty discovery, offline saved results and reconnection remain ac
   if (info.project.name === "phone") {
     await page.getByRole("button", { name: "atlas", exact: true }).click();
   } else await page.getByRole("button", { name: "Add a folder" }).click();
-  await walk.state("04-empty-folder-discovery", { visible: [page.getByRole("region", { name: "First run" }), page.getByLabel("A folder elsewhere")], hidden: [page.getByRole("region", { name: "First run" }).getByRole("listitem")] });
+  await walk.state("04-empty-folder-discovery", { visible: [page.getByRole("region", { name: "First run" }), page.getByRole("region", { name: "Choose a folder" })], hidden: [page.getByRole("region", { name: "First run" }).getByRole("button", { name: "Add project" })] });
 });
 
 test("a failed first conversation exposes Retry and completes the existing setup", async ({ page, request, service }, info) => {
