@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -279,6 +279,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const container = scroller.current;
     if (!node || !container) return;
     following.current = false;
+    const details = node.querySelector("details");
+    if (details) details.open = true;
     container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 32;
     reading.current = container.scrollTop;
     node.focus({ preventScroll: true });

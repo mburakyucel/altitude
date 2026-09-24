@@ -226,16 +226,21 @@ descendants are distinguished when native parentage supports it; otherwise depth
 Counts include observed identities without token counters and remain partial, never a definitive
 total spawned. The same breakdown stays available in task and report details after archival.
 
-L2 can choose a **cross-engine review** when a second opinion is useful. The operator can request
-the same review from the task menu; an existing review opens its status and findings in the task
-conversation. A compact line shows progress, with original findings and L2 dispositions in details.
-One read-only reviewer gives a relatively quick, focused second opinion on a captured committed
-revision, using an additional machine slot and the configured account. Scope guidance replaces a
-programmatic duration cutoff; L2 observes the run and can cancel if it gets stuck or goes off scope. It cannot edit, run tests or approve merging.
+L2 proactively seeks **independent adversarial review** for complex proposals before code and for
+complex implementations; simple work stays light by judgment. The task menu offers **Review proposal**
+and **Review changes**. Each existing review opens its saved status, findings and L2 dispositions in
+the task conversation without invoking a reviewer; reviewing again is an explicit action in details.
+Proposal review captures the exact original L2 proposal message and can proceed while its approval
+question stays open. It grants no implementation approval and never establishes acceptance of changes.
+One read-only reviewer uses an eligible alternate engine when available, otherwise a separate
+same-engine invocation with an explicit fallback reason. Engine/model and account-allowance uncertainty
+stay visible. The reviewer uses one additional machine slot and captured source and context.
+Focused scope replaces a duration cutoff; L2 observes the run and can cancel if it gets stuck or goes
+off scope. It cannot edit, run tests or approve merging. No automatic retry or engine switch follows launch.
 Review launches require working service inspection. Interruption stops the reviewer unit as well as
 its launcher; uncertain termination retains capacity for recovery.
-Accepted requests wait for L2 assessment or authorized withdrawal before merge. Later edits are
-labelled separately. Single-engine work continues normally when no second engine is available.
+Every accepted request waits for L2 assessment or authorized withdrawal before merge. Later proposal,
+code or context changes are labelled separately; proposal evidence never substitutes for changes review.
 See [requesting and assessing review](docs/CLI.md#cross-engine-review).
 
 ## Configure concurrency

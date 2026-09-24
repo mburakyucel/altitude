@@ -427,9 +427,11 @@ export const TokenUsageSchema = z.object({
   helpers: HelperUsageSchema.nullish(),
 }).passthrough();
 
-const ReviewSnapshotSchema = z.object({ head: z.string(), base: z.string(), tree: z.string(), context_hash: z.string(), context_ids: z.array(z.string()).optional(), captured_at: z.string().optional(), input_hash: z.string().optional(), captured_context_hash: z.string().optional(), selected_owner_evidence: z.boolean().optional(), limitations: z.array(z.string()).nullish() }).passthrough();
+const ReviewSnapshotSchema = z.object({ head: z.string(), base: z.string(), tree: z.string(), context_hash: z.string(), context_ids: z.array(z.string()).optional(), captured_at: z.string().optional(), input_hash: z.string().optional(), captured_context_hash: z.string().optional(), selected_owner_evidence: z.boolean().optional(), limitations: z.array(z.string()).nullish(), proposal: z.object({ id: z.string(), at: z.string(), text: z.string() }).nullish(), proposal_id: z.string().optional(), proposal_hash: z.string().optional() }).passthrough();
+export type ReviewSubject = "proposal" | "changes";
 export const ReviewSchema = z.object({
   id: z.string(), requested_at: z.string(), requested_by: z.string(),
+  subject: z.enum(["proposal", "changes"]).default("changes"), same_engine: z.boolean().default(false), fallback_reason: z.string().default(""), allowance_known: z.boolean().default(false),
   state: z.enum(["requested", "running", "completed", "failed", "cancelled", "withdrawn"]),
   engine_label: z.string().nullish(), model: z.string().nullish(),
   started_at: z.string().nullish(), finished_at: z.string().nullish(), error: z.string().nullish(), focus: z.string().default(""),
@@ -438,12 +440,15 @@ export const ReviewSchema = z.object({
   snapshot: ReviewSnapshotSchema.nullish(),
   reconciled: ReviewSnapshotSchema.extend({ reason: z.string() }).nullish(),
   coverage: z.enum(["current", "earlier", "unknown", "assessed"]),
-  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_retry: z.boolean(), can_review_latest: z.boolean(),
+  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_retry: z.boolean(), can_review_latest: z.boolean(), can_review_again: z.boolean().default(false),
 }).passthrough();
 export type Review = z.infer<typeof ReviewSchema>;
+const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable() });
 export const TaskReviewSchema = z.object({
   available: z.boolean(), why: z.string(), engine_label: z.string().nullable(), model: z.string().nullable(),
   allowance_known: z.boolean(), latest: ReviewSchema.nullable(), history: z.array(ReviewSchema),
+  same_engine: z.boolean().default(false), fallback_reason: z.string().default(""),
+  subjects: z.object({ proposal: ReviewSubjectSchema, changes: ReviewSubjectSchema }),
 });
 
 export const TaskViewSchema = z
@@ -901,7 +906,7 @@ export function taskAction(input: TaskActionInput): Promise<unknown> {
 }
 
 export type ReviewAction = "request" | "retry" | "rerun" | "cancel" | "withdraw";
-export async function taskReview(input: { project: string; slug: string; action: ReviewAction; request_id?: string; review_id?: string; reason?: string }): Promise<Review> {
+export async function taskReview(input: { project: string; slug: string; action: ReviewAction; subject?: ReviewSubject; request_id?: string; review_id?: string; reason?: string }): Promise<Review> {
   const result = await post<{ review: unknown }>("/api/task/review", input);
   return ReviewSchema.parse(result.review);
 }

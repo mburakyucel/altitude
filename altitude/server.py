@@ -1602,6 +1602,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
                                  expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
+                                 proposal_id=body.get("proposal_id"),
                                  on_wait=heartbeat)
             result, code = {"ok": True, "review": review}, 200
         except (T.TransitionError, ValueError, KeyError) as exc:
@@ -1625,7 +1626,7 @@ class Handler(BaseHTTPRequestHandler):
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if parts == ["api", "task", "review", "run"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids"}:
+                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
                         raise ValueError("Unsupported review execution fields.")
                     if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
                         raise ValueError("The current L2 attempt is required.")
@@ -1634,7 +1635,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 409)
             if parts == ["api", "task", "review"]:
                 try:
-                    if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus"}:
+                    if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus", "subject"}:
                         raise ValueError("Unsupported review fields.")
                     project, slug, action = o["project"], o["slug"], o["action"]
                     if action in ("request", "retry", "rerun"):
@@ -1642,7 +1643,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("A review request identity is required.")
                         previous = o["review_id"] if action != "request" else None
                         review = reviews.request(project, slug, actor=T.OPERATOR_MESSAGE_ROLE,
-                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous)
+                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous,
+                                                 subject=o.get("subject"))
                     elif action in ("cancel", "withdraw"):
                         operation = reviews.cancel if action == "cancel" else reviews.withdraw
                         review = operation(project, slug, o["review_id"], actor=T.OPERATOR_MESSAGE_ROLE,

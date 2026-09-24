@@ -317,28 +317,107 @@ class ReviewRoutingTests(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(route, "_usage", return_value={"claude": (None, None), "codex": (None, None)})
-        self.patch(engines, "installation", return_value={"available": True})
-        self.patch(engines, "review_capability", return_value={"available": True})
+        self.usage = self.patch(route, "_usage", return_value={"claude": (None, None), "codex": (None, None)})
+        self.installation = self.patch(engines, "installation", return_value={"available": True})
+        self.capability = self.patch(engines, "review_capability", return_value={"available": True})
 
     def test_excludes_actual_owner_seat_all_models_and_keeps_unknown_explicit(self):
         project = {"routing": config.parse_routing("claude:opus>claude:fable>codex")}
         selected = route.pick_review({"l2_engine": "claude", "engine": "codex"}, project)
         self.assertEqual(selected["engine"], "codex")
         self.assertFalse(selected["allowance_known"])
+        self.assertFalse(selected["same_engine"])
+        self.assertEqual(selected["fallback_reason"], "")
 
-    def test_project_pins_and_single_engine_never_fall_back_to_owner(self):
+    def test_single_configured_engine_supports_separate_review_with_unknown_allowance(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine), patch.object(config, "ENGINES", (engine,)):
+                selected = route.pick_review({"l2_engine": engine}, {"routing": [[{"engine": engine}]]})
+                self.assertEqual(selected["engine"], engine)
+                self.assertEqual(selected["label"], config.ENGINE_LABELS[engine])
+                self.assertTrue(selected["same_engine"])
+                self.assertFalse(selected["allowance_known"])
+                self.assertIn("No alternate engine", selected["fallback_reason"])
+                self.capability.assert_called_with(engine)
+
+    def test_project_engine_and_model_pins_remain_strict_for_same_engine_review(self):
         task = {"l2_engine": "claude"}
         for project in ({"l2_engine": "claude"}, {"l2_model": "opus"},
                         {"routing": config.parse_routing("claude:opus>claude:fable")}):
             with self.subTest(project=project):
-                self.assertIsNone(route.pick_review(task, project)["engine"])
-        self.assertIsNone(route.pick_review({}, {})["engine"])
+                selected = route.pick_review(task, project)
+                self.assertEqual(selected["engine"], "claude")
+                self.assertTrue(selected["same_engine"])
+                self.assertEqual(selected["model"], config.default_model("l2", "claude") if project.get("l2_engine") else "opus")
+        self.usage.return_value = {"claude": (100, 0), "codex": (0, 0)}
+        self.assertIsNone(route.pick_review(task, {"l2_engine": "claude"})["engine"])
 
-    def test_exhaustion_and_unsupported_confinement_refuse_without_upgrade(self):
-        self.patch(route, "_usage", return_value={"claude": (100, 0), "codex": (0, 0)})
-        self.assertIsNone(route.pick_review({"l2_engine": "codex"}, {})["engine"])
-        self.patch(engines, "review_capability", return_value={"available": False, "why": "Confinement unavailable"})
-        selected = route.pick_review({"l2_engine": "claude"}, {})
+    def test_unavailable_alternate_pin_cannot_fall_back_to_owner(self):
+        self.installation.side_effect = lambda engine: {"available": engine != "codex", "why": "executable missing"}
+        selected = route.pick_review({"l2_engine": "claude"}, {"l2_engine": "codex"})
         self.assertIsNone(selected["engine"])
-        self.assertEqual(selected["why"], "Confinement unavailable")
+        self.assertIn("executable missing", selected["fallback_reason"])
+        self.capability.assert_not_called()
+
+    def test_missing_or_unconfigured_actual_owner_refuses(self):
+        self.assertIsNone(route.pick_review({}, {})["engine"])
+        self.assertIsNone(route.pick_review({"l2_engine": "absent"}, {})["engine"])
+        self.capability.assert_not_called()
+
+    def test_missing_alternate_executable_falls_back_without_probing_its_capability(self):
+        self.installation.side_effect = lambda engine: {"available": engine != "claude", "why": "executable missing"}
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertEqual(selected["engine"], "codex")
+        self.assertTrue(selected["same_engine"])
+        self.assertIn("executable missing", selected["fallback_reason"])
+        self.capability.assert_called_once_with("codex")
+
+    def test_alternate_exhaustion_falls_back_but_owner_exhaustion_refuses(self):
+        for window, expected in (((100, 0), "weekly window exhausted"), ((0, 100), "short window exhausted")):
+            with self.subTest(window=window):
+                self.usage.return_value = {"claude": window, "codex": (0, 0)}
+                selected = route.pick_review({"l2_engine": "codex"}, {})
+                self.assertEqual(selected["engine"], "codex")
+                self.assertTrue(selected["same_engine"])
+                self.assertTrue(selected["allowance_known"])
+                self.assertIn(expected, selected["fallback_reason"])
+                self.usage.return_value["codex"] = window
+                selected = route.pick_review({"l2_engine": "codex"}, {})
+                self.assertIsNone(selected["engine"])
+                self.assertIn(expected, selected["why"])
+
+    def test_account_rejection_covers_all_alternate_models_and_owner_fallback(self):
+        route.note_rejection({"engine": "claude"}, {"scope": "engine", "why": "Account sign in required"})
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertEqual(selected["engine"], "codex")
+        self.assertIn("Account sign in required", selected["fallback_reason"])
+        self.capability.assert_called_once_with("codex")
+        route.note_rejection({"engine": "codex"}, {"scope": "engine", "why": "Owner account blocked"})
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertIsNone(selected["engine"])
+        self.assertIn("Owner account blocked", selected["why"])
+
+    def test_model_rejection_uses_configured_alternate_model_before_same_engine(self):
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "model", "why": "Model unavailable"})
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertEqual((selected["engine"], selected["model"]), ("claude", "opus"))
+        self.assertFalse(selected["same_engine"])
+
+    def test_unsupported_alternate_capability_falls_back_under_same_contract(self):
+        self.capability.side_effect = lambda engine: {"available": engine == "codex", "why": "Confinement unavailable"}
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertEqual(selected["engine"], "codex")
+        self.assertTrue(selected["same_engine"])
+        self.assertIn("Confinement unavailable", selected["fallback_reason"])
+        self.assertEqual([call.args[0] for call in self.capability.call_args_list], ["claude", "codex"])
+        self.capability.side_effect = None
+        self.capability.return_value = {"available": False, "why": "Confinement unavailable"}
+        selected = route.pick_review({"l2_engine": "codex"}, {})
+        self.assertIsNone(selected["engine"])
+        self.assertIn("Confinement unavailable", selected["why"])
+
+    def test_same_engine_fallback_never_adds_an_unconfigured_option(self):
+        self.capability.return_value = {"available": False, "why": "Confinement unavailable"}
+        selected = route.pick_review({"l2_engine": "codex"}, {"routing": config.parse_routing("claude:opus")})
+        self.assertIsNone(selected["engine"])
+        self.capability.assert_called_once_with("claude")

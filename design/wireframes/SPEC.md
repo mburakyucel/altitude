@@ -344,16 +344,33 @@ yet."); error ("Could not load the report." and Retry).
 
 #### Cross-engine review in the task conversation
 
-The existing task menu offers **Request cross-engine review**, showing the selected engine/model,
-configured allowance (including unknown), “Focused, read-only review” and merge wait. There is no
-duration selector or programmatic review deadline. An existing request
-replaces initiation with **View review** and its status. L2 can initiate the same review itself.
-No permanent review button, card, tab or separate reviewer conversation appears.
+The existing task menu offers **Review proposal** and **Review changes**, with one entry per subject.
+An existing request changes its entry to **View proposal review** or **View changes review**, with
+Requested, In progress, Complete, Earlier version, Failed or Cancelled underneath. Opening any existing
+review shows saved status, findings and L2 dispositions in the conversation and never invokes a reviewer,
+including L2-initiated reviews. **Review again**, **Review latest** and **Retry** are explicit actions
+inside details. A new revision requires the previous request to be addressed. A proposal review remains available when changes
+review is requested. No permanent review button, card, tab or separate reviewer conversation appears.
+
+Before requesting, show the selected engine/model, configured allowance (including unknown), focused
+read-only scope and merge wait. Prefer an eligible alternate engine; otherwise label the separate
+same-engine invocation with its fallback reason, also retained in saved evidence. No duration selector,
+programmatic deadline, automatic retry or engine switch follows launch. Capacity or unavailable
+observation/cancellation cannot be bypassed by fallback.
+
+L2 proactively seeks adversarial review for complex proposals before code and complex implementations;
+simple work stays light by judgment. For proposal review L2 selects the exact original proposal message;
+the operator sees its link and version, with no message-ID form. Missing proposal input is explained
+before invoking a reviewer. Review can continue L2 while an approval question is open solely to prepare,
+run and assess the proposal review; the original question stays open. Captured text and committed source
+define coverage; images require a textual account and remain explicitly outside text review coverage.
+Proposal findings never imply implementation acceptance. Later proposal/context changes show their
+coverage and need L2 assessment or a deliberate new review; pending changes requests remain visible.
 
 A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
 L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
-L2 dispositions, selected context IDs and exact checkpoint evidence. It starts folded; collapsing
-removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
+L2 dispositions, subject, selected proposal/context IDs and exact checkpoint evidence. It starts folded;
+collapsing removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
 folded. No findings never means permission to merge. Failure keeps the request unresolved and exposes
 explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
 

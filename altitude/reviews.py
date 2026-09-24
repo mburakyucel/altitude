@@ -1,4 +1,4 @@
-"""Optional task-owned second-engine review: one captured revision, one bounded invocation."""
+"""Task-owned adversarial review of captured proposals and changes."""
 from __future__ import annotations
 
 import copy
@@ -25,19 +25,19 @@ def _owner(task, actor, expected_attempt=None, *, required=False):
         raise T.TransitionError("The review command does not name the current owner attempt.")
 
 
-def _eligible(task):
+def _eligible(task, subject="changes"):
     if (task.get("fault") or task.get("stop_id") or task.get("planned_wait")
-            or any(q.get("status") == "open" for q in task.get("questions", []))):
+            or subject == "changes" and T.open_questions(task)):
         return "Continue or settle the task before requesting review."
     if task.get("state") == "reported":
         report = S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json")
         if not T.reported_continuable(task, report):
             return "This task has no open delivery to review."
-    elif task.get("state") != "running":
+    elif task.get("state") != "running" and not (subject == "proposal" and task.get("state") == "blocked" and T.open_questions(task)):
         return "Review is available when the task owner is running."
     if not task.get("worktree") or not task.get("l2_engine"):
         return "The owner's worktree and engine must be known before review."
-    if task.get("review_merged_head") and task["review_merged_head"] == _git(Path(task["worktree"]), "rev-parse", "HEAD"):
+    if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(Path(task["worktree"]), "rev-parse", "HEAD"):
         return "This delivery already merged. Prepare the next delivery's checkpoint before requesting review."
     return None
 
@@ -74,7 +74,7 @@ def _capacity(task):
         return "Another cross-engine review is running on this machine."
     owners = sum(dispatch.occupies_slot(t) for p in config.load_projects() for t in S.list_tasks(p))
     # A reported owner must also resume before it can prepare/run the review.
-    if owners + (task.get("state") == "reported") + 1 > config.machine_wip():
+    if owners + (task.get("state") in ("reported", "blocked")) + 1 > config.machine_wip():
         return "No machine capacity for an additional reviewer. Try again when a slot is free."
     return None
 
@@ -101,7 +101,7 @@ def _hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _identity(project, task, *, fetch=False, candidate=True):
+def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     root = Path(task["worktree"])
     from . import dispatch
     dispatch._validate_task_worktree(config.project_path(project), project, task["slug"], root, require_clean=False)
@@ -111,27 +111,53 @@ def _identity(project, task, *, fetch=False, candidate=True):
         _git(root, "fetch", "--no-tags", "origin", "main")
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
-    tree = _git(root, "merge-tree", "--write-tree", base, head).splitlines()[0] if candidate else None
+    tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
+            _git(root, "merge-tree", "--write-tree", base, head).splitlines()[0]) if candidate else None
     context = _context(project, task)
-    return {"head": head, "base": base, "tree": tree, "context_hash": _hash(context)}, context
+    identity = {"head": head, "base": base, "tree": tree}
+    if proposal_id:
+        proposal = next((r for r in context["messages"] if r["id"] == proposal_id and r["role"] == "l2" and r.get("text")), None)
+        if not proposal:
+            raise T.TransitionError("Name an original L2 proposal message with --proposal-message before review.")
+        context["proposal"] = proposal
+        identity.update(proposal_id=proposal_id, proposal_hash=_hash(proposal))
+    identity["context_hash"] = _hash(context)
+    return identity, context
 
 
 def _same(left, right):
-    return all(left.get(k) == right.get(k) for k in ("head", "base", "tree", "context_hash"))
+    return all(left.get(k) == right.get(k) for k in ("head", "base", "tree", "context_hash", "proposal_id", "proposal_hash"))
+
+
+def _current_reviews(task):
+    replaced = {r.get("previous") for r in task.get("reviews", [])}
+    return [r for r in task.get("reviews", []) if r["id"] not in replaced and not r.get("merged_head")]
+
+
+def _request_wait(task, previous=None):
+    for row in _current_reviews(task):
+        if row["id"] == previous or row["state"] == "withdrawn":
+            continue
+        if row["state"] != "completed" or not row.get("reconciled"):
+            return "Address the existing review request before requesting another review."
+    return None
 
 
 def _project_review(review, task, identity):
     row = {k: copy.deepcopy(v) for k, v in review.items() if k not in ("message", "delivered", "worker", "owner")}
     snapshot = review.get("snapshot") or {}
     assessed = review.get("reconciled") or {}
-    matches = lambda saved: all(saved.get(k) == identity.get(k) for k in ("head", "base", "context_hash"))
+    matches = lambda saved: all(saved.get(k) == identity.get(k) for k in ("head", "base", "context_hash", "proposal_id", "proposal_hash"))
     coverage = ("unknown" if identity is None else "current" if snapshot and matches(snapshot)
                 else "assessed" if assessed and matches(assessed) else "earlier")
-    mutable = task.get("state") in ("running", "blocked", "reported") and task.get("reviews", [])[-1]["id"] == review["id"]
+    mutable = task.get("state") in ("running", "blocked", "reported") and review in _current_reviews(task)
+    latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == review.get("subject", "changes")), None)
+    rerunnable = task.get("state") in ("running", "blocked", "reported") and review == latest
     row.update(coverage=coverage, can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
                can_retry=mutable and review["state"] in ("failed", "cancelled"),
-               can_review_latest=mutable and review["state"] == "completed" and coverage != "current")
+               can_review_latest=rerunnable and review["state"] == "completed" and bool(assessed) and coverage != "current",
+               can_review_again=rerunnable and review["state"] == "completed" and bool(assessed) and coverage == "current")
     return row
 
 
@@ -139,26 +165,34 @@ def view(project, slug):
     from . import route
     task = S.load_task(project, slug)
     task["project"] = project
-    why = _eligible(task)
-    choice = route.pick_review(task, config.project(project)) if not why else {}
-    why = why or (None if choice.get("engine") else choice.get("why") or "No second engine is available.")
-    why = why or _capacity(task)
-    identity = None
-    if task.get("reviews") and task.get("worktree"):
-        try:
-            identity, _ = _identity(project, task, candidate=False)
-        except (T.TransitionError, OSError, subprocess.SubprocessError, KeyError):
-            pass
-    history = [_project_review(r, task, identity) for r in task.get("reviews", [])]
-    for row in history:
-        row["can_retry"] = row["can_retry"] and not why
-        row["can_review_latest"] = row["can_review_latest"] and not why
-    return {"available": not bool(why), "why": why or "", "engine_label": choice.get("label"),
-            "model": choice.get("model"), "allowance_known": bool(choice.get("allowance_known")),
+    choice = route.pick_review(task, config.project(project))
+    common = (None if choice.get("engine") else choice.get("why") or "No reviewer is available.") or _capacity(task)
+    subjects, history, identities = {}, [], {}
+    for review in task.get("reviews", []):
+        proposal_id = ((review.get("reconciled") or review.get("snapshot") or {}).get("proposal_id")
+                       if review.get("subject", "changes") == "proposal" else None)
+        if proposal_id not in identities:
+            try:
+                identities[proposal_id], _ = _identity(project, task, candidate=False, proposal_id=proposal_id)
+            except (T.TransitionError, OSError, subprocess.SubprocessError, KeyError):
+                identities[proposal_id] = None
+        row = _project_review(review, task, identities[proposal_id])
+        why = _eligible(task, review.get("subject", "changes")) or common or _request_wait(task, review["id"])
+        for key in ("can_retry", "can_review_latest", "can_review_again"):
+            row[key] = row[key] and not why
+        history.append(row)
+    for subject in ("proposal", "changes"):
+        latest = next((r for r in reversed(history) if r.get("subject", "changes") == subject), None)
+        why = _eligible(task, subject) or common or _request_wait(task)
+        subjects[subject] = {"available": not bool(why), "why": why or "", "latest": latest}
+    return {**{k: subjects["changes"][k] for k in ("available", "why")}, "subjects": subjects,
+            "engine_label": choice.get("label"), "model": choice.get("model"),
+            "same_engine": bool(choice.get("same_engine")), "fallback_reason": choice.get("fallback_reason", ""),
+            "allowance_known": bool(choice.get("allowance_known")),
             "latest": history[-1] if history else None, "history": history}
 
 
-def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None):
+def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None):
     from . import dispatch, route
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         raise T.TransitionError("A stable review request identity is required.")
@@ -169,22 +203,26 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         task["project"] = project
         _owner(task, actor, expected_attempt)
         rows = task.setdefault("reviews", [])
-        repeated = next((r for r in rows if r["id"] == request_id or source_id and r.get("source_id") == source_id), None)
+        prior = _find(task, previous) if previous else None
+        subject = subject if subject is not None else (prior.get("subject", "changes") if prior else "changes")
+        if subject not in ("proposal", "changes") or prior and prior.get("subject", "changes") != subject:
+            raise T.TransitionError("A review must name the same proposal or changes subject as its prior request.")
+        repeated = next((r for r in rows if r["id"] == request_id or source_id and r.get("source_id") == source_id and r.get("subject", "changes") == subject), None)
         if repeated:
             if (repeated.get("focus", "") != focus or repeated.get("source_id") != source_id
-                    or repeated.get("previous") != previous):
+                    or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject):
                 raise T.TransitionError("That review request identity already has a different focus.")
             return _project_review(repeated, task, None)
-        if why := _eligible(task):
+        if why := _eligible(task, subject):
             raise T.TransitionError(why)
-        latest = rows[-1] if rows else None
+        latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
         if latest:
             if previous != latest["id"] or latest["state"] in ("requested", "running"):
                 return _project_review(latest, task, None)
-            if latest["state"] == "completed":
-                identity, _ = _identity(project, task)
-                if _same(latest["snapshot"], identity):
-                    return _project_review(latest, task, identity)
+            if latest["state"] == "completed" and not latest.get("reconciled"):
+                raise T.TransitionError("Assess the completed review before requesting another.")
+        if why := _request_wait(task, previous):
+            raise T.TransitionError(why)
         if why := _capacity(task):
             raise T.TransitionError(why)
         choice = route.pick_review(task, config.project(project))
@@ -201,31 +239,39 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             requester = T.OPERATOR_MESSAGE_ROLE
         at = T._conversation_time()
         row = {"id": request_id, "requested_at": at, "requested_by": requester, "source_id": source_id,
-               "focus": focus, "state": "requested", "engine": choice["engine"], "model": choice.get("model"),
-               "engine_label": choice.get("label"), "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
+               "focus": focus, "subject": subject, "state": "requested", "engine": choice["engine"], "model": choice.get("model"),
+               "engine_label": choice.get("label"), "same_engine": bool(choice.get("same_engine")),
+               "fallback_reason": choice.get("fallback_reason", ""), "allowance_known": bool(choice.get("allowance_known")),
+               "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
                "delivered": actor == "l2", "previous": previous,
                "message": {"id": request_id, "at": at, "role": "system", "by": requester,
-                           "review_id": request_id, "text": "Cross-engine review requested. Prepare a committed checkpoint, "
-                           f"then run alt task review run --review-id {request_id}. " + focus}}
+                           "review_id": request_id, "text": f"Adversarial {subject} review requested. Prepare a committed source checkpoint, "
+                           f"then run alt task review run --review-id {request_id}"
+                           + (" --proposal-message <original-L2-proposal-id>" if subject == "proposal" else "")
+                           + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. " + focus}}
         rows.append(row)
         if task["state"] == "reported":
             task = T.continue_report(project, task, actor=actor, reason="Cross-engine review requested")
+        if task["state"] == "blocked":
             task.update(resume_request=request_id, resume_after=S.now())
         S.save_task(project, task)
         S.append_event(project, slug, "review-requested", review_id=request_id, by=requester)
         return _project_review(row, task, None)
 
 
-def _capture(project, task, review, context_ids):
-    identity, context = _identity(project, task, fetch=True)
-    if identity["head"] == identity["base"]:
+def _capture(project, task, review, context_ids, proposal_id=None):
+    proposal = review.get("subject", "changes") == "proposal"
+    if proposal and not proposal_id or not proposal and proposal_id:
+        raise T.TransitionError("Proposal review requires --proposal-message; changes review does not accept it.")
+    identity, context = _identity(project, task, fetch=True, proposal_id=proposal_id)
+    if not proposal and identity["head"] == identity["base"]:
         raise T.TransitionError("No task changes are ready for review. Prepare a committed checkpoint first.")
     if context_ids is not None:
         available = {r["id"] for r in context["messages"]}
         if not set(context_ids) <= available:
             raise T.TransitionError("Selected review context includes an unavailable message.")
         # Selection narrows owner evidence, never original authority or later corrections.
-        context["messages"] = [r for r in context["messages"] if r["role"] != "l2" or r["id"] in context_ids]
+        context["messages"] = [r for r in context["messages"] if r["role"] != "l2" or r["id"] in context_ids or r["id"] == proposal_id]
     if any(row.get("images") for row in context["messages"]):
         if context_ids is None or not any(r["role"] == "l2" and r.get("text") for r in context["messages"]):
             raise T.TransitionError("Review context includes images. Supply an L2 textual account and select it with --context-message; image bytes are not reviewed.")
@@ -240,7 +286,7 @@ def _capture(project, task, review, context_ids):
     source.mkdir()
     entries = []
     # Deleted/replaced base content also enters changes.patch, so bound both inputs before diffing.
-    for tree in (identity["base"], identity["tree"]):
+    for tree in ((identity["tree"],) if proposal else (identity["base"], identity["tree"])):
         total = count = 0
         for raw in _git(Path(task["worktree"]), "ls-tree", "-rlz", tree, binary=True).split(b"\0"):
             if not raw:
@@ -269,7 +315,7 @@ def _capture(project, task, review, context_ids):
         dest = source.joinpath(*path.parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
-    patch = _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv", identity["base"], identity["tree"], binary=True)
+    patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv", identity["base"], identity["tree"], binary=True)
     (snapshot / "changes.patch").write_bytes(patch)
     (snapshot / "context.json").write_text(text)
     (snapshot / "l1.md").write_text((config.PERSONAS / "l1.md").read_text())
@@ -277,15 +323,18 @@ def _capture(project, task, review, context_ids):
                     captured_context_hash=_hash(context), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
                     input_hash=_hash({"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}))
+    if proposal:
+        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
     runtime = folder / "runtime"
     runtime.mkdir()
     return identity, snapshot, runtime
 
 
-def review_prompt(snapshot, focus):
+def review_prompt(snapshot, focus, subject="changes"):
     rules = engines.repository_rules(snapshot / "source")
     return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
-              "then context.json and changes.patch. Give a relatively quick, focused second opinion on the captured change. "
+              "then context.json and changes.patch. Give a relatively quick, focused independent adversarial review. "
+              + ("Review the exact proposal in context.json against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
               "Start with the brief, decisions, diff and requested focus. Check the main correctness, regression, "
               "security and acceptance risks; follow affected callers and tests when needed to substantiate a finding. "
               "Avoid unrelated exploration, cosmetic suggestions and repeated passes without new evidence. "
@@ -297,7 +346,7 @@ def review_prompt(snapshot, focus):
               "No findings is not merge approval. Focus: " + focus)
 
 
-def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, on_wait=None):
+def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, on_wait=None):
     from . import dispatch, route
     if context_ids is not None and (not isinstance(context_ids, list) or any(not isinstance(item, str) for item in context_ids)):
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
@@ -309,7 +358,9 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
         review = _find(task, review_id)
         if review["state"] != "requested":
             return _project_review(review, task, None)
-        if why := _eligible(task):
+        if task.get("state") != "running":
+            raise T.TransitionError("Resume the current owner before running the requested review.")
+        if why := _eligible(task, review.get("subject", "changes")):
             raise T.TransitionError(why)
         if review["owner"] != {k: task.get(k) for k in ("attempt", "l2_engine")}:
             raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")
@@ -328,7 +379,7 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
     result = None
     invoked = False
     try:
-        identity, snapshot, runtime = _capture(project, task, review, context_ids)
+        identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id)
         with S.project_lock(project):
             current = S.load_task(project, slug)
             live = _find(current, review_id)
@@ -357,7 +408,7 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
                         and current.get("state") == "running" and current.get("attempt") == expected_attempt
                         and current.get("agent_id") == review.get("generation"))
 
-        prompt = review_prompt(snapshot, review["focus"])
+        prompt = review_prompt(snapshot, review["focus"], review.get("subject", "changes"))
         invoked = True
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
                                 model=review["model"], on_start=started, on_wait=waiting)
@@ -396,7 +447,7 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
     return view(project, slug)["latest"] if current["reviews"][-1]["id"] == review_id else _project_review(live, current, None)
 
 
-def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, reason):
+def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, reason, proposal_id=None):
     with merge_lock(project, slug), S.project_lock(project):
         task = S.load_task(project, slug)
         _owner(task, actor, expected_attempt, required=True)
@@ -409,7 +460,11 @@ def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, r
                 or any(d.get("disposition") not in ("fixed", "dismissed") or not isinstance(d.get("reason"), str)
                        or not d["reason"].strip() for d in dispositions)):
             raise T.TransitionError("Give each finding one fixed/dismissed disposition with evidence.")
-        identity, _ = _identity(project, task, fetch=True)
+        if review.get("subject", "changes") == "proposal":
+            proposal_id = proposal_id or review["snapshot"]["proposal_id"]
+        elif proposal_id:
+            raise T.TransitionError("Changes assessment does not accept a proposal message.")
+        identity, _ = _identity(project, task, fetch=True, proposal_id=proposal_id)
         review.update(dispositions=dispositions, reconciled={**identity, "reason": reason.strip(), "at": S.now()})
         S.save_task(project, task)
         return _project_review(review, task, identity)
@@ -455,18 +510,15 @@ def withdraw(project, slug, review_id, *, actor, reason="", expected_attempt=Non
 
 def require_merge(project, slug, pair):
     task = S.load_task(project, slug)
-    rows = task.get("reviews", [])
-    if not rows:
-        return
-    review = rows[-1]
-    if review["state"] == "withdrawn" or review.get("merged_head"):
-        return
-    if review["state"] != "completed" or not review.get("reconciled"):
-        raise T.TransitionError("Cross-engine review must finish and receive the owner's dispositions before merging.")
-    identity, _ = _identity(project, task)
-    if (not _same(review["reconciled"], identity) or identity["base"] != pair["base_sha"]
-            or identity["head"] != pair["head_sha"]):
-        raise T.TransitionError("Code, base or context changed after review assessment. Assess the current candidate before merging.")
+    for review in _current_reviews(task):
+        if review["state"] == "withdrawn":
+            continue
+        if review["state"] != "completed" or not review.get("reconciled"):
+            raise T.TransitionError("Adversarial review must finish and receive the owner's dispositions before merging.")
+        identity, _ = _identity(project, task, proposal_id=review["reconciled"].get("proposal_id"))
+        if (not _same(review["reconciled"], identity) or identity["base"] != pair["base_sha"]
+                or identity["head"] != pair["head_sha"]):
+            raise T.TransitionError("Code, base, proposal or context changed after review assessment. Assess the current candidate before merging.")
 
 
 def cancel_attached(project, slug, reason):

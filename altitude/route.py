@@ -186,27 +186,39 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
 
 
 def pick_review(task: dict, project: dict) -> dict:
-    """Select once from configured options on a different seat, retaining project pins."""
+    """Prefer an eligible alternate seat, then a separate invocation on the owner's seat."""
     from . import engines
     owner = task.get("l2_engine")
-    empty = {"engine": None, "model": None, "label": None, "allowance_known": False}
+    empty = {"engine": None, "model": None, "label": None, "allowance_known": False,
+             "same_engine": False, "fallback_reason": ""}
     if owner not in config.ENGINES:
         return {**empty, "why": "The owner's actual engine is unavailable."}
     try:
         pin = config.pinned_option("l2", project)
         tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
-        excluded = tuple((owner, o.get("model") or config.default_model("l2", owner))
-                         for tier in tiers for o in tier if o["engine"] == owner)
-        choice = pick_engine("l2", project=project, excluded=excluded)
+        options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"]))
+                   for tier in tiers for o in tier]
+        fallback_reason = ""
+        for same_engine in (False, True):
+            excluded = tuple(option for option in options if (option[0] == owner) != same_engine)
+            failures = []
+            while True:
+                choice = pick_engine("l2", project=project, excluded=excluded)
+                if not choice.get("engine"):
+                    why = " ".join([*failures, choice["why"]])
+                    break
+                capability = engines.review_capability(choice["engine"])
+                if capability["available"]:
+                    return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
+                            "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
+                            "same_engine": same_engine, "fallback_reason": fallback_reason}
+                failures.append(f"{config.ENGINE_LABELS[choice['engine']]}: {capability['why']}")
+                excluded += tuple(option for option in options if option[0] == choice["engine"])
+            if not same_engine:
+                fallback_reason = "No alternate engine is eligible. " + why
+        return {**empty, "why": "No reviewer is available. " + why, "fallback_reason": fallback_reason}
     except ValueError as exc:
         return {**empty, "why": str(exc)}
-    if not choice.get("engine"):
-        return {**empty, "why": "No second engine is available. " + choice["why"]}
-    capability = engines.review_capability(choice["engine"])
-    if not capability["available"]:
-        return {**empty, "why": capability["why"]}
-    return {**choice, "label": config.ENGINE_LABELS[choice["engine"]],
-            "allowance_known": all(value is not None for value in _usage()[choice["engine"]])}
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,

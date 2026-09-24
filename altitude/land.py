@@ -1158,8 +1158,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             with S.project_lock(project):
                 current = S.load_task(project, slug)
                 current["review_merged_head"] = pair["head_sha"]
-                if current.get("reviews"):
-                    current["reviews"][-1]["merged_head"] = pair["head_sha"]
+                for review in reviews._current_reviews(current):
+                    review["merged_head"] = pair["head_sha"]
                 S.save_task(project, current)
 
     if merge and not merged:

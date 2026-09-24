@@ -34,7 +34,7 @@ def main():
         git("commit", "-q", "-m", "Update pagination", cwd=worktree)
 
     commit()
-    T.message(project, slug, "l2", "The cursor validation is ready. I will check the expiration boundary.")
+    proposal = T.message(project, slug, "l2", "Filter deleted records before applying the page limit. Keep the cursor format.")
     source = T.message(project, slug, T.OPERATOR_MESSAGE_ROLE, "Keep the pagination contract stable.")
     mode = {"available": True, "fail": False, "active": False, "calls": 0}
     gate = threading.Event()
@@ -77,22 +77,24 @@ def main():
             if self.path == "/fixture/status":
                 return self._json({"project": project, "slug": slug, "calls": mode["calls"],
                                    "hold_merge": S.load_task(project, slug).get("hold_merge"),
-                                   "pending": T.pending(project, slug), "review": reviews.view(project, slug)})
+                                   "pending": T.pending(project, slug), "review": reviews.view(project, slug),
+                                   "proposal": proposal, "questions": [q for q in S.load_task(project, slug).get("questions", []) if q["status"] == "open"]})
             return super().do_GET()
 
         def do_POST(self):
+            nonlocal proposal
             if not self.path.startswith("/fixture/"):
                 return super().do_POST()
             body = self._body()
             try:
                 if self.path == "/fixture/l2-request":
                     result = reviews.request(project, slug, actor="l2", expected_attempt=1,
-                                             request_id=uuid.uuid4().hex, focus="Check expiration boundaries.")
+                                             request_id=uuid.uuid4().hex, focus="Check expiration boundaries.", subject=body.get("subject", "changes"))
                 elif self.path == "/fixture/run":
                     if body.get("hold"):
                         gate.clear()
                     result = reviews.run(project, slug, latest()["id"], actor="l2", expected_attempt=1,
-                                         context_ids=[source["id"]])
+                                         context_ids=[source["id"]], proposal_id=proposal["id"] if latest().get("subject") == "proposal" else None)
                 elif self.path == "/fixture/release":
                     gate.set()
                     result = {"ok": True}
@@ -100,12 +102,28 @@ def main():
                     T.message(project, slug, "l2", "The review caught an expired-cursor bug. I fixed it and checked the later edits. Your merge hold still applies.")
                     result = reviews.assess(project, slug, latest()["id"], actor="l2", expected_attempt=1,
                         dispositions=[{"finding_id": "expiry", "disposition": "fixed", "reason": "Added an explicit expiration response and regression test."}],
-                        reason="Checked the pagination fix and all changes since the captured checkpoint.")
+                        reason="Checked the pagination fix and all changes since the captured checkpoint.",
+                        proposal_id=proposal["id"] if latest().get("subject") == "proposal" else None)
+                elif self.path == "/fixture/proposal-question":
+                    result = T.block(project, slug, "Use this pagination approach?", actor="l2", expected_attempt=1,
+                                     questions={"questions": [{"question": "Use this pagination approach?"}]})
+                elif self.path == "/fixture/revise-proposal":
+                    proposal = T.message(project, slug, "l2", "Filter deleted records before applying the page limit. Preserve the last examined record in the cursor.")
+                    result = proposal
+                elif self.path == "/fixture/approve-proposal":
+                    question = next(q for q in S.load_task(project, slug)["questions"] if q["status"] == "open")
+                    decision = T.message(project, slug, T.OPERATOR_MESSAGE_ROLE, "Use this pagination approach.")
+                    result = T.resolve_question(project, slug, question["id"], question["revision"], decision["id"],
+                                                disposition="answered", reason="The operator approved this approach.", expected_attempt=1)
                 elif self.path == "/fixture/edit":
                     commit()
                     result = {"ok": True}
                 elif self.path == "/fixture/mode":
                     mode.update({key: body[key] for key in ("available", "fail") if key in body})
+                    if "same_engine" in body:
+                        same = body["same_engine"]
+                        choice.update(engine=config.ENGINES[0 if same else 1], label="Owner engine" if same else "Second engine",
+                                      same_engine=same, fallback_reason="No alternate engine is available." if same else "")
                     result = {"ok": True}
                 elif self.path == "/fixture/l2-withdraw":
                     result = reviews.withdraw(project, slug, latest()["id"], actor="l2", expected_attempt=1,

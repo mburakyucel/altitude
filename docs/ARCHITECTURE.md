@@ -354,15 +354,21 @@ in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
 
 ### Cross-engine review
 
-`reviews.py` owns the optional task-bound review record; the task remains owned by L2. L2 elects
-review through the CLI, or the operator requests it through the existing task menu. The same receipt
-appears as a compact task-conversation system row. A repeated request or source message reuses it.
-The owner prepares a committed checkpoint and invokes the fixed daemon review endpoint. This is a
-focused Altitude-managed invocation, separate from engine-native delegation; it adds no helper queue,
-provider handoff, owner session or general command transport.
+`reviews.py` owns task-bound proposal and changes review records; the task remains owned by L2.
+L2 proactively seeks adversarial review of complex proposals before code and complex implementations,
+using judgment to keep simple work light. L2 requests through the CLI or the operator uses the two
+subject entries in the task menu. Each existing entry opens saved evidence without invoking review;
+reruns are explicit actions in details. A repeated request or source message reuses its receipt.
+The owner prepares a committed checkpoint, identifies the exact original L2 proposal message for a
+proposal review, and invokes the fixed daemon endpoint. A proposal request may continue a
+question-blocked owner solely for review while preserving the original approval question. This adds
+no implementation authority, helper queue, provider handoff, owner session or general command transport.
 
-The engine and routing seams select one configured option different from the owner, respecting
-project choices and known quota exhaustion. Unknown allowance remains eligible and visible. Admission
+The engine and routing seams prefer an eligible configured option different from the owner, respecting
+project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
+under the same captured-input/read-only contract, with its fallback reason recorded and shown alongside
+engine/model and account-allowance uncertainty before requesting and in saved evidence. No engine switch
+occurs after launch. Fallback cannot bypass unavailable observation, cancellation or capacity. Admission
 uses the existing machine launch lock: one reviewer machine-wide, with an additional machine slot,
 no reservation while waiting for preparation and no automatic retry. L2 and reviewer instructions
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
@@ -372,26 +378,31 @@ orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
 on interruption, including keyboard interruption and process exit, before reaping the launcher.
 Unknown termination remains a fault with capacity reserved; launcher exit alone is not cleanup.
-Adapters lacking the captured-input contract are unavailable. A single configured engine remains
-fully usable for ordinary work.
+Adapters lacking the captured-input contract are unavailable.
 
-Capture records committed head, fetched base, merge-candidate tree, context identities and input
+Capture records committed head, fetched base, source tree, context identities and input
 hashes. Raw Git blobs preserve exact bytes without export attributes; untracked files, symlinks and
 submodules are excluded by refusal. Both base and candidate accept at most 10000 files, 2 MiB per file
 and 64 MiB per tree, so removed content is bounded before creating the diff. Context includes the brief,
 request, original authority messages and corrections, decisions,
-and default-all or selected L2 evidence, bounded to 64 KiB. Image evidence needs a textual account.
+and default-all or selected L2 evidence, bounded to 64 KiB. Proposal capture also binds the exact
+original L2 message and text against the committed head's source tree, even before code differs from
+main. Changes reviews capture the merge-candidate tree and diff. Missing proposal input prevents invocation. Image evidence needs a
+textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. CLI-internal authentication uses
 the configured account. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
-Review records retain original findings and separate owner dispositions. Exact source/authority
-freshness and actual selected-input hashes are distinct. L2 assessment records the final candidate
-and evidence for every finding. Changed code, base or conversation invalidates that assessment;
-the UI distinguishes independently reviewed work from later L2-assessed edits. Request admission
-and the final merge share a task lock. Landing checks review completion and current assessment
-after other pre-merge checks; review cannot release an operator hold or replace required checks.
+Review records retain original findings and separate owner dispositions for each subject. Exact
+source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
+candidate and evidence for every finding; code, base or conversation changes require reassessment.
+Proposal assessment records the proposal identity and dispositions, including an explicitly selected
+revised proposal when relevant. Later proposal/context changes require L2 assessment or deliberate review.
+The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an
+implementation. Request admission and final merge share a task lock. Landing checks every accepted
+request for assessment or authorized withdrawal after other pre-merge checks, including changes requests
+followed by a proposal request. Review cannot release an operator hold or replace required checks.
 Only the operator can withdraw an operator request. No automatic rerun occurs after fixes.
 
 ## Task lifecycle

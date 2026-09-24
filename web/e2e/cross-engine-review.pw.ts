@@ -3,6 +3,68 @@ import { test } from "./fixtures";
 import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
+test("proposal and changes entries open saved evidence; only explicit rerun spends", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
+  const snapshot = { head: "proposal-source", base: "base", tree: "tree", context_hash: "context", proposal: { id: "original-proposal", at: "2026-09-22T10:24:00Z", text: "Filter deleted records before applying the page limit." } };
+  const proposal = { id: "proposal-review", subject: "proposal", requested_at: "2026-09-22T10:26:00Z", requested_by: "l2", state: "requested", engine_label: "Engine A", model: "Default", same_engine: true, fallback_reason: "No alternate engine is available.", coverage: "current", snapshot, reconciled: { ...snapshot, reason: "The revised proposal preserves cursor continuity." }, can_cancel: false, can_withdraw: false, can_retry: false, can_review_latest: false, can_review_again: false,
+    result: { text: "One proposal finding.", findings: [{ id: "cursor", severity: "high", title: "Cursor continuation needs a rule", body: "Preserve the last examined record." }] }, dispositions: [{ finding_id: "cursor", disposition: "fixed", reason: "The proposal now specifies cursor continuity." }] };
+  const changes = { ...proposal, id: "changes-review", subject: "changes", state: "completed", same_engine: false, fallback_reason: "", engine_label: "Engine B", snapshot: { ...snapshot, proposal: null } };
+  let posts = 0;
+  await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
+    ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null, fault: null, blocked_reason: "",
+    messages: [{ id: "proposal", role: "l2", text: snapshot.proposal.text }],
+    review: { available: true, why: "", engine_label: "Engine A", model: "Default", same_engine: true, fallback_reason: proposal.fallback_reason, allowance_known: false, latest: changes, history: [proposal, changes], subjects: { proposal: { available: true, why: "", latest: proposal }, changes: { available: true, why: "", latest: changes } } },
+  } }));
+  await page.route("**/api/task/review", async (route) => {
+    posts++;
+    expect(route.request().postDataJSON()).toMatchObject({ action: "rerun", review_id: proposal.id });
+    proposal.state = "requested"; proposal.can_review_again = false;
+    await route.fulfill({ json: { review: proposal } });
+  });
+  const walk = walkthrough(page, info);
+  await walk.open(`/projects/${project.name}/tasks/${task.slug}`);
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  await field.fill("Keep this draft.");
+  const menu = page.getByRole("dialog", { name: "Task details" });
+  const row = page.locator('[data-review-id="proposal-review"]');
+  for (const [state, coverage, label] of [["requested", "current", "Requested"], ["running", "current", "In progress"], ["completed", "current", "Complete"], ["completed", "earlier", "Earlier version"], ["failed", "current", "Failed"], ["cancelled", "current", "Cancelled"]]) {
+    proposal.state = state; proposal.coverage = coverage;
+    proposal.can_retry = ["failed", "cancelled"].includes(state); proposal.can_review_latest = coverage === "earlier";
+    await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
+    await expect(menu.getByRole("button", { name: "View proposal review" })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "View proposal review" }).locator("..").getByText(label, { exact: true })).toBeVisible();
+    await walk.state(`proposal-${state}-${coverage}-menu`, { visible: [menu.getByRole("button", { name: "View proposal review" }), menu.getByRole("button", { name: "View changes review" })], hidden: [menu.getByRole("button", { name: "Review proposal", exact: true })] });
+    await menu.getByRole("button", { name: "View proposal review" }).click();
+    await expect(row.locator("details")).toHaveAttribute("open", "");
+    await expect(row.getByText(/Separate same-engine reviewer/).first()).toContainText("No alternate engine is available.");
+    await expect(row.getByText("The proposal now specifies cursor continuity.")).toBeVisible();
+    expect(posts).toBe(0);
+    await row.locator("summary").click();
+    if (state === "requested") {
+      await row.getByRole("link", { name: "View captured proposal" }).click();
+      await expect(row.getByText(snapshot.proposal.text, { exact: true })).toBeVisible();
+      await row.locator("summary").click();
+    }
+  }
+  proposal.state = "completed"; proposal.coverage = "current"; proposal.can_retry = false; proposal.can_review_again = true;
+  await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
+  await menu.getByRole("button", { name: "View proposal review" }).click();
+  await walk.state("proposal-completed-findings", { visible: [row.getByText("The proposal now specifies cursor continuity."), row.getByText(/Implementation is not reviewed/), row.getByRole("button", { name: "Review again" })], hidden: [row.getByRole("button", { name: "Retry review" })] });
+  await row.getByRole("button", { name: "Review again" }).scrollIntoViewIfNeeded();
+  await expect(row.getByRole("button", { name: "Review again" })).toBeInViewport();
+  await walk.state("proposal-explicit-review-again", { visible: [row.getByRole("button", { name: "Review again" }), row.getByText(/Next review:/)], hidden: [row.getByRole("button", { name: "Retry review" })] });
+  await row.getByRole("button", { name: "Review again" }).click();
+  await expect.poll(() => posts).toBe(1);
+  await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
+  await menu.getByRole("button", { name: "View changes review" }).click();
+  await expect(page.locator('[data-review-id="changes-review"] details')).toHaveAttribute("open", "");
+  expect(posts).toBe(1);
+  await expect(field).toHaveValue("Keep this draft.");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+});
+
 // Explicit presentation/transport overlays. Backend transitions have separate deterministic evidence.
 test("cross-engine review stays in task chat through request, result and failure states", async ({ page, request }, info) => {
   test.setTimeout(90_000);
@@ -24,7 +86,7 @@ test("cross-engine review stays in task chat through request, result and failure
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, (route) => route.fulfill({ json: {
     ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null, fault: null, blocked_reason: "", hold_merge: "Operator review of the finished feature.",
     messages: [...messages, ...(existing ? [{ id: "review-anchor", role: "system", text: "Review requested", at: review.requested_at, review_id: review.id }] : [])],
-    review: { available, why: available ? "" : "A second engine is unavailable.", engine_label: "Engine B", model: "Default", allowance_known: false, latest: existing ? review : null, history: existing ? [review] : [] },
+    review: { available, why: available ? "" : "A second engine is unavailable.", engine_label: "Engine B", model: "Default", allowance_known: false, subjects: { proposal: { available: false, why: "No proposal is recorded.", latest: null }, changes: { available, why: available ? "" : "A second engine is unavailable.", latest: existing ? review : null } }, latest: existing ? review : null, history: existing ? [review] : [] },
   } }));
   await page.route("**/api/task/review", async (route) => {
     posts++;
@@ -41,7 +103,7 @@ test("cross-engine review stays in task chat through request, result and failure
   const walk = walkthrough(page, info);
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const menu = page.getByRole("dialog", { name: "Task details" });
-  const openMenu = () => page.getByRole("button", { name: "Task details", exact: true }).click();
+  const openMenu = () => page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
   const row = page.locator(`[data-review-id="${review.id}"]`);
   const details = row.locator("summary");
   const poll = async () => { await expect.poll(async () => page.locator(".task-review-status").textContent()).toContain(review.state === "requested" ? "waiting for L2" : review.state === "running" ? "is reviewing" : review.state === "completed" ? "review complete" : review.state === "cancelled" ? "cancelled" : review.state === "withdrawn" ? "withdrawn" : "failed"); };
@@ -50,11 +112,11 @@ test("cross-engine review stays in task chat through request, result and failure
   await field.fill("Keep the existing pagination contract.");
   await walk.state("01-empty-chat", { visible: [field], hidden: [row] });
   await openMenu();
-  await walk.state("02-request-in-details", { visible: [menu.getByRole("button", { name: "Request cross-engine review" }), menu.getByText(/remaining allowance is unknown/)], hidden: [] });
+  await walk.state("02-request-in-details", { visible: [menu.getByRole("button", { name: "Review changes" }), menu.getByText(/remaining allowance is unknown/)], hidden: [] });
   saving = true;
-  await menu.getByRole("button", { name: "Request cross-engine review" }).click();
+  await menu.getByRole("button", { name: "Review changes" }).click();
   await expect.poll(() => posts).toBe(1);
-  await expect(menu.getByRole("button", { name: "Request cross-engine review" })).toBeDisabled();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeDisabled();
   await walk.state("03-saving", { visible: [menu.getByText("Saving review request…")], hidden: [row] });
   finishPost!(); saving = false;
   await expect(menu).toBeHidden();
@@ -62,7 +124,7 @@ test("cross-engine review stays in task chat through request, result and failure
   await expect(field).toHaveValue("Keep the existing pagination contract.");
   review.state = "running"; review.can_cancel = true;
   await poll();
-  await walk.state("05-running", { visible: [row.getByText("Engine B is reviewing")], hidden: [row.getByRole("button", { name: "Cancel review" })] });
+  await walk.state("05-running", { visible: [row.getByText("Engine B is reviewing changes")], hidden: [row.getByRole("button", { name: "Cancel review" })] });
   await details.click();
   await walk.state("06-running-details", { visible: [row.getByRole("button", { name: "Cancel review" }), row.getByText(/Reviewed head:/)], hidden: [] });
   await row.getByRole("button", { name: "Cancel review" }).click(); await poll();
@@ -87,21 +149,21 @@ test("cross-engine review stays in task chat through request, result and failure
   await details.click();
   await walk.state("12-findings-and-l2-dispositions", { visible: [row.getByText(/high · Expired/), row.getByText(/Added the expiration response/), row.getByText(/The agreed storage contract/), row.getByText(/L2 assessed head:/)], hidden: [row.getByRole("button", { name: "Review latest" })] });
   await details.click(); await openMenu();
-  await walk.state("13-already-reviewed", { visible: [menu.getByRole("button", { name: "View review" })], hidden: [menu.getByRole("button", { name: "Request cross-engine review" })] });
+  await walk.state("13-already-reviewed", { visible: [menu.getByRole("button", { name: "View changes review" })], hidden: [menu.getByRole("button", { name: "Review changes" })] });
   await page.keyboard.press("Escape");
   await expect(field).toHaveValue("Keep the existing pagination contract.");
   existing = false; available = false;
   await expect(row).toBeHidden(); await openMenu();
   await walk.state("14-unavailable", { visible: [menu.getByText("A second engine is unavailable.")], hidden: [row] });
-  await expect(menu.getByRole("button", { name: "Request cross-engine review" })).toBeDisabled();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeDisabled();
   available = true; denied = true;
-  await expect(menu.getByRole("button", { name: "Request cross-engine review" })).toBeEnabled();
-  await menu.getByRole("button", { name: "Request cross-engine review" }).click();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeEnabled();
+  await menu.getByRole("button", { name: "Review changes" }).click();
   await walk.state("15-denied", { visible: [menu.getByText("You do not have permission to request or change this review.")], hidden: [row] });
   denied = false; lost = true;
-  await menu.getByRole("button", { name: "Request cross-engine review" }).click();
-  await expect(menu.getByRole("button", { name: "View review" })).toBeVisible();
-  await walk.state("16-lost-receipt-reconciled", { visible: [menu.getByRole("button", { name: "View review" })], hidden: [menu.getByRole("button", { name: "Request cross-engine review" })] });
+  await menu.getByRole("button", { name: "Review changes" }).click();
+  await expect(menu.getByRole("button", { name: "View changes review" })).toBeVisible();
+  await walk.state("16-lost-receipt-reconciled", { visible: [menu.getByRole("button", { name: "View changes review" })], hidden: [menu.getByRole("button", { name: "Review changes" })] });
   await page.keyboard.press("Escape");
   await expect(field).toHaveValue("Keep the existing pagination contract.");
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -115,7 +177,7 @@ test("review loading and uncertain receipt preserve listening and draft", async 
   let readGate: Promise<void> | null = new Promise((resolve) => { releaseRead = resolve; });
   const record = { ...task, title: "Keep pagination stable", state: "running", question: null, questions: [], question_group: null,
     messages: [{ id: "intro", role: "l2", text: "Checking pagination." }],
-    review: { available: true, why: "", engine_label: "Engine B", model: "Default", allowance_known: true, latest: null, history: [] } };
+    review: { available: true, why: "", engine_label: "Engine B", model: "Default", allowance_known: true, subjects: { proposal: { available: false, why: "No proposal is recorded.", latest: null }, changes: { available: true, why: "", latest: null } }, latest: null, history: [] } };
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`, async (route) => {
     if (readGate) await readGate;
     await route.fulfill({ json: record });
@@ -132,17 +194,17 @@ test("review loading and uncertain receipt preserve listening and draft", async 
   await walk.state("01-loading-task", { visible: [page.getByLabel("Loading", { exact: true })], hidden: [field] });
   releaseRead(); readGate = null;
   await field.fill("Keep my draft.");
-  await page.getByRole("button", { name: "Task details", exact: true }).click();
-  await menu.getByRole("button", { name: "Request cross-engine review" }).click();
+  await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
+  await menu.getByRole("button", { name: "Review changes" }).click();
   await walk.state("02-uncertain-checking", { visible: [menu.getByText(/Review request unconfirmed/)], hidden: [page.locator(".task-review-row")] });
-  await expect(menu.getByRole("button", { name: "Request cross-engine review" })).toBeDisabled();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeDisabled();
   releaseRead(); readGate = null;
-  await expect(menu.getByRole("button", { name: "Request cross-engine review" })).toBeEnabled();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(field).toHaveValue("Keep my draft.");
   await page.getByRole("button", { name: "Start voice input", exact: true }).click();
   await expect(page.locator('.composer[data-phase="listening"]')).toBeVisible();
-  await page.getByRole("button", { name: "Task details", exact: true }).click();
+  await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
   await walk.state("03-listening-with-details", { visible: [menu, page.getByRole("button", { name: "Stop voice input", exact: true })], hidden: [page.locator(".task-review-row")] });
   await page.getByRole("button", { name: "Close task details", exact: true }).click();
   await expect(page.locator('.composer[data-phase="listening"]')).toBeVisible();

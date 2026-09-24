@@ -404,6 +404,8 @@ class TestReviews(AltitudeCase):
             with self.subTest(disconnect=disconnect):
                 self.commit("value.py", f"VALUE = {3 if disconnect else 2}\n")
                 previous = S.load_task(self.project, self.slug).get("reviews", [])
+                if previous:
+                    self.assess(previous[-1])
                 request = self.request(previous=previous[-1]["id"] if previous else None)
                 observed, finished = threading.Event(), threading.Event()
                 release = threading.Event()
@@ -512,6 +514,10 @@ class TestReviews(AltitudeCase):
             self.request(actor=T.OPERATOR_MESSAGE_ROLE)
         self.commit("value.py", "VALUE = 4\n")
         reviews.require_merge(self.project, self.slug, self.pair())
+        saved = reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]
+        self.assertEqual(saved["id"], completed["id"])
+        self.assertTrue(saved["can_review_latest"])
+        self.assertFalse(saved["can_withdraw"])
         later = self.request(actor=T.OPERATOR_MESSAGE_ROLE, previous=completed["id"])
         self.assertNotEqual(later["id"], completed["id"])
         self.assertEqual(later["state"], "requested")
@@ -653,8 +659,111 @@ class TestReviews(AltitudeCase):
         after = {p.relative_to(folder): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob("*") if p.is_file()}
         self.assertEqual(before, after)
         self.assertEqual(self.run_review(result)["id"], result["id"])
-        duplicate = self.request(previous=result["id"])
+        duplicate = self.request()
         self.assertEqual(duplicate["id"], result["id"])
+        self.assertEqual(self.engine.call_count, 1)
+        with self.assertRaisesRegex(T.TransitionError, "Assess the completed"):
+            self.request(previous=result["id"])
+        self.assess(result)
+        rerun = self.request(previous=result["id"])
+        self.assertNotEqual(rerun["id"], result["id"])
+        self.assertEqual(self.engine.call_count, 1)
+
+    def test_proposal_before_code_preserves_open_question_through_resume_and_review(self):
+        git("reset", "--hard", "origin/main", cwd=self.worktree)
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: preserve cursors while filtering deleted rows.")
+        task = T.block(self.project, self.slug, "Use this pagination design?", actor="l2", expected_attempt=1)
+        question = next(q for q in task["questions"] if q["status"] == "open")
+        original = json.loads(json.dumps(question))
+        available = reviews.view(self.project, self.slug)
+        self.assertTrue(available["subjects"]["proposal"]["available"])
+        self.assertFalse(available["subjects"]["changes"]["available"])
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
+        self.assertEqual(task["resume_request"], requested["id"])
+        with self.assertRaisesRegex(T.TransitionError, "Resume the current owner"):
+            self.run_review(requested, proposal_id=proposal["id"])
+        claim = T.claim_resume(self.project, self.slug)
+        self.assertIn(requested["id"], [row["id"] for row in claim["messages"]])
+        T.resume(self.project, self.slug, agent_id="resumed-owner", expected_claim=claim["id"], input_delivered=True)
+        result = self.run_review(requested, proposal_id=proposal["id"], context_ids=[])
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(result["snapshot"]["head"], result["snapshot"]["base"])
+        self.assertEqual(result["snapshot"]["proposal"]["text"], proposal["text"])
+        snapshot = S.task_dir(self.project, self.slug) / "reviews" / result["id"] / "snapshot"
+        context = json.loads((snapshot / "context.json").read_text())
+        self.assertEqual(context["proposal"]["id"], proposal["id"])
+        self.assertIn(proposal["id"], result["snapshot"]["context_ids"])
+        self.assertEqual((snapshot / "changes.patch").read_text(), "")
+        self.assertIn("A proposal review is not implementation review", self.engine.call_args.args[0])
+        self.assess(result)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"])
+        self.assertIsNone(reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"])
+        self.assertEqual(self.engine.call_count, 1)
+
+    def test_proposal_input_and_revisions_bind_freshness_without_code_changes(self):
+        proposal = T.message(self.project, self.slug, "l2", "Proposal version one")
+        review = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
+        self.assess(review)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        revised = T.message(self.project, self.slug, "l2", "Proposal version two with cursor continuity")
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["coverage"], "earlier")
+        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        assessed = reviews.assess(self.project, self.slug, review["id"], actor="l2", expected_attempt=1,
+                                  dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Second proposal adds the missing constraint"}],
+                                  reason="Reviewed the revised proposal against original findings", proposal_id=revised["id"])
+        self.assertEqual(assessed["reconciled"]["proposal_id"], revised["id"])
+        self.assertEqual(assessed["coverage"], "assessed")
+        self.assertEqual(assessed["snapshot"]["proposal"]["text"], proposal["text"])
+        reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
+        result = self.run_review(self.request(subject="proposal"))
+        self.assertEqual(result["state"], "failed")
+        self.assertIn("proposal-message", result["error"])
+        self.engine.assert_not_called()
+        authority = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Please review the proposal")
+        retry = self.request(previous=result["id"])
+        result = self.run_review(retry, proposal_id=authority["id"])
+        self.assertEqual(result["state"], "failed")
+        self.engine.assert_not_called()
+        self.assertEqual(result["subject"], "proposal")
+
+    def test_subject_requests_do_not_hide_unresolved_other_subject_or_its_freshness(self):
+        changes = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        with self.assertRaisesRegex(T.TransitionError, "existing review"):
+            self.request(subject="proposal")
+        self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 1)
+        changes = self.run_review(changes)
+        self.assess(changes)
+        proposal = T.message(self.project, self.slug, "l2", "Proposal for follow-up behavior")
+        proposed = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
+        self.assess(proposed)
+        view = reviews.view(self.project, self.slug)
+        self.assertEqual(view["subjects"]["changes"]["latest"]["id"], changes["id"])
+        self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], proposed["id"])
+        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assess(changes)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        with self.assertRaisesRegex(T.TransitionError, "same proposal or changes"):
+            self.request(subject="changes", previous=proposed["id"])
+
+    def test_saved_fallback_provenance_survives_later_availability_changes(self):
+        self.choice.update(engine=config.ENGINES[0], same_engine=True, fallback_reason="Alternate account unavailable")
+        requested = self.request()
+        result = self.run_review(requested)
+        self.assertTrue(result["same_engine"])
+        self.assertTrue(result["allowance_known"])
+        self.assertEqual(result["fallback_reason"], "Alternate account unavailable")
+        self.choice.update(engine=config.ENGINES[1], same_engine=False, fallback_reason="")
+        view = reviews.view(self.project, self.slug)
+        self.assertFalse(view["same_engine"])
+        self.assertTrue(view["latest"]["same_engine"])
         self.assertEqual(self.engine.call_count, 1)
 
 
