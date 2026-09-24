@@ -992,6 +992,12 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=()):
     turn_id = active_turn["id"]
+    if trigger == "chat":
+        from . import audit
+        try:
+            prompt = audit.take_findings(project, turn_id) + prompt
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass  # Unavailable optional audit evidence must not prevent ordinary conversation.
     engine = choice["engine"]
     S.regen_state_md(project)
     inf = info(project)
