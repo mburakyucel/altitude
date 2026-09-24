@@ -1080,6 +1080,13 @@ without `CI` set uses two browser workers. External writers and older landing ve
 can still change refs: stale base/head evidence refuses merge and is never reused or retried
 automatically. Only invocations using this installed version share serialization.
 
+After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
+the revision it pushed; any other tip is a head the landing did not push and refuses at once
+(`head moved from the pushed revision`). GitHub's PR view lags a push for a moment, so a view that
+still names an earlier head is re-read every 2 seconds for up to 30 seconds until it names the
+pushed revision (#480); a view that never does refuses with the head it reports. Checks still have
+to pass on that exact pushed head with current main included.
+
 ### This repository's required PR check
 
 Owners and helpers run relevant tests during development. The self-hosted PR `check` runs

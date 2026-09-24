@@ -32,6 +32,9 @@ from pathlib import Path
 from . import config, dispatch, github_intake, state as S, tasks as T
 
 CHECK_POLL_SECONDS = 15
+#: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
+PR_VIEW_SETTLE_SECONDS = 30
+PR_VIEW_POLL_SECONDS = 2
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
 LAND_WAIT_TIMEOUT = 3600
@@ -639,19 +642,33 @@ def _require_pr_target(pr: dict, branch: str, base: str) -> None:
 
 
 def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_head: str) -> dict:
-    """Pin the exact GitHub PR base/head pair that check classification and local testing will judge."""
-    pr = _pr_view(root, str(number)) or {}
-    if pr.get("state") != "OPEN":
-        raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
-    _require_pr_target(pr, branch, base)
-    # #266: baseRefOid is PR metadata and may lag the actual branch after main is incorporated.
-    base_sha, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
-    head_sha = pr.get("headRefOid")
-    if head_sha != expected_head:
-        raise LandError(f"PR #{number} head moved from the pushed revision {expected_head} to {head_sha} before checks")
-    if fetched_head != head_sha:
-        raise LandError(f"PR #{number} refs moved while the merge candidate was being pinned "
-                        f"(GitHub head {head_sha}, origin head {fetched_head})")
+    """Pin the exact GitHub PR base/head pair that check classification and local testing will judge.
+
+    origin/<branch> is the authoritative head: anything but the revision this landing pushed is a
+    foreign move and refuses. GitHub's PR view lags a push for a moment (#480), so a view that still
+    names another head is re-read for a short bound until it names the pushed revision.
+    """
+    deadline, settling = time.monotonic() + PR_VIEW_SETTLE_SECONDS, False
+    while True:
+        pr = _pr_view(root, str(number)) or {}
+        if pr.get("state") != "OPEN":
+            raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
+        _require_pr_target(pr, branch, base)
+        # #266: baseRefOid is PR metadata and may lag the actual branch after main is incorporated.
+        base_sha, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
+        if fetched_head != expected_head:
+            raise LandError(f"PR #{number} head moved from the pushed revision {expected_head} to {fetched_head} "
+                            "before checks")
+        head_sha = pr.get("headRefOid")
+        if head_sha == expected_head:
+            break
+        if time.monotonic() >= deadline:
+            raise LandError(f"PR #{number} still reports head {head_sha} instead of the pushed revision "
+                            f"{expected_head} after {PR_VIEW_SETTLE_SECONDS} seconds; re-run alt land")
+        if not settling:
+            _note(f"PR #{number} view still reports {head_sha}; re-reading until it names the pushed head")
+            settling = True
+        time.sleep(PR_VIEW_POLL_SECONDS)
     return {"base": base, "branch": branch, "base_sha": base_sha, "head_sha": head_sha, "number": number,
             "required_pr_check": _required_pr_check(root, base_sha)}
 

@@ -10,6 +10,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   viewer's controls are bordered buttons instead of plain text. The design tenet names recognisable
   affordance as a first-order requirement and the design review checklist checks it.
 
+- `alt land` re-reads GitHub's PR view for up to 30 seconds after its own push until the view names
+  the pushed head, instead of aborting on the stale head it replaced. A tip on `origin/<branch>`
+  that the landing did not push still refuses before checks (#480).
+
 - Voice input works out of the box through the browser's own speech recognition, with words
   appearing while you speak. `alt machine set --voice browser|local|<url>` selects the browser,
   the local speech service or an OpenAI-compatible transcription endpoint; the endpoint key comes

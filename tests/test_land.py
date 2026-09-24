@@ -575,6 +575,80 @@ class TestLand(AltitudeCase):
         with self.assertRaisesRegex(land.LandError, "head moved"):
             land.land("fix: report remote", cwd=self.repo, wait=0)
 
+    def stale_pr_view(self, previous, stale_views):
+        """After the landing's own push, `gh pr view` keeps naming `previous` for `stale_views` reads (#480)."""
+        real, state = land._run, {"pushed": False, "stale": 0}
+
+        def answer(args):
+            if args[:2] == ["git", "push"]:
+                state["pushed"] = True
+            elif args[:3] == ["gh", "pr", "view"] and state["pushed"] and state["stale"] < stale_views:
+                state["stale"] += 1
+                body = json.loads(real(args, self.repo).stdout)
+                body["headRefOid"] = previous
+                return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+            return None
+
+        self.record_commands(answer)
+        return state
+
+    def test_stale_pr_view_after_own_push_is_re_read_until_it_names_the_pushed_head(self):
+        self.staged_change()
+        previous = land.land("fix: first", cwd=self.repo, wait=0)["head"]
+        self.advance_base("docs/base.md")
+        self.staged_change("src/other.py")
+        state = self.stale_pr_view(previous, stale_views=2)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: second", cwd=self.repo, wait=0, merge=True)
+        pushed = self.git("rev-parse", "origin/worktree-fix-x").strip()
+        self.assertNotEqual(pushed, previous)
+        self.assertEqual((result["head"], result["checks"], result["merged"]), (pushed, "pass", True))
+        self.assertEqual(state["stale"], 2)
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.PR_VIEW_POLL_SECONDS)] * 2)
+
+    def test_pr_view_that_never_names_the_pushed_head_refuses_within_the_bound(self):
+        self.staged_change()
+        previous = land.land("fix: first", cwd=self.repo, wait=0)["head"]
+        self.staged_change("src/other.py")
+        self.stale_pr_view(previous, stale_views=10 ** 6)
+        now = {"seconds": 0.0}
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.monotonic.side_effect = lambda: now["seconds"]
+            clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
+            with self.assertRaisesRegex(land.LandError, "still reports head .* instead of the pushed revision") as cm:
+                land.land("fix: second", cwd=self.repo, wait=0, merge=True)
+        self.assertIn(previous, str(cm.exception))
+        self.assertEqual(clock.sleep.call_count, land.PR_VIEW_SETTLE_SECONDS // land.PR_VIEW_POLL_SECONDS)
+        self.assertEqual(self.gh_log()[-1][:2], ["pr", "view"])
+
+    def test_head_the_landing_did_not_push_refuses_without_re_reading(self):
+        self.staged_change()
+        land.land("fix: first", cwd=self.repo, wait=0)
+        self.staged_change("src/other.py")
+        foreign, state = self.clone("foreign"), {"pushed": False, "moved": None}
+
+        def answer(args):
+            if args[:2] == ["git", "push"]:
+                state["pushed"] = True
+            elif args[:3] == ["gh", "pr", "view"] and state["pushed"] and state["moved"] is None:
+                git("fetch", "-q", "origin", cwd=foreign)
+                git("checkout", "-q", "-B", "worktree-fix-x", "origin/worktree-fix-x", cwd=foreign)
+                (foreign / "src/foreign.py").write_text("foreign\n")
+                git("add", "src/foreign.py", cwd=foreign)
+                git("commit", "-q", "-m", "another writer pushes onto the PR branch", cwd=foreign)
+                git("push", "-q", "origin", "worktree-fix-x", cwd=foreign)
+                state["moved"] = git("rev-parse", "HEAD", cwd=foreign).strip()
+            return None
+
+        self.record_commands(answer)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            with self.assertRaisesRegex(land.LandError, "head moved from the pushed revision") as cm:
+                land.land("fix: second", cwd=self.repo, wait=0, merge=True)
+        self.assertIn(f"to {state['moved']} before checks", str(cm.exception))
+        clock.sleep.assert_not_called()
+        self.assertEqual(self.remote_heads(), ["main", "worktree-fix-x"])
+
     def test_wait_zero_reports_pending_without_waiting(self):
         self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "pending"}]')
