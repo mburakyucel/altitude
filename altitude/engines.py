@@ -2155,11 +2155,25 @@ def _review_read(snapshot: Path, args: dict) -> dict:
     if len(data) > 2 * 1024 * 1024:
         raise ValueError("Captured file exceeds the two MiB text-tool limit.")
     lines = data.decode("utf-8").splitlines()
-    start = max(1, int(args.get("line", 1)))
+    start, column = max(1, int(args.get("line", 1))), max(1, int(args.get("column", 1)))
     selected = [(number, line) for number, line in enumerate(lines, 1) if number >= start and
                 (operation == "read" or str(args.get("query", "")) in line)]
-    result = [{"line": number, "text": line[:2000]} for number, line in selected[:100]]
-    return {"lines": result, "truncated": len(selected) > 100 or any(len(line) > 2000 for _, line in selected[:100])}
+    # One response holds at most 100 lines and 16 KiB of text; a longer line continues at its cut
+    # column, so a long JSON string or minified line is readable in full (I-20260924-132135).
+    result, budget = [], 16384
+    for index, (number, line) in enumerate(selected):
+        offset = column - 1 if number == start else 0
+        text = line[offset:offset + budget]
+        result.append({"line": number, "text": text, **({"column": offset + 1} if offset else {})})
+        budget -= len(text)
+        if offset + len(text) < len(line):
+            following = {"line": number, "column": offset + len(text) + 1}
+        elif index + 1 < len(selected) and (len(result) == 100 or not budget):
+            following = {"line": number + 1, "column": 1}
+        else:
+            continue
+        return {"lines": result, "truncated": True, "next": following}
+    return {"lines": result, "truncated": False}
 
 
 def review_mcp(snapshot: str, served: str) -> None:
@@ -2167,11 +2181,14 @@ def review_mcp(snapshot: str, served: str) -> None:
 
     ``served`` is touched on the first read or search that returns lines, so a review that read no
     content fails loudly instead of completing with no coverage (I-20260924-080541)."""
-    tool = {"name": "captured_input", "description": "List captured files, read from a line, or search one file literally.",
+    tool = {"name": "captured_input",
+            "description": "List captured files, read from a line, or search one file literally. A truncated "
+                           "response names the line and column to continue from in next; long lines continue at a column.",
             "inputSchema": {"type": "object", "required": ["operation"], "additionalProperties": False,
                             "properties": {"operation": {"enum": ["list", "read", "search"]},
                                            "path": {"type": "string"}, "query": {"type": "string"},
-                                           "line": {"type": "integer", "minimum": 1}}}}
+                                           "line": {"type": "integer", "minimum": 1},
+                                           "column": {"type": "integer", "minimum": 1}}}}
     for line in sys.stdin:
         request = json.loads(line)
         if "id" not in request:
@@ -2276,6 +2293,23 @@ def review_stop(worker: dict) -> bool:
         return review_active(worker) is False
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _review_object(text: str) -> dict:
+    """The first complete JSON object in the answer, fenced or bare; surrounding prose is ignored.
+
+    A Claude reviewer prefaced its fenced JSON with a sentence and the review failed at character 0
+    (I-20260924-132135). An answer with no object still raises."""
+    decoder, position = json.JSONDecoder(), text.find("{")
+    while position >= 0:
+        try:
+            parsed, _ = decoder.raw_decode(text, position)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+        position = text.find("{", position + 1)
+    raise ValueError("The review answer holds no JSON object.")
 
 
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
@@ -2384,7 +2418,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
         out["text"] = text
         if not _review_served(runtime).exists():
             return {**out, "error": "The reviewer never read its captured input; the result has no coverage."}
-        parsed = json.loads(text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+        parsed = _review_object(text)
         if not isinstance(parsed.get("text"), str) or not isinstance(parsed.get("findings"), list):
             raise ValueError
         out["text"] = parsed["text"]
