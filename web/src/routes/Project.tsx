@@ -219,6 +219,7 @@ function HeaderMenu({ name, designViewer, starting, details }: {
 
   const menu = (
         <div role="menu" className="project-details-actions" aria-label="Project actions">
+          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate("/settings", { state: { settingsFrom: window.location.pathname + window.location.search } })}>Settings…</button>
           {confirm === "reset" ? (
             confirmRow(
               "Reset the L3 conversation?",

@@ -1,4 +1,4 @@
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { EngineReadout, Overview } from "../data/api";
 import { RESERVE_PERCENT, age } from "../data/observed";
@@ -38,6 +38,7 @@ export function Rail({
   onAddFolder: () => void;
 }) {
   const data = overview.data;
+  const location = useLocation();
   const managed = managedProjects(data);
   const unmanaged = unmanagedFolders(data);
   const attention = attentionCount(data, overview.isError);
@@ -94,7 +95,9 @@ export function Rail({
         </NavLink>
       </nav>
       <div className="rail-operator">
-        <span className="truncate font-medium">{data?.operator || "The operator"}</span>
+        <NavLink to="/settings" className="rail-item min-w-0 flex-1" aria-label="Settings" state={location.pathname.startsWith("/settings") ? location.state : { settingsFrom: location.pathname + location.search }}>
+          <span className="truncate font-medium">{data?.operator || "The operator"}</span><span aria-hidden>⚙</span>
+        </NavLink>
         <span className="ml-auto">
           <ThemeToggle />
         </span>

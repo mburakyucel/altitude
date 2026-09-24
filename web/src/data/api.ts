@@ -614,21 +614,30 @@ export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
-const VoiceSchema = z.object({ backend: z.enum(["browser", "local", "endpoint"]) });
+const VoiceSchema = z.object({
+  backend: z.enum(["browser", "local", "endpoint"]), selection: z.string(),
+  url: z.string(), model: z.string(), key_set: z.boolean(),
+});
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
+export type VoiceSettings = z.infer<typeof VoiceSchema>;
+export type VoiceUpdate = { backend: VoiceBackend; selection: string; url?: string; model?: string; key?: string; keep_key?: boolean };
 
 /** Which backend this installation transcribes with; "browser" never uploads audio. */
-export async function readVoiceBackend(): Promise<VoiceBackend> {
-  return VoiceSchema.parse(await api("/api/voice")).backend;
+export async function readVoiceSettings(): Promise<VoiceSettings> {
+  return VoiceSchema.parse(await api("/api/voice"));
+}
+
+export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettings> {
+  return VoiceSchema.parse(await post("/api/voice", value));
 }
 
 /** Upload one browser-native audio blob for the server's local service or configured endpoint. */
-export async function transcribeVoice(audio: Blob, signal?: AbortSignal): Promise<string> {
+export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
   const result = VoiceTranscriptSchema.parse(
     await api("/api/transcribe", {
       method: "POST",
       body: audio,
-      headers: { "Content-Type": audio.type || "application/octet-stream" },
+      headers: { "Content-Type": audio.type || "application/octet-stream", "X-Voice-Selection": selection },
       signal,
     }),
   );

@@ -155,7 +155,7 @@ class TestVoiceBackends(AltitudeCase):
 
     def test_browser_recognition_is_the_default_and_refuses_uploads(self):
         self.patch(config, "machine_settings", return_value={})
-        self.assertEqual(server.voice_view(), {"backend": "browser"})
+        self.assertEqual(server.voice_view()["backend"], "browser")
         with self.assertRaisesRegex(server.VoiceInputError, "runs in the browser") as raised:
             server.transcribe_voice(b"aac", "audio/mp4")
         self.assertEqual(raised.exception.status, 409)
@@ -164,7 +164,7 @@ class TestVoiceBackends(AltitudeCase):
     def test_endpoint_receives_one_openai_compatible_request_and_never_touches_ffmpeg(self):
         self.use({"url": self.url, "key": "sk-private", "model": "whisper-large-v3"})
         run = self.patch(server.subprocess, "run")
-        self.assertEqual(server.voice_view(), {"backend": "endpoint"})
+        self.assertEqual(server.voice_view()["backend"], "endpoint")
 
         text = server.transcribe_voice(b"opus bytes", "audio/webm;codecs=opus")
 
@@ -301,6 +301,9 @@ class TestVoiceSetting(AltitudeCase):
 class TestVoiceEndpoint(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.patch(config, "ROOT", self.tmp / "machine")
+        config.ensure_root()
+        S.write_json(config.ROOT / "settings.json", {"voice": "local"})
         self.logs = []
         self.patch(server, "log", new=self.logs.append)
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -314,13 +317,17 @@ class TestVoiceEndpoint(AltitudeCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def request(self, body: bytes, content_type: str, *, length: int | None = None):
+    def request(self, body: bytes, content_type: str, *, length: int | None = None,
+                selection: str | None = "current"):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=2)
+        headers = {"Content-Type": content_type, "Content-Length": str(len(body) if length is None else length)}
+        if selection is not None:
+            headers["X-Voice-Selection"] = server.voice_view()["selection"] if selection == "current" else selection
         connection.request(
             "POST",
             "/api/transcribe",
             body=body,
-            headers={"Content-Type": content_type, "Content-Length": str(len(body) if length is None else length)},
+            headers=headers,
         )
         response = connection.getresponse()
         payload = json.loads(response.read())
@@ -332,14 +339,14 @@ class TestVoiceEndpoint(AltitudeCase):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=2)
         connection.request("GET", "/api/voice")
         response = connection.getresponse()
-        self.assertEqual((response.status, json.loads(response.read())), (200, {"backend": "local"}))
+        self.assertEqual((response.status, json.loads(response.read())), (200, server.voice_view()))
         connection.close()
 
     def test_passes_the_raw_recording_to_the_adapter(self):
         seen = {}
 
-        def transcribe(raw, content_type):
-            seen.update(raw=raw, content_type=content_type)
+        def transcribe(raw, content_type, *, setting):
+            seen.update(raw=raw, content_type=content_type, setting=setting)
             return "review me first"
 
         self.patch(server, "transcribe_voice", new=transcribe)
@@ -347,7 +354,114 @@ class TestVoiceEndpoint(AltitudeCase):
         status, payload = self.request(b"aac bytes", "audio/mp4")
 
         self.assertEqual((status, payload), (200, {"text": "review me first"}))
-        self.assertEqual(seen, {"raw": b"aac bytes", "content_type": "audio/mp4"})
+        self.assertEqual(seen, {"raw": b"aac bytes", "content_type": "audio/mp4", "setting": {"backend": "local"}})
+
+    def settings_request(self, body=None):
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=2)
+        if body is None:
+            connection.request("GET", "/api/voice")
+        else:
+            connection.request("POST", "/api/voice", body=json.dumps(body), headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        return response.status, payload
+
+    def save(self, **body):
+        return self.settings_request({"selection": self.settings_request()[1]["selection"], **body})
+
+    def test_settings_saves_and_redacts_endpoint_key_through_durable_operator_request(self):
+        status, setting = self.save(backend="endpoint", url="https://voice.example/transcribe", key="secret-fixture")
+        self.assertEqual(status, 200)
+        self.assertEqual({key: value for key, value in setting.items() if key != "selection"},
+                         {"backend": "endpoint", "url": "https://voice.example/transcribe",
+                          "model": config.VOICE_DEFAULT_MODEL, "key_set": True})
+        self.assertNotIn("secret-fixture", json.dumps(setting))
+        self.assertEqual(self.settings_request(), (200, setting))
+        request = S.read_json(config.ROOT / "voice-request.json", {})
+        self.assertEqual((request["actor"], request["status"]), (config.OPERATOR_ACTOR, "done"))
+        self.assertEqual(request["voice"]["key"], "secret-fixture")
+        self.assertNotIn("secret-fixture", (config.ROOT / "events.jsonl").read_text())
+        for backend in ("browser", "local"):
+            self.assertEqual(self.save(backend=backend)[0], 200)
+            self.assertEqual(config.voice_setting(), {"backend": backend})
+            self.assertEqual(self.settings_request()[1]["key_set"], False)
+
+    def test_keep_key_only_for_same_url_and_blank_replacement_removes_it(self):
+        url = "https://voice.example/transcribe"
+        self.assertEqual(self.save(backend="endpoint", url=url, key="original-secret")[0], 200)
+        self.assertEqual(self.save(backend="endpoint", url=url, model="another-model", keep_key=True)[0], 200)
+        self.assertEqual(config.voice_setting()["key"], "original-secret")
+        status, payload = self.save(backend="endpoint", url="https://other.example/transcribe", keep_key=True)
+        self.assertEqual(status, 400)
+        self.assertIn("same endpoint URL", payload["error"])
+        self.assertEqual(config.voice_setting()["url"], url)
+        self.assertEqual(self.save(backend="endpoint", url=url, keep_key=True, key="")[0], 400)
+        self.assertEqual(self.save(backend="endpoint", url=url, key="")[0], 200)
+        self.assertNotIn("key", config.voice_setting())
+        self.assertEqual(self.save(backend="endpoint", url=url, key="second-secret")[0], 200)
+        self.assertEqual(self.save(backend="endpoint", url="https://other.example/transcribe")[0], 200)
+        self.assertNotIn("key", config.voice_setting())
+
+    def test_invalid_settings_never_replace_the_saved_choice(self):
+        for body in ({"backend": "unknown"}, {"backend": "local", "key": "unwanted"},
+                     {"backend": "endpoint", "url": "https://user:secret@voice.example"},
+                     {"backend": "endpoint", "url": "https://voice.example?key=secret"},
+                     {"backend": "endpoint", "url": "file:///recordings"},
+                     {"backend": "endpoint", "url": "https://voice.example", "key": 12},
+                     {"backend": "endpoint", "url": "https://voice.example", "keep_key": "yes"},
+                     {"backend": "local", "other": True}):
+            with self.subTest(body=body):
+                status, payload = self.save(**body)
+                self.assertEqual(status, 400)
+                self.assertNotIn("secret", payload["error"])
+                self.assertEqual(config.voice_setting(), {"backend": "local"})
+        self.assertFalse((config.ROOT / "voice-request.json").exists())
+
+    def test_stale_settings_save_requires_reload_without_saving(self):
+        selection = self.settings_request()[1]["selection"]
+        self.assertEqual(self.save(backend="browser")[0], 200)
+        status, payload = self.settings_request({"backend": "local", "selection": selection})
+        self.assertEqual(status, 409)
+        self.assertIn("Reload settings", payload["error"])
+        self.assertEqual(config.voice_setting(), {"backend": "browser"})
+        self.assertEqual(self.settings_request({"backend": "local"})[0], 409)
+
+    def test_missing_or_stale_recording_selection_never_forwards_audio(self):
+        local = self.patch(server, "_transcribe_local")
+        endpoint = self.patch(server, "_transcribe_endpoint")
+        for previous, current in (
+            ("local", {"url": "https://voice.example/transcribe"}),
+            ({"url": "https://voice.example/transcribe"}, "local"),
+            ({"url": "https://voice.example/transcribe"}, {"url": "https://other.example/transcribe"}),
+            ("local", "browser"),
+        ):
+            with self.subTest(previous=previous, current=current):
+                S.write_json(config.ROOT / "settings.json", {"voice": previous})
+                selection = self.settings_request()[1]["selection"]
+                S.write_json(config.ROOT / "settings.json", {"voice": current})
+                status, payload = self.request(b"audio", "audio/mp4", selection=selection)
+                self.assertEqual(status, 409)
+                self.assertIn("Record again", payload["error"])
+        self.assertEqual(self.request(b"audio", "audio/mp4", selection=None)[0], 409)
+        local.assert_not_called()
+        endpoint.assert_not_called()
+
+    def test_accepted_upload_uses_one_snapshot_even_if_settings_change_during_transcription(self):
+        setting = {"backend": "endpoint", "url": "https://voice.example/transcribe", "model": "fixture", "key": "secret-fixture"}
+        read = self.patch(config, "voice_setting", side_effect=[setting, AssertionError("settings read twice")])
+        seen = []
+
+        def transcribe(raw, media_type, extension, accepted):
+            S.write_json(config.ROOT / "settings.json", {"voice": {"url": "https://other.example/transcribe"}})
+            seen.append(accepted)
+            return "original destination"
+
+        self.patch(server, "_transcribe_endpoint", side_effect=transcribe)
+        status, payload = self.request(b"audio", "audio/mp4", selection=server._voice_selection(setting))
+        self.assertEqual((status, payload), (200, {"text": "original destination"}))
+        self.assertEqual(seen, [setting])
+        read.assert_called_once_with()
 
     def test_rejects_missing_oversize_and_unknown_recordings_before_transcription(self):
         transcribe = self.patch(server, "transcribe_voice")

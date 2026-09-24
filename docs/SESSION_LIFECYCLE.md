@@ -660,6 +660,13 @@ retains its original conversation, text and images while transcription completes
 or task does not cancel that requested send. Returning shows its pending state or recovered failure.
 Late cancelled results cannot fill or send to another conversation, including after a new recording starts.
 
+Settings → Voice input edits the same machine choice as the CLI, without a task, service restart
+or provider call. The overview stays compact; the nested voice page contains backend choices and
+credentials. Back returns to Settings without saving unfinished endpoint edits. Successful saves
+change the next capture in the document. An upload carries its capture's backend/destination identity;
+if it no longer matches the saved choice, transcription is refused before forwarding and the typed
+draft is preserved. A transcription already accepted completes with its captured settings.
+
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
 refresh; newly typed text remains. Failed immediate wakes leave accepted messages and their due

@@ -108,6 +108,19 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       }
     } else if (route === "/monitor") {
       await expect(main.getByRole("heading", { name: "Routing now", exact: true })).toBeVisible();
+    } else if (route === "/settings") {
+      await expect(main.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: "Voice input Local speech service", exact: true })).toBeVisible();
+      await expect(main.getByRole("region", { name: "Network", exact: true })).toBeVisible();
+      await expect(main.getByRole("radio")).toHaveCount(0);
+      await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
+    } else if (route === "/settings/voice") {
+      await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
+      await expect(main.getByRole("radio", { name: "Local speech service", exact: true })).toBeChecked();
+      await expect(main.getByRole("radio")).toHaveCount(3);
+      await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+      await expect(main.getByLabel("Endpoint URL")).toHaveCount(0);
+      await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {
       await expect(page).toHaveURL(new RegExp(`${project.path}(\\?tab=work)?$`));
       await expect(main.getByRole("button", { name: "More actions" })).toBeVisible();

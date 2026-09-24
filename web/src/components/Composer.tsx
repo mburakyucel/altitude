@@ -318,7 +318,9 @@ export default function Composer({
   const [recoveryUnavailable, setRecoveryUnavailable] = useState(false);
   const failure = useRef(sendFailure);
   failure.current = sendFailure;
-  const backend = useVoiceBackend();
+  const voice = useVoiceBackend();
+  const backend = voice?.backend ?? null;
+  const captureSelection = useRef("");
   const unavailable = voiceUnavailable(backend);
   const canvas = useWaveform(stream, phase === "listening");
 
@@ -601,7 +603,7 @@ export default function Composer({
       const timeout = setTimeout(() => request.abort(), TRANSCRIBE_TIMEOUT_MS);
       setPhase("transcribing");
       try {
-        const text = await transcribeVoice(audio, request.signal);
+        const text = await transcribeVoice(audio, captureSelection.current, request.signal);
         if ((!mounted.current && !sending) || request.signal.aborted) return;
         if (sending) {
           if (!text.trim()) { endVoiceSend(sending); return; }
@@ -674,6 +676,7 @@ export default function Composer({
 
   const start = useCallback(async () => {
     if (unavailable || denied || disabled || admitting.current || phase !== "idle") return;
+    captureSelection.current = voice?.selection ?? "";
     setVoiceFailure("");
     setElapsed(0);
     cancelled.current = false;
@@ -742,7 +745,7 @@ export default function Composer({
       else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
-  }, [backend, denied, disabled, finish, focusField, phase, releaseStream, unavailable]);
+  }, [backend, voice, denied, disabled, finish, focusField, phase, releaseStream, unavailable]);
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback(() => {
