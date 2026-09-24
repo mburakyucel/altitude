@@ -219,6 +219,18 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
 /* voice states sheet: one row per state, desktop composer beside the phone dock */
+/* settings page: option rows, the endpoint form, read-only network lines, entry points */
+.opt{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--hairline);align-items:flex-start}.opt:last-child{border-bottom:0}
+.opt .radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border);flex:none;margin-top:2px;position:relative}.opt .radio.on{border-color:var(--accent)}.opt .radio.on::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.opt b{display:block;font-size:14px;font-weight:600}.opt p{margin:2px 0 0;font-size:13px;color:var(--text-muted);line-height:1.5}
+.form{display:grid;gap:10px;margin-top:10px}.form label{display:grid;gap:4px;font-size:12px;color:var(--text-secondary);font-weight:500}
+.form .field{min-width:0;color:var(--text-primary)}.form .field.ph{color:var(--text-muted)}
+.form .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}.settings-saving .opt{opacity:.55}.settings-saving .btn{pointer-events:none}.form .save-error{color:var(--danger);flex-basis:100%}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;font-size:13px}.kv span{color:var(--text-muted)}.kv b{font-weight:500;overflow-wrap:anywhere}
+.sgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
+.sgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}.sgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
+.menu-mock{width:280px;background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:8px;font-size:14px}.menu-mock div{padding:9px 12px;border-radius:8px}.menu-mock div.hi{background:var(--accent-tint);color:var(--accent)}.menu-mock hr{border:0;border-top:1px solid var(--hairline);margin:6px 0}
+.who.on{background:var(--accent-tint);border-radius:10px;color:var(--text-primary)}
 .vgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
 .vgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}
 .vgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
@@ -232,6 +244,9 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
 .route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}
 .route-content h3{font-size:15px;margin:0;font-weight:600}
+.setting-link{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--border);border-radius:var(--radius-card);color:var(--text-primary);background:var(--card);text-decoration:none}
+.setting-link:hover,.setting-link:focus-visible{border-color:var(--accent);background:var(--accent-tint);text-decoration:none}
+.setting-link b{display:block;font-weight:600}.setting-link small{display:block;margin-top:3px;color:var(--text-muted);font-size:13px}.setting-back{margin-bottom:20px}
 .route-content p{margin:8px 0}.route-content ul{padding-left:20px}
 .seats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .monitor-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.monitor-row .muted{margin-left:auto}

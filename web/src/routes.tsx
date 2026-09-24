@@ -13,6 +13,7 @@ import TaskReport from "./routes/TaskReport";
 import TaskDesign from "./routes/TaskDesign";
 import TaskFile from "./routes/TaskFile";
 import Monitor from "./routes/Monitor";
+import Settings from "./routes/Settings";
 
 /** /projects: the first managed project, or First run when nothing is managed
  * (SPEC.md §2.1, §3.12). */
@@ -71,6 +72,8 @@ export const routes: RouteObject[] = [
       { path: "/chat", loader: () => redirect("/projects") },
       { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },
       { path: "/monitor", element: <Monitor /> },
+      { path: "/settings", element: <Settings /> },
+      { path: "/settings/voice", element: <Settings voice /> },
       // Last: a typo'd deep link lands on Needs you inside the shell, not on react-router's bare
       // error page outside it.
       { path: "*", element: <Navigate to="/" replace /> },

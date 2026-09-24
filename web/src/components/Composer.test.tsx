@@ -7,7 +7,7 @@ import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
 import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser } from "./voiceTest";
-import { presetVoiceBackend } from "./voiceBackend";
+import { presetVoiceBackend, updateVoiceSettings } from "./voiceBackend";
 
 /*
  * The composer's states (SPEC.md §3.6), one test per row of the table. Issue #195 is the standing
@@ -930,7 +930,7 @@ describe("Composer", () => {
   it("upload backend: a 409 from a changed installation shows the server's words and reads the backend again", async () => {
     installVoiceBrowser({ backend: "local", recognition: true });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser" });
+      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser", selection: "fixture-browser", url: "", model: "", key_set: false });
       if (String(input).includes("/api/transcribe")) return jsonResponse({ error: "Voice now runs in the browser on this installation. Try again." }, 409);
       return jsonResponse({ error: "not found" }, 404);
     }));
@@ -963,7 +963,7 @@ describe("Composer", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (!String(input).endsWith("/api/voice")) return jsonResponse({ error: "not found" }, 404);
       const backend = await new Promise<string>((resolve) => (answer = resolve));
-      return jsonResponse({ backend });
+      return jsonResponse({ backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false });
     }));
     presetVoiceBackend(null);
     render(<Harness />);
@@ -971,6 +971,19 @@ describe("Composer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     answer("browser");
     expect(await screen.findByRole("button", { name: "Start voice input" })).toBeInTheDocument();
+  });
+
+  it("uploads with the capture's destination even when Settings changes while listening", async () => {
+    installVoiceBrowser();
+    const fetchMock = vi.fn(async () => jsonResponse({ text: "spoken" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => updateVoiceSettings({ backend: "endpoint", selection: "new-destination", url: "https://speech.example.test", model: "", key_set: false }));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Keep this spoken"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/transcribe", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-local" }) }));
   });
 
   it("combines a draft and a transcript with one space, and formats the timer", () => {

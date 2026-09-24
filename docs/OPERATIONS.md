@@ -222,8 +222,15 @@ alt machine set --unset-voice --reason 'Back to browser recognition'
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request;
 the key stays in that file and the request file, and `alt machine show` and the event log show it
-only as `set`. Open composers pick the change up on their next page load, or on their next
-recording when the server refuses an upload because the backend changed. No backend keeps audio.
+only as `set`. **Settings → Voice input** edits the same setting: browser/local save immediately,
+and a custom endpoint uses **Save endpoint**. The stored key is never returned to the page; it is
+retained only for an unchanged URL. **Replace** with a blank field removes it. Back discards unsaved
+endpoint edits. Settings also shows read-only connection details.
+
+A Settings save updates the next capture in that browser document. Other documents and CLI changes
+are picked up on reload or after a stale upload is refused. Recordings identify their selected backend
+and destination; changing either cannot silently reroute unfinished audio. Altitude deletes its
+temporary recordings; external speech services control their own retention.
 
 ### On iPhone
 

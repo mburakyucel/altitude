@@ -86,7 +86,7 @@ export default function AppShell() {
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />
-          {(!projectPage && !taskPage && !taskLive) || missingProject ? <PhoneHeader overview={overview} /> : null}
+          {((!projectPage && !taskPage && !taskLive) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
         </>
       ) : (
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />

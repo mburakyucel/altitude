@@ -124,18 +124,66 @@ def _wav_seconds(path: Path) -> float:
         return audio.getnframes() / rate if rate else 0.0
 
 
+def _voice_selection(setting: dict) -> str:
+    """Bind a recording to its disclosed backend and destination, without retaining old settings."""
+    destination = setting.get("url", "") if setting["backend"] == "endpoint" else ""
+    return hashlib.sha256(json.dumps([setting["backend"], destination]).encode()).hexdigest()
+
+
 def voice_view() -> dict:
-    """What the composer needs: which backend this installation transcribes with."""
-    return {"backend": config.voice_setting()["backend"]}
+    """Settings and recording destination, with a write-only endpoint key."""
+    setting = config.voice_setting()
+    return {"backend": setting["backend"], "url": setting.get("url", ""),
+            "model": setting.get("model", ""), "key_set": bool(setting.get("key")),
+            "selection": _voice_selection(setting)}
 
 
-def transcribe_voice(raw: bytes, content_type: str) -> str:
+def save_voice(body: dict) -> dict:
+    """Apply the operator's voice selection through the same durable request as the CLI."""
+    if body.keys() - {"backend", "url", "model", "key", "keep_key", "selection"}:
+        raise ValueError("Unsupported voice settings fields.")
+    current = config.voice_setting()
+    if body.get("selection") != _voice_selection(current):
+        raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
+    backend = body.get("backend")
+    if backend in config.VOICE_BACKENDS:
+        if body.keys() - {"backend", "selection"}:
+            raise ValueError("Endpoint fields apply only to a custom endpoint.")
+        value = backend
+    elif backend == "endpoint":
+        value = {"url": body.get("url")}
+        for field in ("model", "key"):
+            text = body.get(field, "")
+            if not isinstance(text, str):
+                raise ValueError(f"The voice endpoint {field} must be text.")
+            if text.strip():
+                value[field] = text.strip()
+        keep_key = body.get("keep_key", False)
+        if not isinstance(keep_key, bool):
+            raise ValueError("Keep key must be true or false.")
+        if keep_key:
+            if "key" in body:
+                raise ValueError("Choose either keeping or replacing the endpoint key.")
+            if current["backend"] != "endpoint" or current["url"] != value["url"]:
+                raise ValueError("A saved key can only be kept for the same endpoint URL.")
+            if current.get("key"):
+                value["key"] = current["key"]
+    else:
+        raise ValueError("Choose browser recognition, local speech service, or a custom endpoint.")
+    dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR)
+    result = dispatch._run_setting(None, "voice")
+    if result["status"] != "done":
+        raise ValueError(result["note"])
+    return voice_view()
+
+
+def transcribe_voice(raw: bytes, content_type: str, *, setting: dict | None = None) -> str:
     """Transcribe one bounded browser recording through the machine's backend, retaining no audio."""
     media_type = content_type.split(";", 1)[0].strip().lower()
     extension = VOICE_TYPES.get(media_type)
     if extension is None:
         raise VoiceInputError("This browser's recording format is not supported.", 415)
-    setting = config.voice_setting()
+    setting = config.voice_setting() if setting is None else setting
     if setting["backend"] == "browser":
         raise VoiceInputError("Voice now runs in the browser on this installation. Try again.", 409)
     if setting["backend"] == "endpoint":
@@ -1489,7 +1537,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(raw) != length:
             return self._json({"error": "the recording upload was incomplete"}, 400)
         try:
-            text = transcribe_voice(raw, content_type)
+            setting = config.voice_setting()
+            if self.headers.get("X-Voice-Selection") != _voice_selection(setting):
+                raise VoiceInputError("Voice settings changed. Your typed draft is unchanged. Record again with the new setting.", 409)
+            text = transcribe_voice(raw, content_type, setting=setting)
         except VoiceInputError as exc:
             log(f"voice transcription failed ({exc.status}): {type(exc.__cause__).__name__ if exc.__cause__ else str(exc)}")
             return self._json({"error": str(exc)}, exc.status)
@@ -1771,6 +1822,13 @@ class Handler(BaseHTTPRequestHandler):
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.effort_view(o["project"]))
+                except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "voice"]:
+                try:
+                    return self._json(save_voice(o))
+                except VoiceInputError as exc:
+                    return self._json({"error": str(exc)}, exc.status)
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":

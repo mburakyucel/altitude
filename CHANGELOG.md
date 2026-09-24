@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- **Settings → Voice input** selects the existing browser, local speech service or custom endpoint
+  for every project. The compact overview opens a separate voice page; endpoint credentials stay
+  write-only. Changes apply to the next recording, and a changed destination cannot reroute an
+  unfinished upload (#317).
+
 - Clickable controls read as clickable: the task menu's **Review proposal** and **Review changes**
   entries, **View question**, **Discuss with L3**, the update banner's **Details** and the image
   viewer's controls are bordered buttons instead of plain text. The design tenet names recognisable

@@ -250,6 +250,10 @@ and external certificate directories remain explicit choices. See [operations](O
 for update/recovery and source deployments. Voice input works out of the box through the browser's
 own speech recognition; `ffmpeg` and a local speech service are needed only for the `local` backend
 (see [voice input](OPERATIONS.md#voice-input)). Typing remains available without any of them.
+Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).
+The overview shows the saved backend; the Voice input page holds its options. Browser and local
+choices save immediately. Custom endpoint requires a URL, with optional model and key, then
+**Save endpoint**. It needs no `ffmpeg`; the endpoint’s own setup and charges apply.
 Installation downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work
