@@ -58,7 +58,7 @@ test("Settings holds project models and effort; the menu only links there and th
   await l3First.getByLabel("Model").fill("fixture-model");
   await walk.state("05-model-saved-on-enter", {
     action: () => l3First.getByLabel("Model").press("Enter"),
-    visible: [l3First.getByText("Saved.")], hidden: [l3First.getByRole("alert")],
+    visible: [l3First.locator(".default-field", { has: page.getByLabel("Model") }).getByText("Saved.")], hidden: [l3First.getByRole("alert")],
   });
   await expect(l3First.getByLabel("Model")).toHaveValue("fixture-model");
   expect(values(await defaults(request, project.name))).toEqual({

@@ -178,7 +178,9 @@ Overflow menu: **Settings…** (opens Settings with this project under **This pr
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
 reports a design URL; opens in a new tab).
 
-The menu holds actions only; no engine, model or effort control appears in it.
+The menu holds actions only; no engine, model or effort control appears in it. Opening it focuses
+the first item; arrow keys, Home and End move between items; an inline confirmation takes focus and
+**Cancel** returns it to its item; Escape closes the menu and returns focus to the three dots.
 
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).

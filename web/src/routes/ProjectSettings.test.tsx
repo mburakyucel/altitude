@@ -11,7 +11,7 @@ const overview = { projects: [{ name: "example", managed: true }, { name: "sampl
 const efforts = [{ value: "native", label: "Native" }, { value: "low", label: "Low" }, { value: "high", label: "High" }];
 
 /** A fictional server: settings keyed like the registry, validated and echoed as the defaults view. */
-function fixture({ refuse = "", l3 = {} as Record<string, unknown> } = {}) {
+function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null as null | { setting: string; until: Promise<void> } } = {}) {
   const saved: Record<string, string | null> = {};
   let pin: string | null = null;
   const posts: Record<string, unknown>[] = [];
@@ -30,7 +30,9 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown> } = {}) {
       const body = JSON.parse(String(init.body)); posts.push(body);
       if (body.setting === refuse) return json({ error: "Alpha does not support reasoning effort low" }, 400);
       saved[body.setting] = body.value;
-      return json(view());
+      const response = view();
+      if (hold && body.setting === hold.setting) await hold.until;
+      return json(response);
     }
     if (url === "/api/l3/engine") { const body = JSON.parse(String(init?.body)); posts.push(body); pin = body.engine; return json({ ok: true }); }
     return json({}, 404);
@@ -93,6 +95,22 @@ describe("Project settings", () => {
       notifyManager.setScheduler(defaultScheduler);
       await act(async () => { while (pending.length) pending.shift()!(); });
     }
+  });
+
+  it("keeps a later save of another field when an earlier save's response arrives last", async () => {
+    let release!: () => void;
+    const posts = fixture({ hold: { setting: "l3_alpha_effort", until: new Promise<void>((resolve) => { release = resolve; }) } });
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const l3Alpha = await group("L3 on Alpha");
+    const model = within(await group("L2 on Beta")).getByLabelText("Model");
+    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
+    await user.type(model, "beta-model{Enter}");
+    await within(await group("L2 on Beta")).findByText("Saved.");
+    release();
+    await within(l3Alpha).findByText("Saved.");
+    expect(posts.map((post) => post.setting)).toEqual(["l3_alpha_effort", "l2_beta_model"]);
+    expect(model).toHaveValue("beta-model");
+    expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("low");
   });
 
   it("keeps the saved choice and offers Retry save when the server refuses", async () => {

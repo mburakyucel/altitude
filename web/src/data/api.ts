@@ -1028,7 +1028,16 @@ export function useSetDefault(project: string) {
     mutationFn: async (input: { setting: string; value: string | null }) =>
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
-    onSuccess: (result) => client.setQueryData(["defaults", project], result),
+    // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
+    onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
+      if (!old) return result;
+      const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
+      return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
+        ...e,
+        model: e.model.setting === setting ? { ...e.model, value: saved?.value ?? null } : e.model,
+        effort: e.effort.setting === setting ? { ...e.effort, value: saved?.value ?? null } : e.effort,
+      })) })) };
+    }),
   });
 }
 

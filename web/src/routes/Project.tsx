@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
@@ -155,18 +156,40 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const [confirm, setConfirm] = useState<"" | "reset" | "remove">("");
   const [error, setError] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const shown = useRef<typeof confirm>("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const reset = useL3Reset(name);
   const remove = useProjectRemove();
   const pending = reset.isPending || remove.isPending || starting;
 
-  const close = useCallback(() => {
+  const close = useCallback((refocus = false) => {
     if (pending) return;
     setOpen(false);
     setConfirm("");
     setError("");
+    if (refocus) opener.current?.focus();
   }, [pending]);
+
+  // Menu-button focus: opening enters the first item, a confirmation takes focus and Cancel returns it to its item.
+  useEffect(() => {
+    const menu = ref.current?.querySelector<HTMLElement>('[role="menu"]');
+    if (!open || !menu) { shown.current = ""; return; }
+    const target = confirm ? menu.querySelector<HTMLElement>('[role="group"] button')
+      : menu.querySelector<HTMLElement>(shown.current ? `[data-action="${shown.current}"]` : '[role="menuitem"]');
+    target?.focus();
+    shown.current = confirm;
+  }, [open, confirm]);
+
+  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+    if (next === undefined || !items.length) return;
+    event.preventDefault();
+    items[(next + items.length) % items.length]!.focus();
+  };
 
   const choose = (action: typeof confirm) => {
     setError("");
@@ -185,7 +208,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
       if (!ref.current?.contains(event.target as Node)) close();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") close(ref.current?.contains(document.activeElement) ?? false);
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -212,7 +235,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   );
 
   const menu = (
-        <div role="menu" className="menu project-menu" aria-label="Project actions">
+        <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
           <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate("/settings", { state: { settingsFrom: window.location.pathname + window.location.search } })}>Settings…</button>
           {confirm === "reset" ? (
             confirmRow(
@@ -222,7 +245,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
               () => reset.mutate(undefined, { onSuccess: completed, onError: failed }),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("reset")}>
+            <button type="button" role="menuitem" className="menu-item" data-action="reset" disabled={pending} onClick={() => choose("reset")}>
               Reset L3 conversation
             </button>
           )}
@@ -239,7 +262,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
                 }).catch(failed),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("remove")}>
+            <button type="button" role="menuitem" className="menu-item" data-action="remove" disabled={pending} onClick={() => choose("remove")}>
               Remove project
             </button>
           )}
@@ -256,6 +279,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
       <button
         type="button"
         className="icon-btn"
+        ref={opener}
         aria-label="More actions"
         aria-haspopup="menu"
         aria-expanded={open}
