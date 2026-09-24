@@ -1,5 +1,5 @@
 import { act, screen, waitFor } from "@testing-library/react";
-import { notifyManager } from "@tanstack/react-query";
+import { defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -46,7 +46,7 @@ describe("Voice settings", () => {
       expect(screen.getByLabelText("API key (optional)")).toBeEnabled();
     } finally {
       release();
-      notifyManager.setScheduler((callback) => setTimeout(callback, 0));
+      notifyManager.setScheduler(defaultScheduler);
       await act(async () => { while (pending.length) pending.shift()!(); });
     }
   });
@@ -73,7 +73,7 @@ describe("Voice settings", () => {
       await user.click(screen.getByRole("radio", { name: "Local speech service" }));
       await waitFor(() => expect(calls.at(-1)).toMatchObject({ backend: "local", selection: "browser-selection" }));
     } finally {
-      notifyManager.setScheduler((callback) => setTimeout(callback, 0));
+      notifyManager.setScheduler(defaultScheduler);
       await act(async () => flush());
     }
   });
