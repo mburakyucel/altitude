@@ -1,6 +1,6 @@
-# Set up an early private preview
+# Set up Altitude
 
-Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The private
+Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The release
 archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
 Native macOS, Windows and genuine clean-machine/provider acceptance are not established.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
@@ -27,8 +27,8 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-Obtain `install.py`, the versioned `.tar.gz` archive and its SHA-256 checksum through the approved
-private release channel. The example version below is a placeholder, not a published release.
+Obtain `install.py`, the versioned `.tar.gz` archive and its SHA-256 checksum from a published
+[release](RELEASING.md), or from the maintainer while none is published. The example version below is a placeholder, not a published release.
 Verify the source of the installer and checksum; a checksum from the same untrusted download
 does not establish authenticity. Run these commands as the account that will use Altitude:
 

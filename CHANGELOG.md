@@ -1,9 +1,14 @@
 # Changelog
 
-Release notes describe user-visible behavior, compatibility and recovery. The project is a private
+Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
 ## Unreleased
+
+- The repository is ready for public contributors: a [security policy](SECURITY.md) with private
+  vulnerability reporting and scope, contributor guidance and issue templates written for fork
+  contributors, and preview wording that no longer assumes invited collaborators. The license
+  decision is recorded separately (#219).
 
 - Auto refreshes account quota without an interactive session, using native live usage reports.
   Missing or failed readings remain unknown; stale readings never become fresh by being reread.
