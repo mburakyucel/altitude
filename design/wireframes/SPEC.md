@@ -167,29 +167,18 @@ Status line, composed left to right and separated by "·": "L3 answered N min ag
 part reads "L3 is answering" (or "L3 is handling <what>" for a system turn, §4.1).
 
 The phone combines project identity and a short **L3 Ready / Answering / Handling** status in its
-single 54px shell header. The project name opens the switcher. Details holds the last-answer age,
-engine/model, task counts, Auto/engine selector and existing project actions; a non-Auto pin stays
-named in the compact status. There is no second status row. Details uses a labelled sheet with
-contained focus, Escape/outside dismissal where allowed, and focus returned to its opener. The
-sheet scrolls inside the currently usable viewport above any keyboard; full names remain readable.
+single 54px shell header. The project name opens the switcher; a non-Auto pin stays named in the
+compact status. There is no second status row. The three dots open the same project actions menu as
+desktop, above any keyboard. The engine pin, the last L3 turn and model/effort defaults live on the
+project's Settings page (§3.15).
 **Setup** remains discoverable in the project header on phone and desktop, including healthy
 projects. It opens the same configuration checklist without replacing the conversation or draft.
 
-Overflow menu: **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
+Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
 reports a design URL; opens in a new tab).
 
-Project details, in the phone sheet and desktop overflow popover, contains independent **L3 effort**
-and **L2 effort** selectors alongside the existing engine setting. These controls add no persistent
-header row. Each offers Default with its role's explanation, Native, and supported engine-labelled
-choices supplied by the server. Changes save immediately; both effort controls disable during Saving,
-then show the persisted choice and Saved. Failed or denied saves keep the saved choice and expose the
-server's explanation with Retry save; loading and failed reads show Loading or Retry without controls.
-L3 changes apply next turn. L2 defaults apply to fresh attempts, started tasks keep their effort,
-and per-task overrides win. Copy distinguishes requested effort from observed engine behavior and
-notes that higher effort can use more time and tokens. Default is the unconfigured state; no microphone
-or listening state belongs to settings. Closing details hides controls and keeps the conversation draft.
-`web/e2e/project-effort.pw.ts` walks these states at both viewports with persisted real API writes.
+The menu holds actions only; no engine, model or effort control appears in it.
 
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
@@ -420,8 +409,8 @@ The same card is the row in the work panel and the card under an L3 reply that c
 
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
-"Message the L2"); a left pill (engine pin on L3 chat: Auto or an engine name; none on the task
-conversation, and in project details on phone); Add images button; microphone button; send control. The send control is the arrow in an accent circle
+"Message the L2"); a left pill (engine pin on desktop L3 chat: Auto or an engine name; none on the
+task conversation or on phone, where the pin is in the project's Settings page); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted on desktop. The structure is the same on both widths: the field spans the box on top
 and the controls (pill, Add images, microphone, send, and the recording cluster while listening or
@@ -1085,8 +1074,8 @@ A **Projects folder** row shows the current folder and opens `/settings/projects
 explanation that First run offers the folders directly inside it, the current value and the §3.12
 folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
 new folder; a failure shows the server explanation and Retry. First run reads the change at once.
-The overview also shows read-only address, HTTPS and operator details. Project settings belong to
-a separate increment. Voice input has a labelled **Settings** back button at both widths. It returns
+The overview also shows read-only address, HTTPS and operator details.
+Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
@@ -1108,9 +1097,35 @@ bind to their original backend/destination and refuse a changed selection before
 | Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
 | Saved endpoint | Saved.; key entry clears and becomes Key set when configured. Returning shows Custom endpoint summary. |
 
+Under **This project**, opened from a project, one row names that project and opens
+`/settings/projects/<name>`; a direct visit lists every managed project under **Projects** instead.
+The project page has a labelled **Settings** back button and three cards. **L3 engine** holds the
+Auto/engine pin (the same pin as the desktop composer pill) and the last L3 turn: engine, observed
+model, requested effort and the effort the engine reported, each saying "not reported" when unknown.
+**L3 · project conversation** and **L2 · task owners** each hold one row per engine with **Model**
+and **Effort**: the model is free text with alias suggestions and a "Default: <model>" placeholder,
+saved on Enter or leaving the field, restored by Escape and cleared to Default when empty; effort
+offers "Default (<level>)", Native and only the levels that engine accepts, saved on choice. Each
+field saves alone and shows its own status; changing one pair never changes another. Copy says L3
+changes apply from its next turn, L2 defaults apply to fresh attempts while started tasks keep
+theirs, a choice made for one launch wins, and choices request rather than confirm what the engine
+used. At 390px each row stacks model above effort.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Loading | Loading settings…; no fields. |
+| Read failed | Could not load settings and Retry. |
+| Saving | That field is disabled with Saving…; other fields stay editable. |
+| Saved | That field shows the persisted value and Saved. |
+| Failed/denied save | Server explanation and Retry save; the field keeps the saved value. |
+| Not started | L3 engine card says L3 has not started. |
+
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
 Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,
 typed draft preservation, all three choices, key replacement/removal and loading/saving/failure.
+`web/e2e/project-settings.pw.ts` walks the menu entry, This project row, independent saves, reload
+persistence, restoring Default, the engine pin, loading/read failure and saving/denied states at both
+sizes, with the project draft preserved.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
 ## 4. Behaviour rules
