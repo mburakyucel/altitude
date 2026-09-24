@@ -639,7 +639,7 @@ describe("Task on desktop", () => {
     expect(within(row).getByText("Sending…")).toBeInTheDocument();
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
 
-    const message = { id: input.request_id, at: new Date().toISOString(), role: "burak", text: "prefer the smaller diff", delivery: { state: "queued", at: null, removable: true } };
+    const message = { id: input.request_id, at: new Date().toISOString(), role: running.messages[0]!.role, text: "prefer the smaller diff", delivery: { state: "queued", at: null, removable: true } };
     record = { ...running, messages: [...running.messages, message] };
     await act(async () => accept(jsonResponse({ ok: true, message })));
     await waitFor(() => expect(row).not.toHaveAttribute("data-pending"));
