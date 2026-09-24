@@ -72,12 +72,12 @@ function views(page: Page, info: TestInfo) {
     composer: main.getByRole("textbox", { name: "Message the L2", exact: true }),
     conversation: main.getByRole("region", { name: "Task conversation", exact: true }),
     live: main.getByRole("region", { name: "Live session", exact: true }),
-    stop: main.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }),
+    stop: page.getByRole("button", { name: "Stop", exact: true }),
     reject: main.getByRole("button", { name: "Reject", exact: true }),
     stopConfirm: main.getByRole("group", { name: "Stop this task?", exact: true }),
     rejectConfirm: main.getByRole("group", { name: "Reject this task?", exact: true }),
     async showDetails() {
-      if (phone) await page.getByRole("button", { name: "Task details", exact: true }).click();
+      if (phone) await page.getByRole("button", { name: /Task details$/ }).click();
     },
     async closeDetails() {
       if (phone) await page.getByRole("button", { name: "Close task details", exact: true }).click();
@@ -122,7 +122,7 @@ test("a running task: conversation, live session, Raw events, accessible Stop an
     await walk.state("06-panel-open", { action: () => toggle.click(), visible: [v.live, transcript], hidden: [] });
   }
   await walk.state("07-live-stop-accessible", {
-    visible: [v.live.getByRole("button", { name: "Stop", exact: true })],
+    visible: [page.getByRole("button", { name: "Stop", exact: true })],
     hidden: [v.stopConfirm, v.rejectConfirm],
   });
   await walk.state("08-composer-stop-accessible", {

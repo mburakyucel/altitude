@@ -1243,8 +1243,8 @@
 .decision-receipt { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--hairline); }
 .conversation-notice { margin: 0; padding: 10px 16px; background: var(--accent-tint); font-size: var(--text-meta); }
 .conversation-turn { color: var(--accent-text); font-size: var(--text-meta); font-weight: 600; }
-.conversation-pill { min-height: 36px; padding: 6px 14px; border: 1px solid var(--accent-tint-border); border-radius: 999px; background: var(--card); color: var(--accent-text); font: inherit; font-weight: 500; box-shadow: var(--shadow-card); cursor: pointer; }
-.conversation-jumps { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 20px; padding: 6px 12px; font-size: var(--text-meta); }
+.conversation-jumps { position: absolute; bottom: 12px; right: 16px; display: flex; gap: 8px; max-width: calc(100% - 32px); font-size: var(--text-meta); }
+.conversation-jumps .btn { box-shadow: var(--shadow-card); }
 .conversation-activity { color: var(--text-secondary); font-size: var(--text-meta); }
 .conversation-activity summary { cursor: pointer; padding: 8px 0; }
 .conversation-activity p { overflow-wrap: anywhere; }
@@ -1621,18 +1621,38 @@
   padding: 4px 28px 16px;
 }
 .task-activity { padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; }
-.task-activity-heading, .task-dock-controls, .task-steering { display: flex; align-items: center; gap: 10px; }
-.task-activity-heading, .task-dock-controls { justify-content: space-between; }
+.task-activity-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .task-activity-heading { font-size: 12px; }
 .task-activity p { margin: 3px 0 0; }
 .task-activity-words { font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .task-activity[data-expanded] .task-activity-words { display: block; max-height: 25vh; overflow-y: auto; }
 .cue-line { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; color: var(--text-muted); }
-.task-dock-controls { min-height: 42px; font-size: 12px; margin-bottom: 3px; }
-.task-steering { flex-wrap: wrap; justify-content: flex-end; font-size: 12px; }
-.task-stop { border: 1px solid var(--border); gap: 8px; }
-.task-stop kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
-.live-steering { padding: 0 14px 8px; }
+.task-steering { flex: none; width: 104px; padding: 0 8px; white-space: nowrap; gap: 6px; }
+.task-steering kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
+.task-reading, .task-views, .task-view { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.task-reading { position: relative; }
+.task-view[hidden] { display: none; }
+.task-page .task-actions > .btn, .task-page .task-actions > .icon-btn,
+.task-page .live-tools > .btn, .task-page .conversation-jumps > .btn,
+.phone-header[data-task] .phone-title-button, .phone-header[data-task] .task-steering {
+  min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--surface); color: var(--text-primary); font-weight: 500;
+}
+.task-page .task-actions > .btn:hover, .task-page .task-actions > .icon-btn:hover,
+.task-page .live-tools > .btn:hover, .task-page .conversation-jumps > .btn:hover,
+.phone-header[data-task] .phone-title-button:hover, .phone-header[data-task] .task-steering:hover { background: var(--hairline); }
+.task-page .task-actions > [aria-pressed="true"], .task-page .live-tools > [aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text);
+}
+.phone-header[data-task] { gap: 8px; }
+.phone-header[data-task] .phone-title { font-size: 14px; }
+.phone-header[data-task] .phone-heading { align-items: flex-start; }
+.phone-header[data-task] .phone-title-button { padding: 0 8px; }
+.phone-header[data-task] .task-steering { font-size: 14px; }
+.phone-header[data-task] .phone-title-button > span[aria-hidden] { flex: none; }
+.task-page .live-tools { flex-wrap: wrap; justify-content: flex-end; }
+.task-page[data-phone] > .task-line { margin: 0; padding: 8px 16px; }
+
 .message-delivery { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; max-width: 90%; text-align: right; }
 .shell[data-phone] .convo-scroll {
   padding: 12px 16px 8px;

@@ -248,7 +248,8 @@ describe("Phone", () => {
     const { router, user } = renderBrowserApp("/projects/tutor?tab=work");
 
     await act(() => router.navigate("/projects/tutor/tasks/fix-audio"));
-    expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
+    await screen.findByRole("navigation", { name: "Task views" });
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "fix-audio", level: 1 })).toBeInTheDocument();
     const bar = screen.getByRole("navigation", { name: "Primary" });
     expect(within(bar).getByRole("link", { name: "Work" })).toHaveAttribute("aria-current", "page");
