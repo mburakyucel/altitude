@@ -23,6 +23,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Restart banner states', desktop: 'RestartStates.html', desktopSize: { w: 1200, h: 540, name: 'Sheet' } },
   { label: 'First run', desktop: 'FirstRun.html' },
   { label: 'Composer states, voice included', desktop: 'ComposerStates.html', desktopSize: { w: 1200, h: 1380, name: 'Sheet' } },
+  { label: 'Voice input states: desktop and phone', desktop: 'VoiceStates.html', desktopSize: { w: 1200, h: 1420, name: 'Sheet' } },
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },

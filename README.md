@@ -486,6 +486,9 @@ it is pending shows its status; a failure preserves the original text for recove
 conversation's draft stays independent. While the microphone opens, records or transcribes, the text stays readable
 and read-only, with its activity indicator inside the composer. Stop adds the transcript for editing;
 Send transcribes and sends once. Cancel, denial or failure restores editing and preserves the draft.
+Voice works on a fresh installation through the browser's own speech recognition, with the words
+appearing as you speak; `alt machine set --voice` switches to the local speech service or an
+OpenAI-compatible endpoint, which transcribe after Stop or Send (see [voice input](docs/OPERATIONS.md#voice-input)).
 
 Submitted text, including image captions, stays recoverable in its original conversation while
 awaiting confirmation across navigation and reload in the same browser tab. A receipt clears that recovery copy immediately;

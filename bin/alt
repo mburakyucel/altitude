@@ -60,6 +60,13 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     return payload, reason.strip()
 
 
+def _public_voice_request(request):
+    """A voice request as the terminal shows it: the endpoint key never leaves the private file."""
+    if not request:
+        return request
+    return {key: config.public_voice(value) if key in ("voice", "result_voice") else value for key, value in request.items()}
+
+
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
         return Path(args.file).read_text()
@@ -277,8 +284,12 @@ def main(argv=None) -> None:
     m = sub.add_parser("machine"); ms = m.add_subparsers(dest="mcmd", required=True)
     ms.add_parser("show", help="inspect active/default concurrency limits and pending changes")
     x = ms.add_parser("set"); x.add_argument("--reason", required=True)
-    wip = x.add_mutually_exclusive_group(required=True)
-    wip.add_argument("--wip", type=int); wip.add_argument("--unset-wip", action="store_true")
+    one = x.add_mutually_exclusive_group(required=True)
+    one.add_argument("--wip", type=int); one.add_argument("--unset-wip", action="store_true")
+    one.add_argument("--voice", metavar="BACKEND", help="browser (default), local, or the URL of an OpenAI-compatible audio/transcriptions endpoint")
+    one.add_argument("--unset-voice", action="store_true", help="restore browser recognition")
+    x.add_argument("--voice-model", metavar="MODEL", help=f"model name the endpoint expects (default {config.VOICE_DEFAULT_MODEL})")
+    x.add_argument("--voice-key-file", metavar="PATH", help="file holding the bearer key the endpoint expects, or - for stdin; the key never appears on a command line and stays in the private settings file")
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
@@ -524,11 +535,28 @@ def main(argv=None) -> None:
     if c == "machine":
         from altitude import dispatch
         if args.mcmd == "set":
-            out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
+            if (args.voice_model or args.voice_key_file) and (args.voice is None or args.voice in config.VOICE_BACKENDS):
+                sys.exit("alt machine set: --voice-model and --voice-key-file accompany an endpoint URL")
+            key = None
+            if args.voice_key_file:
+                key = (sys.stdin.read() if args.voice_key_file == "-" else Path(args.voice_key_file).read_text()).strip()
+                if not key:
+                    sys.exit("alt machine set: the voice key file is empty")
+            if args.voice is not None or args.unset_voice:
+                value = None if args.unset_voice else args.voice if args.voice in config.VOICE_BACKENDS else {
+                    "url": args.voice, **({"model": args.voice_model} if args.voice_model else {}),
+                    **({"key": key} if key else {})}
+                request = dispatch.request_setting(None, "voice", value, args.reason, actor=ACTOR)
+                out({**request, "request": _public_voice_request(request["request"])})
+            else:
+                out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
+            voice = config.voice_setting()
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE,
-                 "request": S.read_json(config.ROOT / "wip-request.json", None)})
+                 "request": S.read_json(config.ROOT / "wip-request.json", None),
+                 "voice": config.public_voice(voice),
+                 "voice_request": _public_voice_request(S.read_json(config.ROOT / "voice-request.json", None))})
         return
     if c == "project":
         if args.pcmd == "set":

@@ -1,4 +1,6 @@
 import { vi } from "vitest";
+import { presetVoiceBackend } from "./voiceBackend";
+import type { VoiceBackend } from "../data/api";
 
 /** Browser voice primitives for route/component tests; emits one AAC/mp4 blob when stopped. */
 export class FakeMediaRecorder {
@@ -35,8 +37,71 @@ export class FakeMediaRecorder {
   }
 }
 
-export function installVoiceBrowser() {
+type FakeResult = { isFinal: boolean; 0: { transcript: string }; length: 1 };
+
+/** The browser's speech recognizer for tests: the test hands it phrases, silence and errors. */
+export class FakeSpeechRecognition {
+  static instances: FakeSpeechRecognition[] = [];
+  continuous = false;
+  interimResults = false;
+  lang = "";
+  onresult: ((event: { results: FakeResult[] }) => void) | null = null;
+  onerror: ((event: { error: string }) => void) | null = null;
+  onend: (() => void) | null = null;
+  started = 0;
+  stopped = 0;
+  aborted = 0;
+  running = false;
+  /** false: Stop never gets its `end` event, as a recognizer waiting on its service. */
+  answersStop = true;
+
+  constructor() {
+    FakeSpeechRecognition.instances.push(this);
+  }
+
+  start() {
+    if (this.running) throw new Error("already started");
+    this.running = true;
+    this.started += 1;
+  }
+
+  stop() {
+    this.stopped += 1;
+    this.running = false;
+    if (this.answersStop) queueMicrotask(() => this.onend?.());
+  }
+
+  abort() {
+    this.aborted += 1;
+    this.running = false;
+    queueMicrotask(() => this.onend?.());
+  }
+
+  /** Deliver the session's results so far: settled phrases and the phrase still changing. */
+  hear(finals: string[], interim = "") {
+    const results = finals.map((transcript): FakeResult => ({ isFinal: true, 0: { transcript }, length: 1 }));
+    if (interim) results.push({ isFinal: false, 0: { transcript: interim }, length: 1 });
+    this.onresult?.({ results });
+  }
+
+  /** Chrome ends a continuous session after silence without an error. */
+  silence() {
+    this.running = false;
+    this.onend?.();
+  }
+
+  fail(error: string) {
+    this.onerror?.({ error });
+    this.running = false;
+    this.onend?.();
+  }
+}
+
+export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean } = {}) {
+  const backend = options.backend ?? "local";
+  const recognition = options.recognition ?? backend === "browser";
   FakeMediaRecorder.instances = [];
+  FakeSpeechRecognition.instances = [];
   const track = { stop: vi.fn() };
   const mediaStream = { getTracks: () => [track] } as unknown as MediaStream;
   const getUserMedia = vi.fn(async () => mediaStream);
@@ -45,8 +110,13 @@ export function installVoiceBrowser() {
     configurable: true,
     value: { getUserMedia },
   });
+  // jsdom's Navigator getters refuse a derived object; the recognizer reads the language.
+  Object.defineProperty(voiceNavigator, "language", { configurable: true, value: "en-US" });
   vi.stubGlobal("navigator", voiceNavigator);
   vi.stubGlobal("isSecureContext", true);
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+  if (recognition) vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
+  else vi.stubGlobal("SpeechRecognition", undefined);
+  presetVoiceBackend(backend);
   return { getUserMedia, track };
 }

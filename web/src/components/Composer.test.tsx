@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
-import { FakeMediaRecorder, installVoiceBrowser } from "./voiceTest";
+import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser } from "./voiceTest";
+import { presetVoiceBackend } from "./voiceBackend";
 
 /*
  * The composer's states (SPEC.md §3.6), one test per row of the table. Issue #195 is the standing
@@ -738,6 +739,213 @@ describe("Composer", () => {
     await user.keyboard("{Control>}m{/Control}");
     await waitFor(() => expect(field).toHaveValue("by keyboard"));
     expect(FakeMediaRecorder.instances[0]?.stopCalls).toBe(1);
+  });
+
+  // ---- browser recognition: the default backend shows words while listening and uploads nothing ----
+  it("browser recognition: words appear while listening, the last phrase may change, Stop lands them and nothing else appears", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Fix the timer", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    expect(recognizer).toMatchObject({ continuous: true, interimResults: true, started: 1 });
+    expect(FakeMediaRecorder.instances).toEqual([]);
+    expect(field).toHaveAttribute("readonly");
+
+    act(() => recognizer!.hear([], "and the"));
+    expect(field).toHaveValue("Fix the timer and the");
+    act(() => recognizer!.hear([], "and the tets"));
+    expect(field).toHaveValue("Fix the timer and the tets");
+    act(() => recognizer!.hear(["and the tests"], "on"));
+    expect(field).toHaveValue("Fix the timer and the tests on");
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Listening… Stop to add text, or Send.");
+
+    act(() => recognizer!.hear(["and the tests", "on both sizes"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(recognizer!.stopped).toBe(1);
+    expect(field).toHaveValue("Fix the timer and the tests on both sizes");
+    expect(field.selectionStart).toBe("Fix the timer and the tests on both sizes".length);
+    expect(document.activeElement).toBe(field);
+    expect(screen.queryByText("Transcribing…")).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    // Landed text is an ordinary draft: editing and sending work as with typed text.
+    await user.type(field, "!");
+    expect(field).toHaveValue("Fix the timer and the tests on both sizes!");
+  });
+
+  it("browser recognition: Send at once submits the draft and the recognized words through the normal path", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Fix the timer", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    act(() => recognizer!.hear(["and the tests"]));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith("Fix the timer and the tests", expect.any(Function)));
+    expect(field).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("browser recognition: Send with nothing recognized sends nothing and keeps the draft", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep this", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled());
+    expect(field).toHaveValue("Keep this");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("browser recognition: Cancel discards the words heard so far and restores the draft", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    act(() => recognizer!.hear(["forget this"], "and this"));
+    expect(field).toHaveValue("Keep this forget this and this");
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(field).toHaveValue("Keep this");
+    expect(screen.queryByText("forget this")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("browser recognition: keeps listening when the recognizer ends on silence, retaining the words so far", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    act(() => recognizer!.hear(["first part"], "sec"));
+    act(() => recognizer!.silence());
+    expect(recognizer!.started).toBe(2);
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+    expect(field).toHaveValue("first part");
+    act(() => recognizer!.hear(["second part"]));
+    expect(field).toHaveValue("first part second part");
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(field).toHaveValue("first part second part");
+  });
+
+  it("browser recognition: a recognizer error keeps the words already shown and says typing works; a refusal shows Denied and drops them", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "still here" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[0]!.fail("network"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(field).toHaveValue("still here");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[1]!.hear(["two minutes of"], "dictation"));
+    act(() => FakeSpeechRecognition.instances[1]!.fail("network"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(field).toHaveValue("still here two minutes of dictation");
+    expect(field).not.toHaveAttribute("readonly");
+
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[2]!.hear([], "half"));
+    act(() => FakeSpeechRecognition.instances[2]!.fail("not-allowed"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Microphone blocked in the browser. Typing works.");
+    expect(field).toHaveValue("still here two minutes of dictation");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+  });
+
+  it("browser recognition: Send with a recognizer error lands the words in the draft instead of sending", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    recognizer!.answersStop = false;
+    act(() => recognizer!.hear(["these words"]));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    act(() => recognizer!.fail("network"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(field).toHaveValue("Keep these words");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("browser recognition: Cancel discards at once even while the recognizer is still settling, and late words stay out", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    recognizer!.answersStop = false;
+    act(() => recognizer!.hear(["forget this"]));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Keep this");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(recognizer!.aborted).toBe(1);
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    act(() => recognizer!.hear(["forget this", "and this"]));
+    expect(field).toHaveValue("Keep this");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+  });
+
+  it("upload backend: a 409 from a changed installation shows the server's words and reads the backend again", async () => {
+    installVoiceBrowser({ backend: "local", recognition: true });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser" });
+      if (String(input).includes("/api/transcribe")) return jsonResponse({ error: "Voice now runs in the browser on this installation. Try again." }, 409);
+      return jsonResponse({ error: "not found" }, 404);
+    }));
+    const { user, field } = mount({ initial: "Keep this" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice now runs in the browser on this installation. Try again.");
+    expect(field).toHaveValue("Keep this");
+    // The next attempt uses the backend the server now reports: recognition, no upload.
+    await user.click(await screen.findByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    expect(FakeSpeechRecognition.instances).toHaveLength(1);
+  });
+
+  it("browser recognition: no recognizer in this browser hides the mic and says so; the backend read hides the mic until it answers", async () => {
+    installVoiceBrowser({ backend: "browser", recognition: false });
+    const first = render(<Harness />);
+    expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
+    expect(screen.getByText("This browser has no speech recognition. Typing works.")).toBeInTheDocument();
+    first.unmount();
+
+    installVoiceBrowser({ backend: "browser" });
+    const second = render(<Harness />);
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument();
+    expect(screen.queryByText("This browser has no speech recognition. Typing works.")).toBeNull();
+    second.unmount();
+
+    let answer: (backend: string) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/api/voice")) return jsonResponse({ error: "not found" }, 404);
+      const backend = await new Promise<string>((resolve) => (answer = resolve));
+      return jsonResponse({ backend });
+    }));
+    presetVoiceBackend(null);
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    answer("browser");
+    expect(await screen.findByRole("button", { name: "Start voice input" })).toBeInTheDocument();
   });
 
   it("combines a draft and a transcript with one space, and formats the timer", () => {

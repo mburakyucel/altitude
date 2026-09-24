@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
 from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
@@ -73,8 +75,10 @@ def design_viewer_url(project: str) -> str | None:
     return f"/{DESIGN_ROUTE}/{quote(project)}/{DESIGN_ENTRY}" if (root / DESIGN_ENTRY).is_file() else None
 
 
-# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). Altitude only adapts those containers
-# to the path-based protocol of the existing local faster-whisper server; it owns no speech model.
+# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server adapts those containers to
+# the machine's chosen backend: the path-based protocol of the existing local faster-whisper server,
+# or one OpenAI-compatible transcription endpoint. Browser recognition never uploads. Altitude owns
+# no speech model.
 VOICE_MAX_BODY = 16 << 20
 VOICE_MAX_SECONDS = 600
 VOICE_TYPES = {
@@ -120,13 +124,74 @@ def _wav_seconds(path: Path) -> float:
         return audio.getnframes() / rate if rate else 0.0
 
 
+def voice_view() -> dict:
+    """What the composer needs: which backend this installation transcribes with."""
+    return {"backend": config.voice_setting()["backend"]}
+
+
 def transcribe_voice(raw: bytes, content_type: str) -> str:
-    """Convert one bounded browser recording, ask local Whisper for text, and retain no audio."""
+    """Transcribe one bounded browser recording through the machine's backend, retaining no audio."""
     media_type = content_type.split(";", 1)[0].strip().lower()
     extension = VOICE_TYPES.get(media_type)
     if extension is None:
         raise VoiceInputError("This browser's recording format is not supported.", 415)
+    setting = config.voice_setting()
+    if setting["backend"] == "browser":
+        raise VoiceInputError("Voice now runs in the browser on this installation. Try again.", 409)
+    if setting["backend"] == "endpoint":
+        return _transcribe_endpoint(raw, media_type, extension, setting)
+    return _transcribe_local(raw, extension)
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would carry the bearer key to whatever host the endpoint names; a 3xx is a failure."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_ENDPOINT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _transcribe_endpoint(raw: bytes, media_type: str, extension: str, setting: dict) -> str:
+    """One OpenAI-compatible `audio/transcriptions` request; the endpoint decodes the browser's container."""
+    boundary = uuid.uuid4().hex
+    body = b"".join([
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{setting['model']}\r\n".encode(),
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n".encode(),
+        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording{extension}\"\r\n"
+         f"Content-Type: {media_type}\r\n\r\n").encode(),
+        raw, f"\r\n--{boundary}--\r\n".encode(),
+    ])
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"}
+    if setting.get("key"):
+        headers["Authorization"] = f"Bearer {setting['key']}"
+    request = urllib.request.Request(setting["url"], data=body, headers=headers, method="POST")
+    try:
+        with _ENDPOINT_OPENER.open(request, timeout=120) as response:
+            payload = json.loads(response.read(1 << 20).decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        log(f"voice endpoint refused the recording: HTTP {exc.code}")
+        raise VoiceInputError(
+            "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+        ) from exc
+    except TimeoutError as exc:
+        raise VoiceInputError("Transcription took too long. Try again.", 504) from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log(f"voice endpoint unreachable: {exc.reason if isinstance(exc, urllib.error.URLError) else type(exc).__name__}")
+        raise VoiceInputError(
+            "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+        ) from exc
+    text = payload.get("text") if isinstance(payload, dict) else None
+    if not isinstance(text, str):
+        raise VoiceInputError("Voice transcription returned an invalid response.", 502)
+    if not text.strip():
+        raise VoiceInputError("No speech was detected. Your draft is unchanged.", 422)
+    return text.strip()
+
+
+def _transcribe_local(raw: bytes, extension: str) -> str:
+    """Convert the recording with ffmpeg and send the WAV path to the local speech service."""
     try:
         with tempfile.TemporaryDirectory(prefix="altitude-voice-") as work:
             source = Path(work) / f"recording{extension}"
@@ -1526,6 +1591,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._images(parts, q)
             if api == "overview":
                 return self._json(overview())
+            if api == "voice":
+                return self._json(voice_view())
             if api == "changes":
                 return self._changes()
             if api == "alerts":

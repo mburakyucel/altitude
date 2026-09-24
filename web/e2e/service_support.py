@@ -15,6 +15,9 @@ def configure(*, expected_error=lambda _message: False):
     config.PROJECT_ROOTS = [SUITE / "projects"]
     assert (config.WEB_DIST / "index.html").is_file(), "Build this checkout with pnpm --dir web build first"
     config.ensure_root()
+    # Walkthroughs exercise the upload composer against intercepted /api/transcribe; the browser
+    # recognizer walkthrough overlays /api/voice itself.
+    (config.ROOT / "settings.json").write_text(json.dumps({"voice": "local"}) + "\n")
     # server.spawn and Handler catch exceptions: forwarding tracebacks prevents false green.
     # A scenario may allow a specifically asserted existing failure; all others fail teardown.
     server.log = lambda message: print(message, file=sys.stderr) if (

@@ -202,7 +202,30 @@ before running `systemctl --user daemon-reload` from the operator terminal. This
 without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
 never counts as successful preservation.
 
-## Voice input on iPhone
+## Voice input
+
+Dictation works on a fresh installation through the browser's own speech recognition. One machine
+setting selects the backend; typing is never affected.
+
+| `alt machine set --voice …` | How it works | Words appear | Where audio goes | Needs |
+| --- | --- | --- | --- | --- |
+| `browser` (default) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
+| `local` | The browser records; Altitude converts with `ffmpeg` and asks the local faster-whisper socket, with the loopback bridge as fallback. | after Stop or Send | stays on this machine | `ffmpeg` and the local speech service |
+| an `https://…` URL | The browser records; Altitude posts the recording to that URL as an OpenAI-compatible `audio/transcriptions` request and returns its `text`. `--voice-model` names the model (default `whisper-1`) and `--voice-key-file` supplies the bearer key from a file or stdin. A redirecting endpoint is refused so the key never follows it. | after Stop or Send | to that URL | the endpoint; no `ffmpeg` |
+
+```sh
+alt machine show
+alt machine set --voice local --reason 'Transcribe on this machine'
+alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
+alt machine set --unset-voice --reason 'Back to browser recognition'
+```
+
+The setting lands in the private `~/.altitude/settings.json` through the machine-settings request;
+the key stays in that file and the request file, and `alt machine show` and the event log show it
+only as `set`. Open composers pick the change up on their next page load, or on their next
+recording when the server refuses an upload because the backend changed. No backend keeps audio.
+
+### On iPhone
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a
 secure context, so the phone must trust the local CA used by Altitude's certificate. Follow the
@@ -220,13 +243,13 @@ Generated server certificates renew automatically while the original CA remains 
 or replaced CA needs explicit new trust on every device. External certificate pairs are not renewed
 or overwritten. Existing configured TLS paths and exposure remain operator choices.
 
-The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
-converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
-path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
-audio is deleted after every success or failure and is never part of task or chat state. A recording
-becomes text through **Stop** (Ctrl/⌘+M), appending to the draft for editing, or the send arrow (Enter),
-appending and sending at once (queued while L3 is busy). **Cancel** (Esc) discards the recording.
-An empty transcript or transcription failure sends nothing and preserves the draft.
+With the `browser` backend, recognized words appear in the draft while you speak. With `local`
+or an endpoint, the browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where
+available and uploads the recording when you stop; raw audio is deleted after every success or
+failure and is never part of task or chat state. Either way a recording becomes text through
+**Stop** (Ctrl/⌘+M), landing in the draft for editing, or the send arrow (Enter), landing and
+sending at once (queued while L3 is busy). **Cancel** (Esc) discards it. An empty transcript or a
+transcription failure sends nothing and preserves the draft.
 
 For a manual Safari check, open each of a project conversation, a task conversation, and a project
 task's **Message L2** panel; record and stop; confirm the transcript is appended to the existing

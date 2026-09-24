@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Voice input works out of the box through the browser's own speech recognition, with words
+  appearing while you speak. `alt machine set --voice browser|local|<url>` selects the browser,
+  the local speech service or an OpenAI-compatible transcription endpoint; the endpoint key comes
+  from a file or stdin and stays in the private settings file. The desktop recording controls sit together at the right of the
+  composer row with a crisp waveform; the phone row is unchanged (#317).
+
 - The coordinator's runtime `alt` shim reads stdin only when an argument is `-`, so a verb whose
   text is an argument returns immediately even when the tool harness leaves stdin open
   (I-20260924-054556).

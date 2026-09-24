@@ -2105,17 +2105,19 @@
   background: var(--danger);
   opacity: 0.9;
 }
+/* Desktop keeps the recording cluster compact beside the controls; phone lets it fill the row. */
 .composer-voice {
   display: flex;
   min-width: 0;
-  flex: 1;
+  flex: none;
+  margin-left: auto;
   align-items: center;
   gap: 6px;
 }
 .composer-wave {
-  min-width: 0;
+  flex: none;
+  width: 168px;
   height: 24px;
-  flex: 1;
   color: var(--accent);
 }
 .composer-voice[data-frozen] .composer-wave {
@@ -2181,6 +2183,15 @@
 .shell[data-phone] .composer[data-phase="listening"] .composer-row,
 .shell[data-phone] .composer[data-phase="transcribing"] .composer-row {
   width: 100%;
+}
+.shell[data-phone] .composer-voice {
+  flex: 1;
+  margin-left: 0;
+}
+.shell[data-phone] .composer-wave {
+  flex: 1;
+  width: auto;
+  min-width: 0;
 }
 .shell[data-phone] .composer-hint {
   padding: 0 10px;
