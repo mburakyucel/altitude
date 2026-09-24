@@ -4,6 +4,7 @@ import json
 import fcntl
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,12 @@ TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
 ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
 EFFORT_SETTINGS = ("l3_effort", "l2_effort")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
+
+
+def model_family(name: str | None) -> str | None:
+    """The Claude alias a model id or display name belongs to ("claude-fable-5-1", "Fable" -> "fable")."""
+    words = re.findall(r"[a-z]+", str(name or "").lower())
+    return next((alias for alias in MODEL_ALIASES if alias in words), None)
 
 
 def model_setting(role: str, engine: str) -> str:
