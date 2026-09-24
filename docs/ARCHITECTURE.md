@@ -1354,7 +1354,8 @@ The composer reads the installation's voice backend once per document from `GET 
 shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
 browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event) so
 the composer runs one capture state machine for every backend: recognized words appear after the
-typed draft while listening, the last phrase may change until final, the recognizer restarts when
+typed draft while listening (the field scrolls to keep the latest words in view once they pass its
+height), the last phrase may change until final, the recognizer restarts when
 the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
 and Stop waits at most three seconds for the recognizer's last phrase before landing the words; no
 upload follows. A recognizer refusal is the denied state; any other recognizer error is the failed
