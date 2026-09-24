@@ -1311,10 +1311,25 @@ class _HeadWriter:
         return self._wfile.flush()
 
 
+TLS_HANDSHAKE_SECONDS = 10
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "altd/0.1"
 
     _seen_clients: set = set()
+
+    def handle(self) -> None:
+        # I-20260924-205802: a handshake on the accept thread let one stalled client time out every request,
+        # including activation's quiet check. Each connection completes its own handshake, bounded, here.
+        if isinstance(self.connection, ssl.SSLSocket):
+            try:
+                self.connection.settimeout(TLS_HANDSHAKE_SECONDS)
+                self.connection.do_handshake()
+                self.connection.settimeout(None)
+            except OSError:
+                return  # a failed or abandoned handshake drops only this connection, as accept did
+        super().handle()
 
     def log_message(self, fmt, *args):  # quieter: one line per new client address, nothing per request
         ip = self.client_address[0]
@@ -2574,7 +2589,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     srv.daemon_threads = True
     try:
         if context is not None:
-            srv.socket = context.wrap_socket(srv.socket, server_side=True)
+            srv.socket = context.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)

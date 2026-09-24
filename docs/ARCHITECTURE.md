@@ -233,7 +233,9 @@ Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installatio
 server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,
 with private directories and keys. Startup validates identity and hostname; the existing daily
 timer renews managed server certificates within thirty days of expiry, retaining the CA/key.
-Invalid TLS refuses startup or reports renewal failure without switching to HTTP. External
+Invalid TLS refuses startup or reports renewal failure without switching to HTTP. Each connection
+completes its handshake on its own request thread within ten seconds, so a stalled client drops
+only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
 until the user imports the public CA and verifies it. Remote binding and trust remain explicit;
 HTTPS supplies no application login. See [setup](SETUP.md#trust-https-on-each-device).
@@ -1003,8 +1005,10 @@ pnpm-locked dependencies, builds and validates the latest bundle in staging, rec
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
 restores the prior bundle. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
-the notice leaves when the new process answers with nothing pending. A restart that has not happened
-ten minutes after it was requested is a system fault for L3, and the hold lifts. Dispatch, resume and
+the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
+system fault naming its reason at once and, while its request is still pending, marks the record `failed`
+with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
+reporting) is the same fault. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
 also waits, leaving reports durable for the next tick. A shared activity lock fences these short
 operations against the exclusive restart request, including the launch-to-binding race. Ordinary source changes never
