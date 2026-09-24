@@ -486,10 +486,13 @@ tracks other occurrences and stays open for `alt issue close`. A GitHub failure 
 open so the closure can be repeated. A pending issue needs no GitHub call to close the incident.
 
 The target repository is `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**, an
-operator-configured GitHub `owner/repository` or GitHub origin URL. Unset uses the release metadata
-or the installed Altitude source checkout's GitHub origin. An invalid or unavailable target is a
-pending reason with configuration instructions; there is no fallback to the incident project's
-repository. An incident filed in another managed project sends the registered local `altitude`
+operator-configured GitHub `owner/repository` or GitHub repository URL. Unset is the default for
+every installation: incidents stay on the machine, every record's issue bullet reads
+`pending — incidents stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY …`, and
+`alt incident list` shows that reason. Setting the variable and running `alt incident publish <id>`
+publishes an earlier record. An invalid target is a pending reason with configuration
+instructions; there is no fallback to the incident project's repository, the release metadata or
+the Altitude checkout's origin. An incident filed in another managed project sends the registered local `altitude`
 project one fixed issue-link notification when its Git origin matches the issue repository. The
 receiving queue and chat show the public URL and nothing else; it creates, reuses, resumes or
 coordinates no task. Pending rows and retained receipts deduplicate the full URL across source
@@ -748,10 +751,10 @@ alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>]
 alt task reply <text>|- [--file <path>]
-alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
+alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
-alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
+alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>

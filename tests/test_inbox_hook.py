@@ -36,7 +36,7 @@ class InboxHook(AltitudeCase):
 
         self.assertEqual(done.returncode, 0, done.stderr)
         context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertTrue(context.startswith("Message from Burak ("), context)
+        self.assertTrue(context.startswith("Message from Operator ("), context)
         self.assertLess(context.index("Prefer the smaller diff."), context.index("And add a test."))
         self.assertEqual(T.pending(self.project, self.slug), [])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 2, "the conversation keeps them")

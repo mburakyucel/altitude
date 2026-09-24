@@ -158,7 +158,7 @@ class TestLand(AltitudeCase):
         for actor in ("l3", "altd"):
             with self.subTest(actor=actor):
                 os.environ["ALTITUDE_ACTOR"] = actor
-                with self.assertRaisesRegex(land.LandError, "only the current L2 or Burak"):
+                with self.assertRaisesRegex(land.LandError, "only the current L2 or the operator"):
                     land.land("must refuse", cwd=self.repo, wait=0)
         self.assert_no_publish_mutation(commands)
 

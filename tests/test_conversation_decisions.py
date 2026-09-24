@@ -103,7 +103,7 @@ class ConversationDecisions(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["agent_id"], task["session_id"], task["attempt"]), ("owner", "conversation", 1))
         prompt = T.render_inbox(T.pending(self.project, self.slug))
-        self.assertEqual(prompt, f"Message from Burak (message id {message['id']}):\n{message['text']}")
+        self.assertEqual(prompt, f"Message from Operator (message id {message['id']}):\n{message['text']}")
         self.assertEqual(task["hold_merge"], "Operator review")
         state = S.regen_state_md(self.project).split("## Tasks")[0]
         self.assertIn(question["id"], state)

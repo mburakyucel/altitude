@@ -414,7 +414,7 @@ class QuestionGroups(AltitudeCase):
     def test_structured_cli_accepts_local_file_and_l3_broker_accepts_only_stdin(self):
         path = self.tmp / "questions.json"
         path.write_text(json.dumps(self.payload))
-        result = self.alt("task", "block", self.slug, "--questions-file", str(path), "--for-burak", env={
+        result = self.alt("task", "block", self.slug, "--questions-file", str(path), "--for-operator", env={
             "ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
             "ALTITUDE_ATTEMPT": "1"})
         self.assertEqual(result.returncode, 0, result.stderr)

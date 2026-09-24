@@ -142,10 +142,14 @@ class TestHTTPSServer(AltitudeCase):
         self.assertIn("active certificate is retained", server.log.call_args.args[0])
         self.assertIn("signing key missing", server.log.call_args.args[0])
 
-    def test_archive_upstream_target_uses_release_metadata_and_explicit_override(self):
+    def test_incident_issues_need_an_explicit_repository(self):
+        """A release archive and a source checkout both know the maintainer's repository; neither is a default."""
         with mock.patch.object(config, "RELEASE", {"repository": "fictional/altitude"}), \
              mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", None), \
-             mock.patch.object(server.subprocess, "run", side_effect=AssertionError("archive has no git checkout")):
-            self.assertEqual(server.issue_repository(), "https://github.com/fictional/altitude")
+             mock.patch.object(server.subprocess, "run", side_effect=AssertionError("no git origin lookup")):
+            with self.assertRaisesRegex(ValueError, "stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY"):
+                server.issue_repository()
             with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "other/product"):
+                self.assertEqual(server.issue_repository(), "https://github.com/other/product")
+            with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "https://github.com/other/product.git"):
                 self.assertEqual(server.issue_repository(), "https://github.com/other/product")

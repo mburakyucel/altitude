@@ -35,7 +35,7 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
 REPO = SOURCE.parent.parent if RELEASE is None and SOURCE.parent.name == ".altitude-source" else SOURCE
 if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
     SOURCE = (REPO / ".altitude-source/current").resolve()
-# Product issue target, set only in altd's environment. Unset uses this installation's origin.
+# Incident issue target, set only in altd's environment. Unset keeps incidents on this machine.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
 # Operator decision 2026-09-17: enforce PR CI without a paid repository plan.
 PR_CHECK_REPOSITORY = "mburakyucel/altitude"
@@ -84,6 +84,8 @@ CONVERSATION_AUDIT_REVIEWER = {"engine": "claude", "model": "claude-sonnet-5"}
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
 #: The operator seam: the one configured name the UI shows where a name is shown.
 OPERATOR = os.environ.get("ALTITUDE_OPERATOR") or "Operator"
+#: The persisted authority identity in task records, events and messages, independent of the display name.
+OPERATOR_ACTOR = "burak"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # Ordered tiers; order within a tie settles unknown/equal weekly headroom.
 AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_DEFAULT_ENGINE == "claude" else None},

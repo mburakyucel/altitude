@@ -221,6 +221,7 @@ repair cannot make this choice for you. See the
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
+| `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | GitHub `owner/repository` that receives Altitude's own sanitized incident issues. Unset by default: incidents stay on this machine. Set it in altd's environment only for a repository you manage; see [incident publication](OPERATIONS.md#incident-publication). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,

@@ -58,7 +58,7 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
                          expected_owner: dict | None = None, *, expected_task: dict | None = None) -> tuple[bool | None, bool]:
     """Return (changed blocker, is a repair task); None means no applicable task observation.
 
-    The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
+    The block is tagged with the fault kind and waits on L3, so the restart notice names it and the operator sees no
     card. A task that had already blocked itself is tagged the same way; a finished or missing task stays as it
     is, and the incident still records the fault.
     """
@@ -560,7 +560,7 @@ def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3
     `amended:` line. Corrections stack at the
     bottom of the file, oldest first:
 
-        amended: 2026-08-30 by burak: root cause was wrong; corrected in chat
+        amended: 2026-08-30 by l3: root cause was wrong; corrected in chat
         - was root cause: the worker used stale repository state
 
     Everything is validated before the file is touched — a refusal writes nothing, anywhere."""

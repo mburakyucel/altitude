@@ -645,6 +645,6 @@ proposals. Setup friction and confusing product language are useful feedback too
 fictional or redacted. Report vulnerabilities privately as the [security policy](SECURITY.md)
 describes. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
-Altitude reports its own failures the same way: every incident becomes a sanitized issue in the
-repository altd resolves from its installation origin or the operator's
-`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting. See [incident issues](docs/CLI.md#incident-issues).
+Altitude records its own failures as incidents. They stay on your machine unless you set
+`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment to a GitHub repository you choose;
+every incident then becomes a sanitized issue there. See [incident issues](docs/CLI.md#incident-issues).

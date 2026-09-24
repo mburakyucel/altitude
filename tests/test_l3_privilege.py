@@ -907,7 +907,7 @@ class TestL3DaemonOperations(AltitudeCase):
         held = S.load_task(self.project, task["slug"]); held["hold_merge"] = "security review"; S.save_task(self.project, held)
         released = self.cli("task", "hold-merge", task["slug"], "--off")
         self.assertNotEqual(released.returncode, 0)
-        self.assertIn("only Burak", released.stderr)
+        self.assertIn("only the operator", released.stderr)
         self.assertEqual(S.load_task(self.project, task["slug"])["hold_merge"], "security review")
 
     def test_reject_worker_cleanup_runs_in_altd_and_the_l3_door_refuses_admin_commands(self):

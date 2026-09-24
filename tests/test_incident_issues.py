@@ -143,11 +143,23 @@ class TestPublication(IncidentIssueCase):
         self.assertEqual(self.issues(), [])
         self.assertNotIn(["issue", "create"], self.calls())
 
-    def test_missing_target_is_an_actionable_pending_reason(self):
+    def test_invalid_target_is_an_actionable_pending_reason(self):
         self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "not a repository")
         incident, result = self.file()
         self.assertIn("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", result["pending"])
         self.assertEqual(self.calls(), [])
+
+    def test_fresh_installation_keeps_incidents_local_and_says_why(self):
+        """Issue #470: an unset target files nothing anywhere; the record and `alt incident list` carry the reason."""
+        self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", None)
+        incident, result = self.file()
+        self.assertIsNone(result["issue"])
+        self.assertIn("stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", result["pending"])
+        self.assertEqual(self.calls(), [])
+        self.assertIn("pending — incidents stay on this machine", self.record(incident))
+        self.assertIn("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", self.row(incident)["issue"])
+        listed = self.alt("--project", PROJECT, "incident", "list")
+        self.assertIn("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", listed.stdout)
 
 
 class TestAttachAndClose(IncidentIssueCase):

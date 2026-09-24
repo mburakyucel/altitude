@@ -118,8 +118,7 @@ DAEMON_TASK_OPERATIONS = {
     "stop": {"from": ("running",), "done": ("blocked",)},
     "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
 }
-OPERATOR_ACTOR = "burak"  # persisted authority identity, independent of the configured display name
-DAEMON_REQUEST_ACTORS = ("l3", OPERATOR_ACTOR)
+DAEMON_REQUEST_ACTORS = ("l3", config.OPERATOR_ACTOR)
 
 
 def _ci_api(project: str, repository: str, suffix: str, *, method: str = "GET") -> dict:
@@ -329,7 +328,7 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
     if not reason:
         raise T.TransitionError(f"task {operation} requires a reason")
     if actor not in DAEMON_REQUEST_ACTORS:
-        raise T.TransitionError(f"task {operation} is available only to L3 or Burak")
+        raise T.TransitionError(f"task {operation} is available only to L3 or the operator")
     contract = DAEMON_TASK_OPERATIONS[operation]
     with S.project_lock(project):
         task = S.load_task(project, slug)
@@ -1084,7 +1083,7 @@ def _bind_resume_worker(project: str, slug: str, task: dict, claim: dict, worker
     return {"agent": worker}
 
 
-def stop(project: str, slug: str, *, by: str = "burak", reason: str | None = None,
+def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: str | None = None,
          daemon_request_id: str | None = None, expected_agent_id: object = T._UNSET,
          expected_session_id: object = T._UNSET) -> dict:
     """End this worker; an explicit continuation releases its held inbox into the saved session."""

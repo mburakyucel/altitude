@@ -32,7 +32,7 @@ class TransitionError(Exception):
     pass
 
 
-TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
+TASK_MESSAGE_ROLES = (config.OPERATOR_ACTOR, "l2", "l3")
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
 
@@ -464,7 +464,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             stop_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
             request_id: str | None = None, request_digest: str | None = None) -> dict:
-    """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
+    """Append one message to the task conversation. The operator's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
     if role not in TASK_MESSAGE_ROLES:
@@ -527,7 +527,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             task.setdefault("image_messages", []).append({**row, "delivered": False})
         else:
             _append_jsonl(d / "conversation.jsonl", row)
-        if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
+        if role in (OPERATOR_MESSAGE_ROLE, "l3"):  # an answer waits in the inbox until the worker reads it
             if not row.get("images"):
                 _append_jsonl(d / "inbox.jsonl", row)
             if task.get("state") == "running" and (d / "report.json").exists():
@@ -843,10 +843,15 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None, *, running_
     return taken
 
 
+def _sender(row: dict) -> str:
+    by = row.get("by") or OPERATOR_MESSAGE_ROLE
+    return config.OPERATOR if by == OPERATOR_MESSAGE_ROLE else by.capitalize()
+
+
 def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them: the words, their sender and the id a decision cites.
     The worker already holds its persona, brief and its own questions; nothing else is repeated here."""
-    return "\n\n".join(f"Message from {str(row.get('by') or 'burak').capitalize()} (message id {row['id']}"
+    return "\n\n".join(f"Message from {_sender(row)} (message id {row['id']}"
                        + (f"; answers question {', '.join(row['answers'])}" if row.get("answers") else "")
                        + f"):\n{row['text']}"
                        + ("\nImages: " + ", ".join(f"{image['id']} ({image['name']})" for image in row["images"])
@@ -1020,7 +1025,7 @@ def release_dependency(project: str, slug: str) -> dict:
         return task
 
 
-def reject(project: str, slug: str, reason: str, actor: str = "burak", *,
+def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_ROLE, *,
            expected_state: str | None = None, expected_agent_id: object = _UNSET,
            expected_session_id: object = _UNSET, expected_daemon_request: str | None = None) -> dict:
     with S.project_lock(project):
@@ -2134,7 +2139,7 @@ def block_question(task: dict) -> str:
 def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
              recommendation: str | None = None, recommendation_label: str | None = None,
              recommendation_why: str | None = None, questions: dict | None = None) -> dict:
-    """L3 hands a blocked task's question to Burak as one plain dilemma; the L2's own words stay in the events."""
+    """L3 hands a blocked task's question to the operator as one plain dilemma; the L2's own words stay in the events."""
     question = (question or "").strip()
     if not question:
         raise TransitionError("escalation needs the question")
@@ -2144,7 +2149,7 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
             raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
         _supersede_resume(task)
         _ensure_question(project, task)
-        task.update({"waiting_on": "burak", "escalated": True,
+        task.update({"waiting_on": OPERATOR_MESSAGE_ROLE, "escalated": True,
                      "blocked_reason": task.get("blocked_reason") if task.get("fault") else question})
         current = _publish_block_questions(task, question, actor, questions, recommendation,
                                            recommendation_label, recommendation_why)
@@ -2159,8 +2164,8 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
 def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") -> dict:
     """PRs merge by default; a hold is an explicit, reasoned exception."""
     why = (why or "").strip() or None
-    if why is None and actor != "burak":
-        raise TransitionError("only Burak may release a merge hold")
+    if why is None and actor != OPERATOR_MESSAGE_ROLE:
+        raise TransitionError("only the operator may release a merge hold")
     with S.project_lock(project):
         t = S.load_task(project, slug)
         t["hold_merge"] = why
