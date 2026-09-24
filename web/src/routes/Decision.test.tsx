@@ -259,7 +259,8 @@ describe("Conversation-first decisions", () => {
     expect(router.state.location.pathname + router.state.location.search).toBe(path);
     expect(convo()).toHaveTextContent("The rollback plan needs a retention period.");
     expect(convo()).toHaveTextContent("L3 brought this question to the L2");
-    expect(document.activeElement).toHaveClass("conversation-question");
+    // The anchor takes focus in an effect after the question renders.
+    await waitFor(() => expect(document.activeElement).toHaveClass("conversation-question"));
     expect(document.querySelector("details")).not.toHaveAttribute("open");
     expect(screen.queryByPlaceholderText("Add a note for the L2 (optional)")).toBeNull();
     expect(screen.queryByText("Where this came from")).toBeNull();

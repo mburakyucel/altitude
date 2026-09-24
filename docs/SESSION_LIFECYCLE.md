@@ -28,6 +28,8 @@ task's investigation, approach and relevant system implications within its autho
 with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
+Other reports wait quietly while L3 has no available engine and reach it once one is; a failed
+report turn retries after a growing delay instead of repeating into the conversation.
 
 An [increment's brief](CLI.md#incremental-issue-delivery) identifies its acceptance, parent issue and
 outstanding scope. Completing that increment completes the task; L2 supplies PR/acceptance evidence and
@@ -823,8 +825,8 @@ owners, and the merged tree must equal the tested tree. GitHub updates outside A
 A passing required check with its GitHub console log is sufficient delivery evidence. The runner
 retains small logs and identity receipts; failed runs also retain browser reports and traces, which
 owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
-when the export is unreadable. Unneeded completed exports are cleaned up after three days or when
-disk capacity is tight. GitHub artifact storage is unused. A bounded CI wait
+when the export is unreadable. When the runner's evidence budget refuses admission, L3 coordinates
+a measured cleanup of exports no open work needs. GitHub artifact storage is unused. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
 L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
 recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
@@ -1044,7 +1046,12 @@ injected into the running turn. The finishing turn drains the queue itself, one 
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
 and other conversations separate. Each waiting chat row remains individually removable until claim;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
-a turn in flight, so it neither holds the quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
+a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
+while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
+turn every option refuses before any provider output returns to the front of the queue with its id and
+waits 1, 5, 15, then 60 minutes (`retry_at`) while later messages proceed; it is delivered once L3 is
+available. A turn with provider output is never replayed, and a refused operator message keeps its
+Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
@@ -1070,9 +1077,9 @@ evidence under current instructions and authoritative task records. See
 [CLI semantics and limits](CLI.md#historical-evidence-search).
 
 A resumed session keeps native continuity. When another provider handled intervening turns,
-Altitude supplies only the cross-provider missed-message handoff: user/assistant rows
+Altitude supplies only the cross-provider missed-message handoff: human user/assistant rows
 newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
-log rows. It uses the same text bound and historical label. A fresh session receives only fresh
+human rows. Server-triggered turns never enter it. It uses the same text bound and historical label. A fresh session receives only fresh
 context, and a native resume with no missed rows receives neither block, avoiding duplicate
 injection. A limit or access rejection after text or tool activity never causes the same turn
 to be automatically replayed on another option because that could duplicate side effects. A confirmed
@@ -1152,6 +1159,8 @@ altd is down. The daemon reads durable completion and inbox records at the next 
 
 Conversation and Live session are local views of one L2 task. On phone, left swipes open Live session
 and right swipes return to Conversation, with no wrapping; labeled tabs remain directly accessible.
+The swipe tracks the finger and settles or springs back on release; a drag that reveals Live session
+starts its transcript, which otherwise pauses while the view is inactive.
 Swipes leave vertical scrolling, browser-edge gestures, selection, form controls, the composer,
 recording, dialogs and horizontally scrollable content alone. Phone tab and swipe changes replace the
 current browser entry while retaining navigation state; the desktop panel toggle is local state.

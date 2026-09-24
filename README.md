@@ -395,7 +395,8 @@ Phone chat keeps project/task identity and a short activity status in one header
 microphone and send controls together in a compact composer. Last-answer time, engine selection,
 task metadata and operational actions open in details. Blocked and merge-held status stay distinct;
 full reasons are available there, while actionable failures and the original question remain visible.
-Bottom navigation hides during detected software keyboard use and returns on dismissal. Drafts,
+Bottom navigation hides during detected software keyboard use and returns on dismissal; sending
+keeps the keyboard open. Drafts,
 selection and older-message reading position survive the change; task Conversation/Live session
 tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
 
@@ -443,7 +444,8 @@ assigned a guessed upstream repository.
 
 Within an L2 task, Conversation and Live session are local views. Switching between them adds no
 browser history entries. On phone, swipe left to Live session and right to Conversation, or use the
-labeled tabs. Vertical scrolling, text selection, form controls and horizontally scrollable session
+labeled tabs. The swipe follows your finger: release past half the screen (or a quick flick) switches,
+a shorter drag springs back, and either end gives resistance instead of wrapping. Vertical scrolling, text selection, form controls and horizontally scrollable session
 content keep their gestures. View switches preserve the draft, selection, images and reading position
 without reopening the keyboard. Browser Back and the task's Back control return to the preceding page;
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
@@ -530,7 +532,9 @@ messages, oldest first, as labeled historical context. This includes discussion 
 provider before rotation. Server-triggered reports, restarts and other system events do not consume
 those slots; the current turn is excluded. Each message includes at most 800 characters of text,
 with longer text marked `[truncated]`. Resumed sessions keep native conversation history and receive
-only a bounded handoff of messages missed while another provider handled L3. No tool
+only a bounded handoff of human messages missed while another provider handled L3. The conversation
+view loads the latest human messages and system events as separate allowances, so a burst of system
+events never hides your recent messages. No tool
 transcripts or generated summaries are replayed.
 
 Owners and the coordinator share [project inspection commands](docs/CLI.md#inspection) for task records,
@@ -655,8 +659,8 @@ Python module processes run alongside the ordered web phases; CI browser workers
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 CI retains small logs and tested commit identity on the runner host; failed runs also retain the
 self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
-failure or on a reviewer's request. Unneeded completed exports are cleaned up after three days or
-when disk capacity is tight. No GitHub artifact upload is required.
+failure or on a reviewer's request. When the retained evidence reaches the runner's budget, L3
+coordinates a measured cleanup of exports no open work needs. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).

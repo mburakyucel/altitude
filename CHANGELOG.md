@@ -15,6 +15,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - The phone composer stacks like desktop and standard chat apps: the text field spans the top and
   Add images, microphone, send and the recording controls sit in their own row beneath it, in every
   state, so the send button no longer jumps beside the text when dictation lands.
+- The phone swipe between Conversation and Live session follows your finger: the incoming view slides
+  in as you drag, a release past half the screen or a flick completes the switch, a shorter drag
+  springs back, and either end resists instead of wrapping. Reduced motion switches instantly.
 
 - Clickable controls read as clickable: the task menu's **Review proposal** and **Review changes**
   entries, **View question**, **Discuss with L3**, the update banner's **Details** and the image

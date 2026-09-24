@@ -117,8 +117,8 @@ limit and reads past system traffic. The current `turn_id` is excluded. This his
 contains only message text, limited to 800 characters per row with an explicit `[truncated]`
 marker; stored tool evidence is not replayed. `STATE.md` supplies task state separately.
 Resumed sessions rely on native history and receive only the cross-provider handoff:
-up to 20 user/assistant rows from the latest 60 log rows, handled by a different provider after
-that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
+up to 20 human user/assistant rows, selected by the same trigger filter from the latest 60 human rows,
+handled by a different provider after that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
 
 `alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
 transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
@@ -597,7 +597,10 @@ the action before saving its text; after acceptance, wake failures retain the sa
 `report_after` marks follow-up work, and verification carries its owner identity, worker start and
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
 messages return to the ordinary resume path. Report application, verifier faults, stranded-report
-recovery, automatic completion and report-turn receipts reject superseded work. The existing report
+recovery, automatic completion and report-turn receipts reject superseded work. A report that needs
+L3 waits, with no turn or chat row, while routing has no available L3 option; the stranded-report scan
+delivers it once one is. A report turn that runs and fails leaves `l3_handled` unset and retries after
+1, 5, 15, then 60 minutes; a changed report owner is delivered at once. The existing report
 file remains readable until replaced, but cannot verify a later continuation. The shared L2 persona
 and runtime resume prompt require fresh verified reporting even when guidance is already incorporated
 and no new work is needed. The owner preserves every delivery, exact remaining scope and holds;
@@ -1139,8 +1142,8 @@ workflow retains logs and candidate identity through the runner's local evidence
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
 GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
 with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
-when approaching the existing disk budget. See the
+diagnosis or on a reviewer's request; L3 coordinates cleanup of unneeded exports when the runner's
+budget refuses admission. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
@@ -1251,6 +1254,9 @@ first line names the turn (`{"turn": {id, started_at, trigger}}`) before any tex
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
 assistant or error row wins over a raced active snapshot.
 
+The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
+rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
+operator messages out of view; `chat.jsonl` keeps every row and `alt l3 search` reaches older ones.
 The conversation groups `chat.jsonl` rows by `turn_id` (rows without one, from before the id, by
 adjacency). The operator's rows are bubbles on the right, L3's prose on the left, under day
 dividers, with a row's time in the gutter on hover or a long press. A server-triggered turn (report
@@ -1406,7 +1412,8 @@ row; phone controls are 44px and the row keeps its place in every state. Drafts 
 consume no row; relevant voice, permission and send errors remain visible. Desktop retains its
 shortcut and delivery hints. Keyboard, draft and streaming changes keep bottom-follow when already
 following and preserve the visible message and offset while reading older history. Sending resumes
-following. Browser emulation verifies layout and application transitions; native mobile keyboard
+following. Pressing Send leaves focus in the field, so an open phone keyboard and hidden navigation stay
+through each message. Browser emulation verifies layout and application transitions; native mobile keyboard
 behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
 The same composer adds a single image control and a conditional preview strip.
@@ -1789,7 +1796,10 @@ Preview access stays in the question; tabs and the panel toggle provide live nav
 extra composer row. There is no generic Resume while an operator question is open; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
 read-only with the composer and activity preview gone. Phone swipes left to Live session and right to
-Conversation, without wrapping. Deliberate horizontal gestures exclude browser edges, selection,
+Conversation, without wrapping: both views sit on one track that follows the finger, settles into the
+switch past half the width or a fling, springs back otherwise and resists past either end; reduced
+motion switches instantly. Both phone views stay mounted and laid out, the inactive one invisible with
+its transcript polling paused. Deliberate horizontal gestures exclude browser edges, selection,
 controls, the composer, recording, dialogs and horizontally scrollable content; vertical scrolling
 stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
 selection, images, conversation position and live reading state without reopening the keyboard;

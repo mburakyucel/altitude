@@ -35,6 +35,9 @@ _l3_drain_requested: set[str] = set()
 _l3_verb_brokers: dict[str, "_L3VerbServer"] = {}
 _l3_verb_broker_guard = threading.Lock()
 CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
+# (project, slug) → (report owner, failed report turns, monotonic retry time); a restart retries at once.
+_report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
+REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
 L3_GH_READS = {
@@ -993,7 +996,8 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
     deploy, only fixed or dismissed review findings, and no decisions, blocks, FYIs, follow-ups, or post-mortem work.
     Any malformed, corrupt, stale, or raced state fails closed to L3; corrupt JSON also raises a system
     fault. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart cut short is re-run by
-    `resume_stranded_reports` instead of leaving the task waiting for nobody.
+    `resume_stranded_reports` instead of leaving the task waiting for nobody. While L3 has no available engine the
+    report waits without a turn or chat row; a turn that runs and fails is retried after a growing delay.
     """
     slug = t["slug"]
     owner = T.report_owner(t)
@@ -1080,11 +1084,27 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on the operator.")
-    res = server_l3_turn(project, header, trigger="report-landed")
-    if not (res or {}).get("completed") or (res or {}).get("error"):
-        detail = (res or {}).get("error") or "L3 turn did not complete"
-        log(f"[{project}/{slug}] report turn unfinished: {detail}")  # not stamped: stranded-report retry owns it
+    key, identity = (project, slug), json.dumps(owner, sort_keys=True)
+
+    def unfinished(detail: str) -> None:  # not stamped: the stranded-report scan retries after the delay
+        previous = _report_retries.get(key)
+        failures = previous[1] + 1 if previous and previous[0] == identity else 1
+        delay = REPORT_RETRY_DELAYS[min(failures, len(REPORT_RETRY_DELAYS)) - 1]
+        _report_retries[key] = (identity, failures, time.monotonic() + delay)
+        log(f"[{project}/{slug}] report turn unfinished: {detail}; retry in {delay}s")
+
+    try:
+        res = server_l3_turn(project, header, trigger="report-landed") or {}
+    except Exception as exc:
+        unfinished(str(exc))
+        raise
+    if res.get("held"):
+        log(f"[{project}/{slug}] report waits for L3: {res['error']}")  # the next scan retries it
         return
+    if not res.get("completed") or res.get("error"):
+        unfinished(res.get("error") or "L3 turn did not complete")
+        return
+    _report_retries.pop(key, None)
     try:
         with S.project_lock(project):
             t2 = S.load_task(project, slug)
@@ -1104,6 +1124,10 @@ def resume_stranded_reports(project: str) -> None:
         if not report_path.exists():
             continue
         if t.get("report_after") and not T.report_current(t, report_path):
+            continue
+        retry = _report_retries.get((project, t["slug"]))
+        if (retry and retry[0] == json.dumps(T.report_owner(t), sort_keys=True)
+                and time.monotonic() < retry[2]):
             continue
         key = f"finished:{project}:{t['slug']}"
         with _bg_guard:
