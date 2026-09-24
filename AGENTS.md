@@ -94,14 +94,14 @@ validation task, or release prerequisite.
 
 ## Working rules for every PR
 
-1. Deletion first. A PR reduces production lines, or is a bug fix under fifty lines. No foundations,
-   no dormant modules, no compatibility readers, no "temporary" code. A decision-mandated feature is
-   the stated exception.
+1. Deletion first. Remove what the change makes unnecessary in the same PR, and prefer removing a
+   mechanism over adding one. No foundations, no dormant modules, no compatibility readers, no
+   "temporary" code.
 2. Every defensive check that is added names the incident it prevents in the PR body. A check that
    defends against Altitude's own design is removed with the design.
 3. Describe finished behavior directly in concise present tense, without old-versus-new narrative.
-   Keep the PR body short (at most fifteen lines): behavior, material boundaries or tradeoffs,
-   deletion evidence and validation. Link detailed review evidence instead of pasting boilerplate.
+   Keep the PR body short: behavior, material boundaries or tradeoffs, what is removed, and
+   validation. Link detailed review evidence instead of pasting boilerplate.
    Review asks: is the behavior wanted; which callers, records, external effects and tests depend on it;
    can fewer owners, states, artifacts or compatibility paths express it; what is removed and what
    proves parity; which operator/provider/machine assumptions remain, behind which seam, and could
