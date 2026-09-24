@@ -393,7 +393,8 @@ Phone chat keeps project/task identity and a short activity status in one header
 microphone and send controls together in a compact composer. Last-answer time, engine selection,
 task metadata and operational actions open in details. Blocked and merge-held status stay distinct;
 full reasons are available there, while actionable failures and the original question remain visible.
-Bottom navigation hides during detected software keyboard use and returns on dismissal. Drafts,
+Bottom navigation hides during detected software keyboard use and returns on dismissal; sending
+keeps the keyboard open. Drafts,
 selection and older-message reading position survive the change; task Conversation/Live session
 tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
 
