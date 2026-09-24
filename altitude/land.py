@@ -92,16 +92,16 @@ def _resolve(branch: str, project: str | None) -> tuple[str | None, str | None, 
 def _require_current_publisher(project: str, slug: str, task: dict, authority: dict | None = None) -> None:
     """Fence automated landing to the exact current L2 attempt.
 
-    A hand-run command has no actor (or explicitly names Burak). Every automated
+    A hand-run command has no actor (or explicitly names the operator). Every automated
     caller must be the L2 that owns the task now: L1s and control-plane actors do
     not publish. The attempt number names the L2 that owns the task now: a
     replaced worker keeps it, a relaunch from the queue does not.
     """
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
-    if actor is None or actor == "burak":
+    if actor is None or actor == config.OPERATOR_ACTOR:
         return
     if actor != "l2":
-        raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or Burak may land")
+        raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or the operator may land")
     if task.get("state") != "running":
         raise LandError(f"current L2 cannot land {project}/{slug}: task is not running")
     attempt = authority.get("attempt") if authority is not None else os.environ.get("ALTITUDE_ATTEMPT")

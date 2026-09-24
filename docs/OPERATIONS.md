@@ -57,6 +57,18 @@ through its task reply and report follow-ups and cannot mutate issues directly. 
 [GitHub issues](CLI.md#github-issues) for arguments and the rule excluding home paths and private
 incident evidence from published text.
 
+## Incident publication
+
+Altitude records its own failures as sanitized incidents under the runtime directory. They stay
+there unless `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment names the GitHub
+`owner/repository` that receives them; every incident then becomes one sanitized issue there, and
+`alt incident list` shows the link or the pending reason. Set it only for a repository you manage.
+An installed application keeps the value in its saved settings, so `alt install` from a shell where
+it is exported carries it into the service; a source deployment sets it in the user service unit's
+`Environment=`, as the checked-in `systemd/altitude.service` does for the maintainer's development
+installation; copy the unit and run `systemctl --user daemon-reload` so the next restart applies
+it. See [incident issues](CLI.md#incident-issues).
+
 ## Recovering dirty main
 
 A dirty deployment checkout leaves isolated dispatch and resume available; deployment failures

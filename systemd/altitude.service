@@ -16,6 +16,8 @@ KillMode=control-group
 Environment=ALTITUDE_HOST=10.88.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=ALTITUDE_SERVICE=1
+# This installation's own choice: its incidents become issues on the public Altitude tracker.
+Environment=ALTITUDE_UPSTREAM_ISSUE_REPOSITORY=mburakyucel/altitude
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Runs as the real user on purpose: `claude -p` needs ~/.claude (subscription auth) and the repos.
 # Reachability through the tunnel is the auth; TLS comes from the pocketbook's local CA (already trusted on the phone).

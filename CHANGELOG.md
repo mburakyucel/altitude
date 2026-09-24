@@ -5,6 +5,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Incident issues publish only to the repository named by `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in
+  altd's environment. A fresh installation keeps incidents on the machine and shows that reason
+  in `alt incident list`; the release metadata and source origin are no longer targets (#470).
+
+- CLI help and errors say "the operator" instead of a person's name; `alt task block --for-burak`
+  is `--for-operator` (#470).
+
 - The repository is ready for public contributors: a [security policy](SECURITY.md) with private
   vulnerability reporting and scope, contributor guidance and issue templates written for fork
   contributors, and preview wording that no longer assumes invited collaborators. The license

@@ -201,7 +201,7 @@ class TestOfflineJourneys(AltitudeCase):
                                                 "text": "Discuss the choice before implementation"})
                 args = ["--project", self.project, "task", "block", slug, "--reason", "Include grouped questions?"]
                 if waiting_on == "burak":
-                    args.append("--for-burak")
+                    args.append("--for-operator")
                 result = self.alt(*args, env={"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 blocked = S.load_task(self.project, slug)

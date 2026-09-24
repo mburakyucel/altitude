@@ -11,7 +11,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
 
-ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
+ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
@@ -266,8 +266,8 @@ def main(argv=None) -> None:
             x.add_argument("--design-file", help="current L2: JSON selecting this question's screenshots and proposal text")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
-            x.add_argument("--for-burak", action="store_true", help="the brief says to ask Burak here, or the call is plainly his: skip L3")
-    es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", help="one plain dilemma for Burak, with a recommendation")
+            x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, or the call is plainly theirs: skip L3")
+    es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", help="one plain dilemma for the operator, with a recommendation")
     es.add_argument("--questions-file", help="JSON with one to three questions; L3 supplies '-' on stdin")
     es.add_argument("--recommendation"); es.add_argument("--label"); es.add_argument("--why")
     resolution = ts.add_parser("resolve", help="current L2: record a sourced decision or withdraw a doubtful question")
@@ -533,7 +533,7 @@ def main(argv=None) -> None:
                     if S.load_task(p, args.slug).get("attempt") != int(attempt):
                         sys.exit(f"alt task block: attempt {attempt} is no longer current")
                 else:
-                    waiting = "burak" if args.for_burak else "l3"
+                    waiting = T.OPERATOR_MESSAGE_ROLE if args.for_operator else "l3"
                     previous_questions = {(q["id"], q["revision"])
                                           for q in S.load_task(p, args.slug).get("questions", [])}
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
@@ -552,11 +552,11 @@ def main(argv=None) -> None:
                         from altitude import l3
                         l3.queue_message(p, T.block_question(blocked), trigger="block", slug=args.slug)
             elif not args.fault:
-                out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": "burak"},
+                out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
                             questions=questions, recommendation=args.recommendation,
                             recommendation_label=args.label, recommendation_why=args.why))
             if args.fault:
-                # An environment fault is Altitude's to fix, not a question for Burak: the same path as a fault
+                # An environment fault is Altitude's to fix, not a question for the operator: the same path as a fault
                 # altd detects itself (block, one incident per kind per day, one message for L3).
                 from altitude import incidents
                 out(incidents.system_fault(f"worker:{args.slug}", args.reason, project=p, task=args.slug)
@@ -576,7 +576,7 @@ def main(argv=None) -> None:
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
-            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids)
+            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else T.OPERATOR_MESSAGE_ROLE, _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids)
             out(message)
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
@@ -595,8 +595,8 @@ def main(argv=None) -> None:
                 sys.exit("alt task hold-merge --approval: use the project-bound L3 daemon socket")
             if not args.off and not args.why:
                 sys.exit("alt task hold-merge: --why <reason> (or --off)")
-            if args.off and ACTOR != "burak":
-                sys.exit("alt task hold-merge: only Burak may release a merge hold")
+            if args.off and ACTOR != config.OPERATOR_ACTOR:
+                sys.exit("alt task hold-merge: only the operator may release a merge hold")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "machine":
             attempt = os.environ.get("ALTITUDE_ATTEMPT")

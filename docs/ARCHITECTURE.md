@@ -855,9 +855,8 @@ stalled work. Repeated observations stay quiet; terminal evidence promises no fu
 Project-local repairs remain owned by the affected project. Every incident is published as one
 GitHub issue by `incidents.publish_issue`: system faults publish after the fault lock is released,
 and `alt incident new` publishes after the record is written. The daemon owns the product target
-seam, `server.issue_repository`: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment, the
-release metadata, or the installed Altitude checkout's GitHub origin, never the calling project's
-origin. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
+seam, `server.issue_repository`: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment, and
+nothing else; unset keeps every incident on the machine as a pending record with that reason. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
 the sanitized cause, a reproduction line that reads pending triage until L3 comments one, the
 Altitude version and the incident marker (incident id plus an opaque project digest). Evidence,
 task, project, logs and conversations never supply public content.

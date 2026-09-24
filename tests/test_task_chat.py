@@ -97,7 +97,7 @@ class TestTaskConversation(ChatCase):
         result = self.resume(seen)
 
         self.assertEqual(result["agent"]["id"], "agent-new")
-        self.assertIn("Message from Burak (", seen["prompt"])
+        self.assertIn("Message from Operator (", seen["prompt"])
         self.assertIn("\nUse the existing API.", seen["prompt"])
         self.assertNotIn("Need one decision.", seen["prompt"], "the session already asked it")
         self.assertEqual((seen["name"], seen["session_id"], seen["cwd"]),
@@ -133,7 +133,7 @@ class TestTaskConversation(ChatCase):
         self.assertIn("alt task escalate", queued[0]["text"])
 
         task.update({"state": "running"}); S.save_task(self.project, task)
-        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?", "--for-burak",
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?", "--for-operator",
                        env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], "burak")
@@ -147,12 +147,12 @@ class TestTaskConversation(ChatCase):
         self.assertIn(cards[0]["id"], notification["text"])
         T.resume(self.project, self.slug)
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
-                       "--for-burak", env=self.worker_env())
+                       "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(len(self.l3_queue()), 2, "re-parking the same revision does not notify again")
         T.resume(self.project, self.slug)
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which accent colour?",
-                       "--for-burak", env=self.worker_env())
+                       "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(len(self.l3_queue()), 3, "a revised question carries new coordinator context")
 
@@ -167,7 +167,7 @@ class TestTaskConversation(ChatCase):
              "recommended_key": "implement", "why": "The proposal needs operator judgment."}]}))
         reason = "Scope and proposal decisions."
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", reason,
-                       "--questions-file", str(questions), "--for-burak", env=self.worker_env())
+                       "--questions-file", str(questions), "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         scope, proposal = T.question_views(self.project, self.slug)
         [notification] = self.l3_queue()
@@ -193,7 +193,7 @@ class TestTaskConversation(ChatCase):
             self.assertEqual(after.get(field), before.get(field), field)
         T.resume(self.project, self.slug)
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", reason,
-                       "--for-burak", env=self.worker_env())
+                       "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(len(self.l3_queue()), 1, "settling scope and retaining the proposal does not repeat notification")
 

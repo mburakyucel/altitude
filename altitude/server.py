@@ -401,7 +401,7 @@ def _validate_l3_alt_args(args: list[str]) -> None:
     if args[:2] == ["task", "block"]:
         raise ValueError("L3 must use task stop --reason for a running worker")
     if args[:2] == ["task", "hold-merge"] and "--off" in args[3:]:
-        raise ValueError("only Burak may release a merge hold")
+        raise ValueError("only the operator may release a merge hold")
     if args[:1] == ["fyi"] and len(args) >= 3:
         S.require_task_slug(args[1])
     if args[:2] in (["incident", "amend"], ["incident", "publish"]):
@@ -966,7 +966,7 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
               "a repair task or healing workflow. "
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
-              "and whether anything waits on Burak.")
+              "and whether anything waits on the operator.")
     res = server_l3_turn(project, header, trigger="report-landed")
     if not (res or {}).get("completed") or (res or {}).get("error"):
         detail = (res or {}).get("error") or "L3 turn did not complete"
@@ -1630,7 +1630,7 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "effort"]:
                 try:
                     setting = f"{o['role']}_effort"
-                    dispatch.request_setting(o["project"], setting, o["effort"], "Project details", actor=dispatch.OPERATOR_ACTOR)
+                    dispatch.request_setting(o["project"], setting, o["effort"], "Project details", actor=config.OPERATOR_ACTOR)
                     result = dispatch._run_setting(o["project"], setting)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
@@ -1677,17 +1677,17 @@ class Handler(BaseHTTPRequestHandler):
                                    "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
-                reason = o.get("reason") or f"{action} by Burak"
+                reason = o.get("reason") or f"{action} by the operator"
                 try:
                     if action == "reject":
-                        request_daemon_task_operation(project, slug, "reject", reason, actor=dispatch.OPERATOR_ACTOR)
+                        request_daemon_task_operation(project, slug, "reject", reason, actor=config.OPERATOR_ACTOR)
                     elif action == "resume":
                         request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE,
                                                       stop_id=o.get("stop_id"))
                     elif action == "done":
-                        T.done(project, slug, actor=dispatch.OPERATOR_ACTOR)
+                        T.done(project, slug, actor=config.OPERATOR_ACTOR)
                     elif action == "stop":
-                        request_daemon_task_operation(project, slug, "stop", reason, actor=dispatch.OPERATOR_ACTOR,
+                        request_daemon_task_operation(project, slug, "stop", reason, actor=config.OPERATOR_ACTOR,
                                                       generation=o.get("generation"))
                     elif action == "dispatch":
                         spawn(f"dispatch:{project}", dispatch_waiting, project)
@@ -1719,7 +1719,7 @@ class Handler(BaseHTTPRequestHandler):
                     except (ValueError, TypeError, AttributeError):
                         return self._json({"error": "Task messages require a valid submission identity."}, 400)
                 try:
-                    message = T.message(project, slug, "burak", text,
+                    message = T.message(project, slug, T.OPERATOR_MESSAGE_ROLE, text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),
                                         group_id=o.get("group_id"), group_revision=o.get("group_revision"),
                                         stop_id=o.get("stop_id"), **image_args)
@@ -1784,10 +1784,10 @@ class Handler(BaseHTTPRequestHandler):
                     request_l3_drain(project)
                     return self._json({"queued": row, "accepted": True})
                 if l3.busy(project) or config.restart_in_progress():
-                    # Burak types faster than L3 answers. The message waits for the turn boundary in the
+                    # The operator types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
                     try:
-                        row = l3.queue_message(project, text, trigger="chat", role="burak", slug=slug)
+                        row = l3.queue_message(project, text, trigger="chat", role=T.OPERATOR_MESSAGE_ROLE, slug=slug)
                     except ValueError as exc:
                         return self._json({"error": str(exc)}, 409)
                     request_l3_drain(project)
@@ -1796,7 +1796,7 @@ class Handler(BaseHTTPRequestHandler):
                 gone: list[BaseException] = []
 
                 def send(t: str) -> None:
-                    # The turn owns its answer, not the page that started it. 2026-09-03 07:54Z: Burak refreshed
+                    # The turn owns its answer, not the page that started it. 2026-09-03 07:54Z: the operator refreshed
                     # Chat mid-turn; the write error unwound the turn, the answer was never logged and the
                     # session bookkeeping was skipped. A lost client ends the stream and nothing else.
                     if gone:
@@ -1876,7 +1876,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 
 def auto_restart() -> None:
-    """Activate merged backend or web changes at the quiet point (Burak, 2026-09-03: a merged fix is not a fix
+    """Activate merged backend or web changes at the quiet point (operator, 2026-09-03: a merged fix is not a fix
     until the deployed service and bundle contain it). Activation: only dispatch, L3 and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
@@ -2138,23 +2138,21 @@ def issue_parser() -> argparse.ArgumentParser:
 
 
 def issue_repository() -> str:
-    """Where incident issues go: the installation's product seam, independent of the calling project's origin."""
+    """Where incident issues go: the operator's explicit choice, never a repository this installation did not name.
+
+    The maintainer's repository is in the release metadata and in the source checkout's origin, so either one as a
+    default would publish a stranger's incidents there; unset keeps incidents on this machine.
+    """
     target = config.UPSTREAM_ISSUE_REPOSITORY
-    if target is None and config.RELEASE is not None:
-        target = config.RELEASE.get("repository")
     if target is None:
-        try:
-            origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.REPO,
-                                    capture_output=True, text=True, timeout=10)
-            target = repository_url(origin.stdout) if origin.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError):
-            target = None
-    elif re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", target):
+        raise ValueError("incidents stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd's "
+                         "environment names the GitHub owner/repository that receives them")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", target):
         target = "https://github.com/" + target
-    repository = repository_url(target or "")
+    repository = repository_url(target)
     if not repository:
-        raise ValueError("operator must configure ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd as the Altitude "
-                         "GitHub owner/repository, or install from a GitHub origin")
+        raise ValueError("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd's environment must name a GitHub "
+                         "owner/repository or GitHub repository URL")
     return repository
 
 

@@ -489,7 +489,7 @@ class TestTaskDesign(AltitudeCase):
         head, index = git("rev-parse", "HEAD", cwd=self.worktree), git("ls-files", "--stage", cwd=self.worktree)
         manifest = self.tmp / "selection.json"
         manifest.write_text(json.dumps(self.selection))
-        result = self.alt("task", "block", self.slug, "--reason", "Review this proposal?", "--for-burak",
+        result = self.alt("task", "block", self.slug, "--reason", "Review this proposal?", "--for-operator",
                           "--design-file", str(manifest), env=self.owner_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         question = S.load_task(self.project, self.slug)["questions"][-1]
@@ -539,7 +539,7 @@ class TestTaskDesign(AltitudeCase):
         questions.write_text(json.dumps({"questions": [{"question": first["question"]}]}))
         result = self.alt("task", "block", self.slug, "--reason", "The revised layout is ready.",
                           "--questions-file", str(questions), "--design-file", str(manifest),
-                          "--for-burak", env=self.owner_env())
+                          "--for-operator", env=self.owner_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         current = S.load_task(self.project, self.slug)
         fresh = current["questions"][-1]

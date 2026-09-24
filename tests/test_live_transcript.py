@@ -70,7 +70,7 @@ class TestCodexTranscript(AltitudeCase):
         self.assertEqual(events[0]["text"], "# Brief\nDo it\n")
         self.assertEqual(events[0]["at"], json.loads((self.root / "w1.json").read_text())["started_at"])
         self.assertEqual(events[3]["text"], "queued → running · altd")
-        self.assertRegex(events[6]["text"], r"^Message from Burak \(.*\):\nPrefer the smaller diff$")
+        self.assertRegex(events[6]["text"], r"^Message from Operator \(.*\):\nPrefer the smaller diff$")
         self.assertEqual({k: events[1][k] for k in ("tool", "summary", "text", "output", "tool_use_id", "status", "error")},
                          {"tool": "command", "summary": "make test", "text": "make test", "output": "ok\n",
                           "tool_use_id": "item_1", "status": "completed", "error": False})
@@ -132,7 +132,7 @@ class TestClaudeTranscript(AltitudeCase):
     def test_blocks_become_prompts_replies_calls_and_results_without_reasoning(self):
         def at(seconds):
             return _stamp(10, seconds)
-        message = "Message from Burak (2026-09-03T10:00:07+00:00):\nPrefer the smaller diff"
+        message = "Message from Operator (2026-09-03T10:00:07+00:00):\nPrefer the smaller diff"
         self.path.write_text("".join(json.dumps(r) + "\n" for r in (
             {"type": "user", "timestamp": at(1), "message": {"role": "user", "content": "# Brief\nDo it"}},
             {"type": "assistant", "timestamp": at(2), "message": {"role": "assistant", "content": [

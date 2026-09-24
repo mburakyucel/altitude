@@ -30,6 +30,8 @@ OPERATOR = re.compile(r"(?<![a-z])burak", re.IGNORECASE)
 
 #: Engine-specific code is expected here and nowhere else.
 ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
+#: The configured operator name and the persisted authority identity live here and nowhere else.
+OPERATOR_SEAM = ("altitude/config.py",)
 
 #: Provider names per file in `altitude/*.py` and `bin/alt`, outside the engine seam.
 PROVIDER_BASELINE = {
@@ -43,17 +45,8 @@ PROVIDER_BASELINE = {
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "altitude/dispatch.py": 3,
-    "altitude/incidents.py": 2,
-    "altitude/l3.py": 3,
-    "altitude/land.py": 3,
-    "altitude/server.py": 8,
-    "altitude/tasks.py": 9,
-    "bin/alt": 11,
     "docs/ARCHITECTURE.md": 4,
-    "docs/CLI.md": 2,
-    "docs/SESSION_LIFECYCLE.md": 4,
-    "personas/l2.md": 1,
+    "docs/SESSION_LIFECYCLE.md": 3,
     "web/src/data/api.ts": 1,
     "web/src/routes/Task.test.tsx": 1,
 }
@@ -96,7 +89,7 @@ def _operator_files():
     files = {REPO / "bin" / "alt", REPO / "README.md", REPO / "AGENTS.md", REPO / "CLAUDE.md"}
     for root in ("personas", "altitude", "web/src", "docs"):
         files.update(p for p in (REPO / root).rglob("*") if p.is_file())
-    return sorted(files)
+    return sorted(p for p in files if p.relative_to(REPO).as_posix() not in OPERATOR_SEAM)
 
 
 class TestSeamRatchets(unittest.TestCase):

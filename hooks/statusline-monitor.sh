@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper for the global statusline: snapshot the JSON for Altitude's monitor, then run the original statusline.
-# Install with `alt install-statusline` (edits ~/.claude/settings.json — only with Burak's OK).
+# Install with `alt install-statusline` (edits ~/.claude/settings.json — only with the operator's OK).
 set -u
 ROOT="${ALTITUDE_HOME:-$HOME/.altitude}"
 mkdir -p "$ROOT/monitor"

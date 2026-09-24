@@ -711,12 +711,12 @@ def queue_upstream_issue(project: str, url: str, *, checkout: Path) -> dict:
 
 
 def drop_queued(project: str, message_id: str) -> bool:
-    """Drop one of Burak's chat messages that has not started. Server work is not editable."""
+    """Drop one of the operator's chat messages that has not started. Server work is not editable."""
     path = queue_path(project)
     with S.project_lock(project):
         rows = _queue_rows(path)
         rest = [row for row in rows
-                if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != "burak"
+                if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != config.OPERATOR_ACTOR
                 or row.get("image_turn_id")]
         if len(rest) == len(rows):
             return False
@@ -944,7 +944,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         if active_turn is None:
             if not config.is_managed(project):
                 return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
-            row = queue_message(project, prompt, trigger=trigger, role="burak" if trigger == "chat" else "server",
+            row = queue_message(project, prompt, trigger=trigger, role=config.OPERATOR_ACTOR if trigger == "chat" else "server",
                                 slug=slug)
             return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
