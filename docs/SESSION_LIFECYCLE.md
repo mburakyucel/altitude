@@ -513,8 +513,9 @@ explicit worktree selection with `alt task block --design-file` in the ordinary 
 publication neither launches a worker nor releases a merge hold. Selected content, including
 ignored or untracked captures, is copied without Git changes before
 the question is persisted. Its fixed image files stay with the task through archival, and the
-captured text and manifest stay in the question. **View preview · vN** appears in Needs you, the
-owning question and its offscreen-question navigation. Work opens the owning question from its row.
+captured text and manifest stay in the question. **View preview · vN** appears in Needs you and the
+owning question. Offscreen-question navigation reaches the question before opening its preview.
+Work opens the owning question from its row.
 The preview's saved title distinguishes proposal from implementation review; older attachments
 remain with their historical questions. It opens in another tab, preserving the original view and
 draft; **Back to question** opens the exact question/revision. Viewing creates no
@@ -673,7 +674,8 @@ At clean no-code completion, the final task lock checks the inbox before archiva
 continues the saved session and supersedes the earlier completion request, including when Send arrives
 after the daemon first observed the worker exit.
 
-**Stop** is directly accessible beside the composer and in Live session on phone and desktop.
+**Stop** is directly accessible in the task header from Conversation and Live session on phone and
+desktop; a desktop live overlay carries the same action in its own header.
 It queues one operation in altd without confirmation, records the observed worker and Stop identity,
 holds inbox delivery immediately, blocks the task and stops the worker with its descendants. The poll
 never reads the exiting worker as a death or lets concurrent final output undo Stop. The page says
@@ -815,6 +817,17 @@ complete unpublished follow-up. A raced verification is refused if the delivery 
 report handoff. Existing restart adoption and merge activation observe the continuing task normally.
 
 ## Engine containment
+
+Every fresh and resumed owner receives the same browser capability instruction. Worker admission does
+not certify browser isolation. Before dependent deployment verification, the owner preflights the intended
+browser with its sandbox enabled, finite blank/local fictional content and disposable writable storage,
+then cleans up. Unavailable launch becomes an explicit capability fault through `alt task block --fault`;
+the owner preserves evidence and L3 owns supported recovery. Neither a fictional sandbox-disabled test
+harness nor a diagnostic machine grant authorizes bypassing required browser or worker protections.
+Namespace-visible helper ownership leaves host permissions unknown until authorized host diagnostics.
+This instruction takes effect on launches/resumes after normal source activation; running turns retain
+their delivered instructions. Deterministic launch fixtures prove delivery, not provider adherence or
+live browser isolation. See [the browser contract](DEVELOPMENT.md#browser-verification-and-recovery).
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
 directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
@@ -1075,7 +1088,10 @@ altd is down. The daemon reads durable completion and inbox records at the next 
 
 ## Live transcript
 
-Conversation and Live session are local views of one L2 task. Phone tab changes replace the
+Conversation and Live session are local views of one L2 task. On phone, left swipes open Live session
+and right swipes return to Conversation, with no wrapping; labeled tabs remain directly accessible.
+Swipes leave vertical scrolling, browser-edge gestures, selection, form controls, the composer,
+recording, dialogs and horizontally scrollable content alone. Phone tab and swipe changes replace the
 current browser entry while retaining navigation state; the desktop panel toggle is local state.
 The `/live` URL opens the live view on direct entry and reload. Browser Back and app Back return
 to the preceding page after normal in-app entry. Without an in-app predecessor, app Back replaces
@@ -1084,15 +1100,20 @@ history. Viewing, switching views, and leaving the page do not change the worker
 
 Phone Conversation and Live session tabs remain visible while typing hides the global bottom
 navigation. Keyboard dismissal restores that navigation without clearing the draft or selection;
-local view changes retain the draft, while leaving the task follows the existing discard rule.
+local view changes retain draft text, selection, images and both views' reading state without opening
+the keyboard automatically, while leaving the task follows the existing discard rule.
+Switching to Live session cancels unsent dictation and releases the microphone. An explicit voice Send
+keeps transcribing and sending to its original task while hidden; view switches do not cancel it.
 Desktop uses one navigation/title/actions row and a wrapping chip row; long titles remain readable.
 Attempt, context and token usage open in Task details at both viewports; desktop keeps direct
 Reject, operational Resume and live-panel controls. The compact phone header names L2 activity and
-Merge held independently. Full block/hold reasons,
-metadata, Reject with confirmation and operational Resume open in task details. Stop and Continue
-remain directly accessible in both views on phone and desktop. Faults retain a visible cause and
-the L3 notification. An open question stays at the end of the conversation with its **Your turn**
-pill/Latest messages and no generic Resume. Disclosure,
+Merge held independently. Its bordered title dropdown opens task details with full block/hold reasons,
+metadata, View question, Reject with confirmation and operational Resume. Stop, Continue and Check status
+share one header button's styling and position, visible from either view; no action row consumes
+conversation height. Faults retain a visible cause and the L3 notification. An open question stays
+at the end of the conversation with no generic Resume. A labeled question jump floats above the
+composer while that question is offscreen; Latest appears for newer offscreen messages. A shared
+bottom destination uses only the question jump, and visible destinations hide their jumps. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
 
@@ -1104,6 +1125,8 @@ after existing redaction. The activity line reads "Working · output 12 sec ago"
 dot. Live session keeps the recorded-activity line under its footer, including "No new activity for …"
 after 60 seconds, and its header dot pulses only while output is recent. Reduced motion keeps every
 dot steady. Unavailable activity never pulses and remains explicit in Live session.
+Scrolling up in Live session pauses following; Follow returns to the newest output. The paused
+position and expanded tool output survive phone view switches.
 Resume clears the old
 direction until the new worker emits public output. Questions, decisions and explicit results stay
 durable in Conversation; older worker output remains only in Live session under existing retention.

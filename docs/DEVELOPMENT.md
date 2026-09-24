@@ -142,12 +142,13 @@ CI schedules individual tests across workers, so long spec files cannot hold one
 others sit idle. Local runs retain file-level scheduling.
 Install the Chromium build matching the locked Playwright version. The browser cache
 can be shared across worktrees through `PLAYWRIGHT_BROWSERS_PATH`; use the same value for install
-and execution. Chromium's own sandbox is disabled inside the worker filesystem sandbox because
-of the documented host browser restriction; profiles/configuration remain temporary or under
+and execution. Only this fictional local UI harness disables Chromium's own sandbox inside the worker
+filesystem sandbox; profiles/configuration remain temporary or under
 ignored `web/ui-artifacts/`. Missing browsers fail with installation guidance.
-Incident I-20260907-041446: this host's installed Chrome AppArmor profile denies network sockets
-inside the worker sandbox. Use the locked bundled Chromium in Altitude home's shared `browsers/`
-directory; a missing bundle is a failed prerequisite.
+Incident I-20260907-041446 records an installed Chrome AppArmor network restriction in that worker
+context. The harness uses locked bundled Chromium in Altitude home's shared `browsers/` directory;
+a missing bundle is a failed prerequisite. This historical observation does not diagnose other hosts
+or establish that bundled Chromium supports its own sandbox inside a worker.
 
 `web/e2e/fixtures.ts` starts the disposable services. `acceptance-service.py` supplies fictional
 tasks/history for route and component walkthroughs. Project-isolation and project-lifecycle
@@ -195,6 +196,44 @@ Wireframe renders stay in ignored `design/wireframes/shots/`. The
 [documentation renderer](../design/readme/README.md) also writes to ignored artifacts; only selected
 illustrations that explain current behavior belong in `docs/images/`. Maintain the spec and useful
 boards in place, removing obsolete review scaffolding and its generators/references together.
+
+## Browser verification and recovery
+
+Worker confinement and the browser's own sandbox are separate protections. Worker launch and the
+fictional UI suite do not establish a supported path for verification requiring both. The shared
+launcher tells every fresh/resumed owner to check that capability before dependent deployment
+verification. This is an owner procedure, not automatic capability detection or permission to deploy.
+
+Within the task's diagnostic authority, preflight the intended executable in the intended worker,
+using blank or local fictional content, a finite timeout, and disposable writable profile, config
+and cache directories. Keep the browser sandbox enabled: Playwright's
+[`chromiumSandbox`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox)
+defaults to false and must be explicitly true for this requirement. Record the browser/version,
+launch options, exit/result and cleanup in private task evidence. A successful launch alone does not
+prove every required browser protection; retain the isolation evidence the task requires before
+claiming verification. Do not navigate to a deployment while this prerequisite is unavailable.
+
+Issue #441 reports system Chrome rejecting its
+SUID helper and read-only crash storage before navigation. The reporting Altitude version and host
+permissions are unknown. A bounded current-worker check with disposable writable storage reproduces
+the helper rejection; locked bundled Chromium also refuses with `No usable sandbox`. Neither emits
+the reported read-only crash-storage error. This establishes unavailable launches in that worker,
+not a host package defect or a universal browser limitation. No sandbox-preserving path is established.
+
+Linux [user namespaces](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) translate file
+ownership through UID/GID mappings; unmapped owners can appear as overflow IDs (`nobody:nogroup`).
+Namespace-visible ownership, mode 4755 and a single-ID mapping cannot establish actual host ownership.
+Writable crash storage addresses a separate prerequisite and does not repair browser isolation.
+Do not chmod/chown the helper, add sandbox-disabling flags or weaken worker confinement in response.
+
+On unavailable capability, checkpoint the failed launch and remaining verification, reply, and use
+`alt task block "$ALTITUDE_TASK" --fault --reason "Browser sandbox capability unavailable; L3 must establish a supported path preserving required browser and worker protections before verification resumes."`
+L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
+If host facts are necessary, request a bounded diagnostic purpose through the existing operator
+question, resolution and L3 machine-grant workflow. A diagnostic grant authorizes neither host repair
+nor verification outside worker confinement. Recovery requires evidence in the intended worker;
+without it, retain the capability block and present the exact remaining decision. Altitude's local
+fictional harness exception grants no authority for another project's verification.
 
 ## Coverage and limits
 
