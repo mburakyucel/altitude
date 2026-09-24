@@ -343,7 +343,7 @@ describe("private image reads", () => {
 
   it("keeps an open viewer and its zoom when the opener's row is replaced, then focuses the replacement", async () => {
     const revoke = browser();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["fictional raster"], { type: "image/png" }))));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
     modal();
     const user = userEvent.setup();
     const images = [{ id: "abc", name: "queued.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
@@ -370,7 +370,7 @@ describe("private image reads", () => {
 
   it("closes the viewer when the page scope changes", async () => {
     browser();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["fictional raster"], { type: "image/png" }))));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
     modal();
     const user = userEvent.setup();
     const images = [{ id: "abc", name: "screen.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
