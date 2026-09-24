@@ -509,6 +509,9 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual([r["status"] for r in reads], ["checking"] * 4)
         self.assertEqual(self.step("coordinator")["status"], "complete")
         self.assertEqual(setup.observe(self.project)["status"], "ready")
+        # A read that captured the failed intro before the workflow saved its reply and exited is current.
+        stale = {**setup.read(self.project), "intro": {"state": "failed", "error": "Authentication rejected"}}
+        self.assertEqual(self.step("coordinator", setup._observe(self.project, stale))["status"], "complete")
 
     def test_http_registration_keeps_failed_setup_visible_and_retry_completes_it(self):
         name = "new-folder"

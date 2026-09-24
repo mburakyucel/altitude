@@ -133,11 +133,12 @@ def _coordinator(project: str, record: dict) -> dict:
     connected = broker is not None and l3.verb_socket_path(project).exists()
     if not connected:
         return _step("coordinator", "Coordinator", "input_needed", "The coordinator command connection needs setup.", action="repair")
-    inf = l3.info(project)
-    intro = record.get("intro") or {}
     with server._bg_guard:
         starting = (server._bg.get(f"start:{project}") or threading.Thread()).is_alive()
-    # A live start workflow covers the saves around its turn, so Retry never reads as failed meanwhile.
+    # A live start workflow covers the saves around its turn, so Retry never reads as failed meanwhile;
+    # read its result after the liveness check, since a finished workflow saved it before exiting.
+    inf = l3.info(project)
+    intro = read(project).get("intro") or {}
     if starting or l3.active(project) and (intro.get("state") == "running" or not inf.get("turns")):
         return _step("coordinator", "Coordinator", "running", "The coordinator is preparing its first reply.")
     if intro.get("state") == "failed":

@@ -9,10 +9,11 @@ const healthy: Setup = { project: "atlas", status: "ready", checked_at: "2026-09
   { id: "coordinator", label: "Coordinator", status: "reused", detail: "Using existing conversation" },
 ] };
 function response(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
-let chat = [{ role: "assistant", text: "The existing conversation", at: "2026-09-14T12:00:00Z" }];
+const existing = { role: "assistant", text: "The existing conversation", at: "2026-09-14T12:00:00Z" };
+let chat = [existing];
 function mockSetup(initial: Setup = healthy, refusal = false) {
   let setup = initial;
-  chat = [chat[0]];
+  chat = [existing];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/setup/atlas") return response(setup);
