@@ -1787,7 +1787,10 @@ Preview access stays in the question; tabs and the panel toggle provide live nav
 extra composer row. There is no generic Resume while an operator question is open; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
 read-only with the composer and activity preview gone. Phone swipes left to Live session and right to
-Conversation, without wrapping. Deliberate horizontal gestures exclude browser edges, selection,
+Conversation, without wrapping: both views sit on one track that follows the finger, settles into the
+switch past half the width or a fling, springs back otherwise and resists past either end; reduced
+motion switches instantly. Both phone views stay mounted and laid out, the inactive one invisible with
+its transcript polling paused. Deliberate horizontal gestures exclude browser edges, selection,
 controls, the composer, recording, dialogs and horizontally scrollable content; vertical scrolling
 stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
 selection, images, conversation position and live reading state without reopening the keyboard;

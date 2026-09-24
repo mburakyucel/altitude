@@ -10,7 +10,8 @@ a small text field, plain questions show the field directly, and preset/custom r
 one conversational handoff. Question fields omit microphones; ordinary chat retains voice input.
 
 The operator approved the compact task header and phone swipes (§3.10) on 2026-09-23: uniform
-header actions, a title dropdown for details, and conditional floating question/latest jumps.
+header actions, a title dropdown for details, and conditional floating question/latest jumps. On
+2026-09-24 the operator refined the swipes to track the finger continuously (§3.10 Navigation states).
 
 The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
@@ -818,8 +819,14 @@ current head, a later park on another dependency shows that wait with "PR #N app
 head, a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
-Navigation states: Conversation and Live session are local views of the same task. A deliberate
-phone swipe left opens Live session; right returns to Conversation, with no wrapping past either end.
+Navigation states: Conversation and Live session are local views of the same task. On phone they
+sit side by side on one track. A deliberate horizontal swipe is interactive from its first
+horizontal movement: the outgoing view slides with the finger and the incoming view is on screen
+beside it, proportionally to the drag. Release past half the width, or a fling of at least 0.4 px/ms
+in the drag's direction, completes the switch with a short settle; otherwise, including a fling
+back toward the start, the track springs back. Left opens Live session; right returns to Conversation;
+past either end the track gives a little with rubber-band resistance and never switches. Under
+reduced motion nothing moves with the finger and a release past the same thresholds switches at once.
 Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
 controls, and leave browser-edge Back, text selection, recording, dialogs and horizontally scrollable
 session content alone. Vertical scrolling stays native. Desktop keeps simultaneous panes.
@@ -829,9 +836,16 @@ phone and open the desktop panel. Back in the phone header and the desktop crumb
 the actual preceding in-app page, including its query string. With no in-app predecessor they
 replace the task entry with the owning project's L3 conversation. Browser/system Back remains
 native; Forward restores the task's latest URL, and other pages/tasks keep ordinary history.
-On phone, the inactive view is hidden. Draft text, selection, images, conversation reading position
-and live transcript reading state survive switches. Returning does not open the keyboard automatically;
-touch fields retain their 16px sizing and ordinary use never changes page scale (§2.2).
+On phone both views stay mounted and laid out; the inactive view is invisible and untouchable, not
+removed, so draft text, selection, images, conversation reading position and live transcript reading
+state survive switches natively and a drag reveals the view as it was. An inactive Live session does
+not poll its transcript; the drag that reveals it starts the transcript, so the incoming view shows
+its real content when it has rendered before and its Connecting skeleton during the drag and settle
+otherwise, then its content. The Conversation's initial, empty and error states read the same at any
+offset, and a drag never wakes its composer. Memory matches the desktop's simultaneous panes; only
+the inactive phone view's transcript polling and reading bookkeeping pause. Returning does not open
+the keyboard automatically; touch fields retain their 16px sizing and ordinary use never changes
+page scale (§2.2).
 Switching to Live session cancels unsent dictation and releases the microphone. Explicit voice Send
 continues transcription and submission for its original task while hidden, without refocusing its
 composer; Escape in Live session does not cancel that submitted message.
@@ -840,7 +854,10 @@ alongside newer draft edits; an accepted send remains sent. On desktop, closing 
 the conversation visible. Navigation itself has no
 loading, listening, denied or error state; destination reads and composers retain their states
 specified here and in §3.6. `web/e2e/task-navigation.pw.ts` walks entry from L3 and Work, repeated
-toggles, reload, Back, Forward and direct-live fallback on phone and desktop.
+toggles, reload, Back, Forward and direct-live fallback on phone and desktop. `web/e2e/task-swipe.pw.ts`
+walks the phone gesture: idle, drag started, half-way with the incoming view loading and rendered,
+release completing, springing back, resistance past either end and reduced motion, plus the
+gesture exclusions and retained reading state.
 
 The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when

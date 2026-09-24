@@ -441,7 +441,8 @@ assigned a guessed upstream repository.
 
 Within an L2 task, Conversation and Live session are local views. Switching between them adds no
 browser history entries. On phone, swipe left to Live session and right to Conversation, or use the
-labeled tabs. Vertical scrolling, text selection, form controls and horizontally scrollable session
+labeled tabs. The swipe follows your finger: release past half the screen (or a quick flick) switches,
+a shorter drag springs back, and either end gives resistance instead of wrapping. Vertical scrolling, text selection, form controls and horizontally scrollable session
 content keep their gestures. View switches preserve the draft, selection, images and reading position
 without reopening the keyboard. Browser Back and the task's Back control return to the preceding page;
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link

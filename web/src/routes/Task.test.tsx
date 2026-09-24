@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
 import type { TaskView } from "../data/api";
@@ -788,6 +788,91 @@ describe("Task on desktop", () => {
     await router.navigate("/projects/altitude/tasks/other-task");
     await screen.findByRole("heading", { level: 1, name: "Other task" });
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+  });
+});
+
+describe("Phone swipe lifecycle", () => {
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number) => {
+    const scroller = document.querySelector(".convo-scroll")!;
+    const point = [{ clientX: x, clientY: 300 }];
+    fireEvent[type](scroller, type === "touchEnd" ? { touches: [], changedTouches: point } : { touches: point, cancelable: true });
+  };
+  const track = () => document.querySelector<HTMLElement>(".task-track")!;
+  const live = () => screen.queryByRole("region", { name: "Live session" });
+  const transcriptReads = (fetchMock: ReturnType<typeof stub>) => fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/transcript/")).length;
+  let width: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    setViewport(390);
+    width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+  });
+  afterEach(() => width.mockRestore());
+
+  it("reveals Live session with its transcript while the finger drags, and a short slow release springs back", async () => {
+    const fetchMock = stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    expect(live()).toBeNull();
+    expect(transcriptReads(fetchMock)).toBe(0);
+    touch("touchStart", 200);
+    touch("touchMove", 150);
+    expect(await screen.findByRole("region", { name: "Live session" })).toBeVisible();
+    expect(track().style.transform).toBe("translateX(-50px)");
+    await waitFor(() => expect(transcriptReads(fetchMock)).toBe(1));
+    expect(screen.getByRole("region", { name: "Task conversation" })).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    touch("touchEnd", 150);
+    expect(track().style.transform).toBe("translateX(0px)");
+    await waitFor(() => expect(live()).toBeNull());
+    expect(track().style.transform).toBe("");
+    expect(router.state.location.pathname).toBe(route);
+  });
+
+  it("completes the switch after the settle when the drag passes half the width", async () => {
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    touch("touchStart", 300);
+    touch("touchMove", 100);
+    expect(track().style.transform).toBe("translateX(-200px)");
+    touch("touchEnd", 100);
+    expect(track().style.transform).toBe("translateX(-390px)");
+    expect(router.state.location.pathname).toBe(route);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Task conversation" })).toBeNull());
+    expect(track()).toHaveAttribute("data-live");
+    expect(track().style.transform).toBe("");
+    expect(live()).toBeVisible();
+    expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
+  });
+
+  it("gives resistance past the end and never switches", async () => {
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    touch("touchStart", 100);
+    touch("touchMove", 400);
+    const offset = parseFloat(track().style.transform.replace(/[^\d.-]/g, ""));
+    expect(offset).toBeGreaterThan(0);
+    expect(offset).toBeLessThan(100);
+    touch("touchEnd", 400);
+    await waitFor(() => expect(track().style.transform).toBe(""));
+    expect(router.state.location.pathname).toBe(route);
+    expect(live()).toBeNull();
+  });
+
+  it("switches at once on release under reduced motion, with nothing revealed mid-drag", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    touch("touchStart", 300);
+    touch("touchMove", 100);
+    expect(track().style.transform).toBe("");
+    expect(live()).toBeNull();
+    touch("touchEnd", 100);
+    await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+    expect(track().style.transform).toBe("");
+    expect(live()).toBeVisible();
   });
 });
 
