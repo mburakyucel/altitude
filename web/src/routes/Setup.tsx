@@ -93,7 +93,7 @@ export function ProjectSetup({ name }: { name: string }) {
               {step.action === "repair" ? <button type="button" className="btn" disabled={busy || stale} onClick={() => run("repair")}>
                 {step.status === "failed" || step.status === "unknown" ? "Retry" : "Repair"}
               </button> : null}
-              {step.action === "discuss" ? <button type="button" className="btn btn-ghost" onClick={() => close(true)}>Discuss with L3</button> : null}
+              {step.action === "discuss" ? <button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button> : null}
               {step.action === "combine" ? <>
                 {integration !== step.id ? <button type="button" className="btn" disabled={busy || stale} onClick={() => setIntegration(step.id)}>Review integration</button> : <div className="setup-integration">
                   <p>Use your existing hooks together with Altitude’s guards? Original hook files stay intact. Either set can reject a Git operation.</p>
@@ -108,7 +108,7 @@ export function ProjectSetup({ name }: { name: string }) {
             </div>
           </li>)}
         </ol>
-        {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Discuss with L3 opens your project conversation.</p><button type="button" className="btn btn-ghost" onClick={() => close(true)}>Discuss with L3</button></div> : null}
+        {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Discuss with L3 opens your project conversation.</p><button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button></div> : null}
         <footer className="setup-footer">
           {data?.checked_at ? <p className="text-meta text-muted">{stale ? "Last observed" : "Checked"} {new Date(data.checked_at).toLocaleString()}</p> : null}
           <div className="setup-actions">

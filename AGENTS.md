@@ -110,8 +110,9 @@ validation task, or release prerequisite.
 ## UI
 
 Every design and feature iteration follows the standing project tenet: simple, elegant, polished,
-visually attractive, easy to use, and intuitive. The design itself makes clear where to click and
-where to go. Apply the concise [design review expectations](design/wireframes/SPEC.md#11-standing-design-tenet)
+visually attractive, easy to use, and intuitive. Intuitiveness is a first-order requirement, not a
+finish: the design itself makes clear where to click and where to go, and anything clickable is
+immediately recognisable as clickable. Apply the concise [design review expectations](design/wireframes/SPEC.md#11-standing-design-tenet)
 alongside the interaction-state walkthrough below.
 
 Keep wireframes lean: maintain the current approved design in the spec and useful boards, folding

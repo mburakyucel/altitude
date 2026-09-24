@@ -27,7 +27,7 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
     (dismissed?.update === update && (!restart.failed || dismissed.failure === restart.failed))) return null;
   return <div className="restart-banner" role="status" aria-label="Restart pending">
     <p className="restart-banner-summary">{restart.failed ? "Activation failed" : restart.requested_at ? "Altitude is restarting…" : "Update ready"}</p>
-    <Link className="btn btn-ghost" to="/monitor" aria-label="Update details in Monitor">Details</Link>
+    <Link className="btn" to="/monitor" aria-label="Update details in Monitor">Details</Link>
     <button type="button" className="btn btn-ghost" aria-label="Dismiss update notice" onClick={() => {
       const next = { update, failure: restart.failed };
       setDismissed(next);

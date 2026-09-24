@@ -50,13 +50,17 @@ reviewable work. The UI shows that and nothing else. Its four principles:
 
 Every design and feature iteration is **simple, elegant, polished, visually attractive, easy to
 use, and intuitive**. People understand where to click and where to go from the design itself,
-without feeling lost. This central project tenet guides future iterations as the visual direction
-evolves.
+without feeling lost. Intuitiveness is a first-order requirement, not a finish: anything clickable
+is immediately recognisable as clickable at rest, before hover or focus. This central project tenet
+guides future iterations as the visual direction evolves.
 
 In the existing design review and [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
 
 - Visual hierarchy makes the primary action clear; navigation and plain labels show where people
   are, where they can go, and what an action does.
+- Every clickable control reads as clickable at rest. The only or primary action in an area is a
+  bordered or filled button; a borderless ghost button sits only beside a visible bordered or
+  filled action; a text link is underlined. Plain text beside muted meta lines is not a control.
 - Complexity is restrained: each visible control and detail earns its place in the current task.
 - Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
   interaction states and transitions feel complete and polished on phone and desktop.
@@ -344,7 +348,7 @@ yet."); error ("Could not load the report." and Retry).
 
 #### Cross-engine review in the task conversation
 
-The existing task menu offers **Review proposal** and **Review changes**, with one entry per subject.
+The existing task menu offers **Review proposal** and **Review changes**, one bordered button per subject.
 An existing request changes its entry to **View proposal review** or **View changes review**, with
 Requested, In progress, Complete, Earlier version, Failed or Cancelled underneath. Opening any existing
 review shows saved status, findings and L2 dispositions in the conversation and never invokes a reviewer,

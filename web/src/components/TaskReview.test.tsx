@@ -105,6 +105,8 @@ describe("Review in task chat", () => {
     await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
     expect(screen.getByText(/remaining allowance is unknown/)).toBeVisible();
     const request = screen.getByRole("button", { name: "Review changes" });
+    // The only actions in the review section are bordered buttons, never ghost text (SPEC §1.1 affordance check).
+    for (const name of ["Review proposal", "Review changes"]) { expect(screen.getByRole("button", { name })).toHaveClass("btn"); expect(screen.getByRole("button", { name })).not.toHaveClass("btn-ghost"); }
     await app.user.click(request);
     expect(request).toBeDisabled();
     const requested = { ...completed, state: "requested" as const, result: null, reconciled: null, coverage: "unknown" as const, can_withdraw: true };

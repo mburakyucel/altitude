@@ -113,6 +113,8 @@ test("cross-engine review stays in task chat through request, result and failure
   await walk.state("01-empty-chat", { visible: [field], hidden: [row] });
   await openMenu();
   await walk.state("02-request-in-details", { visible: [menu.getByRole("button", { name: "Review changes" }), menu.getByText(/remaining allowance is unknown/)], hidden: [] });
+  // Affordance (SPEC §1.1): the review entries are the only actions in their section and carry a visible border at rest.
+  for (const name of ["Review proposal", "Review changes"]) expect(await menu.getByRole("button", { name }).evaluate((el) => getComputedStyle(el).borderColor)).not.toBe("rgba(0, 0, 0, 0)");
   saving = true;
   await menu.getByRole("button", { name: "Review changes" }).click();
   await expect.poll(() => posts).toBe(1);

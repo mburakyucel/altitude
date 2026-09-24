@@ -81,7 +81,7 @@ export function ReviewMenu({ task, controls, view }: { task: TaskView; controls:
       const { latest, available, why } = review.subjects[subject];
       const status = latest ? latest.state === "completed" && latest.coverage === "earlier" ? "Earlier version" : ({ requested: "Requested", running: "In progress", completed: "Complete", failed: "Failed", cancelled: "Cancelled", withdrawn: "Withdrawn" })[latest.state] : "Not reviewed";
       return <div key={subject}>
-        <button className="btn btn-ghost" disabled={!latest && (controls.disabled || !available)} onClick={() => latest ? view(latest.id) : controls.run("request", undefined, undefined, subject)}>{latest ? `View ${subject} review` : `Review ${subject}`}</button>
+        <button className="btn" disabled={!latest && (controls.disabled || !available)} onClick={() => latest ? view(latest.id) : controls.run("request", undefined, undefined, subject)}>{latest ? `View ${subject} review` : `Review ${subject}`}</button>
         <p className="text-meta text-muted">{latest ? status : available ? status : why}</p>
       </div>;
     })}
