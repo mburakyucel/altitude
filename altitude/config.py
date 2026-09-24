@@ -88,9 +88,9 @@ AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_
                  {"engine": "claude" if PRIMARY_DEFAULT_ENGINE != "claude" else "codex",
                   "model": "fable" if PRIMARY_DEFAULT_ENGINE != "claude" else None}],
                 [{"engine": "claude", "model": "opus"}]]
-# L3 effort remains native; new L2 tasks explicitly override native effort configuration.
-CODEX_EFFORT = {"l3": None}
-TASK_EFFORTS = ("high", "xhigh")
+TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
+ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
+EFFORT_SETTINGS = ("l3_effort", "l2_effort")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
@@ -104,13 +104,36 @@ INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
 
 
-def task_effort(engine: str | None, effort: str | None) -> str | None:
-    """Validate the task choice; model support is decided by the native provider at launch."""
+def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> str | None:
+    """Resolve intent; native model support and managed caps remain provider decisions."""
     if effort is not None and effort not in TASK_EFFORTS:
-        raise ValueError("task effort must be high or xhigh")
-    if effort is not None and engine is not None and engine != "codex":
-        raise ValueError(f"{engine} does not support task reasoning effort; omit --effort or select a supporting engine")
-    return (effort or "high") if engine == "codex" else effort
+        raise ValueError(f"effort must be one of {', '.join(TASK_EFFORTS)}")
+    if effort is not None and engine is not None and effort not in ENGINE_EFFORTS.get(engine, ()):
+        raise ValueError(f"{ENGINE_LABELS.get(engine, engine)} does not support reasoning effort {effort}; choose a supported level or Native")
+    if effort == "native":
+        return None
+    return effort or ("high" if role == "l2" and engine == "codex" else None)
+
+
+def validate_project_effort(entry: dict, role: str, effort: str | None) -> None:
+    if f"{role}_effort" not in EFFORT_SETTINGS:
+        raise ValueError("effort role must be l3 or l2")
+    pin = pinned_option(role, entry)
+    task_effort(pin["engine"] if pin else None, effort, role=role)
+
+
+def effort_view(name: str) -> dict:
+    entry = project(name)
+    labels = {"native": "Native", "xhigh": "Extra High"}
+    choices = []
+    for value in TASK_EFFORTS:
+        supported = [e for e in ENGINES if value in ENGINE_EFFORTS.get(e, ())]
+        if supported:
+            suffix = "" if len(supported) == len(ENGINES) else " (" + ", ".join(ENGINE_LABELS[e] for e in supported) + ")"
+            choices.append({"value": value, "label": labels.get(value, value.title()) + suffix})
+    return {"l3": entry.get("l3_effort"), "l2": entry.get("l2_effort"), "choices": choices,
+            "defaults": {"l3": "Native", "l2": "; ".join(
+                f"{ENGINE_LABELS[e]}: {task_effort(e, None) or 'native'}" for e in ENGINES)}}
 
 
 def subprocess_env() -> dict[str, str]:
@@ -366,6 +389,7 @@ def set_l3_engine(name: str, engine: str | None) -> dict:
     with S.project_lock(name), edit_projects() as projects:
         if name not in projects:
             raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
+        task_effort(engine, projects[name].get("l3_effort"), role="l3")
         if engine:
             projects[name]["l3_engine"] = engine
         else:

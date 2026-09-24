@@ -169,6 +169,18 @@ Overflow menu: **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`),
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
 reports a design URL; opens in a new tab).
 
+Project details, in the phone sheet and desktop overflow popover, contains independent **L3 effort**
+and **L2 effort** selectors alongside the existing engine setting. These controls add no persistent
+header row. Each offers Default with its role's explanation, Native, and supported engine-labelled
+choices supplied by the server. Changes save immediately; both effort controls disable during Saving,
+then show the persisted choice and Saved. Failed or denied saves keep the saved choice and expose the
+server's explanation with Retry save; loading and failed reads show Loading or Retry without controls.
+L3 changes apply next turn. L2 defaults apply to fresh attempts, started tasks keep their effort,
+and per-task overrides win. Copy distinguishes requested effort from observed engine behavior and
+notes that higher effort can use more time and tokens. Default is the unconfigured state; no microphone
+or listening state belongs to settings. Closing details hides controls and keeps the conversation draft.
+`web/e2e/project-effort.pw.ts` walks these states at both viewports with persisted real API writes.
+
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
 

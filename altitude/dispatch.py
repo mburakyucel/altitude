@@ -118,7 +118,8 @@ DAEMON_TASK_OPERATIONS = {
     "stop": {"from": ("running",), "done": ("blocked",)},
     "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
 }
-DAEMON_REQUEST_ACTORS = ("l3", "burak")
+OPERATOR_ACTOR = "burak"  # persisted authority identity, independent of the configured display name
+DAEMON_REQUEST_ACTORS = ("l3", OPERATOR_ACTOR)
 
 
 def _ci_api(project: str, repository: str, suffix: str, *, method: str = "GET") -> dict:
@@ -394,7 +395,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
         authority = "the operator" if project is None else "L3 or the operator"
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
-    if setting not in (("wip",) if project is None else ("routing",)):
+    if setting not in (("wip",) if project is None else ("routing", *config.EFFORT_SETTINGS)):
         raise T.TransitionError(f"unknown {scope} setting")
     if setting == "wip":
         try:
@@ -405,11 +406,14 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         value = config.parse_routing(value)
     with config.projects_lock() if project is None else S.project_lock(project):
         entry = config.machine_settings() if project is None else config.project(project)
+        if setting in config.EFFORT_SETTINGS:
+            config.validate_project_effort(entry, setting[:2], value)
         directory = config.ROOT if project is None else config.project_dir(project)
         path = directory / f"{setting}-request.json"
         previous = S.read_json(path, {})
         same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
-        if same and (previous.get("status") == "pending" or previous.get(f"result_{setting}") == entry.get(setting)):
+        if same and (previous.get("status") == "pending" or previous.get("status") == "done"
+                     and previous.get(f"result_{setting}") == entry.get(setting)):
             return {"idempotent": True, "request": previous}
         if previous.get("status") == "pending":
             raise T.TransitionError(f"{scope} set already pending in altd")
@@ -420,7 +424,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
 
 
 def run_settings(project: str | None = None) -> dict:
-    settings = ("wip",) if project is None else ("routing",)
+    settings = ("wip",) if project is None else ("routing", *config.EFFORT_SETTINGS)
     return {setting: _run_setting(project, setting) for setting in settings}
 
 
@@ -438,9 +442,14 @@ def _run_setting(project: str | None, setting: str) -> dict:
             return request
         projects = config._load_projects() if project is not None else None
         entry = projects.get(project) if projects is not None else config.machine_settings()
+        if entry is not None and setting in config.EFFORT_SETTINGS:
+            try:
+                config.validate_project_effort(entry, setting[:2], request[setting])
+            except ValueError as exc:
+                request.update(status="refused", note=str(exc))
         if entry is None:
             request.update(status="refused", note="project is not registered")
-        else:
+        elif request["status"] == "pending":
             if request[setting] is None:
                 entry.pop(setting, None)
             else:
@@ -817,7 +826,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             raise T.TransitionError(f"engine hold: {choice['why']}")
         engine = choice["engine"]
         selected_model = choice.get("model")
-        selected_effort = config.task_effort(engine, task.get("effort")) if "effort" in task else None
+        selected_effort = choice.get("effort")
         messages = T.pending(project, slug)
         for row in messages:
             task.setdefault("message_deliveries", {})[row["id"]] = {"state": "unconfirmed", "at": None}
@@ -861,7 +870,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
                     S.save_task(project, current)
                 raise T.TransitionError(f"engine hold: {choice['why']}")
             engine, selected_model = choice["engine"], choice["model"]
-            selected_effort = config.task_effort(engine, task.get("effort")) if "effort" in task else None
+            selected_effort = choice.get("effort")
             with S.project_lock(project):
                 current = S.load_task(project, slug)
                 current.update(l2_engine=engine, launch_model=selected_model, engine_model=selected_model,

@@ -918,6 +918,31 @@ export function useL3Engine(project: string) {
   });
 }
 
+const EffortSchema = z.object({
+  l3: z.string().nullable(), l2: z.string().nullable(),
+  defaults: z.object({ l3: z.string(), l2: z.string() }),
+  choices: z.array(z.object({ value: z.string(), label: z.string() })),
+});
+
+export function useEffort(project: string) {
+  return useQuery({
+    queryKey: ["effort", project],
+    queryFn: async () => EffortSchema.parse(await api(`/api/effort/${project}`)),
+    retry: false,
+    refetchOnMount: "always",
+  });
+}
+
+export function useSetEffort(project: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { role: "l3" | "l2"; effort: string | null }) =>
+      EffortSchema.parse(await post("/api/effort", { project, ...input })),
+    onMutate: () => client.cancelQueries({ queryKey: ["effort", project] }),
+    onSuccess: (result) => client.setQueryData(["effort", project], result),
+  });
+}
+
 export function useRestart() {
   return useOptimisticMutation<void, unknown, Overview>({
     mutationFn: () => post("/api/restart", {}),

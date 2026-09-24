@@ -156,17 +156,26 @@ Task status, documents and events share the archive lock while their snapshot is
 `GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
-Task creation records nullable `effort` (`high` or `xhigh` when explicit). `config.task_effort`
-owns support and the High default for the supporting engine; `route.pick_task` filters Auto options
-for explicit choices while keeping engine/model pins strict. Fresh dispatch resolves `launch_effort`
-and persists it alongside `launch_model` before calling the shared worker launcher. The native CLI
-receives that override on launch and every resume; the worker record retains the same launch evidence.
-Tasks without the creation field retain native configuration, and resume never resolves a new default
-or copies an observation into the launch choice. `alt task status` exposes `effort`, `launch_effort`
-and `engine_reasoning_effort` separately. Resume clears the previous turn's observed effort until
-the current worker reports it. Model compatibility stays with the native provider: unsupported
-effort errors follow the existing task-local failure path, without downgrading effort or rerouting
-that error. No model capability catalog, session migration or L3 effort control exists.
+Project registry fields `l3_effort` and `l2_effort` store independent requested defaults; absence
+preserves existing engine defaults and `native` requests no override. `config.task_effort` owns
+engine support and resolution. Task `effort` overrides the project L2 default. Routing resolves
+effort with the chosen engine/model, excludes unsupported Auto candidates and keeps pins strict.
+Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
+reuses it without resolving current project defaults or copying observed provider values.
+Legacy tasks without an effort field retain native configuration unless a project default applies
+at a fresh launch. L3 resolves each turn, including same-conversation resumes, and saves requested
+`effort` and `launch_effort` before calling the engine. Running calls retain their original selection.
+Both roles clear observed `engine_reasoning_effort` for a new turn; absent observations stay unknown.
+Model compatibility and provider caps remain native decisions. Effort failures do not trigger
+application-side downgrading or engine fallback. No model capability catalog or session migration exists.
+
+`GET /api/effort/<project>` returns the saved role defaults and engine-owned choice labels;
+`POST /api/effort` saves one role through the existing settings request/apply mechanism under
+project/registry locks. Project details applies its request immediately; CLI `alt project set`
+requests are applied on the daemon tick, independently of worker capacity. A conflicting pending
+request refuses another save until applied. The controls add no persistent header rows. Neither path mutates model
+pins or running tasks. Native L1 helpers inherit or override effort through their own engine controls;
+Altitude does not create helper workers or promise a uniform L1 override.
 
 Global role responsibilities live in the personas; project policy lives in the repository's
 instructions, with [AGENTS.md](../AGENTS.md) authoritative for Altitude. The shared engine boundary
