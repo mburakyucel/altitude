@@ -1,3 +1,4 @@
+import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
@@ -14,6 +15,7 @@ test("project actions appear and disappear after cancel and Escape (issue #195)"
   await walk.state("02-open", {
     action: () => more.click(), visible: [menu, reset], hidden: [confirmation],
   });
+  await expect(menu.getByRole("menuitem", { name: "Settings…", exact: true })).toBeFocused();
   await walk.state("03-confirmation", {
     action: () => reset.click(), visible: [confirmation], hidden: [reset],
   });
@@ -21,7 +23,9 @@ test("project actions appear and disappear after cancel and Escape (issue #195)"
     action: () => page.getByRole("button", { name: "Cancel", exact: true }).click(),
     visible: [menu, reset], hidden: [confirmation],
   });
+  await expect(reset).toBeFocused();
   await walk.state("05-dismissed", {
     action: () => page.keyboard.press("Escape"), visible: [more], hidden: [menu, confirmation],
   });
+  await expect(more).toBeFocused();
 });

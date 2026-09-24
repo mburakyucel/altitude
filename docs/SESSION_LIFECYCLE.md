@@ -58,19 +58,20 @@ identities on purpose:
 | `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
-Fresh L2 attempts resolve explicit task effort, then project `l2_effort`, then the existing engine
-default. This includes queued tasks and later fresh attempts. Default remains High on the engine
-that already supplied that default, and native elsewhere; explicit `native` removes the override.
-Auto excludes engines that cannot accept an explicit level; unsupported pins refuse. Model
-compatibility and provider effort caps are separate from the configured intent.
-Messages and resumes keep saved `launch_effort`, attempt and conversation even when project defaults,
-routing or native configuration change. Legacy tasks without an effort field retain native behavior
-at fresh launch unless a project default applies; legacy resumes with no saved override stay native.
-Provider effort failures remain launch/turn failures without an application downgrade or engine switch.
-Observations never become requested settings and start unknown on each resumed turn.
+Fresh L2 attempts resolve explicit task effort, then the project's L2 effort for the routed engine
+(`l2_effort` on Claude, `l2_codex_effort` on Codex), then the existing engine default. This includes
+queued tasks and later fresh attempts. Default remains High on Codex and native on Claude; explicit
+`native` removes the override. Auto excludes engines that cannot accept an explicit level;
+unsupported pins refuse. Model compatibility and provider effort caps are separate from the
+configured intent. Messages and resumes keep saved `launch_effort`, `launch_model`, attempt and
+conversation even when project defaults, routing or native configuration change; a resume with no
+saved override stays native. Provider effort failures remain launch/turn failures without an
+application downgrade or engine switch. Observations never become requested settings and start
+unknown on each resumed turn.
 
-Project `l3_effort` applies at the next turn, including an existing provider conversation, without
-rotating it or changing its model pin. Each call records `effort` (requested setting) and `launch_effort`
+L3's model and effort defaults for the engine of the turn (`l3_model`/`l3_effort` on Claude,
+`l3_codex_model`/`l3_codex_effort` on Codex) apply at the next turn, including an existing provider
+conversation, without rotating it. Each call records `effort` (requested setting) and `launch_effort`
 (resolved override) separately from observed `engine_reasoning_effort`. An in-flight call finishes
 with its original selection. Resetting a project default needs no worker or service restart.
 See [CLI precedence, support and native helper controls](CLI.md#task-reasoning-effort).
@@ -351,7 +352,7 @@ L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them wi
 options, and `>` starts a lower-priority tier. The operator and project's L3 can change or unset this
 operational setting; altd applies it on the next tick and records the reason without a restart.
 The default ties Codex and Claude on their role defaults (a Claude L2 on Opus, L3 on Fable), with
-Opus as L3's lower-tier fallback; an option that names no model takes the project's default L2 model
+Opus as L3's lower-tier fallback; an option that names no model takes the project's default model for that role
 for that engine first. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order.
 
 Auto selects from the highest tier with an eligible option. Within that tier it compares only named
@@ -1132,7 +1133,8 @@ marker or resume claim, L3 turn, adversarial review, or report verification in f
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
-ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
+ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
+fault releases a window whose unit died silently. altd runs the guarded build-and-restart
 script itself.
 The web update notice is dismissible per browser for the pending update and failure identity.
 Ordinary polling, navigation, refresh and quiet-point changes preserve dismissal; a new update

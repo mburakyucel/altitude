@@ -2,6 +2,7 @@
 import http.client
 import json
 import os
+import socket
 import ssl
 import threading
 import urllib.request
@@ -75,6 +76,44 @@ class TestHTTPSServer(AltitudeCase):
         self.assertEqual(observed, [{"version": "trial.1", "commit": "a" * 40, "pid": os.getpid()},
                                     {"version": None, "commit": None, "pid": os.getpid()}])
         stop.assert_called_once()
+
+    def test_a_stalled_or_failed_handshake_never_delays_other_requests(self):
+        """I-20260924-205802: one client that never sent its TLS hello timed out activation's quiet check."""
+        server.tls_init()
+        self.patch(server, "TLS_HANDSHAKE_SECONDS", 0.5)
+        factory, observed = server.ThreadingHTTPServer, []
+
+        def create(address, handler):
+            httpd = factory(address, handler)
+            serve = httpd.serve_forever
+
+            def probe():
+                thread = threading.Thread(target=serve, daemon=True)
+                thread.start()
+                address = ("127.0.0.1", httpd.server_port)
+                stalled = socket.create_connection(address)  # opens TCP, never sends a ClientHello
+                plain = socket.create_connection(address)  # plain HTTP against the HTTPS port
+                try:
+                    plain.sendall(b"GET /api/health HTTP/1.1\r\nHost: x\r\n\r\n")
+                    context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt"))
+                    with urllib.request.urlopen(f"https://127.0.0.1:{httpd.server_port}/api/health",
+                                                context=context, timeout=2) as response:
+                        observed.append(response.status)
+                    stalled.settimeout(3)
+                    observed.append(stalled.recv(1))  # the server drops the stalled handshake at its bound
+                finally:
+                    stalled.close(); plain.close()
+                    httpd.shutdown()
+                    thread.join(5)
+
+            httpd.serve_forever = probe
+            return httpd
+
+        with mock.patch.object(server, "ThreadingHTTPServer", side_effect=create), \
+             mock.patch.object(server, "ensure_l3_verb_broker"), \
+             mock.patch.object(server, "stop_l3_verb_brokers"):
+            server.main()
+        self.assertEqual(observed, [200, b""])
 
     def test_https_change_stream_reports_a_task_and_ends_when_the_client_leaves(self):
         server.tls_init()

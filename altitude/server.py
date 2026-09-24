@@ -1311,10 +1311,25 @@ class _HeadWriter:
         return self._wfile.flush()
 
 
+TLS_HANDSHAKE_SECONDS = 10
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "altd/0.1"
 
     _seen_clients: set = set()
+
+    def handle(self) -> None:
+        # I-20260924-205802: a handshake on the accept thread let one stalled client time out every request,
+        # including activation's quiet check. Each connection completes its own handshake, bounded, here.
+        if isinstance(self.connection, ssl.SSLSocket):
+            try:
+                self.connection.settimeout(TLS_HANDSHAKE_SECONDS)
+                self.connection.do_handshake()
+                self.connection.settimeout(None)
+            except OSError:
+                return  # a failed or abandoned handshake drops only this connection, as accept did
+        super().handle()
 
     def log_message(self, fmt, *args):  # quieter: one line per new client address, nothing per request
         ip = self.client_address[0]
@@ -1668,6 +1683,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(overview())
             if api == "voice":
                 return self._json(voice_view())
+            if api == "folders":
+                try:
+                    return self._json(folders((q.get("path") or [None])[0]))
+                except FolderError as exc:
+                    return self._json({"error": str(exc)}, exc.status)
             if api == "changes":
                 return self._changes()
             if api == "alerts":
@@ -1682,7 +1702,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]))
-            if api == "effort" and len(parts) == 3:
+            if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))
                 except KeyError:
@@ -1838,16 +1858,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError) as exc:
                     return self._json({"error": str(exc)}, 409)
-            if parts in (["api", "effort"], ["api", "model"]):
+            if parts == ["api", "defaults"]:
                 try:
-                    setting, value = ((f"{o['role']}_effort", o["effort"]) if parts[1] == "effort" else
-                                      (config.model_setting("l2", o["engine"]), o["model"]))
-                    dispatch.request_setting(o["project"], setting, value, "Project details", actor=config.OPERATOR_ACTOR)
-                    result = dispatch._run_setting(o["project"], setting)
+                    if o.get("setting") not in config.DEFAULT_SETTINGS:
+                        raise ValueError("unknown project default")
+                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    result = dispatch._run_setting(o["project"], o["setting"])
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "projects-folder"]:
+                try:
+                    return self._json(save_projects_folder(o))
+                except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "voice"]:
                 try:
@@ -2206,16 +2231,69 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
-            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.PROJECT_ROOTS],
+            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.OPERATOR, "restart": restart_status(), "now": S.now()}
 
 
 def home_relative(path: Path) -> str:
     """A folder as First run names it: `~/Projects`, never the whole home path."""
     try:
-        return "~/" + path.expanduser().relative_to(Path.home()).as_posix()
+        relative = path.expanduser().relative_to(config.HOME)
+        return "~/" + relative.as_posix() if relative.parts else "~"
     except ValueError:
         return str(path)
+
+
+class FolderError(ValueError):
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
+def folders(raw: str | None) -> dict:
+    """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
+
+    Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
+    """
+    home = config.HOME.resolve()
+    target = Path(raw).expanduser() if raw else home
+    if not target.is_absolute():
+        raise FolderError("Choose an absolute folder path.", 400)
+    target = target.resolve()
+    if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
+        raise FolderError("Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+    if not target.is_dir():
+        raise FolderError("This folder no longer exists.", 404)
+    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": []}
+    try:
+        entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
+    except PermissionError:
+        return {**view, "readable": False}
+    managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()}
+    for entry in entries:
+        try:
+            if entry.name.startswith(".") or not entry.is_dir():
+                continue
+            resolved = Path(entry.path).resolve()
+        except OSError:
+            continue
+        if resolved.is_relative_to(home) and not any(part.startswith(".") for part in resolved.relative_to(home).parts):
+            view["folders"].append({"name": entry.name, "path": entry.path, "project": managed.get(str(resolved)),
+                                    "git": os.path.exists(os.path.join(entry.path, ".git"))})
+    return view
+
+
+def save_projects_folder(body: dict) -> dict:
+    """Apply the operator's projects folder through the same durable request as `alt machine set`."""
+    if body.keys() - {"path"}:
+        raise ValueError("Unsupported projects folder fields.")
+    path = body.get("path")
+    value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
+    dispatch.request_setting(None, "projects_folder", value, "Projects folder", actor=config.OPERATOR_ACTOR)
+    result = dispatch._run_setting(None, "projects_folder")
+    if result["status"] != "done":
+        raise ValueError(result["note"])
+    return {"roots": [home_relative(r) for r in config.project_roots()]}
 
 
 def repository_url(origin: str) -> str | None:
@@ -2511,7 +2589,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     srv.daemon_threads = True
     try:
         if context is not None:
-            srv.socket = context.wrap_socket(srv.socket, server_side=True)
+            srv.socket = context.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)

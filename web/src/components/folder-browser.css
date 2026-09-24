@@ -1,0 +1,18 @@
+/* The folder browser (§3.12). */
+.folder-browser { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); overflow: hidden; }
+.folder-top { padding: 12px 14px 8px; border-bottom: 1px solid var(--hairline); }
+.folder-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 4px; }
+.folder-crumb { display: inline-flex; align-items: center; gap: 6px; }
+.folder-crumb .link, .folder-crumb-here { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; font-weight: 500; overflow-wrap: anywhere; }
+.folder-crumb-here { font-weight: 600; }
+.folder-list { display: flex; flex-direction: column; gap: 2px; max-height: 20rem; overflow: auto; overscroll-behavior: contain; padding: 6px; }
+.folder-row { display: flex; width: 100%; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border-radius: var(--radius-control); color: var(--text-primary); text-align: left; cursor: pointer; }
+.folder-row:hover:not(:disabled), .folder-row:focus-visible { background: var(--accent-tint); }
+.folder-icon { flex: none; fill: none; stroke: var(--text-muted); stroke-width: 1.75; stroke-linejoin: round; }
+.folder-tags { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.folder-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px 16px; text-align: center; }
+.folder-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--hairline); background: var(--page); }
+.folder-foot .link { min-height: 44px; }
+.folder-typed { gap: 8px; padding: 14px 14px 0; }
+.folder-typed .folder-foot { margin: 0 -14px; }
+.shell[data-phone] .folder-foot > .btn-primary { flex: 1 1 100%; min-height: 44px; }
