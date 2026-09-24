@@ -350,11 +350,11 @@ class TestSystemFault(AltitudeCase):
         done.update({"state": "done"}); S.save_task(PROJECT, done)
         cases = [({}, "paused"), ({"waiting_on": None}, "paused"),
                  ({"waiting_on": "l3"}, "waiting on L3"),
-                 ({"waiting_on": T.OPERATOR_MESSAGE_ROLE}, f"waiting on {config.OPERATOR}"),
-                 ({"stop_id": "operator-stop", "waiting_on": "l3"}, f"stopped by {config.OPERATOR}"),
+                 ({"waiting_on": T.OPERATOR_MESSAGE_ROLE}, f"waiting on {config.operator_label()}"),
+                 ({"stop_id": "operator-stop", "waiting_on": "l3"}, f"stopped by {config.operator_label()}"),
                  # #419: a held review-ready delivery is the operator's turn, never "paused".
                  ({"hold_merge": "Operator review", "prs": [7], "delivery": {"number": 7, "at": S.now()}},
-                  f"{config.OPERATOR}'s turn · review PR #7")]
+                  f"{config.operator_label()}'s turn · review PR #7")]
         blocked = []
         for index, (fields, label) in enumerate(cases):
             task = T.new(PROJECT, f"Parked {index}", "request")

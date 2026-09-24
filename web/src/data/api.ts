@@ -285,7 +285,7 @@ export const OverviewSchema = z
     engines: z.array(EngineReadoutSchema).default([]),
     /** The folders First run scans, named relative to home. */
     roots: z.array(z.string()).default([]),
-    /** The operator's configured name, shown in the rail's operator row. */
+    /** The operator's name (saved, ALTITUDE_OPERATOR or Git's user.name), shown in the rail's operator row; absent reads “You”. */
     operator: z.string().nullish(),
     restart: RestartSchema.nullish(),
     now: z.string().nullish(),
@@ -653,6 +653,42 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
   return post("/api/projects-folder", { path });
 }
 
+const MachineSchema = z.object({
+  operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
+});
+export type Machine = z.infer<typeof MachineSchema>;
+
+/** The operator's name and where system incidents are published, if anywhere. */
+export function useMachine() {
+  return useQuery({ queryKey: ["machine"], queryFn: async () => MachineSchema.parse(await api("/api/machine")), refetchOnWindowFocus: false });
+}
+
+/** Save the name the screens and agents use; an empty name returns to the installation's default. */
+export async function saveOperatorName(name: string): Promise<Machine> {
+  return MachineSchema.parse(await post("/api/operator-name", { name }));
+}
+
+/** Publish system incidents to a GitHub repository, or keep them on this computer with null. */
+export async function saveIncidentReports(repository: string | null): Promise<Machine> {
+  return MachineSchema.parse(await post("/api/incident-reports", { repository }));
+}
+
+const PrerequisitesSchema = z.object({
+  items: z.array(z.object({
+    key: z.string(), label: z.string(), state: z.enum(["met", "unmet", "optional"]),
+    detail: z.string().nullish(), command: z.string().nullish(),
+  })),
+});
+export type Prerequisite = z.infer<typeof PrerequisitesSchema>["items"][number];
+
+/** What the agents need on the computer running Altitude; each read checks again. */
+export function usePrerequisites() {
+  return useQuery({
+    queryKey: ["prerequisites"], queryFn: async () => PrerequisitesSchema.parse(await api("/api/prerequisites")).items,
+    refetchOnWindowFocus: false, retry: false, gcTime: 0,
+  });
+}
+
 /** Upload one browser-native audio blob for the server's local service or configured endpoint. */
 export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
   const result = VoiceTranscriptSchema.parse(
@@ -835,10 +871,14 @@ export interface ProjectAddInput {
   approval?: string;
 }
 
+export function addProject(input: ProjectAddInput): Promise<{ restored?: boolean }> {
+  return post("/api/project/add", input);
+}
+
 export function useProjectAdd(onRegistered: (name: string) => void) {
   const queryClient = useQueryClient();
   return useMutation<{ restored?: boolean }, Error, ProjectAddInput>({
-    mutationFn: (input) => post<{ restored?: boolean }>("/api/project/add", input),
+    mutationFn: addProject,
     // A restored project opens its page only once the overview lists it as managed, so success waits
     // for the refetch; a refused registration reads at once and waits for nothing.
     onSuccess: async (_result, input) => {

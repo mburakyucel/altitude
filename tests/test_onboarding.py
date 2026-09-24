@@ -1,0 +1,141 @@
+"""First run's machine settings (issue #482): the operator's name, incident publication consent and the
+prerequisites the agents need. Fixture engine and GitHub CLIs only."""
+import json
+import subprocess
+from unittest import mock
+
+from tests.support import AltitudeCase
+from altitude import config, engines, incidents, installation, server, tasks as T
+
+
+class OnboardingCase(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        files = [config.ROOT / "settings.json", *(config.ROOT / f"{setting}-request.json"
+                                                  for setting in ("operator_name", "incident_repository"))]
+        saved = {path: path.read_text() if path.exists() else None for path in files}
+        self.addCleanup(lambda: [path.write_text(text) if text is not None else path.unlink(missing_ok=True)
+                                 for path, text in saved.items()])
+        for path in files[1:]:
+            path.unlink(missing_ok=True)
+        self.patch(config, "OPERATOR", None)
+        self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", None)
+        self.git_name = mock.patch.object(config, "_git_name", return_value=None)
+        self.git_name.start()
+        self.addCleanup(self.git_name.stop)
+
+    def gh(self, returncode: int):
+        """Answer `gh repo view` like the signed-in GitHub CLI would; any other command fails the test."""
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            self.assertEqual(args[:3], ["gh", "repo", "view"])
+            return subprocess.CompletedProcess(args, returncode, "{}", "not found")
+        self.patch(server.subprocess, "run", run)
+        return calls
+
+
+class TestOperatorName(OnboardingCase):
+    def test_the_chosen_name_outranks_the_environment_and_git(self):
+        self.assertIsNone(config.operator_name())
+        self.assertEqual(config.operator_label(), "Operator")
+        with mock.patch.object(config, "_git_name", return_value="Git Fixture"):
+            self.assertEqual(config.operator_name(), "Git Fixture")
+            self.patch(config, "OPERATOR", "Env Fixture")
+            self.assertEqual(config.operator_name(), "Env Fixture")
+            self.assertEqual(server.save_operator_name({"name": "  Ada   Fixture "})["operator"], "Ada Fixture")
+            self.assertEqual(config.operator_name(), "Ada Fixture")
+            self.assertEqual(server.overview()["operator"], "Ada Fixture")
+            self.assertEqual(server.save_operator_name({"name": ""})["operator"], "Env Fixture")
+
+    def test_a_name_is_one_line_of_bounded_text_and_a_refusal_changes_nothing(self):
+        server.save_operator_name({"name": "Ada Fixture"})
+        for body in ({"name": "x" * 81}, {"name": 7}, {"name": "Ada", "email": "a@example.test"}):
+            with self.subTest(body=body), self.assertRaises((ValueError, T.TransitionError)):
+                server.save_operator_name(body)
+        self.assertEqual(config.operator_name(), "Ada Fixture")
+
+    def test_the_saved_name_is_scrubbed_from_public_issues(self):
+        server.save_operator_name({"name": "Ada Fixture"})
+        self.assertNotIn("Ada Fixture", incidents.sanitize("Ada Fixture approved the retry"))
+
+    def test_git_name_reads_the_global_config_once(self):
+        self.git_name.stop()
+        config._git_name.cache_clear()
+        self.addCleanup(config._git_name.cache_clear)
+        with mock.patch.object(config.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0, "Git Fixture\n", "")) as run:
+            self.assertEqual(config.operator_name(), "Git Fixture")
+            self.assertEqual(config.operator_name(), "Git Fixture")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], ["git", "config", "--global", "user.name"])
+        self.git_name.start()
+
+
+class TestIncidentReports(OnboardingCase):
+    def test_publication_is_off_until_turned_on_and_the_form_offers_altitude(self):
+        view = server.machine_view()
+        self.assertEqual((view["incident_repository"], view["altitude_repository"]), (None, "mburakyucel/altitude"))
+        with self.assertRaisesRegex(ValueError, "stay on this machine until incident reports are turned on"):
+            server.issue_repository()
+
+    def test_turning_on_checks_the_repository_with_the_signed_in_cli(self):
+        calls = self.gh(0)
+        view = server.save_incident_reports({"repository": "https://github.com/fork-fixture/altitude.git"})
+        self.assertEqual(view["incident_repository"], "fork-fixture/altitude")
+        self.assertEqual(calls[0][:4], ["gh", "repo", "view", "fork-fixture/altitude"])
+        self.assertEqual(server.issue_repository(), "https://github.com/fork-fixture/altitude")
+
+    def test_an_unseen_or_malformed_repository_is_refused_and_publication_stays_as_it_was(self):
+        self.gh(1)
+        with self.assertRaisesRegex(ValueError, "cannot see fork-fixture/missing"):
+            server.save_incident_reports({"repository": "fork-fixture/missing"})
+        with self.assertRaisesRegex(ValueError, "owner/name"):
+            server.save_incident_reports({"repository": "not a repository"})
+        self.assertIsNone(config.incident_repository())
+
+    def test_turning_off_overrides_the_environment_seed(self):
+        self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "env-fixture/altitude")
+        self.assertEqual(server.machine_view()["incident_repository"], "env-fixture/altitude")
+        self.assertIsNone(server.save_incident_reports({"repository": None})["incident_repository"])
+        self.assertFalse(json.loads((config.ROOT / "settings.json").read_text())["incident_repository"])
+        with self.assertRaisesRegex(ValueError, "stay on this machine"):
+            server.issue_repository()
+
+
+class TestPrerequisites(OnboardingCase):
+    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True) -> dict:
+        which = {"gh": "/fixture/gh" if gh else None, "git": "/fixture/git" if git else None}
+        with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
+             mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
+             mock.patch.object(engines, "installation",
+                               side_effect=lambda e: {"available": None if installed[e] else False, "why": ""}), \
+             mock.patch.object(engines, "sign_in", side_effect=lambda e: {"signed_in": signed[e],
+                                                                         "command": engines.SIGN_IN[e][1]}):
+            return {item["key"]: item for item in installation.prerequisites()}
+
+    def test_github_sign_in_comes_first_with_the_command_to_run(self):
+        items = self.items(gh=False, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": True})
+        self.assertEqual(list(items)[0], "github")
+        self.assertEqual((items["github"]["state"], items["github"]["command"]), ("unmet", "gh auth login"))
+
+    def test_one_signed_in_agent_is_enough_and_others_become_optional(self):
+        items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})
+        self.assertEqual([items[k]["state"] for k in ("github", "claude", "codex", "git")], ["met", "met", "optional", "met"])
+        self.assertTrue(items["codex"]["detail"].startswith("Optional"))
+
+    def test_with_no_signed_in_agent_each_shows_its_sign_in_command(self):
+        items = self.items(gh=True, signed={"claude": False, "codex": False}, installed={"claude": True, "codex": True},
+                           git=False)
+        self.assertEqual({k: (items[k]["state"], items[k]["command"]) for k in ("claude", "codex")},
+                         {k: ("unmet", engines.SIGN_IN[k][1]) for k in ("claude", "codex")})
+        self.assertEqual(items["git"]["state"], "unmet")
+
+    def test_sign_in_reads_the_engine_cli_status_exit(self):
+        script = self.tmp / "engine"
+        for code, expected in ((0, True), (1, False)):
+            script.write_text(f"#!/bin/sh\n[ \"$1 $2\" = 'auth status' ] || exit 9\nexit {code}\n")
+            script.chmod(0o755)
+            with self.subTest(code=code), mock.patch.object(config, "CLAUDE_BIN", str(script)):
+                self.assertEqual(engines.sign_in("claude"), {"signed_in": expected, "command": "claude auth login"})

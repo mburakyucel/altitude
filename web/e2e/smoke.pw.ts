@@ -127,6 +127,18 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("region", { name: "Choose a folder", exact: true })).toBeVisible();
       await expect(main.getByRole("button", { name: "Use “Home”", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+    } else if (route === "/settings/name") {
+      await expect(main.getByRole("heading", { name: "Your name", exact: true })).toBeVisible();
+      await expect(main.getByLabel("Your name")).toBeEditable();
+      await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+    } else if (route === "/settings/prerequisites") {
+      await expect(main.getByRole("heading", { name: "Prerequisites", exact: true })).toBeVisible();
+      await expect(main.getByText("gh auth login", { exact: true })).toBeVisible();
+      await expect(main.getByRole("button", { name: "Check again" })).toBeEnabled();
+    } else if (route === "/settings/incident-reports") {
+      await expect(main.getByRole("heading", { name: "Incident reports", exact: true })).toBeVisible();
+      await expect(main.getByRole("radio", { name: "Keep incidents on this computer" })).toBeChecked();
+      await expect(main.getByLabel("Repository")).toHaveCount(0);
     } else if (route === "/settings/projects/:name") {
       await expect(main.getByRole("heading", { name: project.name, exact: true })).toBeVisible();
       await expect(main.getByRole("combobox", { name: "L3 engine" })).toBeVisible();

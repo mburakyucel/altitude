@@ -8,7 +8,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.support import SUITE  # imports the offline guards before application paths freeze
-from altitude import config, engines, server
+from altitude import config, engines, installation, server
 
 
 def configure(*, expected_error=lambda _message: False):
@@ -27,6 +27,9 @@ def configure(*, expected_error=lambda _message: False):
     engines.installation = lambda engine: {
         "available": engine == config.ENGINES[0], "why": "deterministic browser engine fixture"}
     engines.claude_agents = lambda: []
+    # First run's prerequisites: the installed engine is signed in and the GitHub CLI is not.
+    engines.sign_in = lambda engine: {"signed_in": engine == config.ENGINES[0], "command": engines.SIGN_IN[engine][1]}
+    installation._gh_signed_in = lambda: False
     engines.image_capability = lambda _engine: {"available": True, "why": "deterministic image fixture"}
 
 

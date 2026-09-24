@@ -172,7 +172,7 @@ describe("Routes", () => {
     mockFetch({ ...overview, queue: [], projects: [{ name: "removed", managed: false, path: "/tmp/removed" }] });
     localStorage.setItem("altitude.project", "removed");
     renderApp({ route: "/projects/removed/tasks/old/report" });
-    await screen.findByText("Altitude found 1 folder in ~/Projects");
+    await screen.findByRole("heading", { name: "Welcome to Altitude" });
     await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
     expect(screen.queryByRole("heading", { name: "Report" })).toBeNull();
   });

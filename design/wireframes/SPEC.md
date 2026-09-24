@@ -925,11 +925,41 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 
 ### 3.12 First run and project setup
 
-Shown on any project route when no project is managed: a centred card, "Altitude found N folders
-in <projects folder>", one row per folder directly inside it with **Add project**, and **Choose a
-folder elsewhere…**. States: looking for folders; none found ("No folders in <projects folder> yet",
-a link to change the projects folder in Settings, and the folder browser already open); adding;
-failed (one sentence and Retry, shown when registration is refused).
+Shown on any project route when no project is managed: a centred card with four steps, **Your
+name**, **Prerequisites**, **Incident reports** and **Projects**. Desktop shows a numbered stepper
+(done steps ticked); phone shows "Step N of 4 · Title" and keeps the step's buttons in a sticky bar
+above the tab bar. The step is `?step=` so reload and browser Back keep the place. The name and
+incident steps have **Skip**, prerequisites always allow **Continue anyway**, and every step but the
+first has **‹ Back**, which saves nothing. Each step is also
+a Settings row (§3.15), and the name reads “you” wherever none is known.
+
+- **Welcome to Altitude** (name): one field filled in from the saved name, `ALTITUDE_OPERATOR` or
+  Git's `user.name`; **Continue** saves it (empty clears it). Failure: the server sentence under the
+  field, the step stays.
+- **What the agents need**: one row per doctor check (GitHub CLI, each coding agent, Git), a green
+  tick when met, a red mark when unmet, a hollow mark when optional (another agent is signed in).
+  An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
+  asks for a password or token. **Check again** reads again (Checking…). The primary action reads
+  **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
+  failed (one sentence).
+- **Report Altitude’s own faults?**: two radios, **Keep incidents on this computer** (default) and
+  **Also publish them as GitHub issues**, which reveals **Repository** filled in with Altitude's
+  repository and the note that a fork receives them instead. The note **What leaves this computer**
+  states the sanitization and whether the repository is public. Publishing reads **Save and
+  continue** (Checking… while the GitHub CLI confirms the repository); a refusal shows the server
+  sentence under the choice and keeps the step. Keeping incidents local saves nothing.
+- **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser
+  with **Use "<folder>"** in place; with two or more folders, "N folders" and **Add all N**; one row per
+  folder directly inside it with **Add project**; then "A project can live anywhere: **Choose a
+  folder elsewhere…**". States: looking for folders; none found (a "No folders in <projects folder>
+  yet" card, pointing at Change… and Choose a folder elsewhere…); adding ("Adding 2 of 3…"); failed
+  (one sentence with **Retry**, or **Retry Add all** when nothing was added; a later refusal opens
+  the added project with a toast naming the folder left out). Adding opens the first project's Setup.
+
+The rail's **Add a folder** dialog and the phone switcher sheet show only the folder list: "Altitude
+found N folders in <projects folder>", the rows and **Choose a folder elsewhere…**; with none found,
+a link to change the projects folder in Settings and the folder browser already open.
+Walkthroughs: `web/e2e/onboarding.pw.ts` at 390×844 and 1440×900.
 
 The folder browser is an inline panel in the same card, the rail dialog or the phone switcher sheet,
 never a second dialog. It is labelled "Folders on the computer running Altitude", starts at **Home**
@@ -1076,7 +1106,12 @@ A **Projects folder** row shows the current folder and opens `/settings/projects
 explanation that First run offers the folders directly inside it, the current value and the §3.12
 folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
 new folder; a failure shows the server explanation and Retry. First run reads the change at once.
-The overview also shows read-only address, HTTPS and operator details.
+**Your name** shows the name, or "Not set · screens say “you”", and opens `/settings/name`;
+**Prerequisites** opens `/settings/prerequisites`; **Incident reports** shows "Published to
+<repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
+First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
+again** only) and shows Saved. after a save.
+The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.

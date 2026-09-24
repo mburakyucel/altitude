@@ -14,14 +14,16 @@ test("the folder browser lists the computer running Altitude and adds a folder, 
   const listingHeld = new Promise<void>((resolve) => { releaseListing = resolve; });
   await page.route("**/api/folders", async (route) => { await listingHeld; await route.continue(); }, { times: 1 });
 
-  await walk.open("/projects");
+  await walk.open("/projects?step=projects");
+  await expect(firstRun.getByText("No folders in ~/Projects yet")).toBeVisible();
   await walk.state("01-empty-projects-folder-loading", {
-    visible: [firstRun.getByText("No folders in ~/Projects yet"), firstRun.getByRole("link", { name: "change the projects folder in Settings" }), browser],
-    hidden: [row("code"), browser.getByRole("button", { name: "Cancel" })],
+    action: () => firstRun.getByRole("button", { name: "Choose a folder elsewhere…" }).click(),
+    visible: [firstRun.getByText("No folders in ~/Projects yet"), firstRun.getByRole("button", { name: "Change…" }), browser],
+    hidden: [row("code"), firstRun.getByRole("button", { name: "Choose a folder elsewhere…" })],
   });
   await walk.state("02-home-listing", {
     action: async () => releaseListing(),
-    visible: [row("code"), row("locked"), row("Projects"), browser.getByRole("button", { name: "Add “Home”" })],
+    visible: [row("code"), row("locked"), row("Projects"), browser.getByRole("button", { name: "Add “Home”" }), browser.getByRole("button", { name: "Cancel" })],
     hidden: [browser.getByText(".config"), browser.getByText("todo.md")],
   });
   await expect(browser.getByRole("button", { name: "Add “Home”" })).toBeDisabled();

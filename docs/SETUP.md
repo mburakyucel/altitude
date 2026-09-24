@@ -103,6 +103,23 @@ phone means while it is on screen. Each alert opens that decision and carries no
 A push service that refuses Altitude's default sender address takes one from `ALTITUDE_PUSH_CONTACT`.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
+## First run in the browser
+
+With no project managed, the web app opens First run. Its four steps are skippable, go **‹ Back**
+without saving, keep their place in the URL across reloads and are each a row in
+**Settings → This machine** afterwards:
+
+| Step | What it writes |
+| --- | --- |
+| **Your name**, filled in from `ALTITUDE_OPERATOR` or Git's global `user.name` | `operator_name` in `$ALTITUDE_HOME/settings.json`. Screens, agent prompts and incident sanitization use it; clearing it returns to the environment value or Git's name, and with neither, screens say “you”. |
+| **What the agents need**: the GitHub CLI and a coding agent signed in, Git installed | Nothing. Each unmet check shows the command to run in a terminal on this computer (`gh auth login`, the agent's own sign-in command) with **Copy** and **Check again**. One signed-in agent is enough; the others read as optional. The browser never asks for a password or token. |
+| **Report Altitude’s own faults?**, off by default | `incident_repository`: off keeps incidents on this computer; on stores the repository, Altitude's own filled in or a fork you name, after the signed-in GitHub CLI confirms it can see it. |
+| **Add your projects** | `projects_folder` when **Change…** picks another folder, and one registration per **Add project** or **Add all**. Only the folders directly inside the projects folder are listed; nothing is created, cloned or scanned. Adding opens the project's Setup and ends First run. |
+
+The environment variables in [configuration](#configuration-and-limits) remain the
+non-interactive path: an install that sets them has the name and incident repository in place
+before anyone opens the browser, and a saved choice replaces them.
+
 ## Register a project and start a conversation
 
 Use a clean primary checkout of a small GitHub project you are comfortable giving the agent
@@ -219,14 +236,14 @@ repair cannot make this choice for you. See the
 | --- | --- |
 | `ALTITUDE_HOME` | Runtime state directory, default `~/.altitude`; use the same value for CLI and server. Keep it out of Git. |
 | `ALTITUDE_ROOTS` | Initial projects folder(s), colon separated, default `~/Projects`: First run lists the folders directly inside. **Settings → Projects folder** or `alt machine set --projects-folder PATH` replaces it with one folder without a restart; `--unset-projects-folder` returns to this value. `project add --path` also supports other folders. |
-| `ALTITUDE_OPERATOR` | Name shown for the operator; defaults to “Operator”. |
+| `ALTITUDE_OPERATOR` | Initial name shown for the operator; unset falls back to Git's global `user.name`, and with neither, screens say “you”. First run or **Settings → Your name** stores a name that replaces it; clearing that name returns to this value. |
 | `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
-| `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | GitHub `owner/repository` that receives Altitude's own sanitized incident issues. Unset by default: incidents stay on this machine. Set it in altd's environment only for a repository you manage; see [incident publication](OPERATIONS.md#incident-publication). |
+| `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
 | `alt machine set --voice` | Transcription backend: `browser` (default, no setup), `local` (`ffmpeg` and the local speech service) or the URL of an OpenAI-compatible endpoint with an optional model and key. See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
