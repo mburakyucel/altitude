@@ -118,7 +118,8 @@ python3.12 scripts/build_release.py --version v0.1.0-rc.1 --output /tmp/altitude
 Use the approved candidate label. The builder exports the exact Git revision, installs frozen web
 dependencies and builds the UI, then emits the application archive, `install.py` and archive SHA-256
 file. The manifest records source identity and every packaged file hash. The archive contains the
-CLI, Python daemon, built UI, personas, hooks, templates and schemas; users need no source build.
+CLI, Python daemon, built UI, personas, hooks, templates, schemas, the license and third-party
+notices; users need no source build.
 Existing archive names are immutable. Building artifacts creates no tag, GitHub release or public
 publication. Publish the installer and checksum only as the operator authorizes.
 

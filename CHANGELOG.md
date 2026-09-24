@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude is licensed under the Functional Source License (`FSL-1.1-ALv2`): any use except a
+  competing commercial product, converting to Apache-2.0 two years after each release. The release
+  archive ships the license and third-party notices; contributions require the CLA (#219).
+
 - PR checks keep running once the repository is public: the owner's own branches keep the required
   self-hosted `check`, every other pull request runs the same suite on a GitHub-hosted runner without
   touching the owner's machine, and `alt land` requires the check wherever the base ships its
@@ -19,8 +23,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 - The repository is ready for public contributors: a [security policy](SECURITY.md) with private
   vulnerability reporting and scope, contributor guidance and issue templates written for fork
-  contributors, and preview wording that no longer assumes invited collaborators. The license
-  decision is recorded separately (#219).
+  contributors, and preview wording that no longer assumes invited collaborators (#219).
 
 - Auto refreshes account quota without an interactive session, using native live usage reports.
   Missing or failed readings remain unknown; stale readings never become fresh by being reread.

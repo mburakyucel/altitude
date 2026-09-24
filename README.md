@@ -337,8 +337,10 @@ only needed for development. Managed projects use `main`, `origin/main` and GitH
 Follow [setup](docs/SETUP.md) to install the release archive, trust its local HTTPS
 certificate and start your first project conversation. Fresh installs bind to localhost; phone
 access requires an explicitly configured private network and certificate trust on that device.
-Updates preserve configuration and user data. The [license decision](CONTRIBUTING.md#license) is
-pending. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
+Updates preserve configuration and user data. Altitude is source-available under the
+[Functional Source License](LICENSE): use it, run it inside your company and keep private forks,
+but do not offer it as a competing product; each version becomes Apache-2.0 two years after its
+release. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
 
 Each project's **Setup** status opens a revisitable checklist of its folder, repository,
 instructions, Git guards and coordinator. Altitude performs routine setup automatically and

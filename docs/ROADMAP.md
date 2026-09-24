@@ -66,8 +66,9 @@ once the repository is public.
 
 Remaining before public release:
 
-- The maintainer chooses a license; the `LICENSE` file, package metadata and third-party notices
-  for the shipped archive follow that decision. Nothing in the repository selects one implicitly.
+- The license is decided and in place: `FSL-1.1-ALv2` in [LICENSE](../LICENSE), the
+  [third-party notices](../THIRD_PARTY_NOTICES.md) ship in the archive, and contributors accept
+  the [CLA](../CLA.md). A CLA-checking bot is an optional repository setting the maintainer may add.
 - Maintainer actions on release day, in this order: review the
   [history audit](https://github.com/mburakyucel/altitude/issues/233) result, enable private
   vulnerability reporting in the repository's security settings, review branch protection, apply

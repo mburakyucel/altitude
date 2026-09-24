@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a private application archive from one clean committed source revision. No publication."""
+"""Build an application archive from one clean committed source revision. No publication."""
 from __future__ import annotations
 
 import argparse
@@ -49,6 +49,8 @@ def build(version: str, output: Path) -> Path:
         for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates"):
             shutil.copytree(source / name, package / name)
         shutil.copytree(source / "web/dist", package / "web/dist")
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            shutil.copyfile(source / name, package / name)
         files = {str(path.relative_to(package)): hashlib.sha256(path.read_bytes()).hexdigest()
                  for path in sorted(package.rglob("*")) if path.is_file()}
         (package / "release.json").write_text(json.dumps({"version": version, "commit": commit,
