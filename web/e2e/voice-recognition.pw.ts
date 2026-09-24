@@ -12,16 +12,18 @@ import { walkthrough } from "./walkthrough";
 
 const FAKE_RECOGNIZER = `
   class FixtureRecognition {
-    constructor() { this.continuous = false; this.interimResults = true; this.lang = ""; this.onresult = null; this.onerror = null; this.onend = null; this.started = 0; window.fixtureRecognizer = this; }
+    constructor() { this.continuous = false; this.interimResults = true; this.lang = ""; this.onresult = null; this.onerror = null; this.onend = null; this.started = 0; this.ended = false; window.fixtureRecognizer = this; (window.fixtureRecognizers ??= []).push(this); }
     start() { this.started += 1; }
-    stop() { setTimeout(() => this.onend && this.onend(), 0); }
-    abort() { setTimeout(() => this.onend && this.onend(), 0); }
+    stop() { setTimeout(() => this.end(), 0); }
+    // window.fixtureHoldAbort: Cancel's abort ends only when the test calls end(), as a recognizer still shutting down.
+    abort() { if (!window.fixtureHoldAbort) setTimeout(() => this.end(), 0); }
+    end() { if (this.ended) return; this.ended = true; this.onend && this.onend(); }
     hear(finals, interim) {
       const results = finals.map((transcript) => ({ isFinal: true, 0: { transcript }, length: 1 }));
       if (interim) results.push({ isFinal: false, 0: { transcript: interim }, length: 1 });
       this.onresult && this.onresult({ results });
     }
-    fail(error) { this.onerror && this.onerror({ error }); this.onend && this.onend(); }
+    fail(error) { this.onerror && this.onerror({ error }); this.end(); }
   }
   window.SpeechRecognition = FixtureRecognition;
 `;
@@ -208,6 +210,137 @@ test("browser recognition: words appear while listening, Stop lands them, Send a
   expect(posts).toHaveLength(1);
 });
 
+test("browser recognition: repeated Cancel and restart; a cancelled recognizer's late end, words and refusal leave the new capture alone", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await browserBackend(page);
+  await page.addInitScript(FAKE_RECOGNIZER);
+  const posts: string[] = [];
+  await page.route((url) => url.pathname === "/api/chat", (route) => {
+    posts.push(route.request().postData() ?? "");
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: `${JSON.stringify({ t: "Heard the restart." })}\n${JSON.stringify({ done: { turn_id: "ui-restart" } })}\n`,
+    });
+  });
+  // Each capture's microphone is a steady tone of its own, so a restart must show a moving waveform
+  // from a live stream, not the flat one the operator saw.
+  await page.addInitScript(`
+    window.fixtureStreams = [];
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+      const context = new AudioContext();
+      const oscillator = context.createOscillator();
+      const destination = context.createMediaStreamDestination();
+      oscillator.connect(destination);
+      oscillator.start();
+      await context.resume();
+      window.fixtureStreams.push(destination.stream);
+      return destination.stream;
+    }});
+  `);
+  // The tallest drawn bar as a share of the waveform's height: the silent minimum is a few pixels.
+  const loudest = () => page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".composer-wave");
+    const data = canvas?.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height);
+    if (!canvas || !data || !canvas.height) return 0;
+    let tallest = 0;
+    for (let x = 0; x < data.width; x++) {
+      let column = 0;
+      for (let y = 0; y < data.height; y++) if (data.data[(y * data.width + x) * 4 + 3]! > 0) column++;
+      tallest = Math.max(tallest, column);
+    }
+    return tallest / canvas.height;
+  });
+  await walk.open(project.path);
+  await v.field.fill("Typed draft");
+  const recognizers = () => page.evaluate("window.fixtureRecognizers.length");
+  const focused = () => page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName);
+
+  // The operator's journey: dictate, cancel with the X, dismiss the keyboard, start again; repeated,
+  // with one Escape. The X never focuses the field (on a phone that opens the keyboard), and each
+  // restart listens on a live stream while the cancelled one has ended.
+  for (const [cycle, cancelBy] of (["X", "X", "Escape", "X"] as const).entries()) {
+    await v.mic.click();
+    await expect(v.listening).toBeVisible();
+    await expect(v.wave).toBeVisible();
+    await expect.poll(() => page.evaluate(`window.fixtureStreams[${cycle}].getAudioTracks().every(track => track.readyState === "live" && track.enabled && !track.muted)`)).toBe(true);
+    await expect.poll(loudest).toBeGreaterThan(0.5);
+    await hear(page, [`discard ${cycle}`], "more");
+    await expect(v.field).toHaveValue(`Typed draft discard ${cycle} more`);
+    if (cancelBy === "X") {
+      await walk.state(cycle === 0 ? "06-x-cancels-without-the-keyboard" : `06-x-cancels-again-${cycle}`, {
+        action: () => v.cancel.click(),
+        visible: [v.mic, v.field],
+        hidden: [v.stop, v.cancel, v.wave],
+      });
+      await expect(v.field).not.toBeFocused();
+      expect(await focused()).toBe("Start voice input");
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    } else {
+      await page.keyboard.press("Escape");
+      await expect(v.field).toBeFocused();
+    }
+    await expect(v.field).toHaveValue("Typed draft");
+    await expect(v.field).toBeEditable();
+    expect(await recognizers()).toBe(cycle + 1);
+    await expect.poll(() => page.evaluate(`window.fixtureRecognizers[${cycle}].ended`)).toBe(true);
+    await expect.poll(() => page.evaluate(`window.fixtureStreams[${cycle}].getTracks().every(track => track.readyState === "ended")`)).toBe(true);
+  }
+
+  // A recognizer still shutting down: Cancel returns at once, and a restart opens the microphone
+  // only once that recognizer has ended.
+  await page.evaluate("window.fixtureHoldAbort = true");
+  await v.mic.click();
+  await expect(v.listening).toBeVisible();
+  await hear(page, ["gone at once"]);
+  await walk.state("07-cancel-returns-while-the-recognizer-ends", {
+    action: () => v.cancel.click(),
+    visible: [v.mic, v.field],
+    hidden: [v.stop, v.cancel, v.wave],
+  });
+  await expect(v.field).toHaveValue("Typed draft");
+  await expect(v.field).toBeEditable();
+  const opening = v.main.getByText("Opening microphone…", { exact: true });
+  await walk.state("08-restart-waits-for-the-cancelled-recognizer", {
+    action: () => v.mic.click(),
+    visible: [opening, v.field],
+    hidden: [v.mic, v.listening],
+  });
+  expect(await recognizers()).toBe(5);
+  // The cancelled recognizer's stream stays open until it ends; the restart has not opened one yet.
+  expect(await page.evaluate("window.fixtureStreams.length")).toBe(5);
+  expect(await page.evaluate(`window.fixtureStreams[4].getTracks().every(track => track.readyState === "live")`)).toBe(true);
+  await page.evaluate("window.fixtureHoldAbort = false; window.fixtureRecognizers[4].end()");
+  await expect.poll(() => page.evaluate(`window.fixtureStreams[4].getTracks().every(track => track.readyState === "ended")`)).toBe(true);
+  await expect(v.listening).toBeVisible();
+  await expect(opening).toBeHidden();
+  await expect.poll(loudest).toBeGreaterThan(0.5);
+
+  // The restarted capture ignores anything the cancelled recognizer still says.
+  expect(await recognizers()).toBe(6);
+  await page.evaluate(`{
+    const old = window.fixtureRecognizers[4];
+    old.onresult && old.onresult({ results: [{ isFinal: true, 0: { transcript: "stale words" }, length: 1 }] });
+    old.onerror && old.onerror({ error: "not-allowed" });
+    old.onend && old.onend();
+  }`);
+  await hear(page, ["fresh words"]);
+  await walk.state("09-restarted-capture-unaffected", {
+    visible: [v.listening, v.stop, v.cancel, v.field],
+    hidden: [v.mic, v.main.getByText("Microphone blocked in the browser. Typing works.", { exact: true })],
+  });
+  await expect(v.field).toHaveValue("Typed draft fresh words");
+  await walk.state("10-send-after-restart", {
+    action: () => v.send.click(),
+    visible: [v.bubble("Typed draft fresh words"), v.mic],
+    hidden: [v.stop, v.cancel],
+  });
+  await expect(v.field).toHaveValue("");
+  expect(posts).toHaveLength(1);
+  expect(JSON.parse(posts[0]!)).toMatchObject({ text: "Typed draft fresh words" });
+});
+
 test("browser recognition: denied by the recognizer, and a browser without one says typing works", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
@@ -223,10 +356,18 @@ test("browser recognition: denied by the recognizer, and a browser without one s
     visible: [v.main.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.mic, v.field],
     hidden: [v.stop, v.cancel, v.wave],
   });
-  await expect(v.mic).toBeDisabled();
   await expect(v.field).toHaveValue("Typing still works");
   await expect(v.field).toBeEditable();
   await expect(v.send).toBeEnabled();
+  // A refusal may be transient (Safari's speech service briefly unavailable): the mic asks again.
+  await walk.state("01b-denied-then-asks-again", {
+    action: () => v.mic.click(),
+    visible: [v.listening, v.stop, v.cancel],
+    hidden: [v.main.getByText("Microphone blocked in the browser. Typing works.", { exact: true })],
+  });
+  await hear(page, ["asked again"]);
+  await v.stop.click();
+  await expect(v.field).toHaveValue("Typing still works asked again");
 
   // A browser without speech recognition (Firefox today) shows the hint instead of the microphone.
   const plain = await page.context().newPage();

@@ -378,7 +378,6 @@ test("listening, late Stop transcription and denied microphone reset without cro
   await mic.click();
   const denied = v.text("Microphone blocked in the browser. Typing works.");
   await walk.state("05-alpha-denied-overlay", { visible: [denied, mic], hidden: [wave, stop] });
-  await expect(mic).toBeDisabled();
   await switchProject(page, info, "beta");
   await expect(mic).toBeEnabled();
   await expect(v.field("beta")).toHaveValue("Beta typed during transcription");

@@ -83,18 +83,68 @@ describe("RecognitionCapture", () => {
     expect(capture.text).toBe("first");
   });
 
-  it("cancel ends at once and ignores the recognizer's later end", () => {
+  it("cancel aborts at once and ends with the recognizer's own end, once", () => {
+    const capture = new RecognitionCapture(stream, "en-US");
+    const stopped = vi.fn();
+    capture.onstop = stopped;
+    capture.start();
+    const [recognizer] = FakeSpeechRecognition.instances;
+    recognizer!.answersAbort = false;
+    capture.cancel();
+    capture.cancel();
+    expect(recognizer!.aborted).toBe(1);
+    expect(stopped).not.toHaveBeenCalled();
+    recognizer!.silence();
+    expect(recognizer!.started).toBe(1);
+    expect(stopped).toHaveBeenCalledOnce();
+    recognizer!.silence();
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
+  it("cancel that the recognizer never answers still ends within three seconds", () => {
+    const capture = new RecognitionCapture(stream, "en-US");
+    const stopped = vi.fn();
+    capture.onstop = stopped;
+    capture.start();
+    const [recognizer] = FakeSpeechRecognition.instances;
+    recognizer!.answersAbort = false;
+    capture.cancel();
+    vi.advanceTimersByTime(2999);
+    expect(stopped).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(stopped).toHaveBeenCalledOnce();
+    recognizer!.silence();
+    expect(recognizer!.started).toBe(1);
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
+  it("idle() resolves once every capture asked to end has ended", async () => {
+    const capture = new RecognitionCapture(stream, "en-US");
+    capture.start();
+    const [recognizer] = FakeSpeechRecognition.instances;
+    recognizer!.answersAbort = false;
+    const idle = vi.fn();
+    expect(RecognitionCapture.idle()).toBeNull();
+    capture.cancel();
+    void RecognitionCapture.idle()!.then(idle);
+    await Promise.resolve();
+    expect(idle).not.toHaveBeenCalled();
+    recognizer!.silence();
+    await Promise.resolve();
+    expect(idle).toHaveBeenCalledOnce();
+    expect(RecognitionCapture.idle()).toBeNull();
+  });
+
+  it("cancel during Stop's wait for the last phrase aborts without waiting further", () => {
     const capture = new RecognitionCapture(stream, "en-US");
     const stopped = vi.fn();
     capture.onstop = stopped;
     capture.start();
     const [recognizer] = FakeSpeechRecognition.instances;
     recognizer!.answersStop = false;
+    capture.stop();
     capture.cancel();
-    expect(stopped).toHaveBeenCalledOnce();
     expect(recognizer!.aborted).toBe(1);
-    recognizer!.silence();
-    expect(recognizer!.started).toBe(1);
-    expect(stopped).toHaveBeenCalledOnce();
+    return Promise.resolve().then(() => expect(stopped).toHaveBeenCalledOnce());
   });
 });
