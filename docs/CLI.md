@@ -491,11 +491,12 @@ issue and closes the issue this incident created as completed when still open; a
 tracks other occurrences and stays open for `alt issue close`. A GitHub failure leaves the incident
 open so the closure can be repeated. A pending issue needs no GitHub call to close the incident.
 
-The target repository is `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**, an
-operator-configured GitHub `owner/repository` or GitHub repository URL. Unset is the default for
-every installation: incidents stay on the machine, every record's issue bullet reads
-`pending — incidents stay on this machine until ALTITUDE_UPSTREAM_ISSUE_REPOSITORY …`, and
-`alt incident list` shows that reason. Setting the variable and running `alt incident publish <id>`
+The target repository is the machine setting **Settings → Incident reports** saves (a First run
+step), else `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**: a GitHub
+`owner/repository` or GitHub repository URL. Off is the default for every installation: incidents
+stay on the machine, every record's issue bullet reads
+`pending — incidents stay on this machine until incident reports are turned on in Settings …`, and
+`alt incident list` shows that reason. Turning reports on and running `alt incident publish <id>`
 publishes an earlier record. An invalid target is a pending reason with configuration
 instructions; there is no fallback to the incident project's repository, the release metadata or
 the Altitude checkout's origin. An incident filed in another managed project sends the registered local `altitude`

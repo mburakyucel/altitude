@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
-import { ApiError, readVoiceSettings, saveProjectsFolder, saveVoiceSettings, useOverview } from "../data/api";
+import { IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
+import { ApiError, readVoiceSettings, saveProjectsFolder, saveVoiceSettings, useMachine, useOverview } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -135,7 +137,29 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   </>;
 }
 
-const titles = { voice: "Voice input", "projects-folder": "Projects folder" } as const;
+const titles = {
+  voice: "Voice input", "projects-folder": "Projects folder", name: "Your name",
+  prerequisites: "Prerequisites", "incident-reports": "Incident reports",
+} as const;
+
+/** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
+function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-reports" }) {
+  const [saved, setSaved] = useState(false);
+  const status = saved ? <p role="status" className="text-meta text-muted">Saved.</p> : null;
+  const submitRow = (submit: ReactNode) => <div className="onboarding-nav">{submit}{status}</div>;
+  if (page === "name") return <>
+    <p className="text-meta text-muted">Screens, task records and agents use this name wherever they would otherwise say “the operator”.</p>
+    <NameForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
+  </>;
+  if (page === "incident-reports") return <>
+    <p className="text-meta text-muted">When Altitude’s machinery fails, it records an incident on this computer. It can also open a GitHub issue for each one.</p>
+    <IncidentReportsForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
+  </>;
+  return <>
+    <p className="text-meta text-muted">What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again. Altitude never asks for a password or token in the browser.</p>
+    <PrerequisiteList actions={(check) => <div className="onboarding-nav">{check}</div>} />
+  </>;
+}
 
 /** Machine settings, then project settings, each as a compact row that opens its page. */
 export default function Settings({ page }: { page?: keyof typeof titles }) {
@@ -147,6 +171,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const [reloadKey, setReloadKey] = useState(0);
   const state = location.state as { settingsFrom?: string } | null;
   const voice = page === "voice";
+  const machine = useMachine();
   const roots = overview.data?.roots ?? [];
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
@@ -158,7 +183,8 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
     {phone ? <header className="phone-header settings-header">{back}<h1>{title}</h1></header> : null}
     <div className="page settings-page">
       {!phone ? <>{page ? back : null}<h1>{title}</h1></> : null}
-      {page === "projects-folder" ? <>
+      {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
+        : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>
         <ProjectsFolderForm roots={roots} />
       </> : <>
@@ -170,12 +196,23 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
               : <Link className="settings-row" to="/settings/voice" state={state}>
                 <span><strong>Voice input</strong>{" "}<small>{labels[settings.data.backend]}</small></span><span aria-hidden>›</span>
               </Link>}
+        {!voice ? <>
+          <Link className="settings-row" to="/settings/name" state={state}>
+            <span><strong>Your name</strong>{" "}<small>{machine.data ? machine.data.operator || "Not set · screens say “you”" : "Loading…"}</small></span><span aria-hidden>›</span>
+          </Link>
+          <Link className="settings-row" to="/settings/prerequisites" state={state}>
+            <span><strong>Prerequisites</strong>{" "}<small>GitHub CLI sign-in, coding agents and Git</small></span><span aria-hidden>›</span>
+          </Link>
+          <Link className="settings-row" to="/settings/incident-reports" state={state}>
+            <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
+          </Link>
+        </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>
           <span><strong>Projects folder</strong>{" "}<small>{roots.join(" and ") || "Loading…"} · First run offers the folders directly inside it</small></span><span aria-hidden>›</span>
         </Link> : null}
         {!voice ? <section className="settings-card" aria-label="Network">
           <h2>Network</h2><p className="text-meta text-muted">Connection details · view only</p>
-          <dl className="settings-network"><dt>Address</dt><dd>{window.location.origin}</dd><dt>HTTPS</dt><dd>{window.location.protocol === "https:" ? "On" : "Off"}</dd><dt>Operator</dt><dd>{overview.data?.operator || "The operator"}</dd></dl>
+          <dl className="settings-network"><dt>Address</dt><dd>{window.location.origin}</dd><dt>HTTPS</dt><dd>{window.location.protocol === "https:" ? "On" : "Off"}</dd></dl>
         </section> : null}
         {!voice ? <ProjectRows from={state?.settingsFrom} state={state} /> : null}
       </>}

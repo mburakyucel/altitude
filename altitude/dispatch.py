@@ -387,7 +387,7 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-MACHINE_SETTINGS = ("wip", "voice", "projects_folder")
+MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository")
 
 
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
@@ -406,6 +406,10 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_voice(value)
         elif setting == "projects_folder":
             config.validate_projects_folder(value)
+        elif setting == "operator_name":
+            config.validate_operator_name(value)
+        elif setting == "incident_repository":
+            config.validate_incident_repository(value)
         elif setting in config.DEFAULT_SETTINGS:
             config.validate_project_default(setting, value)
     except ValueError as exc:

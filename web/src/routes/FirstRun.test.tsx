@@ -63,27 +63,41 @@ describe("First run", () => {
 
   it("lists the folders in the projects folder and keeps the browser closed", async () => {
     mockFetch();
-    renderApp({ route: "/projects" });
-    await screen.findByText("Altitude found 2 folders in ~/Projects");
+    renderApp({ route: "/projects?step=projects" });
+    await screen.findByRole("heading", { name: "Add your projects" });
+    expect(screen.getByText("~/Projects")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add all 2" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(2);
     expect(screen.getByText("/home/ada/Projects/alpha")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Choose a folder" })).toBeNull();
   });
 
-  it("opens the browser and points at Settings when the projects folder is empty", async () => {
+  it("opens the browser and points at Settings when the projects folder is empty in Add a folder", async () => {
     mockFetch({ empty: true });
-    renderApp({ route: "/projects/anything" });
-    await screen.findByText("No folders in ~/Projects yet");
-    expect(screen.getByRole("link", { name: "change the projects folder in Settings" })).toHaveAttribute("href", "/settings/projects-folder");
-    const browser = screen.getByRole("region", { name: "Choose a folder" });
+    const { user } = renderApp({ route: "/" });
+    await user.click(await screen.findByRole("button", { name: "Add a folder" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a folder" });
+    await within(dialog).findByText("No folders in ~/Projects yet");
+    expect(within(dialog).getByRole("link", { name: "change the projects folder in Settings" })).toHaveAttribute("href", "/settings/projects-folder");
+    const browser = within(dialog).getByRole("region", { name: "Choose a folder" });
     expect(await within(browser).findByRole("button", { name: /work/ })).toBeInTheDocument();
     expect(within(browser).getByRole("button", { name: "Add “Home”" })).toBeDisabled();
     expect(within(browser).queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
+  it("says an empty projects folder is empty in the projects step and offers Change and a folder elsewhere", async () => {
+    mockFetch({ empty: true });
+    const { user } = renderApp({ route: "/projects?step=projects" });
+    await screen.findByText("No folders in ~/Projects yet");
+    expect(screen.queryByRole("region", { name: "Choose a folder" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Change…" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose a folder elsewhere…" }));
+    expect(screen.getByRole("region", { name: "Choose a folder" })).toBeInTheDocument();
+  });
+
   it.each([false, true])("opens setup immediately after accepted registration (restored=%s), without waiting for chat", async (restored) => {
     const fetchMock = mockFetch({ restored });
-    const { router, user } = renderApp({ route: "/projects" });
+    const { router, user } = renderApp({ route: "/projects?step=projects" });
     const row = (await screen.findByText("alpha")).closest("li")!;
     await user.click(within(row).getByRole("button", { name: "Add project" }));
     await screen.findByRole("dialog", { name: "Project setup" });
@@ -95,11 +109,29 @@ describe("First run", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("limit=10"))).toBe(false);
   });
 
+  it("adds every listed folder in order with Add all and opens the first one's setup", async () => {
+    const fetchMock = mockFetch();
+    const { user, router } = renderApp({ route: "/projects?step=projects" });
+    await user.click(await screen.findByRole("button", { name: "Add all 2" }));
+    await screen.findByRole("dialog", { name: "Project setup" });
+    expect(router.state.location.pathname).toBe("/projects/alpha");
+    const adds = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/project/add")).map(([, init]) => JSON.parse(String(init?.body)).name);
+    expect(adds).toEqual(["alpha", "beta"]);
+  });
+
+  it("keeps Add all on the page with Retry when the first folder is refused", async () => {
+    mockFetch({ addStatus: 403 });
+    const { user } = renderApp({ route: "/projects?step=projects" });
+    await user.click(await screen.findByRole("button", { name: "Add all 2" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not add alpha: The folder is not accessible");
+    expect(screen.getByRole("button", { name: "Retry Add all" })).toBeEnabled();
+    expect(screen.queryByRole("dialog", { name: "Project setup" })).toBeNull();
+  });
+
   it("browses into a folder and adds it through the existing flow", async () => {
     const fetchMock = mockFetch();
-    const { user, router } = renderApp({ route: "/projects" });
-    await screen.findByText("Altitude found 2 folders in ~/Projects");
-    await user.click(screen.getByRole("button", { name: "Choose a folder elsewhere…" }));
+    const { user, router } = renderApp({ route: "/projects?step=projects" });
+    await user.click(await screen.findByRole("button", { name: "Choose a folder elsewhere…" }));
     const browser = screen.getByRole("region", { name: "Choose a folder" });
     await user.click(await within(browser).findByRole("button", { name: /work/ }));
     const gamma = await within(browser).findByRole("button", { name: /gamma/ });
@@ -116,7 +148,7 @@ describe("First run", () => {
 
   it("shows an unreadable folder without an add action and goes back by the path", async () => {
     mockFetch();
-    const { user } = renderApp({ route: "/projects" });
+    const { user } = renderApp({ route: "/projects?step=projects" });
     await user.click(await screen.findByRole("button", { name: "Choose a folder elsewhere…" }));
     const browser = screen.getByRole("region", { name: "Choose a folder" });
     await user.click(await within(browser).findByRole("button", { name: /locked/ }));
@@ -130,7 +162,7 @@ describe("First run", () => {
 
   it("adds a typed folder elsewhere", async () => {
     const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects" });
+    const { user } = renderApp({ route: "/projects?step=projects" });
     await user.click(await screen.findByRole("button", { name: "Choose a folder elsewhere…" }));
     await user.click(screen.getByRole("button", { name: "Type a path instead" }));
     await user.type(screen.getByLabelText("A folder on the computer running Altitude"), "/srv/work/alpha");
@@ -143,7 +175,7 @@ describe("First run", () => {
 
   it("keeps a refused registration actionable and does not open setup", async () => {
     mockFetch({ addStatus: 403 });
-    const { user } = renderApp({ route: "/projects" });
+    const { user } = renderApp({ route: "/projects?step=projects" });
     const row = (await screen.findByText("alpha")).closest("li")!;
     await user.click(within(row).getByRole("button", { name: "Add project" }));
     await screen.findByText("Could not add alpha: The folder is not accessible");

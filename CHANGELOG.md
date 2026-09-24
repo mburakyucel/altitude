@@ -5,6 +5,15 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- First run, shown while no project is managed, walks four skippable steps on phone and desktop:
+  your name (filled in from `ALTITUDE_OPERATOR` or Git's `user.name`), what the agents need (the
+  doctor checks with the terminal command to run and **Check again**; the browser never takes a
+  password or token), incident reports (off until turned on, then Altitude's repository or a fork
+  you name) and your projects (change the projects folder in place, then **Add project** or
+  **Add all**). Each step is a row in **Settings → This machine**. `ALTITUDE_OPERATOR` and
+  `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` become initial values that a saved choice replaces; with no
+  name, screens say “you” (#482).
+
 - Each project sets its default model and reasoning effort for L3 and L2 separately on every engine,
   so changing L3 on one engine leaves L3 on the other engine and both L2 pairs alone.
   **Settings → This project**, opened from the project's three dots, holds these defaults, the L3

@@ -1,0 +1,41 @@
+/* First run onboarding (SPEC.md §3.12) and its Settings forms. */
+.onboarding { width: 100%; max-width: 40rem; gap: 18px; }
+.onboarding h1 { font-size: 1.375rem; font-weight: 600; }
+.onboarding-lead { margin-top: 6px; color: var(--text-secondary); line-height: 1.55; }
+.onboarding-steps { display: flex; align-items: center; gap: 8px; font-size: var(--text-meta); color: var(--text-muted); }
+.onboarding-steps li { display: flex; align-items: center; gap: 6px; flex: 1; }
+.onboarding-steps li:last-child { flex: none; }
+.onboarding-steps li:not(:last-child)::after { content: ""; flex: 1; height: 1px; background: var(--hairline); min-width: 12px; }
+.onboarding-steps li > span:first-child { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex: none; }
+.onboarding-step-title { white-space: nowrap; }
+.onboarding-steps li[aria-current] { color: var(--text-primary); font-weight: 600; }
+.onboarding-steps li[aria-current] > span:first-child { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.onboarding-steps li.done > span:first-child { border-color: var(--accent); color: var(--accent); }
+.onboarding-step-count { display: none; font-weight: 600; }
+.onboarding-form { display: flex; flex-direction: column; gap: 14px; }
+.onboarding-form fieldset.settings-card { min-width: 0; padding-block: 2px; }
+.onboarding-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
+.onboarding-field input { min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: var(--text-body); font-weight: 400; }
+.onboarding-field + p { margin-top: 8px; }
+.onboarding-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.onboarding-nav .btn { min-height: 44px; }
+.onboarding-checks { padding-block: 4px; }
+.onboarding-check { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; }
+.onboarding-check + .onboarding-check { border-top: 1px solid var(--hairline); }
+.onboarding-check p { margin-top: 2px; }
+.onboarding-mark { width: 20px; height: 20px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-top: 1px; }
+.onboarding-met { background: var(--success-bg); color: var(--success-text); }
+.onboarding-unmet { background: var(--danger); color: var(--on-accent); }
+.onboarding-optional { border: 1.5px solid var(--border); color: var(--text-muted); }
+.onboarding-command { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 6px 6px 12px; border-radius: 8px; background: var(--bubble); font-family: var(--font-mono, monospace); font-size: var(--text-meta); }
+.onboarding-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.onboarding-command .btn { min-height: 36px; font-family: var(--font-ui, inherit); }
+.onboarding-note { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); line-height: 1.5; }
+.onboarding-projects { display: flex; flex-direction: column; gap: 14px; }
+.onboarding-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+.onboarding-projects .link:disabled { opacity: .6; }
+.shell[data-phone] .onboarding { border: 0; background: transparent; padding: 4px 0 0; }
+.shell[data-phone] .onboarding-steps { display: none; }
+.shell[data-phone] .onboarding-step-count { display: block; }
+.shell[data-phone] .onboarding h1 { font-size: 1.1875rem; }
+.shell[data-phone] .onboarding-nav { position: sticky; bottom: 0; margin-inline: -16px; padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--hairline); }

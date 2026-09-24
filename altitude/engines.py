@@ -165,6 +165,24 @@ def installation(engine: str) -> dict:
     return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
 
 
+#: The command that installs each engine CLI, shown by First run while it is missing.
+INSTALL = {"claude": "npm install -g @anthropic-ai/claude-code", "codex": "npm install -g @openai/codex"}
+
+#: The engine CLI's local sign-in status and the command the operator runs in their own terminal to sign in.
+SIGN_IN = {"claude": (("auth", "status"), "claude auth login"), "codex": (("login", "status"), "codex login")}
+
+
+def sign_in(engine: str) -> dict:
+    """Whether an installed engine CLI reports a signed-in account; the status command reads local credentials only."""
+    binary = {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}[engine]
+    status, command = SIGN_IN[engine]
+    try:
+        signed_in = subprocess.run([binary, *status], capture_output=True, timeout=15, env=clean_env()).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        signed_in = False
+    return {"signed_in": signed_in, "command": command}
+
+
 def session_timeout(engine: str) -> int:
     return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
 
