@@ -392,6 +392,7 @@ test("project: a viewer opened on a queued image stays open through history admi
     visible: [dialog, fit, stored.getByText("Loading image…", { exact: true })], hidden: [queued],
   });
   expect(await dialog.evaluate((node) => (node as HTMLElement & { probe?: boolean }).probe)).toBe(true);
+  await expect(fit).toBeFocused();
   await expect(dialog.getByRole("img")).toHaveJSProperty("complete", true);
   expect(await dialog.getByRole("img").evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(640);
   releaseRead();
