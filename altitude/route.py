@@ -4,6 +4,7 @@ Preference tiers choose eligible engine/model options; named weekly allowance
 chooses within a tied tier. Short windows only rule exhausted seats out.
 """
 from __future__ import annotations
+import time
 from datetime import datetime, timezone
 
 from . import config, state as S
@@ -64,12 +65,38 @@ def _readings() -> dict[str, dict]:
     return {"claude": quota() or {}, "codex": quota_codex()}
 
 
+def _routed_models(engine: str) -> list[str]:
+    """Named models any project's L2/L3 routing can launch on this engine, in first-seen order."""
+    names = []
+    for project in config.load_projects().values():
+        for role in ("l3", "l2"):
+            for tier in project.get("routing", config.AUTO_ROUTING):
+                for option in tier:
+                    if option["engine"] == engine:
+                        names.append(option.get("model") or config.default_model(role, engine, project))
+            if project.get(f"{role}_engine") == engine:
+                names.append(config.default_model(role, engine, project))
+    return list(dict.fromkeys(name for name in names if name))
+
+
+def _models(engine: str, reading: dict) -> list[dict]:
+    """Each model with its own evidence: the reading's model-specific row, if any, and an active
+    rejection. Shared account windows never stand in for a model that has no row of its own."""
+    rows = {row["model"] or row["label"]: {**row, "rejected": None} for row in reading.get("models") or []}
+    for name in _routed_models(engine):
+        key = config.model_family(name) or name
+        row = rows.setdefault(key, {"model": key, "label": None, "seven_day": None, "seven_day_resets": None})
+        row["rejected"] = row.get("rejected") or _rejected({"engine": engine, "model": name})
+    return list(rows.values())
+
+
 def seats() -> list[dict]:
-    """One seat per configured engine, in the seam's order: ``{engine, label, quota}`` with the seat's
-    reading passed through as the seat reports it. The Monitor renders these rows without knowing
-    which reading belongs to which provider."""
+    """One seat per configured engine, in the seam's order: ``{engine, label, quota, models}`` with the
+    seat's reading passed through as the seat reports it and each routed model's own evidence. The
+    Monitor renders these rows without knowing which reading belongs to which provider."""
     readings = _readings()
-    return [{"engine": engine, "label": config.ENGINE_LABELS[engine], "quota": readings[engine]}
+    return [{"engine": engine, "label": config.ENGINE_LABELS[engine], "quota": readings[engine],
+             "models": _models(engine, readings[engine])}
             for engine in config.ENGINES]
 
 
@@ -94,10 +121,10 @@ def engine_readouts() -> list[dict]:
     return rows
 
 
-def _usage() -> dict[str, tuple[float | None, float | None]]:
+def _usage(readings: dict[str, dict] | None = None) -> dict[str, tuple[float | None, float | None]]:
     """Per engine: (weekly % used, short-window % used); None when unknown."""
     from . import engines
-    readings = _readings()
+    readings = readings or _readings()
     claude, codex = readings["claude"], readings["codex"]
     claude_week = _number(claude.get("seven_day")) if claude.get("known") else None
     claude_short = 100.0 if engines.usage_hold() else (_number(claude.get("five_hour")) if claude.get("known") else None)
@@ -114,6 +141,25 @@ def _unavailable(weekly: float | None, short: float | None) -> str | None:
     return None
 
 
+def model_reading(reading: dict, model: str | None) -> dict | None:
+    """The seat reading's own row for this model's family; None when the provider reported none."""
+    family = config.model_family(model)
+    return next((row for row in reading.get("models") or [] if family and row.get("model") == family), None)
+
+
+def _model_exhausted(option: dict, readings: dict[str, dict]) -> str | None:
+    """A current model-specific reading at its limit; the shared account windows say nothing about it."""
+    reading = readings[option["engine"]]
+    row = model_reading(reading, option.get("model")) if reading.get("known") else None
+    used = _number(row.get("seven_day")) if row else None
+    reset = row.get("seven_day_resets") if row else None
+    if used is None or used < 100 or isinstance(reset, (int, float)) and reset <= time.time():
+        return None
+    return (f"{row['label']} weekly allowance exhausted; " +
+            (f"resets {datetime.fromtimestamp(reset, timezone.utc).isoformat(timespec='seconds')}"
+             if isinstance(reset, (int, float)) else "reset time unknown"))
+
+
 SWITCH_MARGIN = 15.0  # weekly points of extra headroom the other engine needs before a session moves
 
 
@@ -125,9 +171,9 @@ def option_label(option: dict) -> str:
     return option["engine"] + (":" + option["model"] if option.get("model") else ":default")
 
 
-def _rejection_path(option: dict, scope: str):
+def _rejection_path(option: dict, scope: str, model: str | None = None):
     from hashlib import sha256
-    model = option.get("model") if scope == "model" else None
+    model = (model or option.get("model")) if scope == "model" else None
     # Native defaults can differ by role (one launcher ignores user model configuration).
     role = option.get("role") if scope == "model" and model is None else None
     name = sha256(repr((option["engine"], model, role, scope)).encode()).hexdigest()[:24]
@@ -140,8 +186,12 @@ def note_rejection(option: dict, rejection: dict) -> None:
 
 
 def _rejected(option: dict) -> str | None:
-    for scope in ("engine", "model"):
-        data = S.read_json(_rejection_path(option, scope), {})
+    # A usage limit names the model family ("fable"); a configured model id shares its exclusion.
+    family = config.model_family(option.get("model"))
+    paths = [_rejection_path(option, "engine"), _rejection_path(option, "model"),
+             *([_rejection_path(option, "model", family)] if family and family != option.get("model") else [])]
+    for path in paths:
+        data = S.read_json(path, {})
         if data:
             now = datetime.now(timezone.utc)
             active = (now < datetime.fromisoformat(data["until"]) if data.get("until") else
@@ -164,7 +214,8 @@ def resume_hold(engine: str, model: str | None) -> str | None:
     if installed["available"] is False:
         return installed["why"]
     option = {"engine": engine, "model": model or config.default_model("l2", engine), "role": "l2"}
-    return _rejected(option) or _unavailable(*_usage()[engine])
+    readings = _readings()
+    return _rejected(option) or _unavailable(*_usage(readings)[engine]) or _model_exhausted(option, readings)
 
 
 def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
@@ -234,7 +285,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     effort = effort if effort is not None else project.get(f"{role}_effort")
     pin = config.pinned_option(role, project, engine=forced, model=model)
     tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
-    usage = _usage()
+    readings = _readings()
+    usage = _usage(readings)
     skipped, considered = [], set()
     for priority, tier in enumerate(tiers, 1):
         available = []
@@ -254,7 +306,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
             installed = engines.installation(engine)
             unavailable = ("already tried in this dispatch/turn" if option_key(option) in excluded else
                            installed["why"] if installed["available"] is False else
-                           _rejected(option) or _unavailable(*usage[engine]))
+                           _rejected(option) or _unavailable(*usage[engine]) or _model_exhausted(option, readings))
             if unavailable:
                 skipped.append(f"{option_label(option)} unavailable: {unavailable}")
             else:
