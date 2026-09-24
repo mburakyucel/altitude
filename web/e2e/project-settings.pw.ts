@@ -28,6 +28,8 @@ test("Settings holds project models and effort; the menu only links there and th
   const l3First = main.getByRole("group", { name: `L3 on ${first!.label}` });
   const l3Second = main.getByRole("group", { name: `L3 on ${second!.label}` });
   const l2Group = main.getByRole("group", { name: `L2 on ${l2First.label}` });
+  /** Each field reports its own save, so a group can show two statuses at once. */
+  const saved = (label: string) => l3First.locator(".default-field", { has: page.getByLabel(label) }).getByText("Saved.");
 
   await walk.open(project.path);
   await draft.fill("Keep my project draft");
@@ -53,12 +55,12 @@ test("Settings holds project models and effort; the menu only links there and th
   const choice = first!.effort.choices.at(-1)!;
   await walk.state("04-l3-effort-saved", {
     action: () => l3First.getByLabel("Effort").selectOption(choice.value),
-    visible: [l3First.getByText("Saved.")], hidden: [l3Second.getByText("Saved."), l2Group.getByText("Saved.")],
+    visible: [saved("Effort")], hidden: [l3Second.getByText("Saved."), l2Group.getByText("Saved.")],
   });
   await l3First.getByLabel("Model").fill("fixture-model");
   await walk.state("05-model-saved-on-enter", {
     action: () => l3First.getByLabel("Model").press("Enter"),
-    visible: [l3First.locator(".default-field", { has: page.getByLabel("Model") }).getByText("Saved.")], hidden: [l3First.getByRole("alert")],
+    visible: [saved("Model")], hidden: [l3First.getByRole("alert")],
   });
   await expect(l3First.getByLabel("Model")).toHaveValue("fixture-model");
   expect(values(await defaults(request, project.name))).toEqual({
@@ -73,7 +75,7 @@ test("Settings holds project models and effort; the menu only links there and th
   await expect(draft).toHaveValue("Keep my project draft");
 
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-  await walk.state("07-persisted-on-direct-visit", { visible: [l3First], hidden: [l3First.getByText("Saved.")] });
+  await walk.state("07-persisted-on-direct-visit", { visible: [l3First], hidden: [saved("Model"), saved("Effort")] });
   await expect(l3First.getByLabel("Effort")).toHaveValue(choice.value);
   await expect(l3First.getByLabel("Model")).toHaveValue("fixture-model");
   await expect(l3Second.getByLabel("Effort")).toHaveValue("");
@@ -81,7 +83,7 @@ test("Settings holds project models and effort; the menu only links there and th
   await l3First.getByLabel("Effort").focus();
   await expect(l3First.getByLabel("Model")).toHaveValue("");
   await l3First.getByLabel("Effort").selectOption("");
-  await walk.state("08-default-restored", { visible: [l3First.getByText("Saved.")], hidden: [] });
+  await walk.state("08-default-restored", { visible: [saved("Model"), saved("Effort")], hidden: [] });
   await expect.poll(async () => values(await defaults(request, project.name))).toEqual(values(initial));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
