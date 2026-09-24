@@ -53,9 +53,8 @@ message. Quota numbers are illustrative.
   sanitized Markdown, image paths and anchors, then inspect both widths. Open the original images
   to review details that are small in a desktop README column.
 
-The curated project/task images use application source at `6654927` and the fixtures in this
-directory; they explain
-project coordination, direct task steering and the separate phone panes. The two orchestration
+The curated project/task images use application source at `eb18c78a` and the fixtures in this
+directory; they explain project coordination, direct task steering and the separate phone panes. The two orchestration
 SVGs explain the same role relationships in wide and narrow layouts. Task token readings are
 absent from this fixture, so the app shows its unknown state. Current decision behavior lives in
 the [decision boards and spec](../wireframes/CONVERSATION_FIRST.md), with implementation captures
