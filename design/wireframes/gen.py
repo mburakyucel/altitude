@@ -232,6 +232,16 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .statebox .wave{min-width:0;overflow:hidden}.statebox .status{flex-shrink:0}
 .statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
+/* voice states sheet: one row per state, desktop composer beside the phone dock */
+.vgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
+.vgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}
+.vgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
+.vdesk .composer{max-width:none;box-shadow:none}.vdesk .hint{text-align:left;padding:6px 0 0 18px}
+.wave.bounded{flex:none;width:168px;padding:0}
+.wave.frozen i{background:var(--text-muted)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);display:inline-block;flex:none}
+.compact .composer.voice{flex-wrap:wrap}.compact .composer.voice .draft,.compact .composer.voice .ph2{flex-basis:100%;min-height:24px;padding-bottom:0}
+.compact .composer.voice .crow{display:flex;width:100%;align-items:center;gap:2px;margin-top:0}.compact .composer.voice .gap{flex:1}.compact .composer.voice .crow>span[style]{display:none}
 .route-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 28px 28px}
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
 .route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}
@@ -635,6 +645,54 @@ sheet_inner = (
 )
 board("ComposerStates", 1200, 1380, sheet_inner)
 
+# Voice states sheet: the same three controls at both widths; only the desktop waveform is bounded.
+LIVE = "Keep the draft and the words appear while you speak"
+def vcomposer(draft, row, hint="", phone=False, hint_danger=False, wrap=False):
+    top = f'<div class="draft">{draft}</div>' if draft else '<div class="ph2">Message L3 about altitude</div>'
+    body = f'<div class="composer{" voice" if wrap else ""}">{top}<div class="crow">{row}</div></div>'
+    if hint:
+        body += f'<div class="hint">{"<span class=danger>" + hint + "</span>" if hint_danger else hint}</div>'
+    return f'<div class="statebox compact">{body}</div>' if phone else f'<div class="vdesk">{body}</div>'
+
+def vrow(label, note, draft, phase, hint="", danger=False):
+    cancel = f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>'
+    stop = f'<span class="icb rec" aria-label="Stop">{I("stop","i lg")}</span>'
+    mic = f'<span class="icb">{I("mic","i lg")}</span>'
+    pill = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span style="flex:1"></span>'
+    if phase == "listening":
+        desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded"') + '<span class="status">0:07</span>' + stop + arrow()
+        phone = cancel + wave(W[:6]) + '<span class="status">0:07</span>' + stop + arrow()
+    elif phase == "transcribing":
+        desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded frozen"') + '<span class="status">0:07</span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
+        phone = cancel + '<span class="gap"></span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
+        hint = '<span class="spin"></span> ' + hint
+    elif phase == "unavailable":
+        desk = pill + arrow(not draft)
+        phone = arrow(not draft)
+    else:
+        desk = pill + mic + arrow(not draft)
+        phone = mic + arrow(not draft)
+    return (f'<div class="vlab">{label}<span>{note}</span></div>'
+            + vcomposer(draft, desk, hint, hint_danger=danger)
+            + vcomposer(draft, phone, hint, phone=True, hint_danger=danger, wrap=phase in ("listening", "transcribing")))
+
+voice_rows = "".join([
+    vrow("Listening · browser recognition", "words land in the field as they are recognized; the last phrase may still change", LIVE, "listening", "Listening… Stop to add text, or Send."),
+    vrow("Listening · server transcription", "local Whisper or a configured endpoint: the draft waits, text arrives after Stop or Send", "Keep the draft", "listening", "Listening… Stop to add text, or Send."),
+    vrow("Transcribing · server transcription only", "Cancel stays available; desktop waveform and timer freeze; phone hides them", "Keep the draft", "transcribing", "Transcribing…"),
+    vrow("Landed · every backend", "transcript appended to the draft, cursor at the end, nothing else appears", LIVE, "landed"),
+    vrow("Unavailable · this browser has no speech recognition", "mic hidden, typing unaffected; the docs name a server backend for this browser", "", "unavailable", "This browser has no speech recognition. Typing works."),
+    vrow("Failed · recognition or transcription error", "draft stays; nothing is sent", "Keep the draft", "failed", "Could not transcribe. Typing works.", danger=True),
+])
+voice_inner = (
+    '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Voice input states</h1>'
+    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:960px">One recording cluster at both widths: Cancel, waveform, timer, Stop and the send arrow. '
+    'Desktop keeps the cluster compact beside the controls with a crisp, bounded waveform instead of stretching it across the field; phone fills its single row. '
+    'Browser recognition shows words while you speak; server backends show the draft until the transcript lands. The field is read-only during voice input on every backend.</p></div>'
+    f'<div class="vgrid">{voice_rows}</div>'
+)
+board("VoiceStates", 1200, 1420, voice_inner)
+
 
 # =====================================================================
 # Decisions use the current conversation boards below; obsolete standalone forms are removed.
@@ -848,6 +906,7 @@ ROUTES = [
     ("Restart banner states", "RestartStates", None),
     ("First run", "FirstRun", None),
     ("Composer states, voice included", "ComposerStates", None),
+    ("Voice input states: desktop and phone", "VoiceStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),

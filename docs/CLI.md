@@ -676,6 +676,24 @@ impose no limit.
 Machine caps accept positive integers with no fixed ceiling of 80. Zero, negatives, fractions,
 booleans and nonnumeric values are rejected. Reset removes the override and restores 80.
 
+### Voice backend
+
+The same request path selects the transcription backend every composer uses:
+
+```sh
+alt machine set --voice browser --reason 'Recognize in the browser'   # the default
+alt machine set --voice local --reason 'Transcribe with the local speech service'
+alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
+alt machine set --unset-voice --reason 'Back to the default'
+```
+
+`--voice` accepts `browser`, `local` or an `http(s)` URL without credentials or a query string;
+`--voice-model` and `--voice-key-file` (a file, or `-` for stdin) accompany a URL only, so the key
+is never on a command line. `machine show` reports `voice` with an endpoint key shown as `set`; the
+key itself stays in the private settings and request files under the runtime home and never
+appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
+backend needs and where audio goes.
+
 The operator runs machine commands from their own terminal. Neither L2 nor L3 can change the
 machine cap. A nonempty reason is required. The CLI queues one durable daemon request;
 altd applies it on its next tick, without a PR, service restart or free task slot. Repeat inspection

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
@@ -168,6 +169,43 @@ def machine_settings() -> dict:
 
 def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
+
+
+# The capability seam for speech: the browser's own recognition needs nothing installed; the local
+# speech service and a transcription endpoint are the machine's explicit choices.
+VOICE_BACKENDS = ("browser", "local")
+VOICE_DEFAULT_MODEL = "whisper-1"
+
+
+def voice_setting() -> dict:
+    """The transcription backend: browser recognition (default), the local speech service, or one endpoint."""
+    value = machine_settings().get("voice", "browser")
+    if isinstance(value, dict):
+        return {"backend": "endpoint", "model": VOICE_DEFAULT_MODEL, **value}
+    return {"backend": value}
+
+
+def validate_voice(value) -> None:
+    if value is None or value in VOICE_BACKENDS:
+        return
+    if not isinstance(value, dict) or not value or set(value) - {"url", "model", "key"}:
+        raise ValueError("voice must be browser, local, or an endpoint with a URL")
+    url = value.get("url")
+    parts = urlsplit(url) if isinstance(url, str) else None
+    if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ValueError("the voice endpoint must be an http(s) URL")
+    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise ValueError("the voice endpoint URL carries no credentials, query or fragment; give the key separately")
+    for field in ("model", "key"):
+        if field in value and (not isinstance(value[field], str) or not value[field].strip()):
+            raise ValueError(f"the voice endpoint {field} must be nonempty text")
+
+
+def public_voice(value):
+    """The voice setting as records and readouts show it: an endpoint key is only ever 'set'."""
+    if isinstance(value, dict) and "key" in value:
+        return {**value, "key": "set"}
+    return value
 
 
 def validate_wip(value) -> None:

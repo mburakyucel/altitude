@@ -165,6 +165,11 @@ MediaRecorder while holding `AudioContext.resume()` pending: an output-device/re
 failure cannot strand their microphone fixture in `AudioContext.resume()`. They assert the
 listening phase before the recorded interval; the Stop control also exists during startup.
 The cancel, transcription, image send, navigation and denied states run at both viewports.
+Fixture services set the `local` voice backend so those journeys keep the upload path;
+`voice-recognition.pw.ts` overlays `GET /api/voice` with `browser` and installs a page-level fake
+`SpeechRecognition` it drives itself (Playwright's Chromium has no vendor recognition), walking
+words while listening, landed, Send at once, cancel, failed, denied and no-recognizer states at
+both viewports. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
 
 `walkthrough.ts` drives actions, asserts text/roles appearing and disappearing, and saves named
 screenshots. Route smoke checks real route discovery, content, assets, console/API failures and

@@ -614,7 +614,15 @@ export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
-/** Upload one browser-native audio blob; the server normalizes it for the existing local Whisper service. */
+const VoiceSchema = z.object({ backend: z.enum(["browser", "local", "endpoint"]) });
+export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
+
+/** Which backend this installation transcribes with; "browser" never uploads audio. */
+export async function readVoiceBackend(): Promise<VoiceBackend> {
+  return VoiceSchema.parse(await api("/api/voice")).backend;
+}
+
+/** Upload one browser-native audio blob for the server's local service or configured endpoint. */
 export async function transcribeVoice(audio: Blob, signal?: AbortSignal): Promise<string> {
   const result = VoiceTranscriptSchema.parse(
     await api("/api/transcribe", {

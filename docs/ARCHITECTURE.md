@@ -1350,15 +1350,30 @@ the source conversation. Recovery arriving from an earlier send remains a separa
 it is not appended to the captured voice Send. Image Retry retains the captured request context.
 This client operation lasts within the current document; it adds no streaming
 transcription service or server-side audio queue.
-The composer owns microphone
-permission, MediaRecorder state, a 595-second client stop below the server's 600-second
+The composer reads the installation's voice backend once per document from `GET /api/voice` and
+shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
+browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event) so
+the composer runs one capture state machine for every backend: recognized words appear after the
+typed draft while listening, the last phrase may change until final, the recognizer restarts when
+the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
+and Stop waits at most three seconds for the recognizer's last phrase before landing the words; no
+upload follows. A recognizer refusal is the denied state; any other recognizer error is the failed
+state and keeps the words already shown. Cancel aborts the recognizer at once. The microphone
+stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
+endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
+server whose backend changed shows the server's words and reads the backend again. Words are never
+simulated. The composer owns microphone
+permission, capture state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
 prefix, separated from dictated text by one space when it does not already end in whitespace. Its
 send control is an arrow in an accent circle in every state, with no visible text and an accessible
 name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60% with a progress ring that settles in place on acknowledgement, busy queueing, listening
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
-phone and desktop widths in `web/e2e/conversation.pw.ts`. On phone text, mic and send share one row
+phone and desktop widths in `web/e2e/conversation.pw.ts` (upload backends) and
+`web/e2e/voice-recognition.pw.ts` (browser recognition). While listening, desktop keeps Cancel, a
+168px waveform drawn at device pixel ratio, the timer, Stop and the arrow together at the right of
+the control row; the phone waveform fills its row. On phone text, mic and send share one row
 with 44px controls in a 70px single-line dock. Drafts grow from 44px to the lesser of 120px and
 25% of the usable visual viewport (at least 44px), then scroll internally. Routine phone hints
 consume no row; relevant voice, permission and send errors remain visible. Desktop retains its
@@ -1582,17 +1597,28 @@ heads-ups from historical automatic calls that inherited `by: "l3"`; history is 
 nor classified by text. The [L3 persona](../personas/l3.md) owns selection guidance.
 There is no project inbox file and no `fyis` in the digest or overview.
 
-`POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
-browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),
-limits the upload to 16 MiB, and asks `ffmpeg` for at most 601 seconds of 16 kHz mono PCM so a decoded
-clip over the 600-second product limit is rejected without unbounded output. Conversion lives in a
-unique temporary directory. The adapter sends the WAV path through `/tmp/whisper-server.sock`,
-falling back to the existing `127.0.0.1:8890` Whisper bridge, then removes the entire directory on
-success or failure. It neither persists raw audio nor owns or starts a speech model.
+Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
+settings file: `browser` (the default), `local`, or an endpoint object with `url`, optional `model`
+and optional `key`. `GET /api/voice` reports only the backend name; `alt machine set --voice`
+requests a change through the same durable request that carries `wip`, and the CLI, `machine show`
+and the event log show a key only as `set`.
 
-Unreadable media, timeouts, and an unavailable Whisper service become concise client errors while
-converter paths and diagnostics stay in the private server log. The composer announces recording
-and transcribing, restores the editable field after cancel or error, and leaves the microphone as
+`POST /api/transcribe` is a bounded adapter for the two upload backends. It accepts the
+browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers)
+and limits the upload to 16 MiB. With `local` it asks `ffmpeg` for at most 601 seconds of 16 kHz
+mono PCM so a decoded clip over the 600-second product limit is rejected without unbounded output,
+converts in a unique temporary directory, sends the WAV path through `/tmp/whisper-server.sock`
+with the existing `127.0.0.1:8890` Whisper bridge as fallback, then removes the entire directory on
+success or failure. With an endpoint it posts the recording unchanged as an OpenAI-compatible
+`audio/transcriptions` multipart request (bearer key when configured, `whisper-1` unless a model is
+named) and returns the endpoint's `text`; a redirect is refused so the key never follows it, and
+the URL carries no credentials or query string. With `browser` it refuses uploads so a page that
+read the backend earlier reads it again. It neither persists raw audio nor owns or starts a speech model.
+
+Unreadable media, timeouts, a refused or unreachable endpoint and an unavailable Whisper service
+become concise client errors while converter paths, endpoint status codes and diagnostics stay in the
+private server log; the key never appears in either. The composer announces recording and
+transcribing, restores the editable field after cancel or error, and leaves the microphone as
 progressive enhancement. Phone access uses an explicitly configured private HTTPS address whose
 certificate covers that address. Safari can use the microphone after the CA is trusted on the phone;
 typing remains available without speech services.

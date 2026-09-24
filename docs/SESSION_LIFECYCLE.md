@@ -643,8 +643,10 @@ the receipt before resuming a blocked owner, who completes review and current-ca
 A follow-up restores the original review requirement for its own scoped release; an explicit renewed
 hold requires approval of that renewed requirement. Failed reconciliation follows L3's recovery path.
 
-Voice capture does not add a lifecycle state. **Stop** transcribes the bounded recording into
-the editable draft; the send arrow transcribes, appends and sends at once. Both sending paths use
+Voice capture does not add a lifecycle state. With the default browser backend, recognized words
+appear in the read-only draft while listening and **Stop** lands them without a transcription step;
+with the local speech service or a configured endpoint, **Stop** transcribes the bounded recording
+into the editable draft. The send arrow lands or transcribes, appends and sends at once. Both sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.

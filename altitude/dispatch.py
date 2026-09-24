@@ -387,6 +387,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
+MACHINE_SETTINGS = ("wip", "voice")
+
+
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
     """2026-09-07 WIP incident: persist an operational change without needing a free task slot."""
     reason = str(reason or "").strip()
@@ -394,11 +397,11 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
         authority = "the operator" if project is None else "L3 or the operator"
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
-    if setting not in (("wip",) if project is None else ("routing", *config.EFFORT_SETTINGS)):
+    if setting not in (MACHINE_SETTINGS if project is None else ("routing", *config.EFFORT_SETTINGS)):
         raise T.TransitionError(f"unknown {scope} setting")
-    if setting == "wip":
+    if setting in ("wip", "voice"):
         try:
-            config.validate_wip(value)
+            (config.validate_wip if setting == "wip" else config.validate_voice)(value)
         except ValueError as exc:
             raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
@@ -423,7 +426,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
 
 
 def run_settings(project: str | None = None) -> dict:
-    settings = ("wip",) if project is None else ("routing", *config.EFFORT_SETTINGS)
+    settings = MACHINE_SETTINGS if project is None else ("routing", *config.EFFORT_SETTINGS)
     return {setting: _run_setting(project, setting) for setting in settings}
 
 
@@ -462,7 +465,7 @@ def _run_setting(project: str | None, setting: str) -> dict:
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
-                     "actor": request["actor"], "reason": request["reason"], setting: request[setting],
+                     "actor": request["actor"], "reason": request["reason"], setting: config.public_voice(request[setting]),
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})

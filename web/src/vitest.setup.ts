@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
+import { presetVoiceBackend } from "./components/voiceBackend";
 
 /** jsdom has no EventSource: the shell's change stream stays silent unless a test drives its own. */
 class SilentEventSource extends EventTarget {
@@ -15,6 +16,8 @@ class SilentEventSource extends EventTarget {
 
 beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);
+  // Composers read the installation's voice backend once; tests name it instead (upload path by default).
+  presetVoiceBackend("local");
 });
 
 afterEach(() => {

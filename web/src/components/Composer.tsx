@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { ApiError, imageSendRefused, transcribeVoice } from "../data/api";
+import type { VoiceBackend } from "../data/api";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
+import { RecognitionCapture, recognitionAvailable } from "./recognition";
+import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -10,6 +13,9 @@ import type { ImageScope, ImageSubmission } from "./ImageDraft";
  * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
  * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
+ * The installation's voice backend decides the capture: browser recognition shows words while
+ * listening and never uploads; the local service and a configured endpoint record and upload on
+ * Stop or Send. Both run the same recorder-shaped state machine.
  */
 
 /** The server decodes at most ten minutes; five seconds under it absorbs timer delay and container padding. */
@@ -21,6 +27,7 @@ const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
+type Capture = MediaRecorder | RecognitionCapture;
 type SendFailure = "refused" | "unconfirmed" | "transcription" | null;
 type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
@@ -115,13 +122,18 @@ export function combineDraft(draft: string, transcript: string): string {
   return `${draft}${/\s$/.test(draft) ? "" : " "}${spoken}`;
 }
 
-/** Why voice is unavailable: "insecure" (the hint says so), "unsupported" (the mic simply hides), or null. */
-export function voiceUnavailable(): "insecure" | "unsupported" | null {
+/**
+ * Why voice is unavailable: "insecure" (the hint says so), "unrecognized" (the browser backend has
+ * no speech recognition; the hint says so), "unsupported" (the mic simply hides), "pending" while the
+ * backend is still being read (the mic hides), or null.
+ */
+export function voiceUnavailable(backend: VoiceBackend | null): "insecure" | "unrecognized" | "unsupported" | "pending" | null {
   if (typeof window === "undefined" || typeof navigator === "undefined") return "unsupported";
   if (window.isSecureContext === false) return "insecure";
-  if (typeof MediaRecorder === "undefined" || typeof navigator.mediaDevices?.getUserMedia !== "function") {
-    return "unsupported";
-  }
+  if (backend === null) return "pending";
+  if (typeof navigator.mediaDevices?.getUserMedia !== "function") return "unsupported";
+  if (backend === "browser") return recognitionAvailable() ? null : "unrecognized";
+  if (typeof MediaRecorder === "undefined") return "unsupported";
   return null;
 }
 
@@ -186,9 +198,10 @@ function CloseIcon() {
 }
 
 /**
- * The live waveform while listening: the recent loudness as bars, drawn from an AnalyserNode. It
- * freezes (the loop stops, the last frame stays) while transcribing. Where the page has no audio
- * graph (a test runtime), the canvas simply stays blank.
+ * The live waveform while listening: the recent loudness as bars, drawn from an AnalyserNode into a
+ * backing store sized from the canvas's CSS box at the device pixel ratio, so it is crisp at every
+ * width. It freezes (the loop stops, the last frame stays) while transcribing. Where the page has no
+ * audio graph (a test runtime), the canvas simply stays blank.
  */
 function useWaveform(stream: MediaStream | null, running: boolean) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -211,6 +224,14 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
     const node = canvas.current;
     const draw = () => {
       if (!analyser || !node) return;
+      const box = node.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.round(box.width * scale));
+      const height = Math.max(1, Math.round(box.height * scale));
+      if (node.width !== width || node.height !== height) {
+        node.width = width;
+        node.height = height;
+      }
       analyser.getByteTimeDomainData(data);
       let sum = 0;
       for (const sample of data) {
@@ -221,13 +242,11 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
       levels.current = [...levels.current.slice(1), level];
       const ctx = node.getContext("2d");
       if (ctx) {
-        const width = node.width;
-        const height = node.height;
         ctx.clearRect(0, 0, width, height);
         ctx.fillStyle = getComputedStyle(node).color;
         const gap = width / WAVE_BARS;
         levels.current.forEach((value, index) => {
-          const bar = Math.max(3, value * height);
+          const bar = Math.max(3 * scale, value * height);
           ctx.fillRect(index * gap + gap * 0.25, (height - bar) / 2, gap * 0.5, bar);
         });
       }
@@ -273,7 +292,7 @@ export default function Composer({
   const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string; send: ComposerProps["onSubmit"]; preserveDraft: boolean } | null>(null);
   const deferredRecovery = useRef<SubmittedText | null>(null);
   const [refusalReason, setRefusalReason] = useState("");
-  const recorder = useRef<MediaRecorder | null>(null);
+  const recorder = useRef<Capture | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
   const stopRequested = useRef(false);
@@ -288,7 +307,9 @@ export default function Composer({
   const [capturePhase, setPhase] = useState<Phase>("idle");
   const [voiceSend, setVoiceSend] = useState(() => voiceSends.get(conversation) ?? null);
   const phase = voiceSend ? "transcribing" : capturePhase;
-  const displayedDraft = voiceSend?.text ?? value;
+  /** Browser recognition: the draft plus the words recognized so far, shown while listening. */
+  const [live, setLive] = useState<string | null>(null);
+  const displayedDraft = voiceSend?.text ?? live ?? value;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
@@ -297,7 +318,8 @@ export default function Composer({
   const [recoveryUnavailable, setRecoveryUnavailable] = useState(false);
   const failure = useRef(sendFailure);
   failure.current = sendFailure;
-  const unavailable = voiceUnavailable();
+  const backend = useVoiceBackend();
+  const unavailable = voiceUnavailable(backend);
   const canvas = useWaveform(stream, phase === "listening");
 
   useLayoutEffect(() => {
@@ -515,7 +537,7 @@ export default function Composer({
 
   // ---- voice: listening, transcribing, landed; every failure is one hint and an unchanged draft ----
   const finish = useCallback(
-    async (finished: MediaRecorder, used: MediaStream | null) => {
+    async (finished: Capture, used: MediaStream | null) => {
       if (recorder.current !== finished) return;
       recorder.current = null;
       stopRequested.current = false;
@@ -526,9 +548,39 @@ export default function Composer({
       const parts = chunks.current;
       chunks.current = [];
       const sending = sendAfterTranscribing.current;
+      if (mounted.current) setLive(null);
       if (!mounted.current && !sending) return;
       if (cancelled.current || sending?.controller.signal.aborted) {
         setPhase("idle");
+        focusField();
+        return;
+      }
+      if (finished instanceof RecognitionCapture) {
+        // Browser recognition: the words are already here; nothing is uploaded. Words shown before a
+        // recognizer error still land in the draft; only a refusal discards them.
+        const text = finished.failure === "denied" ? "" : finished.text;
+        if (sending) {
+          if (finished.failure) {
+            sending.text = combineDraft(sending.text, text);
+            endVoiceSend(sending, "transcription");
+            return;
+          }
+          if (!text.trim()) { endVoiceSend(sending); return; }
+          voiceSends.delete(conversation);
+          const view = recoveryViews.get(conversation);
+          view?.voice(null);
+          void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
+          return;
+        }
+        setPhase("idle");
+        if (finished.failure === "denied") setDenied(true);
+        else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
+        if (text.trim()) {
+          const next = combineDraft(draft.current, text);
+          editDraft(next);
+          focusField(next.length);
+          return;
+        }
         focusField();
         return;
       }
@@ -561,11 +613,13 @@ export default function Composer({
         editDraft(next);
         setPhase("idle");
         focusField(next.length);
-      } catch {
+      } catch (error) {
+        // 409: the installation moved to browser recognition since this page read its backend.
+        if (error instanceof ApiError && error.status === 409) refreshVoiceBackend();
         if (sending) { endVoiceSend(sending, "transcription"); return; }
         if (!mounted.current || cancelled.current || abort.current !== request) return;
         setPhase("idle");
-        setVoiceFailure("Could not transcribe. Typing works.");
+        setVoiceFailure(error instanceof ApiError && error.status === 409 ? error.message : "Could not transcribe. Typing works.");
         focusField();
       } finally {
         clearTimeout(timeout);
@@ -629,30 +683,41 @@ export default function Composer({
     audioSession("play-and-record");
     let opened: MediaStream | null = null;
     try {
+      // Every backend opens the microphone: the waveform draws from it, and the browser backend's
+      // recognizer needs the same permission.
       opened = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!mounted.current || opening.signal.aborted) {
         opened.getTracks().forEach((track) => track.stop());
         return;
       }
-      const mimeType = recordingMimeType();
-      const active = new MediaRecorder(opened, mimeType ? { mimeType } : undefined);
       const used = opened;
+      let active: Capture;
+      if (backend === "browser") {
+        const recognition = new RecognitionCapture(opened);
+        recognition.onupdate = (text) => { if (recorder.current === recognition && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+        recognition.onstop = () => void finish(recognition, used);
+        active = recognition;
+      } else {
+        const mimeType = recordingMimeType();
+        const recording = new MediaRecorder(opened, mimeType ? { mimeType } : undefined);
+        recording.ondataavailable = (event) => {
+          if (recorder.current === recording && event.data.size) chunks.current.push(event.data);
+        };
+        recording.onstop = () => void finish(recording, used);
+        recording.onerror = () => {
+          if (recorder.current !== recording) return;
+          cancelled.current = false;
+          chunks.current = [];
+          try {
+            if (recording.state !== "inactive") recording.stop();
+            else void finish(recording, used);
+          } catch {
+            void finish(recording, used);
+          }
+        };
+        active = recording;
+      }
       recorder.current = active;
-      active.ondataavailable = (event) => {
-        if (recorder.current === active && event.data.size) chunks.current.push(event.data);
-      };
-      active.onstop = () => void finish(active, used);
-      active.onerror = () => {
-        if (recorder.current !== active) return;
-        cancelled.current = false;
-        chunks.current = [];
-        try {
-          if (active.state !== "inactive") active.stop();
-          else void finish(active, used);
-        } catch {
-          void finish(active, used);
-        }
-      };
       active.start();
       startedAt.current = Date.now();
       setStream(opened);
@@ -674,13 +739,14 @@ export default function Composer({
       else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
-  }, [denied, disabled, finish, focusField, phase, releaseStream, unavailable]);
+  }, [backend, denied, disabled, finish, focusField, phase, releaseStream, unavailable]);
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback(() => {
     const sending = voiceSends.get(conversation);
     if (sending) { sending.cancel(); return; }
     cancelled.current = true;
+    setLive(null);
     if (capTimer.current) clearTimeout(capTimer.current);
     capTimer.current = null;
     abort.current?.abort();
@@ -689,7 +755,9 @@ export default function Composer({
     if (active) {
       try {
         if (active.state !== "inactive") {
-          active.stop();
+          // Recognition discards at once; a recorder ends through its stop event.
+          if (active instanceof RecognitionCapture) active.cancel();
+          else active.stop();
           return;
         }
       } catch {
@@ -804,6 +872,8 @@ export default function Composer({
     hintText = "Microphone blocked in the browser. Typing works.";
   } else if (unavailable === "insecure") {
     hintText = "Voice needs HTTPS";
+  } else if (unavailable === "unrecognized") {
+    hintText = "This browser has no speech recognition. Typing works.";
   } else {
     routineHint = true;
     if (busy) {
@@ -871,7 +941,7 @@ export default function Composer({
               <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={cancel}>
                 <CloseIcon />
               </button>
-              <canvas ref={canvas} className="composer-wave" width={140} height={24} aria-hidden />
+              <canvas ref={canvas} className="composer-wave" aria-hidden />
               <span
                 className="composer-timer"
                 data-danger={listening && remaining <= LAST_MINUTE_MS ? "" : undefined}

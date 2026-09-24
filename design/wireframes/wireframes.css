@@ -218,6 +218,16 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .statebox .wave{min-width:0;overflow:hidden}.statebox .status{flex-shrink:0}
 .statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
+/* voice states sheet: one row per state, desktop composer beside the phone dock */
+.vgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
+.vgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}
+.vgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
+.vdesk .composer{max-width:none;box-shadow:none}.vdesk .hint{text-align:left;padding:6px 0 0 18px}
+.wave.bounded{flex:none;width:168px;padding:0}
+.wave.frozen i{background:var(--text-muted)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);display:inline-block;flex:none}
+.compact .composer.voice{flex-wrap:wrap}.compact .composer.voice .draft,.compact .composer.voice .ph2{flex-basis:100%;min-height:24px;padding-bottom:0}
+.compact .composer.voice .crow{display:flex;width:100%;align-items:center;gap:2px;margin-top:0}.compact .composer.voice .gap{flex:1}.compact .composer.voice .crow>span[style]{display:none}
 .route-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 28px 28px}
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
 .route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}

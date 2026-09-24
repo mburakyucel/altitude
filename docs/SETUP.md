@@ -222,6 +222,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | GitHub `owner/repository` that receives Altitude's own sanitized incident issues. Unset by default: incidents stay on this machine. Set it in altd's environment only for a repository you manage; see [incident publication](OPERATIONS.md#incident-publication). |
+| `alt machine set --voice` | Transcription backend: `browser` (default, no setup), `local` (`ffmpeg` and the local speech service) or the URL of an OpenAI-compatible endpoint with an optional model and key. See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,
@@ -246,9 +247,10 @@ Remote access is explicit: configure a controlled private interface/address, mat
 host and firewall/network access. There is no application login layer; HTTPS authenticates the
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
-for update/recovery and source deployments. Voice needs `ffmpeg` and a compatible local speech
-service; typing remains available without them. Installation downloads no models and makes no
-paid provider calls. User conversations and tasks use the account's normal allowance/charges.
+for update/recovery and source deployments. Voice input works out of the box through the browser's
+own speech recognition; `ffmpeg` and a local speech service are needed only for the `local` backend
+(see [voice input](OPERATIONS.md#voice-input)). Typing remains available without any of them.
+Installation downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work
 
