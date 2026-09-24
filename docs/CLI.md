@@ -772,7 +772,7 @@ alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
-alt task done <slug> --digest <text>
+alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
 
@@ -1107,7 +1107,13 @@ refused. Finish through the verified report path when all agreed work is done; a
 does not require a new task or complete the current one. `alt task done` verifies a reported
 delivery whose recorded verdict is not ok against GitHub again before completing, so a merged
 delivery whose report only abbreviated the merge SHA completes without resuming its owner; the
-refusal names the remaining problems.
+refusal names the remaining problems. A review finding the owner leaves `open` on an unblocked report
+is one such problem: it belongs to coordination, and L3 completes the task once the finding is tracked
+elsewhere with `alt task done <slug> --digest '…' --findings-tracked '#461'`. The reference must
+name a real tracking record such as the issue coordination filed; the done event and archived digest
+list every open finding with that reference, so nothing is dropped silently. The flag accepts only
+that one problem on a delivery whose merges and heads verify, refuses a report without open findings,
+and is not available to the owner.
 
 ### Task design previews
 

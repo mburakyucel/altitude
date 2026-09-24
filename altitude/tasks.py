@@ -1237,7 +1237,12 @@ def _reverify(project: str, slug: str) -> dict | None:
 
 def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_state: str | None = None, expected_attempt: int | None = None,
-         expected_owner: dict | None = None) -> dict:
+         expected_owner: dict | None = None, findings_tracked: str = "") -> dict:
+    """Complete a reported task. `findings_tracked` names where coordination tracks the report's open review
+    findings (#462): a verified merged delivery then completes with those findings recorded in the done event
+    and digest instead of staying stuck behind the verifier's open-finding problem."""
+    from . import verify
+    findings_tracked = str(findings_tracked or "").strip()
     fresh = _reverify(project, slug) if actor != "l2" else None
     with S.project_lock(project):
         task = S.load_task(project, slug)
@@ -1247,6 +1252,8 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
         if actor == "l2":  # archived by the server once this worker has exited
+            if findings_tracked:
+                raise TransitionError(f"{slug}: coordination records where open review findings are tracked")
             if task.get("state") != "running":
                 raise TransitionError(f"{slug}: L2 can complete only its running task")
             _require_no_code_change(task)
@@ -1267,17 +1274,34 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                 or (task.get("report_after") and verified.get("owner") != report_owner(task))
                 or any(row.get("wake", True) for row in pending(project, slug))):
             raise TransitionError(f"{slug}: follow-up work requires a current report before completion")
+        d = S.task_dir(project, slug)
+        tracked = _tracked_findings(slug, S.read_json(d / "report.json"), findings_tracked)
         if delivery and (not delivery.get("number") or verified.get("delivery") != delivery
-                         or verified.get("verdict") != "ok"):
+                         or (verified.get("verdict") != "ok"
+                             and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
             raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
                                              *(verified.get("problems") or [])]))
-        d = S.task_dir(project, slug)
-        task = _move(project, task, "done", actor)
+        task = _move(project, task, "done", actor, **({"findings_tracked": tracked} if tracked else {}))
+        if tracked:
+            digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
+                                *(f"- {finding}" for finding in tracked["findings"])]).lstrip()
         if digest:
             S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
         _archive(project, slug)
         S.regen_state_md(project)
         return task
+
+
+def _tracked_findings(slug: str, report: dict | None, reference: str) -> dict | None:
+    """The coordinator's tracking reference names every open finding on the report, or nothing."""
+    from . import verify
+    if not reference:
+        return None
+    findings = [str(finding.get("summary") or finding.get("reason") or "untitled finding")
+                for finding in verify.open_findings(report)]
+    if not findings:
+        raise TransitionError(f"{slug}: the report has no open review findings to track")
+    return {"reference": reference, "findings": findings}
 
 
 def finalize_completion(project: str, slug: str, actor: str = "altd", *,
