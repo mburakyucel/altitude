@@ -41,7 +41,7 @@ test("compact chat keeps bottom and older reading anchors through keyboard, deta
   await walk.state("01-reading", { visible: [nav, field, page.getByRole("button", { name: "More actions" })], hidden: [] });
   const readingHeight = await scroll.evaluate((el) => el.clientHeight);
   const heights: Record<string, number> = { reading: readingHeight };
-  if (phone) expect(readingHeight).toBeGreaterThanOrEqual(630);
+  if (phone) expect(readingHeight).toBeGreaterThanOrEqual(586);
 
   await field.fill("Retain this draft and selection.");
   await field.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(7, 11));
@@ -55,7 +55,7 @@ test("compact chat keeps bottom and older reading anchors through keyboard, deta
   await walk.state("02-keyboard-simulated", { visible: [field], hidden: phone ? [nav] : [] });
   heights.keyboard = await scroll.evaluate((el) => el.clientHeight);
   if (phone) {
-    expect(await scroll.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(380);
+    expect(await scroll.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(336);
     await expect(page.locator(".shell")).toHaveAttribute("data-keyboard", "");
   } else await expect(nav).toBeVisible();
   await expect.poll(bottomGap).toBeLessThanOrEqual(1);

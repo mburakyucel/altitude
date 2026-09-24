@@ -1981,8 +1981,9 @@
   color: var(--accent-text);
 }
 
-/* ---- The shared composer (§3.6): phone text and controls share one row; desktop keeps its
- * engine pill and shortcut hint. Voice and actionable failures explain their current state. ---- */
+/* ---- The shared composer (§3.6): the field spans the box and the controls sit in one row
+ * beneath it on both widths; desktop keeps its engine pill and shortcut hint. Voice and
+ * actionable failures explain their current state. ---- */
 .composer {
   display: flex;
   width: 100%;
@@ -2146,26 +2147,17 @@
   padding: 6px 0;
 }
 .shell[data-phone] .composer-box {
-  min-height: 54px;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 4px 0;
   padding: 4px;
   border-radius: 22px;
 }
 .shell[data-phone] .composer-field {
-  min-width: 0;
   min-height: 44px;
   max-height: max(44px, min(120px, calc(var(--viewport-height, 100dvh) * .25)));
-  flex: 1;
-  padding: 10px 0 10px 4px;
+  padding: 10px 8px;
   font-size: 16px;
   overflow-y: auto;
 }
 .shell[data-phone] .composer-row {
-  flex: none;
-  gap: 0;
   margin-top: 0;
 }
 .shell[data-phone] .composer-icon {
@@ -2173,16 +2165,10 @@
   height: 44px;
 }
 .shell[data-phone] .composer-pill,
-.shell[data-phone] .composer-spacer,
 .shell[data-phone] .composer-hint[data-routine],
 .shell[data-phone] .composer-voice[data-frozen] .composer-wave,
 .shell[data-phone] .composer-voice[data-frozen] .composer-timer {
   display: none;
-}
-.shell[data-phone] .composer[data-phase="starting"] .composer-row,
-.shell[data-phone] .composer[data-phase="listening"] .composer-row,
-.shell[data-phone] .composer[data-phase="transcribing"] .composer-row {
-  width: 100%;
 }
 .shell[data-phone] .composer-voice {
   flex: 1;
@@ -2212,7 +2198,6 @@
   margin: 0 0 8px;
 }
 .shell[data-phone] .image-draft {
-  flex: 0 0 100%;
   margin-bottom: 0;
 }
 .image-draft-item {
