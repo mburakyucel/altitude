@@ -228,6 +228,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     return () => { mounted.current = false; setPending(null); };
   }, [setPending]);
   const messages = task.messages ?? [];
+  // The stored row carries the submission id: once it renders, it has settled the pending bubble in place.
+  useEffect(() => {
+    if (pending && messages.some((message) => message.id === pending.id)) setPending(null);
+  }, [messages, pending, setPending]);
   const removal = useMutation({
     mutationFn: (id: string) => removeL2Message(project, task.slug, id),
     onSuccess: async (_result, id) => {
@@ -303,7 +307,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         );
         for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
         if (images && submission.current?.request_id === images.request_id) submission.current = null;
-        if (mounted.current) setPending((current) => current === preview ? null : current);
       } catch (error) {
         if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
         if (mounted.current && (!images || imageSendRefused(error))) {
@@ -369,6 +372,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined}><MessageImages project={project} images={message.images} /></Reply>);
     }
   });
+  if (pending && !messages.some((message) => message.id === pending.id)) {
+    // The stored row keeps this key, so acceptance settles the same bubble in place (SPEC.md §3.6 Sending).
+    const day = dayLabel(Date.now());
+    if (day !== lastDay) rows.push(<DayDivider key={`day-${day}`} label={day} />);
+    rows.push(<Bubble key={pending.id} text={pending.text} at={new Date().toISOString()} pending receipt="Sending…" images={<PendingImages images={pending.images} />} />);
+  }
   return (
     <section className="convo" aria-label="Task conversation">
       {task.state === "queued" && task.planned_wait ? <p className="conversation-notice" role="status">{facts.waiting}</p> : null}
@@ -389,7 +398,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
-          {pending && !messages.some((message) => message.id === pending.id) ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
           {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
             group.questions.forEach((q) => {
               const id = `${q.id}:${q.revision}`;

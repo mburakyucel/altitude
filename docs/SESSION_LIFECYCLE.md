@@ -424,7 +424,7 @@ The old report file remains readable until replacement, with its historical copy
 Archived/done/rejected tasks remain read-only; archived restoration is not part of this lifecycle.
 
 On phone and desktop the reported composer uses the ordinary empty, draft, sending, listening,
-transcribing, denied and error states. A receipt clears the submitted draft and pending bubble;
+transcribing, denied and error states. A receipt clears the submitted draft and settles the pending bubble in place;
 capacity waits retain the composer. Refused sends restore recoverable text, while an unconfirmed
 response keeps the recovery hint and never resends automatically. Merge-held status persists after
 send and reload. `reported-continuation.pw.ts` walks continuation and refusal; the shared composer

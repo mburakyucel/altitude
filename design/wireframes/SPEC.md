@@ -373,13 +373,13 @@ a newline while editing, Ctrl/⌘+M starts the microphone or stops to the draft,
 During voice input, keyboard, paste and cut cannot mutate the text; selection and copying remain available.
 `web/e2e/conversation.pw.ts` and `project-isolation.pw.ts` walk these states, delayed success,
 failure/cancel, Stop versus Send, independent project drafts and navigation during transcription
-at both phone and desktop widths.
+at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pending and settled bubble.
 
 | State | What is on screen | What changes |
 | --- | --- | --- |
 | Idle | placeholder, mic, arrow disabled | typing enables the arrow |
 | Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
-| Sending | the bubble shows at 60% until the server accepts it | accepted: full opacity; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
+| Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); the task page's receipt line reads "Sending…" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |

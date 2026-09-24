@@ -628,6 +628,38 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("status", { name: "L3 is answering" })).toBeNull();
   });
 
+  it("appends the bubble at once with a sending cue and settles the same bubble in place when the stream accepts it", async () => {
+    const reply = liveReply();
+    const stored = [...history];
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: () => reply.response });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Hold the line");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const row = within(region).getByText("Hold the line").closest<HTMLElement>(".msg-row")!;
+    expect(row).toHaveAttribute("data-pending");
+    expect(within(row).getByRole("status", { name: "Sending" })).toBeInTheDocument();
+    expect(region.querySelectorAll("[data-pending]")).toHaveLength(1);
+
+    await act(async () => { reply.frame({ turn: { id: "c9", started_at: ago(0), trigger: "chat" } }); });
+    await waitFor(() => expect(row).not.toHaveAttribute("data-pending"));
+    expect(within(region).getByText("Hold the line").closest<HTMLElement>(".msg-row")).toBe(row);
+    expect(within(row).queryByRole("status", { name: "Sending" })).toBeNull();
+    expect(within(region).getByRole("status", { name: "L3 is answering" })).toBeInTheDocument();
+
+    await act(async () => { reply.frame({ t: "Held." }); reply.frame({ done: { turn_id: "c9" } }); reply.close(); });
+    await within(region).findByText("Held.");
+    stored.push(
+      { at: ago(0), role: "user", text: "Hold the line", trigger: "chat", turn_id: "c9" },
+      { at: ago(0), role: "assistant", text: "Held.", trigger: "chat", engine: "alpha", turn_id: "c9" },
+    );
+    await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+    await waitFor(() => expect(region.querySelector("[data-local]")).toBeNull());
+    expect(within(region).getAllByText("Hold the line")).toHaveLength(1);
+    expect(within(region).getAllByText("Held.")).toHaveLength(1);
+    expect(region.querySelector("[data-pending]")).toBeNull();
+  });
+
   it("refused: the bubble leaves, the draft returns, and the hint reads Not sent. Retry", async () => {
     mockFetch({ post: () => jsonResponse({ error: "no L3 for this project" }, 409) });
     const { user } = renderApp({ route: "/projects/altitude" });
@@ -638,6 +670,7 @@ describe("Conversation", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Retry");
     expect(field).toHaveValue("Ship it");
     expect([...region.querySelectorAll(".bubble")].map((el) => el.textContent)).not.toContain("Ship it");
+    expect(region.querySelector("[data-pending]")).toBeNull();
   });
 
   it.each(["", "My next draft"])("keeps an accepted message sent after stream failure with draft '%s' and failed refresh", async (draft) => {

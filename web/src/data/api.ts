@@ -878,20 +878,6 @@ export function taskAction(input: TaskActionInput): Promise<unknown> {
   return post("/api/task/action", input);
 }
 
-export function useL2Message(project: string) {
-  const queryClient = useQueryClient();
-  return useOptimisticMutation<L2MessageInput, unknown, ProjectView>({
-    mutationFn: async (input) => {
-      const out = await post("/api/l2/message", input);
-      void queryClient.invalidateQueries({ queryKey: ["task", input.project, input.slug] });
-      return out;
-    },
-    queryKey: ["project", project],
-    update: () => undefined,
-    failureMessage: "Couldn't send the message to the L2.",
-  });
-}
-
 export function useL3Reset(project: string) {
   const queryClient = useQueryClient();
   return useOptimisticMutation<void, unknown, ChatView>({

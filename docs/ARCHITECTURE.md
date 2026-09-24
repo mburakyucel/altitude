@@ -1270,7 +1270,7 @@ decoded-audio limit, transcription, cancellation, and focus. A landed transcript
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
 prefix, separated from dictated text by one space when it does not already end in whitespace. Its
 send control is an arrow in an accent circle in every state, with no visible text and an accessible
-name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60%, busy queueing, listening
+name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60% with a progress ring that settles in place on acknowledgement, busy queueing, listening
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
 phone and desktop widths in `web/e2e/conversation.pw.ts`. On phone text, mic and send share one row
 with 44px controls in a 70px single-line dock. Drafts grow from 44px to the lesser of 120px and
