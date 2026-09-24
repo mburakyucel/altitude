@@ -1064,10 +1064,10 @@ appearing and disappearing, and saves named screenshots on passing and failing w
 Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
 workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
-GitHub artifact uploads, duplicate raw results and caches are excluded. Owners verify retrieval
-after container removal, preserve needed evidence in the task through review, and clean up
-unneeded completed exports after three days or when approaching the existing disk budget.
-Unavailable local evidence blocks delivery even when GitHub checks pass. See the
+GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
+with its console log is sufficient delivery evidence; owners retrieve a failed report only for
+diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
+when approaching the existing disk budget. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
