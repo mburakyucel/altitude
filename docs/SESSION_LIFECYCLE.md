@@ -1042,7 +1042,11 @@ injected into the running turn. The finishing turn drains the queue itself, one 
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
 and other conversations separate. Each waiting chat row remains individually removable until claim;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
-a turn in flight, so it neither holds the quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
+a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
+while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
+turn every option refuses before any provider output returns to the front of the queue with its id and is
+delivered once L3 is available; a turn with provider output is never replayed, and a refused operator
+message keeps its Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,

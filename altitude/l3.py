@@ -853,6 +853,11 @@ def deliver_queued(project: str) -> dict | None:
                 result = {"completed": False, "error": str(exc)}
             if trigger == "ci-recheck":
                 queue_ci_recheck(project, slug)
+            elif trigger != "chat" and not selected[0].get("images") and (result or {}).get("undelivered"):
+                # Every option refused before any provider output: the notification keeps its place and id,
+                # and the next drain after L3 becomes available delivers it once.
+                with S.project_lock(project):
+                    _write_queue(path, selected + [row for row in _queue_rows(path) if row.get("id") not in selected_ids])
             if selected[0].get("images"):
                 _finish_image_queue(project)
             return result
@@ -996,14 +1001,15 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
                          trigger=trigger, engine=choice["engine"], turn_id=turn_id, **_slug_meta(slug))
-                return res
+                return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
         why = f"engine hold: {choice['why']}"
         chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
         return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                 "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
-                "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id}
+                "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id,
+                "undelivered": True}
 
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=()):
