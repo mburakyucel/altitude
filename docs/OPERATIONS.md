@@ -226,9 +226,11 @@ only as `set`. **Settings → Voice input** edits the same setting: browser/loca
 and a custom endpoint uses **Save endpoint**. The stored key is never returned to the page; it is
 retained only for an unchanged URL. **Replace** with a blank field removes it. Back discards unsaved
 endpoint edits. Settings also shows read-only connection details.
+Use HTTPS when entering an endpoint key from another device: the browser sends that key to
+Altitude in the save request, and an HTTP connection does not encrypt it.
 
-A Settings save updates the next capture in that browser document. Other documents and CLI changes
-are picked up on reload or after a stale upload is refused. Recordings identify their selected backend
+A Settings read or save updates the next capture in that browser document. Other documents and CLI changes
+are picked up when opening Settings, on reload or after a stale upload is refused. Recordings identify their selected backend
 and destination; changing either cannot silently reroute unfinished audio. Altitude deletes its
 temporary recordings; external speech services control their own retention.
 

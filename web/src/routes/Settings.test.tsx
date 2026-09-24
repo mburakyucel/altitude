@@ -64,4 +64,35 @@ describe("Voice settings", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked());
     expect(calls).toEqual([{ backend: "browser", selection: saved.selection }]);
   });
+
+  it("rail entry within Settings retains the original Back destination across viewports", async () => {
+    setViewport(1440);
+    fixture();
+    const { user, router } = renderApp({ route: "/settings/voice" });
+    await screen.findByText("Key set · never shown");
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    await screen.findByRole("link", { name: "Voice input Custom endpoint" });
+    setViewport(390);
+    await user.click(await screen.findByRole("button", { name: "‹ Back" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
+  });
+
+  it("reloads a conflicting save before accepting another edit", async () => {
+    const calls = fixture();
+    const fetchOriginal = globalThis.fetch;
+    let stale = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST" && stale) return json({ error: "Voice settings changed. Reload settings and try again." }, 409);
+      return fetchOriginal(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/voice" });
+    await user.click(await screen.findByRole("radio", { name: "Browser recognition" }));
+    await user.click(await screen.findByRole("button", { name: "Reload settings" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByRole("radio", { name: "Custom endpoint" })).toBeChecked();
+    stale = false;
+    await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+    await screen.findByText("Saved.");
+    expect(calls).toHaveLength(1);
+  });
 });

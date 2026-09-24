@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, readVoiceSettings, saveVoiceSettings, useOverview } from "../data/api";
@@ -26,6 +26,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [keepKey, setKeepKey] = useState(saved.key_set);
   const save = useMutation({
     mutationFn: saveVoiceSettings,
+    onMutate: () => client.cancelQueries({ queryKey }),
     onSuccess: (value) => {
       client.setQueryData(queryKey, value);
       updateVoiceSettings(value);
@@ -84,23 +85,22 @@ export default function Settings({ voice = false }: { voice?: boolean }) {
   const overview = useOverview();
   const settings = useQuery({ queryKey, queryFn: readVoiceSettings, refetchOnWindowFocus: false });
   const [reloadKey, setReloadKey] = useState(0);
-  const page = useRef<HTMLDivElement>(null);
-  const state = location.state as { settingsFrom?: string; settingsScroll?: number } | null;
-  useLayoutEffect(() => {
-    if (!voice && page.current) page.current.scrollTop = state?.settingsScroll ?? 0;
-  }, [voice, state?.settingsScroll]);
+  const state = location.state as { settingsFrom?: string } | null;
+  useEffect(() => {
+    if (settings.data) updateVoiceSettings(settings.data);
+  }, [settings.data]);
   const back = voice ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
   return <>
     {phone ? <header className="phone-header settings-header">{back}<h1>{voice ? "Voice input" : "Settings"}</h1></header> : null}
-    <div className="page settings-page" ref={page}>
+    <div className="page settings-page">
       {!phone ? <>{voice ? back : null}<h1>{voice ? "Voice input" : "Settings"}</h1></> : null}
       {voice ? <p className="text-meta text-muted">Choose how speech becomes text. Applies to every project.</p>
         : <div><h2>This machine</h2><p className="text-meta text-muted">Applies to every project in this Altitude installation.</p></div>}
       {settings.isPending ? <p role="status">Loading settings…</p>
         : settings.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
           : voice ? <VoiceForm key={reloadKey} saved={settings.data} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />
-            : <Link className="settings-row" to="/settings/voice" state={{ ...state, settingsScroll: page.current?.scrollTop ?? 0 }}>
+            : <Link className="settings-row" to="/settings/voice" state={state}>
               <span><strong>Voice input</strong>{" "}<small>{labels[settings.data.backend]}</small></span><span aria-hidden>›</span>
             </Link>}
       {!voice ? <section className="settings-card" aria-label="Network">

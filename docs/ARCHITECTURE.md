@@ -1379,8 +1379,9 @@ state and keeps the words already shown. Cancel aborts the recognizer at once. T
 stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
 endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
 server whose backend or endpoint URL changed shows the server's words and reads the backend again.
-A successful Settings save updates the document's cached selection for the next capture; an earlier
-pending read cannot overwrite that saved selection. Each recording holds its initial identity.
+A successful Settings read or save updates the document's cached selection for the next capture;
+saving cancels an older Settings query, and an earlier composer read cannot overwrite the saved
+selection. Each recording holds its initial identity.
 Words are never
 simulated. The composer owns microphone
 permission, capture state, a 595-second client stop below the server's 600-second

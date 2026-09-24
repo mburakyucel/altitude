@@ -95,7 +95,7 @@ export function Rail({
         </NavLink>
       </nav>
       <div className="rail-operator">
-        <NavLink to="/settings" className="rail-item min-w-0 flex-1" aria-label="Settings" state={{ settingsFrom: location.pathname + location.search }}>
+        <NavLink to="/settings" className="rail-item min-w-0 flex-1" aria-label="Settings" state={location.pathname.startsWith("/settings") ? location.state : { settingsFrom: location.pathname + location.search }}>
           <span className="truncate font-medium">{data?.operator || "The operator"}</span><span aria-hidden>⚙</span>
         </NavLink>
         <span className="ml-auto">
