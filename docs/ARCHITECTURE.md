@@ -1140,8 +1140,8 @@ workflow retains logs and candidate identity through the runner's local evidence
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
 GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
 with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
-when approaching the existing disk budget. See the
+diagnosis or on a reviewer's request; L3 coordinates cleanup of unneeded exports when the runner's
+budget refuses admission. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
@@ -1410,7 +1410,8 @@ row; phone controls are 44px and the row keeps its place in every state. Drafts 
 consume no row; relevant voice, permission and send errors remain visible. Desktop retains its
 shortcut and delivery hints. Keyboard, draft and streaming changes keep bottom-follow when already
 following and preserve the visible message and offset while reading older history. Sending resumes
-following. Browser emulation verifies layout and application transitions; native mobile keyboard
+following. Pressing Send leaves focus in the field, so an open phone keyboard and hidden navigation stay
+through each message. Browser emulation verifies layout and application transitions; native mobile keyboard
 behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
 The same composer adds a single image control and a conditional preview strip.
