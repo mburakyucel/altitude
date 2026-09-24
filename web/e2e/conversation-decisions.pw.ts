@@ -312,7 +312,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await handedBack(page, questionCard(page, retention));
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByRole("group", { name: "Stop this task?", exact: true })).toBeHidden();
-  await expect(page.getByRole("button", { name: "Continue session", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
   await expect.poll(async () => (await readTask(request, slug)).steering.state).toBe("stopped");
   expect((await readTask(request, slug)).question_group.questions.filter((q) => q.status === "open")).toHaveLength(3);
   await back.click();
@@ -323,7 +323,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   });
   await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
   await row.click();
-  await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Continue session", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   await park(request, slug);
   await back.click();

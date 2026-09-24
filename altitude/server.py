@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, route, state as S, tasks as T, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, push, route, state as S, tasks as T, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1080,6 +1080,8 @@ def tick() -> None:
 
 
 def tick_project(project: str) -> None:
+    if audit.path(project).exists():
+        spawn(f"audit:{project}", audit.run, project)
     try:
         project_setup.maintain(project)
     except (OSError, ValueError, RuntimeError) as exc:

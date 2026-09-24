@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +12,7 @@ import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
-import { SteeringControls, useTaskSteering } from "../components/TaskSteering";
+import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
@@ -24,6 +24,7 @@ import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import LiveSession from "./LiveSession";
+import { useTaskSwipe } from "../components/useTaskSwipe";
 import "./task-details.css";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared fields (attempt,
@@ -189,10 +190,10 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
 
-function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, showLive, phone, selection, onEscapeOwnership }: {
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
   draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: Dispatch<SetStateAction<PendingMessage | null>>;
-  steering: Steering; showLive: () => void; phone: boolean;
+  steering: Steering; active: boolean; denied: boolean; setDenied: (denied: boolean) => void; questionVisit: number;
   selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
 }) {
   const queryClient = useQueryClient();
@@ -219,7 +220,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const following = useRef(!questionId);
   const [latest, setLatest] = useState(false);
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
-  const [denied, setDenied] = useState(false);
+  const [questionAtLatest, setQuestionAtLatest] = useState(false);
+  const reading = useRef(0);
   const [accessRefresh, setAccessRefresh] = useState(0);
   const submission = useRef<L2MessageInput | null>(null);
   const mounted = useRef(true);
@@ -242,9 +244,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
   });
-  const anchorKey = `${location.key}:${questionId ?? ""}:${revision ?? ""}`;
+  const anchorKey = `${questionVisit}:${questionId ?? ""}:${revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
+    setQuestionAtLatest(Boolean(anchor && anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop >= node.scrollHeight - node.clientHeight));
     setQuestionOffscreen(Boolean(anchor && (anchor.getBoundingClientRect().bottom < node.getBoundingClientRect().top || anchor.getBoundingClientRect().top > node.getBoundingClientRect().bottom)));
   }, [current?.id, current?.revision]);
   const jumpTo = useCallback((question: Decision) => {
@@ -256,20 +259,22 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     following.current = false;
     // Leave a little of the preceding explanation visible; never jump to the latest tool event.
     container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 80;
+    reading.current = container.scrollTop;
     node.focus({ preventScroll: true });
     setQuestionOffscreen(false);
     return true;
   }, []);
-  useLayoutEffect(() => {
-    if (!target || followedAnchor.current === anchorKey) return;
+  useEffect(() => {
+    if (!active || !target || followedAnchor.current === anchorKey) return;
     if (jumpTo(target)) followedAnchor.current = anchorKey;
-  }, [anchorKey, target, messages, jumpTo]);
+  }, [active, anchorKey, target, messages, jumpTo]);
   useEffect(() => {
     const node = scroller.current;
     const column = node?.firstElementChild;
-    if (!node || !column || typeof ResizeObserver === "undefined") return;
+    if (!active || !node || !column || typeof ResizeObserver === "undefined") return;
+    node.scrollTop = following.current ? node.scrollHeight : reading.current;
     const observer = new ResizeObserver(() => {
-      if (following.current) node.scrollTop = node.scrollHeight;
+      node.scrollTop = following.current ? node.scrollHeight : reading.current;
       viewportHeight.current = node.clientHeight;
       setLatest(!following.current && node.scrollHeight - node.scrollTop - node.clientHeight > 48);
       updateQuestionVisibility(node);
@@ -277,7 +282,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(column);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [updateQuestionVisibility]);
+  }, [active, updateQuestionVisibility]);
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -387,10 +392,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </p> : null}
       {questionId && !target ? <p className="conversation-notice" role="status">This question is unavailable. The task conversation is below.</p> : null}
       {target && current && !inGroup(target) && (target.id !== current.id || target.revision !== current.revision) ? <p className="conversation-notice">This question has been replaced. <Link to={questionPath(current)} state={location.state} replace>View current question</Link></p> : null}
+      <div className="task-reading">
       <div className="convo-scroll" ref={scroller} onScroll={(event) => {
         const node = event.currentTarget;
         // Keyboard/composer resize can emit a scroll before ResizeObserver restores bottom-follow.
-        if (node.clientHeight !== viewportHeight.current) return;
+        if (!active || node.clientHeight !== viewportHeight.current) return;
+        reading.current = node.scrollTop;
         following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
         setLatest(!following.current);
         updateQuestionVisibility(node);
@@ -422,16 +429,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         </div>
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
-        {current && questionOffscreen && turn.length ? <button type="button" className="conversation-pill" onClick={() => jumpTo(current)}>{count} ↓</button> : null}
-        {current?.design_url && questionOffscreen ? <a href={current.design_url} target="_blank" rel="noopener noreferrer">View preview · v{current.revision}</a> : null}
-        {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
+        {current && questionOffscreen && turn.length ? <button type="button" className="btn conversation-pill" aria-label={count} onClick={() => jumpTo(current)}>{turn.length} question{turn.length === 1 ? "" : "s"} ↓</button> : null}
+        {latest && !(current && questionOffscreen && turn.length && questionAtLatest) ? <button type="button" className="btn" aria-label="Latest messages" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest ↓</button> : null}
       </div> : null}
+      </div>
       {facts.canMessage ? <div className="convo-dock">
-        {steering.state !== "idle" ? <div className="task-dock-controls">
-          <button type="button" className="link" onClick={showLive}>View live session</button>
-          <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />
-        </div> : null}
-        <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(...args) => prepareSend()(...args)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        <Composer active={active} conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(...args) => prepareSend()(...args)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
@@ -584,6 +587,8 @@ function TaskPage({
   const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
     .find((question) => question.status === "open" && !question.response);
   const [draft, setDraft] = useState("");
+  const [denied, setDenied] = useState(false);
+  const [questionVisit, setQuestionVisit] = useState(0);
   const [pending, setPending] = useState<PendingMessage | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
   const selection = useRef<{ start: number; end: number } | null>(null);
@@ -611,7 +616,7 @@ function TaskPage({
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
-      {decision ? <Link className="btn btn-ghost" to={questionPath(decision)} state={location.state} replace onClick={closeDetails}>View question</Link> : null}
+      {decision ? <Link className="btn btn-ghost" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
       {phone ? <>
         <div className="task-actions"><ActionButtons facts={facts} actions={actions} /></div>
         <ConfirmRow actions={actions} />
@@ -620,7 +625,7 @@ function TaskPage({
     </div>
   </Overlay> : null;
   useEffect(() => {
-    if (phone || readOnly || voiceOwnsEscape || actions.confirm || steering.state !== "running") return;
+    if (phone || readOnly || denied || voiceOwnsEscape || actions.confirm || steering.state !== "running") return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented ||
@@ -631,16 +636,24 @@ function TaskPage({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [phone, readOnly, voiceOwnsEscape, actions.confirm, steering]);
-  const showLive = () => { if (phone) void navigate(`${base}/live${location.search}`, { replace: true, state: location.state }); else setPanelOpen(true); };
+  }, [phone, readOnly, denied, voiceOwnsEscape, actions.confirm, steering]);
+  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape, liveRoute, (live) => {
+    void navigate(`${base}${live ? "/live" : ""}${location.search}`, { replace: true, state: location.state });
+  });
+  const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
 
-  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={steering} readOnly={readOnly} /></ProseScope>;
-  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} showLive={showLive} phone={phone} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseScope>;
+  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute} /></ProseScope>;
+  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseScope>;
 
   if (phone) {
     return (
+      <>
+      <PhoneHeader overview={overview} onTitleClick={() => setDetailsOpen(true)} titleExpanded={detailsOpen} status={
+        <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
+      }>{control}</PhoneHeader>
       <div className="task-page" data-phone>
         {faultNotice}
+        <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
         <nav className="task-tabs" aria-label="Task views">
@@ -651,9 +664,13 @@ function TaskPage({
             Live session
           </NavLink>
         </nav>
-        {liveRoute ? panel : conversation}
+        <div className="task-views" ref={swipe}>
+          <div className="task-view" hidden={liveRoute}>{conversation}</div>
+          <div className="task-view" hidden={!liveRoute}>{panel}</div>
+        </div>
         {details}
       </div>
+      </>
     );
   }
 
@@ -669,6 +686,7 @@ function TaskPage({
             <span>{title}</span>
           </h1>
           <div className="task-actions">
+            {control}
             <ActionButtons facts={facts} actions={actions} />
             {detailsButton}
             <button
@@ -683,6 +701,7 @@ function TaskPage({
           </div>
         </div>
         <Chips chips={facts.chips} />
+        <SteeringNotice steering={steering} />
         <ConfirmRow actions={actions} />
         {resumeError}
         {faultNotice}
@@ -744,10 +763,7 @@ export default function Task() {
   const { phone } = useViewport();
   const [detailsOpen, setDetailsOpen] = useState(false);
   useEffect(() => setDetailsOpen(false), [project, slug]);
-  const facts = task.data ? taskFacts(task.data, overview.data, project) : null;
-  const header = phone ? <PhoneHeader overview={overview} onTitleClick={facts ? () => setDetailsOpen(true) : undefined} status={facts ?
-    <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span> : undefined
-  }>{facts ? <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button> : null}</PhoneHeader> : null;
+  const header = phone && !task.data ? <PhoneHeader overview={overview} /> : null;
   let content: ReactNode;
   if (task.isPending) content = <TaskSkeleton phone={phone} />;
   else if (task.isError && !task.data) {

@@ -104,6 +104,7 @@ export interface ComposerProps {
   selection?: RefObject<{ start: number; end: number } | null>;
   onEscapeOwnership?: (owned: boolean) => void;
   autoFocus?: boolean;
+  active?: boolean;
 }
 
 /** Append dictated text as normal prose without altering any existing draft characters. */
@@ -258,10 +259,13 @@ export default function Composer({
   selection,
   onEscapeOwnership,
   autoFocus = false,
+  active = true,
   imageScope,
 }: ComposerProps) {
   const hintId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const visible = useRef(active);
+  visible.current = active;
   const picker = useRef<HTMLInputElement>(null);
   const images = useImageDraft(imageScope);
   const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
@@ -319,9 +323,9 @@ export default function Composer({
   }, [displayedDraft, phase]);
 
   useEffect(() => {
-    onEscapeOwnership?.(phase !== "idle");
+    onEscapeOwnership?.(active && phase !== "idle");
     return () => onEscapeOwnership?.(false);
-  }, [phase, onEscapeOwnership]);
+  }, [active, phase, onEscapeOwnership]);
   useEffect(() => {
     if (selection?.current) field.current?.setSelectionRange(selection.current.start, selection.current.end);
   }, [selection]);
@@ -354,7 +358,7 @@ export default function Composer({
   const focusField = useCallback((position?: number) => {
     queueMicrotask(() => {
       const node = field.current;
-      if (!node) return;
+      if (!node || !visible.current) return;
       node.focus({ preventScroll: true });
       if (position != null) node.setSelectionRange(position, position);
     });
@@ -700,16 +704,21 @@ export default function Composer({
   }, [conversation, focusField, releaseStream, stream]);
 
   useEffect(() => {
-    if (phase === "idle") return;
+    if (!active && capturePhase !== "idle" && !voiceSend) cancel();
+  }, [active, capturePhase, voiceSend, cancel]);
+
+  useEffect(() => {
+    if (phase === "idle" || (!active && !voiceSend)) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented ||
           document.querySelector('[role="dialog"], [role="menu"], [aria-haspopup][aria-expanded="true"], .overlay')) return;
       event.preventDefault();
-      cancel();
+      // A submitted voice message keeps sending offscreen; Escape must not abort its browser request.
+      if (visible.current) cancel();
     };
     document.addEventListener("keydown", onEscape);
     return () => document.removeEventListener("keydown", onEscape);
-  }, [phase, cancel]);
+  }, [active, phase, voiceSend, cancel]);
 
   const toggleMic = useCallback(() => {
     if (phase === "listening") stop();

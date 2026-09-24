@@ -38,11 +38,11 @@ test("separate queued messages remove independently and the remaining batch reac
   await page.reload();
   await expect(convo.getByText("Message removed", { exact: true })).toBeVisible();
   expect((await status()).tasks[0].pending.map((message: { text: string }) => message.text)).toEqual(["First instruction.", "Third instruction."]);
-  await convo.getByRole("button", { name: "Stop", exact: true }).click();
-  await walk.state("05-stop-keeps-waiting-messages-removable", { visible: [convo.getByRole("button", { name: "Continue session" }), row("First instruction.").getByRole("button", { name: "Remove", exact: true })], hidden: [] });
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await walk.state("05-stop-keeps-waiting-messages-removable", { visible: [page.getByRole("button", { name: "Continue" }), row("First instruction.").getByRole("button", { name: "Remove", exact: true })], hidden: [] });
   await control("hold-resume");
   try {
-    await convo.getByRole("button", { name: "Continue session" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await walk.state("06-claimed-batch-cannot-be-removed", { visible: [row("First instruction.").getByText("Sending to session · cannot remove"), row("Third instruction.").getByText("Sending to session · cannot remove")], hidden: [convo.getByRole("button", { name: "Remove", exact: true })] });
     expect((await request.post("/api/l2/message", { data: { project: "atlas", slug, text: "Later arrival." } })).ok()).toBe(true);
     await walk.state("07-later-arrival-stays-removable", { visible: [row("Later arrival.").getByRole("button", { name: "Remove", exact: true })], hidden: [row("First instruction.").getByRole("button", { name: "Remove", exact: true })] });

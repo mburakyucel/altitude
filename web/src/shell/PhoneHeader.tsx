@@ -61,11 +61,12 @@ function Switcher({
 /** The 54px phone header (SPEC.md §2.2): the project name with a chevron on project tabs, a back control
  * and the task's title on a pushed task page (§3.10), a back control, the crumb and Open task on a
  * pushed decision page (§3.9), "Altitude" on the global tabs. */
-export function PhoneHeader({ overview, status, children, onTitleClick }: {
+export function PhoneHeader({ overview, status, children, onTitleClick, titleExpanded }: {
   overview: UseQueryResult<Overview>;
   status?: ReactNode;
   children?: ReactNode;
   onTitleClick?: () => void;
+  titleExpanded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
@@ -101,7 +102,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick }: {
   };
 
   return (
-    <header className="phone-header">
+    <header className="phone-header" data-task={Boolean(onTitleClick) || undefined}>
       {pushed ? (
         <button type="button" className="icon-btn" aria-label="Back" onClick={back}>
           <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
@@ -127,8 +128,9 @@ export function PhoneHeader({ overview, status, children, onTitleClick }: {
           </svg>
         </button>
       ) : onTitleClick ? (
-        <button type="button" className="phone-title phone-title-button" aria-label={`${title} details`} aria-haspopup="dialog" onClick={onTitleClick}>
+        <button type="button" className="phone-title phone-title-button" aria-label={`${title} — Task details`} aria-haspopup="dialog" aria-expanded={titleExpanded} onClick={onTitleClick}>
           {titleContent}
+          <span aria-hidden>⌄</span>
         </button>
       ) : titleContent}
       </h1>

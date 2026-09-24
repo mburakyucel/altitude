@@ -25,7 +25,8 @@ import unittest
 from tests.support import REPO
 
 PROVIDER = re.compile(r"codex|claude", re.IGNORECASE)
-OPERATOR = re.compile(r"burak", re.IGNORECASE)
+#: The GitHub account name contains the operator's name; a repository URL is not a mention.
+OPERATOR = re.compile(r"(?<![a-z])burak", re.IGNORECASE)
 
 #: Engine-specific code is expected here and nowhere else.
 ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
@@ -42,8 +43,6 @@ PROVIDER_BASELINE = {
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "README.md": 3,
-    "altitude/config.py": 1,
     "altitude/dispatch.py": 3,
     "altitude/incidents.py": 2,
     "altitude/l3.py": 3,
@@ -53,7 +52,6 @@ OPERATOR_BASELINE = {
     "bin/alt": 11,
     "docs/ARCHITECTURE.md": 4,
     "docs/CLI.md": 2,
-    "docs/ROADMAP.md": 2,
     "docs/SESSION_LIFECYCLE.md": 4,
     "personas/l2.md": 1,
     "web/src/data/api.ts": 1,

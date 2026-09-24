@@ -234,7 +234,7 @@ describe("Task on desktop", () => {
     const holdReason = "Wait for the operator to review the complete phone and desktop evidence before merging this pull request.";
     stub({ ...askingL3, hold_merge: holdReason, question: { ...decision, audience: "l3" }, questions: [{ ...decision, audience: "l3" }] });
     const { user } = renderApp({ route });
-    const opener = await screen.findByRole("button", { name: "Task details" });
+    const opener = await screen.findByRole("button", { name: /Task details$/ });
     expect(screen.getByText("Waits for L3")).toBeInTheDocument();
     expect(screen.queryByText(holdReason)).toBeNull();
     expect(screen.queryByText(askingL3.blocked_reason)).toBeNull();
@@ -308,6 +308,18 @@ describe("Task on desktop", () => {
     stub(running);
     renderApp({ route: `${route}/live` });
     expect(await screen.findByRole("dialog", { name: "Live session" })).toBeInTheDocument();
+  });
+
+  it("keeps Stop reachable in a narrow desktop live overlay without a session transcript", async () => {
+    setViewport(1024);
+    const fetchMock = stub({ ...running, session_id: "" });
+    const { user } = renderApp({ route: `${route}/live` });
+    const dialog = await screen.findByRole("dialog", { name: "Live session" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "stop", generation: null });
+    expect(within(dialog).getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/transcript/"))).toBe(false);
   });
 
   it("requests Stop once without confirmation and keeps the draft editable until evidence arrives", async () => {
@@ -407,7 +419,7 @@ describe("Task on desktop", () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
     await screen.findByText("L2 working", { exact: true });
     expect(field).toHaveValue("Preserve this draft");
-    expect(within(conversation).getByRole("button", { name: /^Stop/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
     expect(screen.queryByText("Planned", { exact: true })).toBeNull();
   });
 
@@ -432,7 +444,7 @@ describe("Task on desktop", () => {
     const convo = screen.getByRole("region", { name: "Task conversation" });
     const card = convo.querySelector("[data-question-id=\"q-timer\"]")!;
     expect(card).toHaveTextContent("Should the timer keep the old default?");
-    expect(convo.firstElementChild?.firstElementChild).toHaveClass("convo-col");
+    expect(card.closest(".convo-col")).toBeInTheDocument();
     const turn = card.closest(".conversation-question")!;
     expect(turn).toHaveAttribute("data-turn", "operator");
     expect(turn.querySelector(".conversation-turn")).toHaveTextContent("Your turn · 1 question");
@@ -540,7 +552,7 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Waits for L3")).toBeInTheDocument();
     expect(screen.queryByText("which suite covers the timer")).toBeNull();
     expect(document.querySelector(".task-line")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Task details" }));
+    await user.click(screen.getByRole("button", { name: /Task details$/ }));
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
   });
 
@@ -559,7 +571,7 @@ describe("Task on desktop", () => {
     const reason = `The verification browser could not start ${"while checking the configured environment ".repeat(12)}`.trim();
     stub({ ...faulted, blocked_reason: reason });
     const { user } = renderApp({ route });
-    const opener = await screen.findByRole("button", { name: "Task details" });
+    const opener = await screen.findByRole("button", { name: /Task details$/ });
     const notice = document.querySelector(".task-fault");
     expect(notice).toHaveTextContent("The verification browser could not start");
     expect(notice).toHaveTextContent("… L3 has been told.");
@@ -573,7 +585,7 @@ describe("Task on desktop", () => {
     stub(done, { repository: "https://github.com/example/project" });
     const { user } = renderApp({ route });
 
-    if (width === 390) await user.click(await screen.findByRole("button", { name: "Task details" }));
+    if (width === 390) await user.click(await screen.findByRole("button", { name: /Task details$/ }));
     const link = await screen.findByRole("link", { name: "PR #202 merged · main checks passed" });
     expect(link).toHaveAttribute("href", "https://github.com/example/project/pull/202");
     expect(link).toHaveAttribute("target", "_blank");
@@ -585,7 +597,7 @@ describe("Task on desktop", () => {
     stub(done, { repository: null });
     const { user } = renderApp({ route });
 
-    if (width === 390) await user.click(await screen.findByRole("button", { name: "Task details" }));
+    if (width === 390) await user.click(await screen.findByRole("button", { name: /Task details$/ }));
     expect(await screen.findByText("PR #202 merged · main checks passed", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /PR #202/ })).toBeNull();
   });
@@ -604,7 +616,7 @@ describe("Task on desktop", () => {
     expect(screen.getByText("No messages on this task.")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Task details" }));
+    await user.click(screen.getByRole("button", { name: /Task details$/ }));
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("attempt 1 · done 1 min ago")).toBeInTheDocument();
   });
 
@@ -818,17 +830,21 @@ describe("Task on the phone", () => {
     expect(within(tabs).getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
     const panel = await screen.findByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Reading the timer code")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("keeps Stop directly beside the composer on phone", async () => {
+  it("keeps a single Stop in the phone header across both views", async () => {
     setViewport(390);
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     const stop = screen.getByRole("button", { name: "Stop" });
-    expect(stop.closest(".convo-dock")).toBeInTheDocument();
+    expect(stop.closest("header")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "View live session" })).toBeNull();
+    await user.click(screen.getByRole("link", { name: "Live session" }));
+    expect(screen.getByRole("button", { name: "Stop" })).toBe(stop);
     await user.click(stop);
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
   });
@@ -838,15 +854,16 @@ describe("Task on the phone", () => {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });
     let record = running;
-    stub(running, { message: () => response, task: () => jsonResponse(record) });
+    const fetchMock = stub(running, { message: () => response, task: () => jsonResponse(record) });
     const { user } = renderApp({ route });
     const field = await screen.findByLabelText("Message the L2");
     await user.type(field, "Original message");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.type(field, "New thought");
-    await user.click(screen.getByRole("button", { name: "View live session" }));
-    expect(screen.queryByLabelText("Message the L2")).toBeNull();
-    const message = { id: "after-view-switch", at: new Date().toISOString(), role: running.messages[0]!.role, text: "Original message" };
+    await user.click(screen.getByRole("link", { name: "Live session" }));
+    expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
+    const message = { id: JSON.parse(String(call?.[1]?.body)).request_id, at: new Date().toISOString(), role: running.messages[0]!.role, text: "Original message" };
     if (status === 200) record = { ...running, messages: [...running.messages, message] };
     await act(async () => { finish(jsonResponse(status === 200 ? { ok: true, message } : { error: "Send failed" }, status)); });
     await user.click(screen.getByRole("link", { name: "Conversation" }));
@@ -872,7 +889,7 @@ describe("Task on the phone", () => {
       await user.click(screen.getByRole("button", { name: "Send" }));
     }
     await user.type(field, "New draft");
-    await user.click(screen.getByRole("button", { name: "View live session" }));
+    await user.click(screen.getByRole("link", { name: "Live session" }));
     for (const index of refusalFirst ? [0, 1] : [1, 0]) {
       await act(async () => finishes[index]!(jsonResponse({ error: "Send failed" }, index === 0 ? 409 : 500)));
     }
@@ -924,6 +941,32 @@ describe("L2 activity and steering", () => {
   };
   const steering = { state: "running", stop_id: null as string | null, generation: "worker-1", error: null };
   const active = { ...running, steering, activity };
+
+  it.each([390, 1440])("keeps header actions disabled after a denied send across views at %i", async (width) => {
+    setViewport(width);
+    const fetchMock = stub(active, { message: () => jsonResponse({ error: "Access denied" }, 403) });
+    const { user } = renderApp({ route });
+    const field = await screen.findByRole("textbox", { name: "Message the L2" });
+    await user.type(field, "Keep this correction");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("You cannot send messages or answers here.", { exact: false });
+    expect(field).toBeDisabled();
+    expect(field).toHaveValue("Keep this correction");
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    if (width === 390) {
+      await user.click(screen.getByRole("link", { name: "Live session" }));
+      expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+      await user.click(screen.getByRole("link", { name: "Conversation" }));
+    } else {
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    }
+    expect(actionCall(fetchMock)).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled());
+    expect(field).toBeEnabled();
+    expect(field).toHaveValue("Keep this correction");
+  });
+
   it.each([390, 1440])("replaces fresh public words without adding replies and hides stale or missing evidence at %i", async (width) => {
     setViewport(width);
     stub(active);
@@ -968,24 +1011,26 @@ describe("L2 activity and steering", () => {
     let field = within(convo).getByRole("textbox") as HTMLTextAreaElement;
     await user.type(field, "Keep this correction");
     field.setSelectionRange(2, 7); fireEvent.select(field);
-    await user.click(within(convo).getByRole("button", { name: "View live session" }));
+    if (width === 390) await user.click(screen.getByRole("link", { name: "Live session" }));
     const live = screen.getByRole("region", { name: "Live session" });
-    expect(within(live).getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(live).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop" }).closest("header")).toBeInTheDocument();
     if (width === 390) {
       await user.click(screen.getByRole("link", { name: "Conversation" }));
       field = screen.getByRole("textbox") as HTMLTextAreaElement;
       expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(7);
     }
     const controls = within(screen.getByRole("region", { name: "Task conversation" }));
-    await user.click(controls.getByRole("button", { name: "Stop" }));
+    await user.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
     expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body)).generation).toBe("worker-1");
     expect(field).toHaveValue("Keep this correction");
     expect(controls.getByRole("button", { name: "Send" })).toBeDisabled();
     await update({ ...active, state: "blocked", steering: { ...steering, state: "stopping" } });
-    expect(controls.queryByRole("button", { name: "Continue session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await update({ ...active, state: "blocked", steering: { ...steering, state: "stopped", stop_id: "stop-1" } });
-    expect(controls.getByRole("button", { name: "Continue session" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" }).closest("header")).toBeInTheDocument();
     await user.click(controls.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
@@ -999,10 +1044,11 @@ describe("L2 activity and steering", () => {
     const { user } = renderApp({ route });
     const field = await screen.findByLabelText("Message the L2");
     await user.type(field, "Unsent thought");
-    await user.click(screen.getByRole("button", { name: "Continue session" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
     expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "resume", stop_id: "stop-1" });
     expect(screen.getByText("Waiting to resume")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
     expect(field).toHaveValue("Unsent thought");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(false);
   });

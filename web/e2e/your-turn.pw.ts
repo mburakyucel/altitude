@@ -55,10 +55,10 @@ test("a question at the end of the chat: reply hands the turn back, asked again,
   await walk.state("02-question-at-end-of-chat", {
     visible: [v.turn.getByText("Your turn · 1 question", { exact: true }), v.card.getByRole("button", { name: /7 days/ }),
       v.main.getByText("Your turn · 1 question").first(), ...(v.phone ? [] : [v.hint])],
-    hidden: [v.quiet, v.conversation.getByRole("button", { name: /Your turn · 1 question ↓/ })],
+    hidden: [v.quiet, v.conversation.getByRole("button", { name: /Your turn · 1 question/ })],
   });
 
-  const pill = page.getByRole("button", { name: "Your turn · 1 question ↓", exact: true });
+  const pill = page.getByRole("button", { name: "Your turn · 1 question", exact: true });
   await walk.state("02b-scrolled-up-jump-pill", {
     action: () => page.locator(".convo-scroll").evaluate((node) => { node.scrollTop = 0; }),
     visible: [pill, v.conversation.getByText("The new index passes the fixture checks.", { exact: true })],

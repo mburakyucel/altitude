@@ -78,6 +78,8 @@ CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 2
 # Default Claude models. Codex uses the Codex CLI's configured model unless the task overrides it.
 MODELS = {"l3": "fable", "l2": "opus"}
 ENGINES = ("claude", "codex")
+CONVERSATION_AUDIT_PROJECT = "altitude"
+CONVERSATION_AUDIT_REVIEWER = {"engine": "claude", "model": "claude-sonnet-5"}
 #: Display names, the way the shell shows an engine; nothing outside the seam spells one.
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
 #: The operator seam: the one configured name the UI shows where a name is shown.

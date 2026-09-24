@@ -41,13 +41,13 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const scroller = conversation.locator(".convo-scroll");
-  const opener = page.getByRole("button", { name: "Task details", exact: true });
+  const opener = page.getByRole("button", { name: /Task details$/ });
   const dialog = page.getByRole("dialog", { name: "Task details", exact: true });
   await walk.open(`/projects/${project.name}/tasks/${task.slug}`);
   if (!phone) await page.getByRole("button", { name: "Live session", exact: true }).click();
   await field.fill("Keep this unsent draft and its cursor.");
   await field.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
-  const latest = page.getByRole("button", { name: "Latest messages", exact: true });
+  const latest = page.getByRole("button", { name: question?.audience === "operator" ? "Your turn · 1 question" : "Latest messages", exact: true });
   const readingTop = 170;
   // Draft resizing can still be following the bottom. Establish older reading before testing
   // restoration: accepting any positive scrollTop also accepts that unrelated bottom position.
@@ -116,13 +116,16 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
     await expect(field).toHaveValue("Keep this unsent draft and its cursor.");
   }
   if (question) {
-    await opener.click();
-    await walk.state("05-view-question", {
-      action: () => dialog.getByRole("link", { name: "View question" }).click(),
-      visible: [conversation.locator(`[data-question-id="${question.id}"]`)], hidden: [dialog],
-    });
-    await expect(conversation.locator(".conversation-question")).toBeFocused();
-    await expect(conversation.locator(`[data-question-id="${question.id}"]`)).toBeInViewport();
+    for (const visit of [1, 2]) {
+      if (visit === 2) await scroller.evaluate((node) => { node.scrollTop = 0; });
+      await opener.click();
+      await walk.state(`05-view-question-${visit}`, {
+        action: () => dialog.getByRole("link", { name: "View question" }).click(),
+        visible: [conversation.locator(`[data-question-id="${question.id}"]`)], hidden: [dialog],
+      });
+      await expect(conversation.locator(".conversation-question")).toBeFocused();
+      await expect(conversation.locator(`[data-question-id="${question.id}"]`)).toBeInViewport();
+    }
   }
   if (phone && scene.key === "running-held") {
     await page.getByRole("button", { name: "Latest messages", exact: true }).click();

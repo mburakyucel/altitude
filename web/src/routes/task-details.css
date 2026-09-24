@@ -24,5 +24,3 @@
 .phone-header .task-state-line { display: block; font-size: 12px; line-height: 16px; }
 .phone-header .task-state-line .dot { display: inline-block; width: 6px; height: 6px; }
 .phone-header .task-state-line [data-tone="held"] { color: var(--chip-claimed-text); white-space: nowrap; }
-.task-page[data-phone] .conversation-jumps { flex: none; padding: 0 12px; }
-.task-page[data-phone] .conversation-jumps .link { min-height: 44px; display: inline-flex; align-items: center; }

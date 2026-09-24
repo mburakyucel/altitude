@@ -946,6 +946,43 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+`audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
+it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,
+reviewed exchange identities and finding-supply receipts. Sessions wait twelve hours and four new
+exchanges mature for thirty minutes. Failed/unanswered exchanges also mature, with incomplete and
+in-flight evidence. Only human chat counts. Seven days or fourteen attempts ends the pilot.
+
+The tick's keyed background executor owns packet construction and provider IO outside ordinary L3
+locks and the timer thread. A short project lock reserves attempts before launch. Failures pause
+the pilot; interrupted execution becomes uncertain after the deadline without automatic replay.
+Stop prevents later sessions; an already claimed session can finish within its timeout. Project
+activity holds preserve the existing detach boundary. None of these states pauses ordinary work.
+
+Sampling reads at most 2 MiB of the original chat tail, selecting at most twenty unseen exchanges
+within forty-eight hours, never before September 22, 2026 07:00 UTC. Byte offsets, turn IDs and dates
+identify original rows. Complete fitting exchanges take precedence over oversized ones; omissions
+and truncation remain explicit. Later context and four directly referenced task records carry
+current ownership, decisions and canonical messages, including removal markers. The complete starting
+prompt stays within 64 KiB. Sparse/overflowing evidence can expire without review.
+
+`engines.conversation_review` uses a fresh native session, the ordinary coordinator tools/permissions,
+an explicit model and the engine's ordinary session timeout, enforced for the process tree. The
+attempt records that timeout so interrupted-run detection respects it. It does not resume or publish
+an L3 turn. The review assignment leaves implementation, publication and operational decisions with
+L3/L2. Tool reads and reasoning add usage within that deadline; byte/time bounds are not dollar caps.
+Available native model, usage and API-equivalent cost are recorded; missing values remain unknown.
+Provider options stay in the engine seam, with no fallback when the pinned reviewer is unavailable.
+
+Private `audits/<id>/packet.json` and `result.json` retain each attempt. A bounded JSON response carries
+at most three classified findings, expected/observed behavior, impact, uncertainty, corrections,
+ownership and an original selected source. Only unresolved candidates enter the next project chat
+turn, without another L3 queue event. Category/source fingerprints suppress repeated supply. The L3
+turn identity proves supply, not handling; interrupted supply remains inspectable without automatic
+replay. L3 verifies current tasks/issues and later evidence before action. No issue writer, task
+dispatcher or instruction editor belongs to the reviewer. Unavailable optional audit evidence never
+blocks ordinary conversation. Model-quality evaluation is separately authorized and reported;
+deterministic fixtures establish application behavior only.
+
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
 into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the
@@ -1550,7 +1587,7 @@ and design. A normal block without design inputs retains the attached capture. T
 review conversation, approval state or artifact registry.
 
 `question_view` exposes `design_url` for **View preview · vN** in Needs you and the owning question.
-The conversation's offscreen-question navigation also exposes the open question's attachment.
+The conversation's offscreen-question jump reaches that question, where its preview opens.
 Within a group it follows an open member with a preview, then another open member, including after
 partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
 question through its task row. Preview headings use the captured title to distinguish a proposal
@@ -1613,28 +1650,43 @@ concise status with its complete reason in details; a fault retains a visible ca
 scrolling column and expands on request. It appears only while both its public words and recorded
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
-reader's position. Stop is one click beside the composer and in
-Live session at both viewports. It remains Stopping until termination is evidenced; failed or unknown
+reader's position. Stop is one click in the task header at both viewports, serving Conversation and
+Live session with one action. Stop, Continue and Check status share its button treatment and position.
+It remains Stopping until termination is evidenced; failed or unknown
 termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
 Continue preserves the unsent draft; sending a correction explicitly resumes the saved session.
 Desktop Escape applies only outside inputs, dialogs, recording, menus and overlays. The live
 session panel is closed when entering a question. When opened, it is 480px inline at 1280px and
-wider and an overlay from the header's panel button below that; it reads the worker's native session
+wider and an overlay from the header's panel button below that; the overlay carries the task action
+in its own header while its scrim blocks the page header. It reads the worker's native session
 and task-owned turn records together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
 as thin separators, each row with its recorded time or "time unavailable", hidden reasoning never shown, and Raw events behind a
 toggle for the complete redacted records, the task's other operational events among them. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
-missing session file says so. On a phone one header carries Back, title, L2 state and independent
-Merge held status. Its title and details button open metadata, tokens, full reasons, Reject with
-confirmation and operational Resume. Stop and Continue stay directly accessible in both views.
+missing session file says so. On a phone one header carries Back, a bordered title dropdown, the task
+action, L2 state and independent Merge held status. The title dropdown opens metadata, tokens, full
+reasons, View question, Reject with confirmation and operational Resume. Stop and Continue stay
+directly accessible in both views.
 Desktop keeps direct header actions. Two tabs, Conversation and Live session, switch the content
 (`/live` selects the second); they stay visible
 when software keyboard use hides bottom navigation. The composer sits above that navigation or
 the keyboard. Details closes back to its opener without changing the draft or reading position.
-Open questions sit at the end of the chat with the **Your turn** jump pill, with no generic Resume; viewing
+Open questions sit at the end of the chat with a conditional floating question jump. Latest floats
+beside it when newer messages are offscreen; the question jump alone serves a shared bottom destination.
+Both are labeled 44px controls above the composer and disappear when their destinations are visible.
+Preview access stays in the question; tabs and the panel toggle provide live navigation without an
+extra composer row. There is no generic Resume while an operator question is open; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
-read-only with the composer and activity preview gone. View switches preserve draft text and selection.
+read-only with the composer and activity preview gone. Phone swipes left to Live session and right to
+Conversation, without wrapping. Deliberate horizontal gestures exclude browser edges, selection,
+controls, the composer, recording, dialogs and horizontally scrollable content; vertical scrolling
+stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
+selection, images, conversation position and live reading state without reopening the keyboard;
+local history and deep links retain their navigation contract.
+Scrolling up in Live session pauses following; Follow catches up to the newest output. Switching
+views cancels unsent dictation and releases the microphone; an explicit voice Send completes for its
+original conversation while hidden, without refocusing the composer.
 The read-only activity projection uses only the selected worker generation, existing redaction and
 public output. Provider parsing stays in the engine seam; no summarizer, extra model instructions,
 new archive or copied conversation replies supply the preview. Conversation and Live session derive one

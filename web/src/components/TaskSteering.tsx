@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, taskAction } from "../data/api";
 import type { TaskView } from "../data/api";
 
 export function useTaskSteering(project: string, task: TaskView, refresh: () => Promise<unknown>) {
-  const client = useQueryClient();
   const generation = task.steering?.generation ?? null;
   const currentGeneration = useRef(generation);
   currentGeneration.current = generation;
@@ -50,13 +48,22 @@ export function useTaskSteering(project: string, task: TaskView, refresh: () => 
 export type Steering = ReturnType<typeof useTaskSteering>;
 
 export function SteeringControls({ steering, disabled = false, escape = false }: { steering: Steering; disabled?: boolean; escape?: boolean }) {
-  return <div className="task-steering">
-    {steering.state === "running" ? <button type="button" className="btn task-stop" disabled={disabled} onClick={steering.stop} aria-keyshortcuts={escape ? "Escape" : undefined}>Stop{escape ? <kbd aria-hidden>Esc</kbd> : null}</button> : null}
-    {steering.state === "stopping" ? <span role="status">Stopping…</span> : null}
-    {steering.state === "stopped" ? <><span role="status">Stopped</span><button type="button" className="btn btn-ghost" disabled={disabled} onClick={steering.resume}>Continue session</button></> : null}
-    {steering.state === "resuming" ? <span role="status">Waiting to resume</span> : null}
-    {steering.state === "stop_unconfirmed" ? <span role="status">Stop unconfirmed · The worker may still be running</span> : null}
-    {steering.error ? <span className="text-danger" role="alert">{steering.error}</span> : null}
-    {steering.state === "stop_unconfirmed" || steering.error ? <button type="button" className="link" onClick={() => void steering.recheck()}>Check status</button> : null}
-  </div>;
+  const { state, error } = steering;
+  if (state === "idle" && !error) return null;
+  const checking = state === "stop_unconfirmed" || Boolean(error);
+  const pending = state === "stopping" || state === "resuming";
+  return <button type="button" className="btn task-steering" disabled={pending || (!checking && disabled)}
+    onClick={checking ? () => void steering.recheck() : state === "stopped" ? steering.resume : steering.stop}
+    aria-keyshortcuts={escape && state === "running" ? "Escape" : undefined}>
+    {checking ? "Check status" : state === "stopped" ? "Continue" : state === "stopping" ? "Stopping…" : state === "resuming" ? "Resuming…" : "Stop"}
+    {escape && state === "running" && !checking ? <kbd aria-hidden>Esc</kbd> : null}
+  </button>;
+}
+
+export function SteeringNotice({ steering }: { steering: Steering }) {
+  const text = steering.state === "stop_unconfirmed" ? `Stop unconfirmed · ${steering.error || "The worker may still be running."}`
+    : steering.error || (steering.state === "resuming" ? "Waiting to resume" : "");
+  return text ? <p className="task-line" role={steering.error ? "alert" : "status"}>
+    {text}
+  </p> : null;
 }

@@ -654,6 +654,7 @@ export function useTranscript(
   sessionId: string,
   raw: boolean,
   live = true,
+  enabled = true,
 ) {
   const query = new URLSearchParams({ engine, session_id: sessionId, raw: raw ? "1" : "0" });
   return useQuery<Transcript>({
@@ -663,7 +664,7 @@ export function useTranscript(
     // The poll is the retry: a failed read shows at once (a 404 is the server's answer, no session
     // file for this task generation) and the next interval reads again.
     retry: false,
-    enabled: Boolean(project && slug && engine && sessionId),
+    enabled: enabled && Boolean(project && slug && engine && sessionId),
   });
 }
 
