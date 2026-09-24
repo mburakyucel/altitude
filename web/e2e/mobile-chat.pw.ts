@@ -3,6 +3,11 @@ import { test } from "./fixtures";
 import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
+/*
+ * The chat on a small screen: reading anchors through the keyboard, queue recovery inside the usable
+ * viewport, and the sent message that appears at once and settles in place (SPEC.md §3.6 Sending).
+ */
+
 // Browser layout simulation, not a claim about native iOS/Android keyboard events.
 async function visualViewport(page: Page, height: number, top = 0, scale = 1) {
   await page.evaluate(({ height, top, scale }) => {
@@ -127,4 +132,44 @@ test("queued removal failure and Retry stay inside the usable viewport", async (
   await walk.state("02-queue-remove-retried", { action: () => toast.getByRole("button", { name: "Retry" }).click(), visible: [field], hidden: [queued, toast] });
   await expect(field).toHaveValue("Keep this draft.");
   expect(attempts).toBe(2);
+});
+
+test("a task message appears at once as a pending bubble and settles in place when the server accepts it", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const text = "Keep the migration reversible while the index rebuilds.";
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  // The slow link: admission waits for the gate, then the real handler stores the row and answers.
+  await page.route("**/api/l2/message", async (route) => {
+    await gate;
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    await route.fulfill({ response });
+  }, { times: 1 });
+  const walk = walkthrough(page, info);
+  await walk.open(`${project.path}/tasks/prepare-index-migration`);
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const bubble = conversation.locator(".bubble", { hasText: text });
+  const row = conversation.locator(".msg-row").filter({ hasText: text });
+  const cue = row.getByRole("status", { name: "Sending", exact: true });
+  const remove = row.getByRole("button", { name: "Remove", exact: true });
+  await field.fill(text);
+  await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  try {
+    await walk.state("01-sent-pending-bubble-with-cue", { visible: [bubble, cue, row.getByText("Sending…", { exact: true })], hidden: [remove] });
+    await expect(row).toHaveAttribute("data-pending", "true");
+    await expect(row).toHaveCSS("opacity", "0.6");
+    await expect(field).toHaveValue("");
+    await row.evaluate((node) => node.setAttribute("data-walk", "pending"));
+  } finally { release(); }
+  await walk.state("02-settled-in-place", {
+    visible: [bubble, row.getByText("Queued · waiting for a checkpoint", { exact: true }), remove],
+    hidden: [cue, row.getByText("Sending…", { exact: true })],
+  });
+  await expect(row).not.toHaveAttribute("data-pending");
+  await expect(row).toHaveCSS("opacity", "1");
+  // The stored row settled the same node: nothing remounted, nothing duplicated.
+  await expect(row).toHaveAttribute("data-walk", "pending");
+  await expect(bubble).toHaveCount(1);
 });
