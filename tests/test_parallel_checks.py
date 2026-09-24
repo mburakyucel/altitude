@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import signal
 import subprocess
@@ -124,10 +125,11 @@ class TestParallelChecks(AltitudeCase):
             root = pathlib.Path(os.environ["CHECK_FIXTURE"])
             phase = "python" if pathlib.Path(sys.argv[0]).name == "python3" else sys.argv[1]
             (root / phase).touch()
-            if phase == "python":
-                assert sys.argv[-2:] == ["--workers", "2"]
+            if phase == "python": assert sys.argv[-2:] == ["--workers", "2"]
+            if phase in ("python", "test"):
+                # Both branches wait for each other, so their timing summaries are written together.
                 deadline = time.monotonic() + 5
-                while not (root / "test").exists():
+                while not (root / ("test" if phase == "python" else "python")).exists():
                     if time.monotonic() > deadline: sys.exit(99)
                     time.sleep(.01)
             if phase == "build": assert (root / "test").exists()
@@ -152,7 +154,10 @@ class TestParallelChecks(AltitudeCase):
                 self.assertTrue((self.tmp / "test").exists())
                 self.assertEqual((self.tmp / "build").exists(), failed != "test")
                 self.assertEqual((self.tmp / "ui").exists(), failed not in ("test", "build"))
-                self.assertIn("real ", result.stderr)
+                # Each phase that ran reports one intact timing summary.
+                timed = sum((self.tmp / phase).exists() for phase in ("python", "test", "build", "ui"))
+                summaries = re.findall(r"^real [\d.]+\nuser [\d.]+\nsys [\d.]+$", result.stderr, re.M)
+                self.assertEqual(len(summaries), timed, result.stderr)
 
     def test_interrupt_stops_both_make_branches(self):
         (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())
