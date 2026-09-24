@@ -625,10 +625,22 @@ class TestLand(AltitudeCase):
         self.staged_change()
         res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(res["merged"])
-        self.assertEqual(res["main_run"], {"databaseId": 7, "status": "completed", "conclusion": "success"})
+        self.assertNotIn("main_run", res)
         merge = next(args for args in self.gh_log() if args[:2] == ["pr", "merge"])
         self.assertEqual(merge[:5], ["pr", "merge", "101", "--squash", "--delete-branch"])
         self.assertEqual(merge[merge.index("--match-head-commit") + 1], self.git("rev-parse", "HEAD").strip())
+
+    def test_merge_receipt_names_no_main_run_while_the_previous_run_is_still_the_latest(self):
+        """Issue #476: right after the merge, GitHub's latest main run still belongs to the preceding merge
+        commit; the receipt names no run at all, and `alt task status` resolves the merged commit's own run."""
+        self.staged_change()
+        previous_main = self.git("rev-parse", "origin/main").strip()
+        (self.ghdir / "runs.json").write_text(json.dumps([
+            {"databaseId": 6, "headSha": previous_main, "status": "completed", "conclusion": "success"}]))
+        res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(res["merged"])
+        self.assertNotIn("main_run", res)
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["run", "list"]], [])
 
     def test_changed_pr_head_is_refused_atomically(self):
         self.staged_change()
@@ -666,7 +678,6 @@ class TestLand(AltitudeCase):
         res = land.land("fix: red", cwd=self.repo, wait=0, merge=True)
         self.assertEqual(res["checks"], "fail")
         self.assertFalse(res["merged"])
-        self.assertIsNone(res["main_run"])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_detached_head_refuses(self):
