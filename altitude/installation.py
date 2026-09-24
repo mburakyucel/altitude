@@ -209,7 +209,7 @@ def prerequisites() -> list[dict]:
 
 
 def doctor() -> dict:
-    from . import config, engines, platform
+    from . import config, engines, platform, tls
     checks = [{"name": "Python", "state": "tested" if sys.version_info >= (3, 12) else "unavailable",
                "detail": sys.version.split()[0]}]
     for name in ("git", "gh", "openssl"):
@@ -225,9 +225,15 @@ def doctor() -> dict:
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",
                    "detail": "Authentication check passed; repository permissions are checked during project setup."
                    if authenticated else "Run gh auth login, then gh auth status; repository access remains unverified."})
+    try:
+        identity = tls.info()
+        trust = {"state": "unknown", "url": f"https://{identity['host']}:{config.PORT}",
+                 **{key: identity[key] for key in ("ca_cert", "ca_sha256", "trust_steps")}}
+    except tls.TLSFailure as exc:
+        trust = {"state": "unavailable", "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
     return {"version": (config.RELEASE or {}).get("version"), "checks": checks, "engines": seats,
-            "engine_access": "unknown; no provider requests are made", "certificate_trust": "unknown; verify each browser/device",
+            "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 
 
@@ -438,7 +444,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
                 time.sleep(0.25)
             return {"version": release["version"], "prefix": str(prefix), "url": f"https://{config.HOST}:{config.PORT}",
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Trust the public CA in your browser, then open the URL."}
+                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device, comparing the CA fingerprint, then open the URL."}
 
 
 def uninstall() -> dict:

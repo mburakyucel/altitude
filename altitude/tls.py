@@ -14,6 +14,24 @@ from . import config
 
 RENEW_SECONDS = 30 * 24 * 60 * 60
 _MARKER = ".altitude-managed"
+# A new CA vouches only for loopback, private-network addresses and private names, so trusting it on a
+# device can never let its key impersonate a public website.
+_PRIVATE = ("DNS:localhost", "DNS:local", "DNS:internal", "DNS:home.arpa",
+            "IP:127.0.0.0/255.0.0.0", "IP:10.0.0.0/255.0.0.0", "IP:172.16.0.0/255.240.0.0",
+            "IP:192.168.0.0/255.255.0.0", "IP:100.64.0.0/255.192.0.0",
+            "IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "IP:fc00::/fe00::")
+TRUST_STEPS = (
+    "Transfer only ca.crt by cable, verified AirDrop or an authenticated channel; never ca.key or server.key, "
+    "and never click through a warning to fetch it. Compare its SHA-256 fingerprint with ca_sha256.",
+    "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
+    "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
+    "Mac: open ca.crt in Keychain Access, then set Trust > When using this certificate > Always Trust.",
+    "iPhone/iPad: open ca.crt and install the profile in Settings, then enable it under "
+    "General > About > Certificate Trust Settings.",
+    "Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate. "
+    "Firefox for Android also needs its third-party CA certificate setting.",
+    "Open the HTTPS URL on each device; trust is confirmed only when it loads without a warning.",
+)
 
 
 class TLSFailure(ValueError):
@@ -36,6 +54,9 @@ def _openssl(*args: str, allow_failure: bool = False) -> subprocess.CompletedPro
 
 def _host(host: str | None) -> tuple[str, str]:
     value = host or config.HOST
+    if value in ("0.0.0.0", "::"):
+        # A wildcard bind is not a name a device can use; devices reach it through localhost.
+        return "DNS", "localhost"
     try:
         return "IP", str(ipaddress.ip_address(value))
     except ValueError:
@@ -98,7 +119,13 @@ def _verify(directory: Path, host: str | None, *, ignore_time: bool = False, ver
     if ignore_time:
         args.append("-no_check_time")
     certificate = str(directory / "server.crt")
-    _openssl(*args, "-untrusted", certificate, certificate)
+    try:
+        _openssl(*args, "-untrusted", certificate, certificate)
+    except TLSFailure as exc:
+        if "permitted subtree violation" in str(exc):
+            raise TLSFailure(f"This installation's CA covers only loopback, private-network addresses and private "
+                             f"names; {name} is outside it. Serve Altitude on a private address or name.") from exc
+        raise
 
 
 def _load(directory: Path, context: ssl.SSLContext | None = None) -> ssl.SSLContext:
@@ -149,14 +176,6 @@ def initialize(host: str | None = None) -> dict:
     _host(host)
     try:
         if directory.exists() and any(directory.iterdir()):
-            if _managed(directory):
-                _load(directory)
-                _verify(directory, host, ignore_time=True, verify_host=False)
-                try:
-                    _verify(directory, host, ignore_time=True)
-                except TLSFailure:
-                    # An explicit tls-init may replace the leaf's host; the trust identity stays fixed.
-                    _renew(directory, host)
             check(host)
             return info(host)
         _safe_location(directory)
@@ -167,10 +186,13 @@ def initialize(host: str | None = None) -> dict:
             for name in ("ca", "server"):
                 _openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", staging / f"{name}.key")
                 (staging / f"{name}.key").chmod(0o600)
+            kind, name = _host(host)
+            permitted = [*_PRIVATE, *([f"DNS:{name}"] if kind == "DNS" else [])]
             _openssl("req", "-x509", "-new", "-key", staging / "ca.key", "-sha256", "-days", "3650",
                      "-out", staging / "ca.crt", "-subj", "/CN=Altitude local CA",
                      "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
-                     "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+                     "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+                     "-addext", "nameConstraints=critical," + ",".join(f"permitted;{n}" for n in dict.fromkeys(permitted)))
             _issue(staging, staging, host)
             _load(staging)
             _verify(staging, host)
@@ -185,14 +207,20 @@ def initialize(host: str | None = None) -> dict:
 
 def check(host: str | None = None, *, renew: bool = True,
           context: ssl.SSLContext | None = None) -> ssl.SSLContext:
-    """Validate HTTPS, renew a managed leaf when due, and load the serving context."""
+    """Validate HTTPS, reissue a managed leaf when due or for a new host, and load the serving context."""
     directory = config.TLS_DIR
     managed = _managed(directory)
     validated = _load(directory)
-    _verify(directory, host, ignore_time=managed and renew)
-    if managed and renew and _openssl("x509", "-checkend", str(RENEW_SECONDS), "-noout",
-                                     "-in", directory / "server.crt", allow_failure=True).returncode:
-        validated = _renew(directory, host)
+    if managed and renew:
+        _verify(directory, host, ignore_time=True, verify_host=False)
+        try:
+            _verify(directory, host, ignore_time=True)
+            due = _openssl("x509", "-checkend", str(RENEW_SECONDS), "-noout",
+                           "-in", directory / "server.crt", allow_failure=True).returncode
+        except TLSFailure:
+            due = True  # The configured host changed; the CA and every device's trust stay fixed.
+        if due:
+            validated = _renew(directory, host)
     _verify(directory, host)
     return _load(directory, context) if context is not None else validated
 
@@ -207,6 +235,4 @@ def info(host: str | None = None) -> dict:
     return {"dir": str(directory), "host": _host(host)[1], "managed": _managed(directory),
             "server_cert": details, "ca_cert": str(ca) if ca.exists() else None,
             "ca_sha256": _openssl("x509", "-noout", "-fingerprint", "-sha256", "-in", ca).stdout.strip()
-            if ca.exists() else None, "trust": "unknown",
-            "trust_action": "Transfer only ca.crt to each device and explicitly trust it in OS/browser settings. "
-                            "Never transfer ca.key or server.key; verify the CA SHA-256 fingerprint."}
+            if ca.exists() else None, "trust": "unknown", "trust_steps": list(TRUST_STEPS)}

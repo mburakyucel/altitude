@@ -57,10 +57,18 @@ enable its Corepack pnpm shim for project builds. See [noninteractive toolchain 
 
 ### Trust HTTPS on each device
 
-Import only the printed `ca.crt` file and compare its SHA-256 fingerprint with the local installer
-output. For another device, transfer it using a cable, verified AirDrop or an existing authenticated
+Trusting Altitude's own certificate authority (CA) once on each device removes the browser warning
+for good: the device then treats Altitude like any trusted site. The installer and `alt doctor` print
+the URL, the `ca.crt` path, its SHA-256 fingerprint and these steps in short form (`trust_steps`).
+
+Import only `ca.crt` and compare its SHA-256 fingerprint with the installer or `alt doctor` output.
+For another device, transfer it using a cable, verified AirDrop or an existing authenticated
 file-transfer channel. Never transfer `ca.key` or `server.key`. Do not bypass a browser warning or
 use HTTP to obtain the first trusted certificate. Trust grants the CA authority to identify sites.
+A CA that Altitude generates covers only loopback, private-network addresses (10/8, 172.16/12,
+192.168/16, 100.64/10, IPv6 unique-local), the private names `localhost`, `.local`, `.internal` and
+`home.arpa`, and a DNS name configured when it was created. It cannot vouch for a public website;
+if its key leaked it could still impersonate other private-network devices, such as a router page.
 
 - **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
   certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →
@@ -79,6 +87,10 @@ use HTTP to obtain the first trusted certificate. Trust grants the CA authority 
 - **Android:** Settings → Security → Encryption & credentials → Install a certificate →
   **CA certificate**; names vary by device. Select the transferred public CA and confirm trust.
   [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
+
+The CA is valid for ten years; Altitude renews its one-year server certificate automatically and
+reissues it when the listening address changes, so devices keep their trust. A device trusts again
+only when the CA expires or is replaced, for example after a new installation or a lost key.
 
 Open the exact HTTPS URL without a warning and reload it before adding a home-screen app. Check
 the installed app separately: a shortcut or cached page does not prove TLS works. A phone needs
@@ -265,8 +277,8 @@ application versions under `~/.local/share/altitude`, configuration/TLS under `~
 runtime state under `ALTITUDE_HOME`, and project checkouts/worktrees in their existing locations.
 Keep those directories separate. Updates retain previous versions and settings.
 
-Remote access is explicit: configure a controlled private interface/address, matching certificate
-host and firewall/network access. There is no application login layer; HTTPS authenticates the
+Remote access is explicit: bind the specific private interface/address your devices reach (a
+wildcard bind is certified for `localhost` only) and arrange firewall/network access. There is no application login layer; HTTPS authenticates the
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
 for update/recovery and source deployments. Voice input works out of the box through the browser's

@@ -250,8 +250,9 @@ secure context, so the phone must trust the local CA used by Altitude's certific
 trusted HTTPS, not a first-trust bootstrap. The microphone button remains a typing-only hint on plain
 HTTP or an unsupported browser.
 
-For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-network endpoint,
-and use `alt tls-init --ip <private-address>` to create the local CA and server certificate.
+For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-network endpoint.
+On the next start Altitude reissues its server certificate for that address under the same CA, so
+trusted devices need no new step. A generated CA refuses public addresses and names.
 `ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
 Install the CA on the phone and enable its trust in Certificate Trust Settings. Arrange the
 private tunnel and any firewall rule for your chosen interface/port separately. The shipped
