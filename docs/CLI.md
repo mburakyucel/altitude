@@ -1193,6 +1193,7 @@ and can cancel if it gets stuck or goes off scope. No suitable engine or capacit
 unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
 unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
 owner effort setting does not change reviewer eligibility.
+Saved review receipts remain readable after a project is detached; new review is unavailable.
 Service inspection must work before launch; failure refuses the invocation without spending a review.
 Use the supported review endpoint so observation and cancellation remain available. Launcher exit alone
 does not prove reviewer termination. If inspection fails, preserve the receipt and block for recovery.

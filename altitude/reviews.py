@@ -165,7 +165,8 @@ def view(project, slug):
     from . import route
     task = S.load_task(project, slug)
     task["project"] = project
-    choice = route.pick_review(task, config.project(project))
+    settings = config.load_projects().get(project)
+    choice = route.pick_review(task, settings) if settings else {"why": "Project is not managed."}
     common = (None if choice.get("engine") else choice.get("why") or "No reviewer is available.") or _capacity(task)
     subjects, history, identities = {}, [], {}
     for review in task.get("reviews", []):

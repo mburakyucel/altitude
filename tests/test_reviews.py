@@ -64,6 +64,22 @@ class TestReviews(AltitudeCase):
         return {"base_sha": git("rev-parse", "origin/main", cwd=self.worktree).strip(),
                 "head_sha": git("rev-parse", "HEAD", cwd=self.worktree).strip()}
 
+    def test_detached_project_retains_saved_review_without_selecting_reviewer(self):
+        completed = self.run_review()
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "done"
+        S.save_task(self.project, task)
+        with config.edit_projects() as projects:
+            projects.pop(self.project)
+        self.pick.reset_mock()
+        saved = reviews.view(self.project, self.slug)
+        self.assertEqual(saved["latest"]["id"], completed["id"])
+        self.assertEqual(saved["latest"]["result"], completed["result"])
+        self.assertEqual(saved["latest"]["coverage"], "unknown")
+        self.assertFalse(saved["available"])
+        self.assertFalse(saved["subjects"]["proposal"]["available"])
+        self.pick.assert_not_called()
+
     def test_request_dedup_and_source_keep_operator_authority(self):
         source = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Please review the public API.")
         first = self.request(source_id=source["id"], focus="Public API")
