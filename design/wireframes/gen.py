@@ -314,7 +314,7 @@ def rail(selected, needs=3, first_run=False):
         projects = (
             '<div class="rsec"><span>Projects</span><span class="plus">' + I("plus", "i sm") + '</span></div>'
             f'<div class="ri{sel("altitude")}"><span class="dot held"></span>altitude</div>'
-            f'<div class="ri{sel("voice-tutor")}"><span class="dot idle"></span>voice-tutor</div>'
+            f'<div class="ri{sel("harbor")}"><span class="dot idle"></span>harbor</div>'
             '<div class="ri" style="color:var(--text-muted);font-weight:400;font-size:13px">' + I("folder") + '2 folders not managed</div>'
         )
         engines = (
@@ -503,7 +503,7 @@ first_inner = (
     '<div style="text-align:center"><h1 style="font-size:24px;font-weight:600;margin:0">Point Altitude at a project</h1>'
     '<p style="font-size:15px;color:var(--text-secondary);margin:8px 0 0;line-height:1.55">Altitude runs an L3 for each project you manage. Pick a folder to open Setup and see configuration progress while L3 prepares its first reply. Work lands as reviewed pull requests.</p></div>'
     '<div class="card" style="padding:6px 8px">'
-    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">career-platform</div><div class="tm">~/Projects · git repository · 214 commits</div></div><div class="r"><span class="btn primary">Add project</span></div></div>'
+    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">atlas</div><div class="tm">~/Projects · git repository · 214 commits</div></div><div class="r"><span class="btn primary">Add project</span></div></div>'
     f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">job-search-assistant</div><div class="tm">~/Projects · git repository · 61 commits</div></div><div class="r"><span class="btn primary">Add project</span></div></div>'
     f'<div class="srow" style="min-height:48px"><span class="ib" style="color:var(--text-muted)">{I("plus")}</span><div class="tt" style="font-size:14px;font-weight:500;color:var(--text-secondary)">Choose another folder…</div></div>'
     '</div>'
@@ -559,9 +559,9 @@ def mobile_chat(sheet=False):
             '<div class="sheet"><div class="handle"></div>'
             '<div class="sh" style="padding:0 8px;margin-bottom:6px">Projects <span>2 managed</span></div>'
             f'<div class="srow sel"><span class="dot held"></span><div><div class="tt">altitude</div><div class="tm">L3 ready</div></div><div class="r">{I("check")}</div></div>'
-            '<div class="srow"><span class="dot idle"></span><div><div class="tt">voice-tutor</div><div class="tm">L3 idle since yesterday</div></div></div>'
+            '<div class="srow"><span class="dot idle"></span><div><div class="tt">harbor</div><div class="tm">L3 idle since yesterday</div></div></div>'
             '<div style="height:1px;background:var(--hairline);margin:8px 8px"></div>'
-            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">career-platform</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Add project</span></div></div>'
+            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">atlas</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Add project</span></div></div>'
             f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">job-search-assistant</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Add project</span></div></div>'
             '</div>'
         )
@@ -788,7 +788,7 @@ monitor_content = (
     '<p class="muted">The mark on each meter is the 70% reserve line.</p>'
     '<h2>Routing now</h2><div class="card">'
     '<div class="routing"><span>L3 · altitude · Auto</span><b>Claude Code</b><p>More weekly headroom in the current readings.</p></div>'
-    '<div class="routing"><span>L3 · voice-tutor · pinned to Codex</span><b>Codex</b><p>Pinned for this project.</p></div>'
+    '<div class="routing"><span>L3 · harbor · pinned to Codex</span><b>Codex</b><p>Pinned for this project.</p></div>'
     '<div class="routing"><span>L2 · new task</span><b>Claude Code</b><p>More weekly headroom in the current readings.</p></div></div>'
     '<h2>Sessions (2)</h2><div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>altitude / design-wireframes</b><span class="muted">3 min ago</span></div><p class="muted">Claude Code · Fable · context 18%</p><div class="meter"><i style="width:18%"></i></div></div>'
     '<div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>altitude / persist-paths</b><span class="muted">2 days ago</span></div><p class="muted">Codex · context 9% · idle</p><div class="meter"><i style="width:9%"></i></div></div>'

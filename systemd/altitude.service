@@ -1,5 +1,5 @@
 [Unit]
-Description=Altitude — coordinator server and web app (altd) on the WireGuard address
+Description=Altitude — coordinator server and web app (altd) on the configured address
 After=network-online.target
 Wants=network-online.target
 
@@ -13,14 +13,15 @@ RestartSec=20
 # stop/restart must leave no unowned workers behind; Claude transcripts and task
 # worktrees are the durable resume boundary, not processes that outlive altd.
 KillMode=control-group
-Environment=ALTITUDE_HOST=10.88.0.1
+# Bind the private address your devices reach (for example a VPN tunnel address); see docs/OPERATIONS.md.
+Environment=ALTITUDE_HOST=127.0.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=ALTITUDE_SERVICE=1
 # This installation's own choice: its incidents become issues on the public Altitude tracker.
 Environment=ALTITUDE_UPSTREAM_ISSUE_REPOSITORY=mburakyucel/altitude
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Runs as the real user on purpose: `claude -p` needs ~/.claude (subscription auth) and the repos.
-# Reachability through the tunnel is the auth; TLS comes from the pocketbook's local CA (already trusted on the phone).
+# Reachability through the private network is the auth; TLS comes from the local CA trusted on each device.
 NoNewPrivileges=yes
 
 [Install]
