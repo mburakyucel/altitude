@@ -845,6 +845,40 @@ describe("Phone swipe lifecycle", () => {
     expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
   });
 
+  it("completes a short quick flick from its release speed", async () => {
+    let now = 0;
+    const clock = vi.spyOn(Event.prototype, "timeStamp", "get").mockImplementation(() => now);
+    try {
+      stub(running);
+      const { router } = renderApp({ route });
+      await screen.findByRole("region", { name: "Task conversation" });
+      touch("touchStart", 300);
+      now = 20;
+      touch("touchMove", 260);
+      now = 40;
+      touch("touchEnd", 220);
+      expect(track().style.transform).toBe("translateX(-390px)");
+      await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+    } finally { clock.mockRestore(); }
+  });
+
+  it("springs back when a second finger lands during the drag", async () => {
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    touch("touchStart", 300);
+    touch("touchMove", 100);
+    expect(live()).toBeVisible();
+    fireEvent.touchStart(document.querySelector(".convo-scroll")!, { touches: [{ clientX: 100, clientY: 300 }, { clientX: 200, clientY: 500 }] });
+    expect(track().style.transform).toBe("translateX(0px)");
+    touch("touchMove", 60);
+    expect(track().style.transform).toBe("translateX(0px)");
+    touch("touchEnd", 60);
+    await waitFor(() => expect(live()).toBeNull());
+    expect(track().style.transform).toBe("");
+    expect(router.state.location.pathname).toBe(route);
+  });
+
   it("gives resistance past the end and never switches", async () => {
     stub(running);
     const { router } = renderApp({ route });

@@ -40,15 +40,19 @@ describe("swipe arithmetic", () => {
     expect(completes(-300, -2, width, true)).toBe(false);
   });
 
-  it("measures release speed over the last hundred milliseconds only", () => {
-    const samples = [{ x: 300, at: 0 }, { x: 260, at: 40 }, { x: 220, at: 80 }, { x: 180, at: 120 }, { x: 140, at: 160 }];
-    expect(releaseVelocity(samples, 170)).toBeCloseTo(-1, 6);
-    expect(releaseVelocity([{ x: 300, at: 0 }, { x: 200, at: 50 }], 60)).toBeCloseTo(-2, 6);
+  it("measures release speed over the last hundred milliseconds, the release included", () => {
+    const samples = [{ x: 300, at: 0 }, { x: 260, at: 40 }, { x: 220, at: 80 }, { x: 180, at: 120 }, { x: 140, at: 160 }, { x: 130, at: 170 }];
+    expect(releaseVelocity(samples)).toBeCloseTo(-90 / 90, 6);
+  });
+
+  it("measures a short flick over its whole length, from the touch to the release", () => {
+    expect(releaseVelocity([{ x: 300, at: 0 }, { x: 220, at: 40 }])).toBeCloseTo(-2, 6);
+    expect(releaseVelocity([{ x: 300, at: 0 }, { x: 260, at: 20 }, { x: 220, at: 40 }])).toBeCloseTo(-2, 6);
   });
 
   it("counts a pause before lifting as rest", () => {
-    expect(releaseVelocity([{ x: 300, at: 0 }, { x: 100, at: 50 }], 200)).toBe(0);
-    expect(releaseVelocity([{ x: 300, at: 0 }], 10)).toBe(0);
-    expect(releaseVelocity([], 10)).toBe(0);
+    expect(releaseVelocity([{ x: 300, at: 0 }, { x: 100, at: 50 }, { x: 100, at: 200 }])).toBe(0);
+    expect(releaseVelocity([{ x: 300, at: 0 }])).toBe(0);
+    expect(releaseVelocity([])).toBe(0);
   });
 });

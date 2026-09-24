@@ -25,17 +25,18 @@ export function dragOffset(dx: number, width: number, live: boolean): number {
   return Math.sign(dx) * (1 - 1 / ((magnitude * RESISTANCE) / width + 1)) * width * RESISTANCE;
 }
 
-/** Speed at release from the movement inside the window; a pause before lifting counts as rest. */
-export function releaseVelocity(samples: readonly Sample[], at: number): number {
+/**
+ * Speed over the last hundred milliseconds of a gesture whose samples run from the touch to the
+ * release: a short flick is measured over its whole length, and a pause before lifting reads as rest.
+ */
+export function releaseVelocity(samples: readonly Sample[]): number {
   const last = samples[samples.length - 1];
-  if (!last || at - last.at > VELOCITY_WINDOW) return 0;
-  let reference = last;
+  if (!last) return 0;
+  let reference = samples[0]!;
   for (let index = samples.length - 2; index >= 0; index--) {
-    reference = samples[index]!;
-    if (last.at - reference.at >= VELOCITY_WINDOW) break;
+    if (last.at - samples[index]!.at >= VELOCITY_WINDOW) { reference = samples[index]!; break; }
   }
-  if (reference.at === last.at) return 0;
-  return (last.x - reference.x) / (last.at - reference.at);
+  return last.at === reference.at ? 0 : (last.x - reference.x) / (last.at - reference.at);
 }
 
 /**
@@ -104,7 +105,8 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
       }
     };
     const start = (event: TouchEvent) => {
-      gesture = null;
+      // A second finger lands as a fresh touchstart: the drag it interrupts springs back first.
+      cancel();
       const target = event.target instanceof Element ? event.target : null;
       const touch = event.touches[0];
       if (settling || event.touches.length !== 1 || !touch || selecting() ||
@@ -115,7 +117,7 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
         if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return;
       }
       gesture = { x: touch.clientX, y: touch.clientY, at: event.timeStamp, width: node.clientWidth, horizontal: false,
-        reduced: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches), samples: [] };
+        reduced: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches), samples: [{ x: touch.clientX, at: event.timeStamp }] };
     };
     const move = (event: TouchEvent) => {
       if (!gesture) return;
@@ -136,7 +138,8 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
     const end = (event: TouchEvent) => {
       const touch = event.changedTouches[0];
       if (!gesture?.horizontal || !touch) { gesture = null; return; }
-      finish(touch.clientX - gesture.x, releaseVelocity(gesture.samples, event.timeStamp));
+      gesture.samples.push({ x: touch.clientX, at: event.timeStamp });
+      finish(touch.clientX - gesture.x, releaseVelocity(gesture.samples));
     };
     const cancel = () => {
       if (gesture?.horizontal) finish(0, 0);
