@@ -153,7 +153,12 @@ Register before starting a foreground development server when you want to use `a
 startup creates the project's coordinator broker. Web conversations also create the broker on
 demand, so a project registered after startup can start from the web app. Its First run / Add
 project flow registers the folder and opens Setup immediately, using Auto and the project's
-preferences. Closing the checklist leaves accepted work running. A CLI conversation
+preferences. Its folder browser shows folders on the computer running Altitude, whichever device
+displays the page. Browsing starts at your home folder and stays inside it, judged after following
+links; hidden folders are left out. Each request lists one folder you opened: subfolder names, whether
+one is already a project and whether it holds a Git repository, never file names, sizes or contents.
+Altitude reads only what your account can read; an unreadable folder shows as such. Folders outside
+home are added by typing their path or with `alt project add --path`. Closing the checklist leaves accepted work running. A CLI conversation
 also works from another terminal with
 the same PATH and Altitude home while the server is running:
 
@@ -213,7 +218,7 @@ repair cannot make this choice for you. See the
 | Setting | Purpose |
 | --- | --- |
 | `ALTITUDE_HOME` | Runtime state directory, default `~/.altitude`; use the same value for CLI and server. Keep it out of Git. |
-| `ALTITUDE_ROOTS` | Colon-separated parent folders scanned by First run, default `~/Projects`; `project add --path` also supports other folders. |
+| `ALTITUDE_ROOTS` | Initial projects folder(s), colon separated, default `~/Projects`: First run lists the folders directly inside. **Settings → Projects folder** or `alt machine set --projects-folder PATH` replaces it with one folder without a restart; `--unset-projects-folder` returns to this value. `project add --path` also supports other folders. |
 | `ALTITUDE_OPERATOR` | Name shown for the operator; defaults to “Operator”. |
 | `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |

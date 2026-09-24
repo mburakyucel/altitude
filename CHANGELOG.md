@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- **Choose a folder elsewhere…** in First run browses folders on the computer running Altitude,
+  starting at your home folder and staying inside it, and adds the current folder with one action;
+  typing a path remains. Listings show folder names only, one folder at a time when you open it.
+  The projects folder First run lists is a machine setting: **Settings → Projects folder** or
+  `alt machine set --projects-folder PATH`, with `ALTITUDE_ROOTS` as its initial value (#479).
+
 - Consecutive voice settings saves use the acknowledged selection immediately and preserve the
   next credential edit when a cache notification arrives later.
 

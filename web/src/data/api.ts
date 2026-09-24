@@ -631,6 +631,28 @@ export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettin
   return VoiceSchema.parse(await post("/api/voice", value));
 }
 
+const FoldersSchema = z.object({
+  path: z.string(), parts: z.array(z.string()), readable: z.boolean(),
+  folders: z.array(z.object({ name: z.string(), path: z.string(), project: z.string().nullish(), git: z.boolean() })),
+});
+export type Folders = z.infer<typeof FoldersSchema>;
+
+/** One folder on the computer running Altitude, opened by the operator: its subfolders, never files. */
+export function useFolders(path: string | undefined) {
+  return useQuery({
+    queryKey: ["folders", path ?? ""],
+    queryFn: async () => FoldersSchema.parse(await api(path ? `/api/folders?path=${encodeURIComponent(path)}` : "/api/folders")),
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
+/** Choose the projects folder First run lists; an empty path returns to the installation's default. */
+export async function saveProjectsFolder(path: string): Promise<{ roots: string[] }> {
+  return post("/api/projects-folder", { path });
+}
+
 /** Upload one browser-native audio blob for the server's local service or configured endpoint. */
 export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
   const result = VoiceTranscriptSchema.parse(

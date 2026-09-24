@@ -53,6 +53,7 @@ CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 HOST = os.environ.get("ALTITUDE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
+# The projects folder's initial value; `alt machine set --projects-folder` replaces it (project_roots()).
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
 TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser()
 TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
@@ -194,6 +195,23 @@ def subprocess_env() -> dict[str, str]:
 def machine_settings() -> dict:
     from . import state as S
     return S.read_json(ROOT / "settings.json", {})
+
+
+def project_roots() -> list[Path]:
+    """The folders First run lists the immediate subfolders of: the chosen projects folder, else ALTITUDE_ROOTS."""
+    folder = machine_settings().get("projects_folder")
+    return [Path(folder)] if folder else PROJECT_ROOTS
+
+
+def validate_projects_folder(value) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not Path(value).is_absolute():
+        raise ValueError("the projects folder must be an absolute path")
+    if not Path(value).is_dir():
+        raise ValueError(f"{value} is not a directory")
+    if not os.access(value, os.R_OK | os.X_OK):
+        raise ValueError(f"{value} is not readable")
 
 
 def machine_wip() -> int:
@@ -371,7 +389,7 @@ def _write_project(name: str, entry: dict | None) -> None:
 def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_engine=None):
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
-    path = Path(path or (PROJECT_ROOTS[0] / name)).expanduser()
+    path = Path(path or (project_roots()[0] / name)).expanduser()
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
     entry = {"path": str(path), "approval": approval,
@@ -471,14 +489,16 @@ def project_dir(name: str) -> Path:
 
 
 def discover_projects() -> list[dict]:
-    """Every folder under the roots, marked managed/unmanaged."""
+    """The immediate subfolders of the projects folder, marked managed/unmanaged, and managed projects elsewhere."""
     managed = load_projects()
     by_path = {str(Path(v["path"]).expanduser().resolve()): k for k, v in managed.items()}
     out, seen = [], set()
-    for root in PROJECT_ROOTS:
-        if not root.is_dir():
+    for root in project_roots():
+        try:
+            children = sorted(root.iterdir())
+        except OSError:  # a missing or unreadable projects folder lists nothing; managed projects remain
             continue
-        for p in sorted(root.iterdir()):
+        for p in children:
             if not p.is_dir() or p.name.startswith("."):
                 continue
             key = str(p.resolve())
