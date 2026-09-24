@@ -392,7 +392,14 @@ original L2 message and text against the committed head's source tree, even befo
 main. Changes reviews capture the merge-candidate tree and diff. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
-connectors, network tools, mutation, nested helpers or task identity. CLI-internal authentication uses
+connectors, network tools, mutation, nested helpers or task identity. Codex reaches it through its
+code-mode host, the one native feature left enabled besides skipping host skill discovery: a
+JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
+sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
+built-in tools, no skills and no safe mode, which disables every MCP server. Both are provider
+properties established by recorded reviewer runs, not by the suite. The adapter records the first
+content-bearing read in the review runtime; a reviewer that read no content fails with that reason
+instead of completing with no coverage. CLI-internal authentication uses
 the configured account. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
