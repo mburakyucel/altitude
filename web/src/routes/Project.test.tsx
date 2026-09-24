@@ -84,8 +84,6 @@ function mockFetch(fixtures: Fixtures = {}) {
     if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
-    if (url.includes("/api/effort/")) return jsonResponse({ l3: null, l2: null,
-      defaults: { l3: "Native", l2: "High" }, choices: [{ value: "native", label: "Native" }, { value: "high", label: "High" }] });
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true });
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/l3/")) return jsonResponse({ ok: true });

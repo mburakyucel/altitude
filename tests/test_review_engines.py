@@ -422,7 +422,7 @@ class ReviewRoutingTests(AltitudeCase):
         self.assertEqual(selected["fallback_reason"], "")
 
     def test_owner_effort_does_not_exclude_native_default_reviewer(self):
-        selected = route.pick_review({"l2_engine": "codex"}, {"l2_effort": "ultra"})
+        selected = route.pick_review({"l2_engine": "codex"}, {"l2_effort": "max"})
         self.assertEqual(selected["engine"], "claude")
         self.assertFalse(selected["same_engine"])
         self.assertIsNone(selected["effort"])

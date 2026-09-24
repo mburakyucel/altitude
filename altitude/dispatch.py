@@ -399,18 +399,21 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
     if setting not in (MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS):
         raise T.TransitionError(f"unknown {scope} setting")
-    if setting in ("wip", "voice", "projects_folder", *config.MODEL_SETTINGS):
-        try:
-            {"wip": config.validate_wip, "voice": config.validate_voice,
-             "projects_folder": config.validate_projects_folder}.get(setting, config.validate_project_model)(value)
-        except ValueError as exc:
-            raise T.TransitionError(str(exc)) from exc
+    try:
+        if setting == "wip":
+            config.validate_wip(value)
+        elif setting == "voice":
+            config.validate_voice(value)
+        elif setting == "projects_folder":
+            config.validate_projects_folder(value)
+        elif setting in config.DEFAULT_SETTINGS:
+            config.validate_project_default(setting, value)
+    except ValueError as exc:
+        raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
         value = config.parse_routing(value)
     with config.projects_lock() if project is None else S.project_lock(project):
         entry = config.machine_settings() if project is None else config.project(project)
-        if setting in config.EFFORT_SETTINGS:
-            config.validate_project_effort(entry, setting[:2], value)
         directory = config.ROOT if project is None else config.project_dir(project)
         path = directory / f"{setting}-request.json"
         previous = S.read_json(path, {})
@@ -445,11 +448,6 @@ def _run_setting(project: str | None, setting: str) -> dict:
             return request
         projects = config._load_projects() if project is not None else None
         entry = projects.get(project) if projects is not None else config.machine_settings()
-        if entry is not None and setting in config.EFFORT_SETTINGS:
-            try:
-                config.validate_project_effort(entry, setting[:2], request[setting])
-            except ValueError as exc:
-                request.update(status="refused", note=str(exc))
         if setting == "projects_folder":  # the folder can vanish or lose access before altd drains the CLI request
             try:
                 config.validate_projects_folder(request[setting])

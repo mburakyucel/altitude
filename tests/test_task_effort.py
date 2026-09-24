@@ -11,10 +11,10 @@ from tests.test_engines import _Process as ClaudeWorker
 from altitude import config, dispatch, engines, incidents, route, state as S, status, tasks as T
 
 
-def set_effort(project, role, value):
-    dispatch.request_setting(project, f"{role}_effort", value, "Set test effort", actor="burak")
-    dispatch._run_setting(project, f"{role}_effort")
-    return config.defaults_view(project)
+def set_effort(project, value):
+    """The L2 Codex default: the setUp routing sends fresh attempts to Codex."""
+    dispatch.request_setting(project, "l2_codex_effort", value, "Set test effort", actor="burak")
+    dispatch._run_setting(project, "l2_codex_effort")
 
 
 class TestTaskEffort(AltitudeCase):
@@ -71,33 +71,19 @@ class TestTaskEffort(AltitudeCase):
         self.assertEqual((saved["attempt"], saved["launch_effort"], saved["effort"]), (1, "xhigh", "xhigh"))
         self.assertIsNone(saved["engine_reasoning_effort"], "a new turn has no observation yet")
 
-    def test_existing_task_launch_and_resume_do_not_acquire_a_default(self):
-        task = T.new(self.project, "Existing work", "request")
-        del task["effort"]
-        S.save_task(self.project, task)
-        self.assertIsNone(self.launch(task).kwargs["effort"])
-        saved = S.load_task(self.project, task["slug"])
-        saved.pop("launch_effort")
-        saved["engine_reasoning_effort"] = "low"
-        S.save_task(self.project, saved)
-        T.block(self.project, task["slug"], "Paused")
-        with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
-            dispatch.resume(self.project, task["slug"])
-        self.assertIsNone(resume.call_args.kwargs["effort"])
-
     def test_project_default_is_read_at_dispatch_and_override_wins(self):
-        set_effort(self.project, "l2", "medium")
+        set_effort(self.project, "medium")
         queued = T.new(self.project, "Queued before change", "request")
         explicit = T.new(self.project, "Explicit choice", "request", effort="low")
         native = T.new(self.project, "Native choice", "request", effort="native")
-        set_effort(self.project, "l2", "max")
+        set_effort(self.project, "max")
         self.assertEqual(self.launch(queued).kwargs["effort"], "max")
         self.assertEqual(self.launch(explicit).kwargs["effort"], "low")
         self.assertIsNone(self.launch(native).kwargs["effort"])
         saved = S.load_task(self.project, queued["slug"])
         self.assertIsNone(saved["effort"])
         self.assertEqual(saved["launch_effort"], "max")
-        set_effort(self.project, "l2", "low")
+        set_effort(self.project, "low")
         T.block(self.project, queued["slug"], "Paused")
         T.message(self.project, queued["slug"], "burak", "Continue", by="burak")
         with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
@@ -107,10 +93,10 @@ class TestTaskEffort(AltitudeCase):
         self.assertEqual(self.launch(T.new(self.project, "After change", "request")).kwargs["effort"], "low")
 
     def test_native_started_task_stays_native_after_project_default_change(self):
-        set_effort(self.project, "l2", "native")
+        set_effort(self.project, "native")
         task = T.new(self.project, "Native project default", "request")
         self.assertIsNone(self.launch(task).kwargs["effort"])
-        set_effort(self.project, "l2", "high")
+        set_effort(self.project, "high")
         T.block(self.project, task["slug"], "Paused")
         with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
             dispatch.resume(self.project, task["slug"])

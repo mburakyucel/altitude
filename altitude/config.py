@@ -96,8 +96,13 @@ AUTO_ROUTING = [[{"engine": engine, "model": None} for engine in sorted(ENGINES,
                 [{"engine": "claude", "model": "opus"}]]
 TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
 ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
-EFFORT_SETTINGS = ("l3_effort", "l2_effort")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
+ROLES = ("l3", "l2")
+
+
+def role_setting(role: str, engine: str, kind: str) -> str:
+    """Project registry key holding a role's default ``model`` or ``effort`` on one engine."""
+    return f"{role}_{kind}" if engine == "claude" else f"{role}_{engine}_{kind}"
 
 
 def model_family(name: str | None) -> str | None:
@@ -107,12 +112,13 @@ def model_family(name: str | None) -> str | None:
 
 
 def model_setting(role: str, engine: str) -> str:
-    """Project registry key holding a role's default model on one engine."""
-    return f"{role}_model" if engine == "claude" else f"{role}_{engine}_model"
+    return role_setting(role, engine, "model")
 
 
-MODEL_SETTINGS = tuple(model_setting("l2", engine) for engine in ENGINES)
-PROJECT_SETTINGS = ("routing", *EFFORT_SETTINGS, *MODEL_SETTINGS)
+#: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
+DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
+                    for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
+PROJECT_SETTINGS = ("routing", *DEFAULT_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
@@ -136,38 +142,41 @@ def task_effort(engine: str | None, effort: str | None, *, role: str = "l2") -> 
     return effort or ("high" if role == "l2" and engine == "codex" else None)
 
 
-def validate_project_effort(entry: dict, role: str, effort: str | None) -> None:
-    if f"{role}_effort" not in EFFORT_SETTINGS:
-        raise ValueError("effort role must be l3 or l2")
-    pin = pinned_option(role, entry)
-    task_effort(pin["engine"] if pin else None, effort, role=role)
+def validate_project_default(setting: str, value) -> None:
+    """A model is one alias or id; an effort must be one its own engine accepts."""
+    role, engine, kind = DEFAULT_SETTINGS[setting]
+    if kind == "effort":
+        task_effort(engine, value, role=role)
+    elif value is not None and not valid_model(value):
+        raise ValueError("a default model is one alias or model id without spaces")
 
 
 def valid_model(value) -> bool:
     return isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
 
 
-def validate_project_model(value) -> None:
-    if value is not None and not valid_model(value):
-        raise ValueError("a default model is one alias or model id without spaces")
+EFFORT_LABELS = {"native": "Native", "xhigh": "Extra High"}
+
+
+def effort_label(value: str | None) -> str:
+    return EFFORT_LABELS.get(value or "native", (value or "").title())
 
 
 def defaults_view(name: str) -> dict:
-    """Requested project defaults for the settings UI: effort per role and the L2 model per engine."""
+    """Requested project defaults for the settings UI: one model/effort pair per role and engine."""
     entry = project(name)
-    labels = {"native": "Native", "xhigh": "Extra High"}
-    choices = []
-    for value in TASK_EFFORTS:
-        supported = [e for e in ENGINES if value in ENGINE_EFFORTS.get(e, ())]
-        if supported:
-            suffix = "" if len(supported) == len(ENGINES) else " (" + ", ".join(ENGINE_LABELS[e] for e in supported) + ")"
-            choices.append({"value": value, "label": labels.get(value, value.title()) + suffix})
-    return {"l3": entry.get("l3_effort"), "l2": entry.get("l2_effort"), "choices": choices,
-            "defaults": {"l3": "Native", "l2": "; ".join(
-                f"{ENGINE_LABELS[e]}: {task_effort(e, None) or 'native'}" for e in ENGINES)},
-            "models": {e: {"label": ENGINE_LABELS[e], "value": entry.get(model_setting("l2", e)),
-                           "default": default_model("l2", e) or "native",
-                           "choices": list(MODEL_ALIASES) if e == "claude" else []} for e in ENGINES}}
+    def field(role, engine, kind):
+        key = role_setting(role, engine, kind)
+        if kind == "model":
+            return {"setting": key, "value": entry.get(key), "default": default_model(role, engine) or "CLI default",
+                    "choices": list(MODEL_ALIASES) if engine == "claude" else []}
+        return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
+                "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
+    return {"l3_engine": entry.get("l3_engine"),
+            "roles": [{"role": role, "engines": [{"engine": engine, "label": ENGINE_LABELS[engine],
+                                                   "model": field(role, engine, "model"),
+                                                   "effort": field(role, engine, "effort")} for engine in ENGINES]}
+                      for role in ROLES]}
 
 
 def subprocess_env() -> dict[str, str]:
@@ -283,6 +292,11 @@ def parse_routing(value: str) -> list[list[dict]]:
 def default_model(role: str, engine: str, project: dict | None = None) -> str | None:
     """The project's default model on that engine, then the role default; Codex leaves it to its CLI."""
     return (project or {}).get(model_setting(role, engine)) or (MODELS[role] if engine == "claude" else None)
+
+
+def default_effort(role: str, engine: str, project: dict | None = None) -> str | None:
+    """The project's requested effort for that role on that engine; None keeps the engine default."""
+    return (project or {}).get(role_setting(role, engine, "effort"))
 
 
 def pinned_option(role: str, project: dict, *, engine: str | None = None,
@@ -472,7 +486,6 @@ def set_l3_engine(name: str, engine: str | None) -> dict:
     with S.project_lock(name), edit_projects() as projects:
         if name not in projects:
             raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
-        task_effort(engine, projects[name].get("l3_effort"), role="l3")
         if engine:
             projects[name]["l3_engine"] = engine
         else:
