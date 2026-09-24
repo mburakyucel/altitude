@@ -24,6 +24,7 @@ class TestConversationReview(AltitudeCase):
             self.assertIn(str(self.repo / "AGENTS.md"), prompt)
             self.assertIn("Review only", prompt)
             self.assertIsNone(kw["resume"])
+            self.assertIsNone(kw.get("effort"))
             self.assertEqual(kw["timeout"], engines.session_timeout(engine))
             self.assertTrue(kw["durable_timeout"])
             self.assertEqual(kw["model"], "configured-review-model")

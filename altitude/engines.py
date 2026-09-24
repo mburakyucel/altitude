@@ -186,7 +186,7 @@ def conversation_review(project: str, prompt: str, *, engine: str, model: str) -
                                   permission_mode="dontAsk", permission_prompts="none", restricted=True,
                                   add_dirs=(config.project_path(project), config.ROOT))
         else:
-            native = codex_exec(body, **common, effort=config.CODEX_EFFORT.get("l3"),
+            native = codex_exec(body, **common,
                                 sandbox_settings=codex_l3_permissions(runtime, project=project),
                                 ignore_user_config=True)
         result.update(text=native.get("final_text", native.get("text")) or "", usage=native.get("usage") or None,
