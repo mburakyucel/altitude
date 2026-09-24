@@ -8,6 +8,10 @@ Each project has an ongoing conversation with a coordinator. It assigns tasks, a
 from recorded decisions and brings unresolved choices back to you. You can get into the details
 at any time: talk directly to a task owner, inspect its live session or redirect its work.
 
+Work from your computer or phone. Dictate what you want to change, answer questions and follow
+progress in the browser while agents run on your machine.
+[Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported browser.
+
 Codex and Claude Code are supported today; one is enough. Their integrations are
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
