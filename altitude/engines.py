@@ -2099,7 +2099,7 @@ def _review_native(engine: str, executable: str, modified: int, size: int) -> tu
         result = subprocess.run([executable, *(["exec"] if engine == "codex" else []), "--help"],
                                 capture_output=True, text=True, timeout=5, env=_review_env())
         flags = (("--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral") if engine == "codex"
-                 else ("--restricted", "--safe-mode", "--strict-mcp-config", "--tools", "--permission-prompts"))
+                 else ("--restricted", "--strict-mcp-config", "--tools", "--permission-prompts"))
         if result.returncode or not all(flag in result.stdout for flag in flags):
             return False, ()
         if engine == "codex":
@@ -2162,8 +2162,11 @@ def _review_read(snapshot: Path, args: dict) -> dict:
     return {"lines": result, "truncated": len(selected) > 100 or any(len(line) > 2000 for _, line in selected[:100])}
 
 
-def review_mcp(snapshot: str) -> None:
-    """The reviewer's only tool, over stdio. No command, write, credential or network API."""
+def review_mcp(snapshot: str, served: str) -> None:
+    """The reviewer's only tool, over stdio. No command, write, credential or network API.
+
+    ``served`` is touched on the first read or search that returns lines, so a review that read no
+    content fails loudly instead of completing with no coverage (I-20260924-080541)."""
     tool = {"name": "captured_input", "description": "List captured files, read from a line, or search one file literally.",
             "inputSchema": {"type": "object", "required": ["operation"], "additionalProperties": False,
                             "properties": {"operation": {"enum": ["list", "read", "search"]},
@@ -2181,7 +2184,10 @@ def review_mcp(snapshot: str) -> None:
             elif method == "tools/list":
                 result = {"tools": [tool]}
             elif method == "tools/call" and params.get("name") == tool["name"]:
-                result = {"content": [{"type": "text", "text": json.dumps(_review_read(Path(snapshot), params["arguments"]))}]}
+                payload = _review_read(Path(snapshot), params["arguments"])
+                if payload.get("lines"):
+                    Path(served).touch()
+                result = {"content": [{"type": "text", "text": json.dumps(payload)}]}
             else:
                 raise ValueError("Unsupported captured-input request.")
             reply = {"result": result}
@@ -2190,12 +2196,19 @@ def review_mcp(snapshot: str) -> None:
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}), flush=True)
 
 
+def _review_served(runtime: Path) -> Path:
+    return runtime / "captured-input.read"
+
+
 def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | None) -> list[str]:
     adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
-               f"from altitude.engines import review_mcp; review_mcp({str(snapshot)!r})")
+               f"from altitude.engines import review_mcp; review_mcp({str(snapshot)!r}, {str(_review_served(runtime))!r})")
     server = {"command": sys.executable, "args": ["-I", "-c", adapter]}
     if engine == "claude":
-        return [config.CLAUDE_BIN, "-p", "--output-format", "json", "--restricted", "--safe-mode",
+        # No safe mode: it disables every MCP server, the captured adapter included (I-20260924-080541).
+        # Restricted mode ignores user/project/local settings (hooks, plugins), strict MCP configuration
+        # admits only the adapter, and "" tools with disabled skills leave captured_input alone.
+        return [config.CLAUDE_BIN, "-p", "--output-format", "json", "--restricted",
                 "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": {"captured": server}}),
                 "--tools", "", "--allowedTools", "mcp__captured__captured_input", "--permission-mode", "dontAsk",
                 "--permission-prompts", "none", "--disable-slash-commands", "--no-chrome", "--no-session-persistence",
@@ -2211,7 +2224,11 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
                 "mcp_servers.captured.command=" + json.dumps(server["command"]),
                 "mcp_servers.captured.args=" + json.dumps(server["args"]), "mcp_servers.captured.required=true",
                 'mcp_servers.captured.tools.captured_input.approval_mode="approve"',
-                *(f"features.{feature}=" + ("true" if feature == "skip_host_skill_discovery" else "false") for feature in features)]
+                # Codex reaches MCP tools only through its code-mode host: a JavaScript tool bridge without
+                # filesystem, process or network globals whose write tool the read-only sandbox rejects. With the
+                # host disabled, captured_input is unreachable and the turn still completes (I-20260924-080541).
+                *(f"features.{feature}=" + ("true" if feature in ("skip_host_skill_discovery", "code_mode_host") else "false")
+                  for feature in features)]
     return [config.CODEX_BIN, "exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules",
             "--ephemeral", "--skip-git-repo-check", "-C", str(runtime), *(["-m", model] if model else []),
             *(arg for setting in settings for arg in ("-c", setting)), "-"]
@@ -2365,6 +2382,8 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
             if any(event.get("type") == "turn.failed" for event in events):
                 return {**out, "error": "The review engine returned an error."}
         out["text"] = text
+        if not _review_served(runtime).exists():
+            return {**out, "error": "The reviewer never read its captured input; the result has no coverage."}
         parsed = json.loads(text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
         if not isinstance(parsed.get("text"), str) or not isinstance(parsed.get("findings"), list):
             raise ValueError

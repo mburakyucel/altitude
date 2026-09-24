@@ -41,25 +41,35 @@ class ReviewEngineTests(AltitudeCase):
                 engines._review_read(self.snapshot, {"operation": operation})
 
     def test_mcp_exposes_only_captured_read_tool_and_redacts_path_failures(self):
+        served = engines._review_served(self.runtime)
         requests = [{"id": 1, "method": "tools/list"},
                     {"id": 2, "method": "tools/call", "params": {"name": "captured_input", "arguments":
                      {"operation": "read", "path": "/private/credential"}}},
                     {"id": 3, "method": "tools/call", "params": {"name": "shell", "arguments": {}}}]
         output = io.StringIO()
         with patch.object(sys, "stdin", io.StringIO("\n".join(map(json.dumps, requests)))), patch.object(sys, "stdout", output):
-            engines.review_mcp(str(self.snapshot))
+            engines.review_mcp(str(self.snapshot), str(served))
         replies = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual([tool["name"] for tool in replies[0]["result"]["tools"]], ["captured_input"])
         self.assertIn("error", replies[1])
         self.assertIn("error", replies[2])
         self.assertNotIn("/private", output.getvalue())
+        self.assertFalse(served.exists(), "tool listing and refused reads are not coverage")
+        for arguments, coverage in (({"operation": "list"}, False),
+                                    ({"operation": "search", "path": "code.py", "query": "absent"}, False),
+                                    ({"operation": "read", "path": "code.py", "line": 2}, True)):
+            request = {"id": 4, "method": "tools/call", "params": {"name": "captured_input", "arguments": arguments}}
+            with patch.object(sys, "stdin", io.StringIO(json.dumps(request))), patch.object(sys, "stdout", io.StringIO()):
+                engines.review_mcp(str(self.snapshot), str(served))
+            self.assertEqual(served.exists(), coverage, arguments)
 
     def test_commands_disable_native_tools_and_user_configuration_for_both_engines(self):
         features = ("shell_tool", "apps", "plugins", "multi_agent", "view_image", "code_mode_host", "skip_host_skill_discovery")
         self.patch(engines, "_review_native", return_value=(True, features))
         first = engines._review_command("claude", self.snapshot, self.runtime, "selected")
-        for flag in ("--safe-mode", "--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
+        for flag in ("--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
             self.assertIn(flag, first)
+        self.assertNotIn("--safe-mode", first, "safe mode disconnects the captured adapter (I-20260924-080541)")
         self.assertEqual(first[first.index("--tools") + 1], "")
         self.assertEqual(first[first.index("--allowedTools") + 1], "mcp__captured__captured_input")
         second = engines._review_command("codex", self.snapshot, self.runtime, "selected")
@@ -67,8 +77,12 @@ class ReviewEngineTests(AltitudeCase):
             self.assertIn(flag, second)
         for setting in ('approval_policy="never"', 'web_search="disabled"', 'permissions.captured-review.network.enabled=false',
                         'features.shell_tool=false', 'features.apps=false', 'features.plugins=false', 'features.multi_agent=false',
-                        'features.view_image=false', 'features.skip_host_skill_discovery=true'):
+                        'features.view_image=false', 'features.skip_host_skill_discovery=true', 'features.code_mode_host=true'):
             self.assertIn(setting, second)
+        self.assertNotIn('features.code_mode_host=false', second)
+        for command in (first, second):
+            adapter = next(item for item in command if "review_mcp(" in item)
+            self.assertIn(f"review_mcp({str(self.snapshot)!r}, {str(self.runtime / 'captured-input.read')!r})", adapter)
         filesystem = next(item for item in second if item.startswith("permissions.captured-review.filesystem="))
         self.assertIn('\":root\"=\"deny\"', filesystem)
         self.assertNotIn('"write"', filesystem)
@@ -85,7 +99,9 @@ class ReviewEngineTests(AltitudeCase):
         self.assertEqual(set(env) - {"HOME", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
         self.assertNotIn("secret", env.values())
 
-    def fixture(self, *, result=None, exitcode=0):
+    def fixture(self, *, result=None, exitcode=0, served=True):
+        if served:
+            engines._review_served(self.runtime).touch()
         self.patch(engines, "review_capability", return_value={"available": True})
         self.patch(engines, "_review_command", return_value=["fixture-only"])
         self.patch(engines, "_unit_active", return_value=False)
@@ -114,6 +130,29 @@ class ReviewEngineTests(AltitudeCase):
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertIn("invalid findings", result["error"])
         self.assertEqual(result["findings"], [])
+
+    def test_reviewer_that_never_reads_captured_input_fails_with_reason(self):
+        # I-20260924-080541: Codex completed a review with zero coverage after its tool discovery failed.
+        service = self.fixture(served=False)
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("never read its captured input", result["error"])
+        self.assertEqual(result["findings"], [])
+        payload = {"text": "captured_input is not available among the exposed tools.", "findings": [],
+                   "limitations": ["No source or diff was examined."]}
+        records = [{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(payload)}},
+                   {"type": "turn.completed", "usage": {"input_tokens": 30, "output_tokens": 10}}]
+        stdout = "\n".join(map(json.dumps, records))
+        service.return_value = [sys.executable, "-I", "-c", f"import sys; sys.stdin.read(); print({stdout!r})"]
+        result = engines.review("Review", engine="codex", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("never read its captured input", result["error"])
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["text"], json.dumps(payload), "the reviewer's own account is retained as evidence")
+        self.assertEqual(result["usage"]["input_tokens"], 30)
+        self.assertTrue(result["termination_confirmed"])
+        failed = "\n".join(map(json.dumps, [{"type": "turn.failed", "error": {"message": "quota"}}, records[1]]))
+        service.return_value = [sys.executable, "-I", "-c", f"import sys; sys.stdin.read(); print({failed!r})"]
+        result = engines.review("Review", engine="codex", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["error"], "The review engine returned an error.", "engine failures keep precedence")
 
     def test_codex_result_uses_same_findings_and_usage_contract(self):
         service = self.fixture()

@@ -228,7 +228,8 @@ Owner Stop/rejection, changed owner identity and caller disconnect cancel attach
 Service inspection is checked before launch. Interruption stops the review unit before its launcher
 is reaped; an exited launcher is not evidence that the independent reviewer terminated.
 The waiting command has no review-duration timeout; whitespace heartbeats detect disconnects.
-Failure, invalid output and cancellation retain an unresolved request; retry is explicit. Restart
+Failure, invalid output, a reviewer that read no captured input, and cancellation retain an unresolved
+request; retry is explicit. Restart
 reconciliation cancels orphaned invocations and never launches a replacement. Capacity
 is released only after termination is confirmed; uncertain termination follows task-local incident
 recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain

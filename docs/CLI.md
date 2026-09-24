@@ -1222,7 +1222,8 @@ Requests prefer an eligible alternate configured engine; otherwise they use a se
 invocation with the same captured-input/read-only contract. Engine/model, fallback reason and
 account-allowance uncertainty appear before requesting and in saved evidence. One reviewer machine-wide
 uses one additional machine slot. L2 names acceptance criteria and key risks for focused adversarial
-review; the reviewer reports findings and coverage gaps without a duration cutoff. L2 observes the run
+review; the reviewer reports findings and coverage gaps without a duration cutoff. A reviewer that never
+reads its captured input fails with that reason rather than completing with no coverage. L2 observes the run
 and can cancel if it gets stuck or goes off scope. No suitable engine or capacity means explicitly
 unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
 unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
