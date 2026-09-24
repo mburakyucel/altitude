@@ -89,6 +89,10 @@ same-user altd Unix socket. The socket fixes the project independently of reques
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
 repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
 
+Input bodies go on stdin with `-` (`task new … -`, `task message <slug> -`, `issue new … -`,
+`issue comment <number> -`, `--questions-file -`); the `alt` shim reads stdin only when an argument is `-`,
+so every other argument, including long text, never waits on an open stdin.
+
 ### Loaded service evidence
 
 The coordinator tool reads `{"kind":"service","unit":"altitude.service"}`. The same record is

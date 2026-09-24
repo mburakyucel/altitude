@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The coordinator's runtime `alt` shim reads stdin only when an argument is `-`, so a verb whose
+  text is an argument returns immediately even when the tool harness leaves stdin open
+  (I-20260924-054556).
+
 - Altitude is licensed under the Functional Source License (`FSL-1.1-ALv2`): any use except a
   competing commercial product, converting to Apache-2.0 two years after each release. The release
   archive ships the license and third-party notices; contributions require the CLA (#219).

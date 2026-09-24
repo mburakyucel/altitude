@@ -394,6 +394,37 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual((gh_read.returncode, gh_read.stdout.strip()), (0, "checks are green"))
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", (runtime / "bin" / "systemctl").read_text())
 
+    def test_i_20260924_054556_alt_shim_reads_stdin_only_for_a_dash_body(self):
+        """The harness can leave stdin open for argument text; the shim must not wait on it."""
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        runtime = l3._l3_runtime(self.project, "claude")
+        self.addCleanup(l3._remove_runtime, runtime)
+        seen = []
+
+        def record(_project, request):
+            seen.append(request)
+            return {"returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+        shim = str(runtime / "bin" / "alt")
+        text = "Resolve the conflicts and retain the review hold. " * 200
+        read_end, write_end = os.pipe()
+        self.addCleanup(os.close, write_end)  # never closed while the shim runs
+        with mock.patch.object(server, "l3_verb_request", side_effect=record):
+            open_stdin = subprocess.run([shim, "task", "message", "slug", text], stdin=read_end,
+                                        capture_output=True, text=True, timeout=15)
+            os.close(read_end)
+            body = subprocess.run([shim, "task", "message", "slug", "-"], input="Body $1.20\n",
+                                  capture_output=True, text=True, timeout=15)
+            questions = subprocess.run([shim, "task", "escalate", "slug", "--questions-file", "-"],
+                                       input='{"questions":[]}', capture_output=True, text=True, timeout=15)
+        self.assertEqual((open_stdin.returncode, open_stdin.stdout), (0, "ok\n"), open_stdin.stderr)
+        self.assertEqual([(r["args"], r["stdin"]) for r in seen], [
+            (["task", "message", "slug", text], ""),
+            (["task", "message", "slug", "-"], "Body $1.20\n"),
+            (["task", "escalate", "slug", "--questions-file", "-"], '{"questions":[]}')])
+        self.assertEqual([r.returncode for r in (body, questions)], [0, 0])
+
     def test_sept7_coordinator_mcp_uses_real_broker_and_preserves_authority(self):
         broker = server.start_l3_verb_broker(self.project)
         self.addCleanup(server.stop_l3_verb_broker, broker)
