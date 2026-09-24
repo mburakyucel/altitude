@@ -28,8 +28,8 @@ then `alt serve` with the same environment. It still needs the systemd user mana
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
-isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output; the
-command waits for both branches and fails if either fails. A failed web prerequisite stops its
+isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output, written
+as one block so the parallel branches never interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
 budget from Node's `availableParallelism()` for both languages: container CPU quotas may be
@@ -183,9 +183,11 @@ pnpm --dir web exec playwright show-report ui-artifacts/report
 
 Named walkthrough screenshots and HTML reports live under ignored `web/ui-artifacts/`, grouped
 by spec and viewport. Walkthrough screenshots remain on passing and failing tests; automatic
-screenshots and traces are retained on failure. Passing tests discard their traces. The report
-includes attached screenshots and failure traces in `report/data/`, with the trace viewer alongside
-them. Keep that whole report directory together when opening or sharing it.
+screenshots and traces are retained on failure. Passing tests discard their traces. The local report
+includes attached walkthrough screenshots and failure traces in `report/data/`, with the trace viewer
+alongside them. Under `CI`, walkthroughs still capture each state but do not attach it, so a failed
+run's report holds the failure screenshots and traces in a few megabytes instead of every passing
+state. Keep that whole report directory together when opening or sharing it.
 Test artifacts contain only fictional test data. Keep actual service captures, session logs,
 conversations and private incident evidence out of shared artifacts.
 
@@ -353,11 +355,18 @@ when a reviewer asks, match its run URL, attempt, head and tree to the candidate
 `pnpm --dir web exec playwright show-report /path/to/report`. When the export is unreadable from the
 task sandbox (issue #380), the owner says so in the report and continues with the console log.
 
-The runner limits evidence to 256 MiB per job and 4 GiB for this repository. Owners remove
-unneeded completed exports older than three days, and clean up earlier when capacity is tight,
-after copying anything still needed for review into its owning task. Never remove active jobs
-or the only copy of evidence awaiting review. A budget refusal requires bounded cleanup and
-verification, not a quota increase. Task evidence stays accessible through review. No new paid
+The runner limits evidence to 256 MiB per job and 4 GiB for this repository. It reserves the
+per-job limit for each of its four slots, so it admits a job only while the full retained size is at
+most 3 GiB; otherwise it logs "Evidence budget reached" and every queued job waits. Private runner
+diagnostics count toward that size but are unreadable to owners, so a worker-readable total is a
+lower bound. Owners can read exports but not remove them. An owner that needs a failed run's report
+for review copies it into its task. When admission refuses, L3 coordinates the cleanup: a read-only
+inventory of completed exports whose PR has merged or closed, or whose main run a later green main
+superseded, with no open task or incident relying on them; their receipts and console logs copied
+into the recovery task; and an operator machine grant to measure the full size as the CI account,
+remove exactly that list and verify that the runner starts queued jobs. Never remove active jobs,
+open PRs' failures or the only copy of evidence awaiting review. A budget refusal requires bounded
+cleanup and verification, not a quota increase. Task evidence stays accessible through review. No new paid
 storage, public report server or host mount into Altitude runtime is required. Runner credentials
 and other projects' evidence remain outside the report access path. GitHub still supplies checks
 and console logs; browser reports are read locally instead of downloaded from GitHub.

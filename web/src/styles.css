@@ -836,6 +836,13 @@
 .queued-status { display: block; font-size: var(--text-meta); }
 .shell[data-phone] .queued-row > .link { min-width: 44px; min-height: 44px; }
 .shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }
+/* Inline phone text controls keep their line and reach the 44px touch target (§6). */
+.shell[data-phone] .sys-line .link,
+.shell[data-phone] .needs-alerts .link,
+.shell[data-phone] .report-page > .text-meta > a { display: inline-block; padding: 13px 6px; margin: -13px -6px; }
+.shell[data-phone] .wp-fold-summary,
+.shell[data-phone] .conversation-activity summary { min-height: 44px; padding-block: 12px; }
+.shell[data-phone] .wp-fold[open] .wp-fold-summary { margin-bottom: 0; }
 
 /* First run (§3.12). */
 .first-run-page {
