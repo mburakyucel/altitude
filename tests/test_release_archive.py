@@ -70,6 +70,8 @@ class ReleaseArchive(AltitudeCase):
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         (self.repo / "web").mkdir()
         (self.repo / "web/package.json").write_text('{}\n')
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            (self.repo / name).write_text((REPO / name).read_text())
         git("add", ".", cwd=self.repo)
         git("commit", "-m", "Fictional release source", cwd=self.repo)
         git("remote", "set-url", "origin", "https://github.com/example/altitude.git", cwd=self.repo)
@@ -101,6 +103,8 @@ class ReleaseArchive(AltitudeCase):
         self.assertEqual((release["commit"], release["repository"]), (expected, "https://github.com/example/altitude"))
         self.assertEqual(builds, [["install", "--frozen-lockfile"], ["build"]])
         self.assertEqual((output / "install.py").read_bytes(), (package / "altitude/installation.py").read_bytes())
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            self.assertEqual((package / name).read_text(), (REPO / name).read_text())
         self.assertFalse((package / ".git").exists())
         self.assertFalse((package / "web/node_modules").exists())
         (self.repo / "altitude/config.py").write_text("uncommitted change")

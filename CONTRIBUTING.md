@@ -1,16 +1,22 @@
 # Contributing to Altitude
 
-Altitude is early-stage software developed in the open. Start with the [README](README.md),
+Altitude is early-stage, source-available software developed in the open. Start with the [README](README.md),
 [setup](docs/SETUP.md) and [architecture](docs/ARCHITECTURE.md). The project rules that every
 change follows, including the seven review questions, are in [AGENTS.md](AGENTS.md); it is
 the same instruction file the coding agents read.
 
-## License
+## License and contributor agreement
 
-The maintainer's license choice is pending and a `LICENSE` file records it when made. Until
-then the repository grants no rights beyond GitHub's terms of service; read and evaluate it,
-but do not redistribute it. Public release follows that decision, as tracked in the
-[roadmap](docs/ROADMAP.md#early-user-onboarding-and-public-release).
+Altitude is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE)
+(`FSL-1.1-ALv2`). You may use, modify, fork and redistribute it for any purpose except a
+competing commercial product or service; internal use inside a company, private forks with
+internal integrations, education and research are expressly permitted. Each version becomes
+Apache-2.0 two years after its release. The release archive ships the license and the
+[third-party notices](THIRD_PARTY_NOTICES.md) for the bundled web packages.
+
+Contributions are accepted only under the [contributor license agreement](CLA.md), which lets
+the maintainer relicense the project later. Agree once by writing "I have read the CLA and I
+agree to it" in your first pull request.
 
 ## Ask, report or propose
 
