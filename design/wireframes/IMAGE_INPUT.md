@@ -33,7 +33,10 @@ reason. An uncertain response keeps the pending bubble and frozen submission; Re
 identity and content. Navigation remains available. No artificial percentage implies upload progress.
 
 Saved thumbnails stay with their caption and open in a full-image modal on phone/desktop, with
-Fit/Zoom, scrolling, Close/Escape and focus return. Loading, missing and denied reads keep an
+Fit/Zoom, scrolling, Close/Escape and focus return. A viewer opened on a queued project image stays
+open, with its zoom, while history admission replaces the queued row; closing it then focuses that
+image's stored thumbnail, or its Retry or placeholder while the new row reads. Leaving the page
+closes the viewer. Loading, missing and denied reads keep an
 image-sized placeholder, readable message text and Retry that only repeats the read. A queued
 project image retains its own caption and Remove until delivery starts. Unclaimed task image messages
 offer the same Remove as text; removal replaces the caption and thumbnails with Message removed and

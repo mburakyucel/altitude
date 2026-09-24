@@ -104,7 +104,7 @@ for (const scope of ["project", "task"] as const) {
     await walk.state("04-sending-images", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
     await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled();
     release();
-    // The sent-viewer journey needs history admission; a queued opener is replaced when the engine finishes.
+    // The saved-image states name the stored row's opener; the queued-to-history transition has its own journey.
     if (scope === "project") await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
     await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip, page.getByText("Sending images…", { exact: true })] });
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
@@ -363,7 +363,55 @@ test("project: busy queue preserves images, removal cancels one message, and fai
   await walk.state("05-saved-image-retry-completed", { visible: [page.getByText(`I can inspect 1 image(s). ${caption}`, { exact: true })], hidden: [v.strip] });
 });
 
-test("late admission and clipboard selection stay with the original project", async ({ page, request }, info) => {
+test("project: a viewer opened on a queued image stays open through history admission", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  await open(page, "project", info);
+  const v = controls(page, "project");
+  const file = await screenshotFile(page, "queued.png");
+  await request.post("/fixture/pause/alpha");
+  await v.field.fill("Hold the engine."); await v.send.click();
+  await expect.poll(async () => (await (await request.get("/fixture/calls")).json()).calls.length).toBe(1);
+  await v.picker.setInputFiles(file); await v.field.fill("Inspect this next."); await v.send.click();
+  const queued = page.getByRole("list", { name: "Queued messages", exact: true });
+  const queuedOpener = queued.getByRole("button", { name: "Open image queued.png", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Image queued.png" });
+  const fit = page.getByRole("button", { name: "Fit image", exact: true });
+  // The modal makes the page behind it inert, so the history row is located by markup, not role.
+  const stored = page.locator(".bubble .message-image");
+  await walk.state("01-queued-image-viewer", { action: () => queuedOpener.click(), visible: [dialog], hidden: [] });
+  await page.getByRole("button", { name: "Zoom image", exact: true }).click();
+  await dialog.evaluate((node) => { (node as HTMLElement & { probe?: boolean }).probe = true; });
+  let releaseRead: () => void = () => undefined;
+  const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+  await page.route((url) => /^\/api\/images\/alpha\/[^/]+$/.test(url.pathname), async (route) => {
+    await readGate;
+    await route.fulfill({ status: 404, body: "{}" });
+  });
+  await walk.state("02-admitted-behind-open-viewer", {
+    action: () => request.post("/fixture/release/alpha"),
+    visible: [dialog, fit, stored.getByText("Loading image…", { exact: true })], hidden: [queued],
+  });
+  expect(await dialog.evaluate((node) => (node as HTMLElement & { probe?: boolean }).probe)).toBe(true);
+  await expect(dialog.getByRole("img")).toHaveJSProperty("complete", true);
+  expect(await dialog.getByRole("img").evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(640);
+  releaseRead();
+  const retry = page.getByRole("button", { name: "Retry image queued.png", exact: true });
+  await walk.state("03-history-read-error-behind-viewer", { visible: [dialog, fit, stored.getByText("Image unavailable.", { exact: true })], hidden: [] });
+  await page.keyboard.press("Escape");
+  await walk.state("04-dismissed-focus-on-history-image", { visible: [retry], hidden: [dialog] });
+  await expect(retry).toBeFocused();
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  const opener = page.locator(".bubble").getByRole("button", { name: "Open image queued.png", exact: true });
+  await walk.state("05-history-retry-loads", { action: () => retry.click(), visible: [opener], hidden: [retry] });
+  await walk.state("06-history-viewer", { action: () => opener.click(), visible: [dialog, page.getByRole("button", { name: "Zoom image", exact: true })], hidden: [fit] });
+  await page.getByRole("button", { name: "Close image", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(opener).toBeFocused();
+  await page.reload();
+  await walk.state("07-reload-history-image", { visible: [opener], hidden: [queued, dialog] });
+});
+
+test("late admission and clipboard selection stay with the original project",async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await open(page, "project", info);
   const v = controls(page, "project");

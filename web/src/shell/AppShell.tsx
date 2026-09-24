@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useMatch, useParams } from "react-router";
 import { useDecisionAlerts } from "../data/alerts";
 import { ToastViewport } from "../data/Toast";
 import { useChangeStream, useOverview } from "../data/api";
+import { ImageViewerHost } from "../components/MessageImages";
 import FirstRun from "../routes/FirstRun";
 import { LAYOUT_SIZES, useViewport } from "./breakpoints";
 import { Overlay } from "./Overlay";
@@ -101,7 +102,7 @@ export default function AppShell() {
               <Link className="link" to="/projects">Open projects</Link>
             </> : <FirstRun overview={overview} />}
           </div>
-        ) : <Outlet />}
+        ) : <ImageViewerHost scope={location.pathname}><Outlet /></ImageViewerHost>}
       </main>
       {phone ? <TabBar overview={overview.data} stale={overview.isError} /> : null}
       {addingFolder ? (
