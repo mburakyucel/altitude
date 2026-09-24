@@ -19,6 +19,11 @@ class TestQueuedNotifications(AltitudeCase):
                 return {"text": "", "session_id": "", "error": "fixture allowance exhausted", "usage": {},
                         "limited": {"scope": "engine", "why": "fixture allowance exhausted", "until": until},
                         "safe_to_retry": True, "tools": []}
+            if self.mode == "expired-limit" and "Fictional operator question" not in text:
+                until = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+                return {"text": "", "session_id": "", "error": "fixture refusal", "usage": {},
+                        "limited": {"scope": "engine", "why": "fixture refusal", "until": until},
+                        "safe_to_retry": True, "tools": []}
             if self.mode == "after-output":
                 return {"text": "Partial answer.", "session_id": "", "error": "fixture stream broke", "usage": {},
                         "safe_to_retry": False, "tools": [{"name": "shell", "command": "alt task show fictional"}]}
@@ -37,6 +42,11 @@ class TestQueuedNotifications(AltitudeCase):
             route.note_rejection({"engine": engine, "model": None}, {
                 "scope": "engine", "why": "fixture recovered",
                 "until": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()})
+
+    def later(self) -> None:
+        """The retained notification's retry time passes."""
+        rows = [{**row, "retry_at": "2000-01-01T00:00:00+00:00"} for row in self.queue()]
+        l3._write_queue(l3.queue_path(self.project), rows)
 
     def turns(self, role: str) -> int:
         return sum(row["role"] == role and row["trigger"] == "block" for row in l3.chat_history(self.project, None))
@@ -59,6 +69,8 @@ class TestQueuedNotifications(AltitudeCase):
 
         self.recover()
         self.mode = "ok"
+        self.assertIsNone(l3.deliver_queued(self.project), "the retained notification waits for its retry time")
+        self.later()
         l3.deliver_queued(self.project)
         l3.deliver_queued(self.project)
 
@@ -85,3 +97,30 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertEqual(self.queue(), [])
         errors = [row for row in l3.chat_history(self.project, None) if row["role"] == "error"]
         self.assertTrue(errors)
+
+    def test_refusal_that_leaves_routing_available_waits_instead_of_looping(self):
+        row = l3.queue_message(self.project, "Fictional restart inventory.", trigger="restart")
+        chat = l3.queue_message(self.project, "Fictional operator question", trigger="chat", role=config.OPERATOR_ACTOR)
+        self.mode = "expired-limit"
+
+        def attempts() -> int:
+            return sum("Fictional restart inventory." in prompt for prompt in self.prompts)
+
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        refused = attempts()
+        for _ in range(10):
+            if not l3.deliver_queued(self.project):
+                break
+
+        self.assertEqual(attempts(), refused, "one refused turn, then the notification waits for its retry time")
+        self.assertEqual([(item["id"], item["refusals"]) for item in self.queue()], [(row["id"], 1)])
+        self.assertEqual(sum(row["role"] == "user" and row["trigger"] == "chat"
+                             for row in l3.chat_history(self.project, None)), 1, "the operator message behind it ran")
+        self.assertNotIn(chat["id"], [item["id"] for item in self.queue()])
+
+        self.later()
+        self.mode = "ok"
+        l3.deliver_queued(self.project)
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(sum(row["role"] == "assistant" and row["trigger"] == "restart"
+                             for row in l3.chat_history(self.project, None)), 1)

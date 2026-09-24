@@ -676,9 +676,12 @@ def queue_ci_recheck(project: str, slug: str) -> dict | None:
         return record
 
 
-def _ci_recheck_ready(project: str, row: dict) -> bool:
+NOTIFICATION_RETRY_DELAYS = (60, 300, 900, 3600)
+
+
+def _queue_ready(project: str, row: dict) -> bool:
     if row.get("trigger") != "ci-recheck":
-        return True
+        return (row.get("retry_at") or "") <= S.now()
     record = S.load_task(project, row["slug"]).get("ci_recheck") or {}
     delivery = record.get("delivery") or {}
     return (record.get("id") == row["id"] and record.get("status") == "notifying"
@@ -782,7 +785,7 @@ def deliver_queued(project: str) -> dict | None:
             return None
         while True:
             with S.project_lock(project):
-                rows = [row for row in _queue_rows(path) if _ci_recheck_ready(project, row)]
+                rows = [row for row in _queue_rows(path) if _queue_ready(project, row)]
             if not rows:
                 return None
             take = 1
@@ -797,7 +800,7 @@ def deliver_queued(project: str) -> dict | None:
             def claim(active_turn) -> bool:
                 with S.project_lock(project):
                     current = _queue_rows(path)
-                    eligible = [row for row in current if _ci_recheck_ready(project, row)]
+                    eligible = [row for row in current if _queue_ready(project, row)]
                     if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
                     if selected[0].get("images"):
@@ -854,10 +857,14 @@ def deliver_queued(project: str) -> dict | None:
             if trigger == "ci-recheck":
                 queue_ci_recheck(project, slug)
             elif trigger != "chat" and not selected[0].get("images") and (result or {}).get("undelivered"):
-                # Every option refused before any provider output: the notification keeps its place and id,
-                # and the next drain after L3 becomes available delivers it once.
+                # Every option refused before any provider output: the notification keeps its place and id and
+                # waits a growing delay, so a refusal that leaves routing available cannot loop the drain.
+                refused = selected[0].get("refusals", 0) + 1
+                delay = NOTIFICATION_RETRY_DELAYS[min(refused, len(NOTIFICATION_RETRY_DELAYS)) - 1]
+                retry_at = (datetime.fromisoformat(S.now()) + timedelta(seconds=delay)).isoformat(timespec="seconds")
                 with S.project_lock(project):
-                    _write_queue(path, selected + [row for row in _queue_rows(path) if row.get("id") not in selected_ids])
+                    _write_queue(path, [{**row, "refusals": refused, "retry_at": retry_at} for row in selected]
+                                 + [row for row in _queue_rows(path) if row.get("id") not in selected_ids])
             if selected[0].get("images"):
                 _finish_image_queue(project)
             return result
