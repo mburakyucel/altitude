@@ -397,11 +397,12 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
         authority = "the operator" if project is None else "L3 or the operator"
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
-    if setting not in (MACHINE_SETTINGS if project is None else ("routing", *config.EFFORT_SETTINGS)):
+    if setting not in (MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS):
         raise T.TransitionError(f"unknown {scope} setting")
-    if setting in ("wip", "voice"):
+    if setting in ("wip", "voice", *config.MODEL_SETTINGS):
         try:
-            (config.validate_wip if setting == "wip" else config.validate_voice)(value)
+            (config.validate_wip if setting == "wip" else config.validate_voice if setting == "voice"
+             else config.validate_project_model)(value)
         except ValueError as exc:
             raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
@@ -426,7 +427,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
 
 
 def run_settings(project: str | None = None) -> dict:
-    settings = MACHINE_SETTINGS if project is None else ("routing", *config.EFFORT_SETTINGS)
+    settings = MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS
     return {setting: _run_setting(project, setting) for setting in settings}
 
 

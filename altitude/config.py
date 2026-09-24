@@ -87,15 +87,24 @@ OPERATOR = os.environ.get("ALTITUDE_OPERATOR") or "Operator"
 #: The persisted authority identity in task records, events and messages, independent of the display name.
 OPERATOR_ACTOR = "burak"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
-# Ordered tiers; order within a tie settles unknown/equal weekly headroom.
-AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_DEFAULT_ENGINE == "claude" else None},
-                 {"engine": "claude" if PRIMARY_DEFAULT_ENGINE != "claude" else "codex",
-                  "model": "fable" if PRIMARY_DEFAULT_ENGINE != "claude" else None}],
+# Ordered tiers; order within a tie settles unknown/equal weekly headroom. An option without a model uses the
+# project's default model for that engine, then the role default (L2 Opus, L3 Fable). The lower tier keeps Opus,
+# the generally available Claude model, below a rejected role default; a tier never repeats an option resolved above it.
+AUTO_ROUTING = [[{"engine": engine, "model": None} for engine in sorted(ENGINES, key=lambda e: e != PRIMARY_DEFAULT_ENGINE)],
                 [{"engine": "claude", "model": "opus"}]]
 TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
 ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
 EFFORT_SETTINGS = ("l3_effort", "l2_effort")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
+
+
+def model_setting(role: str, engine: str) -> str:
+    """Project registry key holding a role's default model on one engine."""
+    return f"{role}_model" if engine == "claude" else f"{role}_{engine}_model"
+
+
+MODEL_SETTINGS = tuple(model_setting("l2", engine) for engine in ENGINES)
+PROJECT_SETTINGS = ("routing", *EFFORT_SETTINGS, *MODEL_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
@@ -126,7 +135,17 @@ def validate_project_effort(entry: dict, role: str, effort: str | None) -> None:
     task_effort(pin["engine"] if pin else None, effort, role=role)
 
 
-def effort_view(name: str) -> dict:
+def valid_model(value) -> bool:
+    return isinstance(value, str) and bool(value) and not any(c.isspace() for c in value)
+
+
+def validate_project_model(value) -> None:
+    if value is not None and not valid_model(value):
+        raise ValueError("a default model is one alias or model id without spaces")
+
+
+def defaults_view(name: str) -> dict:
+    """Requested project defaults for the settings UI: effort per role and the L2 model per engine."""
     entry = project(name)
     labels = {"native": "Native", "xhigh": "Extra High"}
     choices = []
@@ -137,7 +156,10 @@ def effort_view(name: str) -> dict:
             choices.append({"value": value, "label": labels.get(value, value.title()) + suffix})
     return {"l3": entry.get("l3_effort"), "l2": entry.get("l2_effort"), "choices": choices,
             "defaults": {"l3": "Native", "l2": "; ".join(
-                f"{ENGINE_LABELS[e]}: {task_effort(e, None) or 'native'}" for e in ENGINES)}}
+                f"{ENGINE_LABELS[e]}: {task_effort(e, None) or 'native'}" for e in ENGINES)},
+            "models": {e: {"label": ENGINE_LABELS[e], "value": entry.get(model_setting("l2", e)),
+                           "default": default_model("l2", e) or "native",
+                           "choices": list(MODEL_ALIASES) if e == "claude" else []} for e in ENGINES}}
 
 
 def subprocess_env() -> dict[str, str]:
@@ -222,7 +244,7 @@ def parse_routing(value: str) -> list[list[dict]]:
         options = []
         for item in tier.split(","):
             engine, separator, model = item.strip().partition(":")
-            if engine not in ENGINES or separator and (not model or any(c.isspace() for c in model)):
+            if engine not in ENGINES or separator and not valid_model(model):
                 raise ValueError("routing needs engine[:model] options, comma ties, and > between tiers")
             key = (engine, model or None)
             if key in seen:
@@ -233,29 +255,24 @@ def parse_routing(value: str) -> list[list[dict]]:
     return tiers
 
 
-def default_model(role: str, engine: str) -> str | None:
-    return MODELS[role] if engine == "claude" else None
+def default_model(role: str, engine: str, project: dict | None = None) -> str | None:
+    """The project's default model on that engine, then the role default; Codex leaves it to its CLI."""
+    return (project or {}).get(model_setting(role, engine)) or (MODELS[role] if engine == "claude" else None)
 
 
 def pinned_option(role: str, project: dict, *, engine: str | None = None,
                   model: str | None = None) -> dict | None:
-    """Launch overrides are separate from Auto preferences and observed session models."""
-    overrides = {"claude": project.get(f"{role}_model"), "codex": project.get(f"{role}_codex_model")}
+    """Explicit task or project engine/model pins; project default models are preferences, not pins."""
     if model and not engine:
         engine = "claude" if model in MODEL_ALIASES else project.get(f"{role}_engine")
         if not engine:
             raise ValueError("a model pin requires --engine for this model")
     engine = engine or project.get(f"{role}_engine")
-    if not engine and any(overrides.values()):
-        choices = [key for key, value in overrides.items() if value]
-        if len(choices) != 1:
-            raise ValueError(f"set {role}_engine to disambiguate the project's model pins")
-        engine = choices[0]
     if not engine:
         return None
     if engine not in ENGINES:
         raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
-    return {"engine": engine, "model": model or overrides.get(engine) or default_model(role, engine)}
+    return {"engine": engine, "model": model or default_model(role, engine, project)}
 
 
 @contextmanager

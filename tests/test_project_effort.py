@@ -11,7 +11,7 @@ from altitude import config, dispatch, engines, l3, route, server, tasks as T
 def set_effort(project, role, value):
     dispatch.request_setting(project, f"{role}_effort", value, "Set test effort", actor="burak")
     dispatch._run_setting(project, f"{role}_effort")
-    return config.effort_view(project)
+    return config.defaults_view(project)
 
 
 class TestProjectEffort(AltitudeCase):

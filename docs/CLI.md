@@ -722,7 +722,8 @@ alt project set example --unset-routing --reason 'Restore default Auto preferenc
 ```
 
 Quote the policy so the shell does not interpret `>`. Options use `engine[:model]`; commas tie
-options, and `>` starts a lower-priority tier. An omitted model uses the engine's role default.
+options, and `>` starts a lower-priority tier. An omitted model uses the project's
+[default L2 model](#default-l2-model) for that engine, then the engine's role default.
 Empty tiers/options, duplicate options and unknown engines are rejected. The daemon applies the
 request on its next tick and records actor, reason and outcome. No PR, restart, UI setting or free
 task slot is needed. `alt project list` shows the stored override; `alt monitor` explains each
@@ -732,7 +733,9 @@ Auto uses the highest tier with an eligible option. Only comparable, named seven
 readings select by headroom within a tie; short windows only determine availability. Unknown or
 incomparable weekly readings use configured tie order. An L3 engine/model still eligible in that
 tier stays unless a competing option has at least fifteen percentage points more weekly headroom.
-Default preferences tie Codex's default model with Claude Fable and put Opus below them;
+Default preferences tie Codex and Claude on their role defaults, so a Claude L2 launches on Opus
+and L3 on Fable, and put Opus below them as L3's fallback when Fable is rejected. A lower tier never
+repeats an option a higher tier already resolved, so for L2 the Codex tie is the only fallback.
 `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. A project override replaces the
 whole preference list, and `--unset-routing` restores those defaults.
 
@@ -745,15 +748,16 @@ comparable. See [source compatibility and verification limits](SESSION_LIFECYCLE
 | Intended preference | `--routing` value |
 | --- | --- |
 | Claude-only account with Opus available | `'claude:opus'` |
-| Fable unavailable; prefer Codex with Opus as fallback | `'codex>claude:opus'` |
+| Codex first; Opus only when Codex is unavailable | `'codex>claude:opus'` |
 | Fable and Codex tied; prefer Fable when weekly quota is unknown | `'claude:fable,codex>claude:opus'` |
 | Same tie; prefer Codex when weekly quota is unknown | `'codex,claude:fable>claude:opus'` |
 | Prefer Opus first, then Codex | `'claude:opus>codex'` |
 
 A missing CLI, exhausted window or known access rejection excludes the affected options; unknown
 access or quota remains eligible. No plan name implies model entitlement, and a shared account
-meter does not supply separate Fable/Opus allowances. If Fable rejects access while Codex is absent,
-the default policy can try Opus after confirming no output or tool effects occurred. A model
+meter does not supply separate Fable/Opus allowances. If L3's Fable rejects access while Codex is
+absent, the default policy tries Opus after confirming no output or tool effects occurred; an L2
+already on Opus has no lower Claude option. A model
 rejection excludes that model for thirty minutes; an authentication rejection excludes the engine
 for thirty minutes. A rejection of an unresolved native default is scoped to that role, since
 the two launchers can use different default models. Each alternative is tried at most once per dispatch or turn. When none is
@@ -762,7 +766,8 @@ eligible, the explanation identifies installation, authentication, reset or conf
 Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
 one task; project `--l2-engine`/`--l3-engine` pins, the composer's L3 engine choice and
 `alt chat --engine …` take precedence over Auto and never silently fall back. An explicit model pin
-also remains strict. Changing preferences does not unpin them or change a running L2: resume keeps
+also remains strict. A project default L2 model is a preference, not a pin: it names the model an
+Auto option on that engine uses and leaves the engine choice to the tiers. Changing preferences does not unpin them or change a running L2: resume keeps
 that attempt's engine, provider session and recorded launch model. A quota fallback is a recorded
 fresh attempt from `progress.md`. L3 retains a separate provider conversation per engine, including
 when its chosen model changes; crossing providers supplies missed human conversation without
@@ -846,6 +851,36 @@ and at most one named dependency, with no dependency graph or PR watcher. For is
 `parallelize-deterministic-checks-operato` (PR #376) or `make-the-two-browser-walkthroughs-that-f`
 alone fits `--after`; their joint prerequisite uses `--wait` and explicit release after both merges
 are verified. Creating that planned task neither enables CI nor closes the issue.
+
+### Default L2 model
+
+Set the model a fresh L2 attempt uses on each engine, independently of engine selection:
+
+```sh
+alt project set example --l2-model fable --reason 'Use Fable for Claude-routed tasks in this project'
+alt project set example --l2-codex-model gpt-6-astra --reason 'Name the Codex model instead of its CLI default'
+alt project set example --unset-l2-model --reason 'Restore Opus'
+alt project set example --unset-l2-codex-model --reason 'Restore the Codex CLI default'
+alt project list
+```
+
+`--l2-model` is the Claude default (registry key `l2_model`) and `--l2-codex-model` the Codex default
+(`l2_codex_model`). A value is one alias or model id without spaces; Altitude validates nothing else and
+passes it to the engine, which reports an inaccessible model as a routing rejection. The Claude aliases
+`opus`, `sonnet`, `haiku` and `fable` resolve to the current model of that family in the Claude CLI, so
+new models arrive with CLI updates without an Altitude change; a specific id can always be typed. Codex
+uses the model configured in its CLI unless a default or pin names one. Neither CLI exposes a model list,
+so Altitude offers the aliases as suggestions and does not discover models.
+
+Precedence for a fresh attempt is the task's `alt task new --model …` pin, then the model named in the
+selected routing option, then the project default for that engine, then the role default: Opus for a
+Claude L2, Fable for L3 and the CLI default for Codex. Defaults apply at dispatch, including queued
+tasks; messages and resumes keep the attempt's saved `launch_model`. A default never pins an engine:
+with the default tiers a project whose Claude default is Fable still ties Codex first. L3 has its own
+default and is not affected. The operator and the project's L3 set these through the same reason-bearing
+requests as effort; L2 cannot. Project details reads them from `GET /api/effort/<project>` (`models`
+per engine with `value`, `default` and `choices`) and saves with `POST /api/model`
+`{"project", "engine", "model" | null}`.
 
 ### Task reasoning effort
 
