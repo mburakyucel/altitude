@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ApiError } from "../data/api";
 import Composer from "./Composer";
 import type { ComposerProps } from "./Composer";
 import type { ImageSubmission } from "./ImageDraft";
-import { MessageImages } from "./MessageImages";
+import { ImageViewerHost, MessageImages } from "./MessageImages";
 import { installVoiceBrowser } from "./voiceTest";
 
 const capability = { available: true, max_count: 4, max_bytes: 10 << 20, max_total_bytes: 20 << 20, max_pixels: 25_000_000, max_dimension: 8192 };
@@ -37,6 +37,12 @@ function browser(available = true) {
   });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("transcribe") ? json({ text: "the spoken explanation" }) : json({ ...capability, available, reason: available ? undefined : "Image decoder unavailable." })));
   return revoke;
+}
+
+/** jsdom has no modal dialogs; opening only needs the dialog shown. */
+function modal() {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute("open", ""); };
+  onTestFinished(() => { delete (HTMLDialogElement.prototype as Partial<HTMLDialogElement>).showModal; });
 }
 
 function Harness({ initial = "Explain this", ...props }: Partial<ComposerProps> & { initial?: string }) {
@@ -327,11 +333,53 @@ describe("private image reads", () => {
     let status = 403;
     vi.stubGlobal("fetch", vi.fn(async () => json({}, status)));
     const user = userEvent.setup();
-    render(<MessageImages project="alpha" images={[{ id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" }]} />);
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[{ id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" }]} /></ImageViewerHost>);
     expect(await screen.findByRole("alert")).toHaveTextContent("Image access denied.");
     status = 404;
     await user.click(screen.getByRole("button", { name: "Retry image screen.png" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Image unavailable.");
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(["/api/images/alpha/abc", "/api/images/alpha/abc"]);
+  });
+
+  it("keeps an open viewer and its zoom when the opener's row is replaced, then focuses the replacement", async () => {
+    const revoke = browser();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
+    modal();
+    const user = userEvent.setup();
+    const images = [{ id: "abc", name: "queued.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
+    // Queued and stored rows are separate subtrees, as in the project conversation.
+    const Page = ({ admitted }: { admitted: boolean }) => <ImageViewerHost scope="/projects/alpha">
+      {admitted ? <div className="bubble"><MessageImages project="alpha" images={images} /></div> : <ul><li><MessageImages project="alpha" images={images} /></li></ul>}
+    </ImageViewerHost>;
+    const view = render(<Page admitted={false} />);
+    await user.click(await screen.findByRole("button", { name: "Open image queued.png" }));
+    await user.click(screen.getByRole("button", { name: "Zoom image" }));
+    const dialog = screen.getByRole("dialog", { name: "Image queued.png" });
+    view.rerender(<Page admitted />);
+    await screen.findByRole("button", { name: "Open image queued.png" });
+    expect(screen.getByRole("dialog", { name: "Image queued.png" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Fit image" })).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(2); // The viewer reuses its bytes; only the new row reads.
+    await user.click(screen.getByRole("button", { name: "Close image" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open image queued.png" })).toHaveFocus();
+    const before = revoke.mock.calls.length;
+    view.rerender(<ImageViewerHost scope="/projects/beta"><p /></ImageViewerHost>);
+    expect(revoke.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("closes the viewer when the page scope changes", async () => {
+    browser();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
+    modal();
+    const user = userEvent.setup();
+    const images = [{ id: "abc", name: "screen.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
+    const view = render(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>);
+    await user.click(await screen.findByRole("button", { name: "Open image screen.png" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(<ImageViewerHost scope="/projects/alpha/tasks/other"><MessageImages project="alpha" images={images} /></ImageViewerHost>);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    view.rerender(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

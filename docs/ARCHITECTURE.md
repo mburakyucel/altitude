@@ -1441,8 +1441,10 @@ The same composer adds a single image control and a conditional preview strip.
 Image admission freezes that submission's controls until acceptance or confirmed refusal; an uncertain
 response retains a pending bubble until polling observes its saved message and retries with the same identity while mounted. Submitted captions
 use the existing text recovery; image bytes are not persisted in browser storage. Acceptance clears selection
-and releases the composer before the agent finishes. Private thumbnails and a modal viewer belong
-to the original saved message. Image interaction states and boundaries are specified in
+and releases the composer before the agent finishes. Private thumbnails belong to the original saved
+message. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
+opened image's bytes, so it outlives the queued row that opened it when history admission replaces
+that row, and closes when the route changes. Image interaction states and boundaries are specified in
 `design/wireframes/IMAGE_INPUT.md` and walked at both viewports by `web/e2e/image-input.pw.ts`.
 
 The L2 task's phone tabs replace the current router history entry and retain its location state;

@@ -1,17 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MessageImage } from "../data/api";
 
 export interface ImagePreview { name: string; url: string }
+interface OpenImage { key: string; name: string; blob: Blob }
+interface Viewing extends OpenImage { scope: string }
+
+const ViewerContext = createContext<((image: OpenImage) => void) | null>(null);
+
+/** The page's one image viewer. It keeps its own copy of the bytes, so a viewer opened on a queued
+ * message stays open while history admission replaces that row (issue #461). A new scope closes it. */
+export function ImageViewerHost({ scope, children }: { scope: string; children: ReactNode }) {
+  const [viewing, setViewing] = useState<Viewing | null>(null);
+  if (viewing && viewing.scope !== scope) setViewing(null);
+  return <ViewerContext.Provider value={(image) => setViewing({ ...image, scope })}>
+    {children}
+    {viewing?.scope === scope ? <ImageViewer key={viewing.key} image={viewing} onClose={() => setViewing(null)} /> : null}
+  </ViewerContext.Provider>;
+}
 
 /** One private read owns its object URL. Neither retry nor opening the viewer resends a message. */
 function StoredImage({ project, image }: { project: string; image: MessageImage }) {
   const container = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
   const [attempt, setAttempt] = useState(0);
+  const [blob, setBlob] = useState<Blob | null>(null);
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
+  const view = useContext(ViewerContext);
+  if (!view) throw new Error("MessageImages renders inside ImageViewerHost.");
+  const key = `${project}/${image.id}`;
   useEffect(() => {
     if (visible || !container.current) return;
     const observer = new IntersectionObserver((entries) => {
@@ -32,9 +51,10 @@ function StoredImage({ project, image }: { project: string; image: MessageImage 
         if (!response.ok) {
           throw new Error(response.status === 403 || response.status === 401 ? "Image access denied." : response.status === 404 ? "Image unavailable." : "Could not load image.");
         }
-        const blob = await response.blob();
+        const bytes = await response.blob();
         if (request.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
+        objectUrl = URL.createObjectURL(bytes);
+        setBlob(bytes);
         setUrl(objectUrl);
       } catch (cause) {
         if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not load image.");
@@ -42,8 +62,8 @@ function StoredImage({ project, image }: { project: string; image: MessageImage 
     })();
     return () => { request.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [project, image.id, attempt, visible]);
-  return <div className="message-image" ref={container}>
-    {url && !error ? <button className="message-image-open" type="button" aria-label={`Open image ${image.name}`} onClick={() => setOpen(true)}>
+  return <div className="message-image" ref={container} data-image={key} tabIndex={-1}>
+    {url && blob && !error ? <button className="message-image-open" type="button" aria-label={`Open image ${image.name}`} onClick={() => view({ key, name: image.name, blob })}>
       <img src={url} alt={image.name} onError={() => setError("Could not display image.")} />
       <span>{image.name}</span>
     </button> : <div className="message-image-placeholder">
@@ -51,18 +71,28 @@ function StoredImage({ project, image }: { project: string; image: MessageImage 
       {error ? <><span role="alert">{error}</span><button type="button" className="link" onClick={() => setAttempt((value) => value + 1)}>Retry image {image.name}</button></>
         : <span role="status">Loading image…</span>}
     </div>}
-    {open && url ? <ImageViewer image={{ name: image.name, url }} onClose={() => setOpen(false)} /> : null}
   </div>;
 }
 
-function ImageViewer({ image, onClose }: { image: ImagePreview; onClose: () => void }) {
+function ImageViewer({ image, onClose }: { image: OpenImage; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [zoomed, setZoomed] = useState(false);
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(image.blob);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [image.blob]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     dialog.current?.showModal();
-    return () => { previous?.focus({ preventScroll: true }); };
-  }, []);
+    return () => {
+      // A replaced opener returns focus to the same image where it now appears.
+      const place = [...document.querySelectorAll<HTMLElement>("[data-image]")].find((node) => node.dataset.image === image.key);
+      const target = previous?.isConnected ? previous : place?.querySelector("button") ?? place;
+      target?.focus({ preventScroll: true });
+    };
+  }, [image.key]);
   return createPortal(<dialog ref={dialog} role="dialog" className="image-viewer" aria-label={`Image ${image.name}`} onCancel={(event) => { event.preventDefault(); onClose(); }}
     onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="image-viewer-header">
@@ -71,7 +101,7 @@ function ImageViewer({ image, onClose }: { image: ImagePreview; onClose: () => v
       <button type="button" className="btn" onClick={onClose}>Close image</button>
     </div>
     <div className="image-viewer-canvas" data-zoomed={zoomed || undefined}>
-      <img src={image.url} alt={image.name} />
+      {url ? <img src={url} alt={image.name} /> : null}
     </div>
   </dialog>, document.body);
 }
