@@ -1786,7 +1786,6 @@ class TestRequiredPrCheck(AltitudeCase):
     def setUp(self):
         super().setUp()
         TestCheckEvidence.setup_check_evidence(self)
-        self.patch(land.config, "PR_CHECK_REPOSITORY", "team/demo")
         self.configure_required_check()
         (self.ghdir / "merge_git.txt").touch()
 
@@ -1801,6 +1800,26 @@ class TestRequiredPrCheck(AltitudeCase):
     def assert_not_merged(self):
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
         self.assertEqual(self.runner_log(), [])
+
+    def test_base_shipping_the_workflow_requires_the_check_even_when_the_head_deletes_it(self):
+        self.assertTrue(land._required_pr_check(self.repo, self.base))
+        self.git("rm", "-q", self.workflow_path)
+        self.git("commit", "-q", "-m", "drop the workflow")
+        result = land.land("head without the workflow", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("skipped", False, None))
+        self.assert_not_merged()
+
+    def test_head_adding_the_workflow_does_not_require_the_check_yet(self):
+        self.git("rm", "-q", self.workflow_path)
+        self.git("commit", "-q", "-m", "base without the workflow")
+        self.git("push", "-q", "origin", "HEAD:main")
+        self.assertFalse(land._required_pr_check(self.repo, self.git("rev-parse", "origin/main").strip()))
+        self.git("revert", "--no-edit", "HEAD")
+        prospective = land.land("the workflow arrives", cwd=self.repo, dry_run=True)["prospective"]
+        self.assertEqual((prospective["required_pr_check"], prospective["gate"], prospective["workflows"]),
+                         (False, "github-actions", {"base": False, "head": True}))
+        result = land.land("the workflow arrives", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
 
     def test_head_bound_check_lands_same_tree_without_local_full_run(self):
         self.assertEqual(self.classify(), "pass")

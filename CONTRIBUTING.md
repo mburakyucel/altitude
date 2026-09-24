@@ -52,12 +52,13 @@ evidence for the affected user flows and failure modes. Application logic, API/s
 stay real; external engine and GitHub effects use fixtures. Live-provider validation, including
 the real tiny task, is deferred under the operator's recorded testing policy.
 
-The required check currently runs on the maintainer's self-hosted runner for maintainer-initiated
-pull requests only, so a PR from a fork does not start it automatically. How fork PRs get their
-checks once the repository is public is decided in
-[issue #469](https://github.com/mburakyucel/altitude/issues/469). Until then, expect the
-maintainer to review your PR first and then arrange its check; nothing merges without one, and
-there is no local bypass.
+A pull request from a fork, or from anyone other than the repository owner, runs that suite on a
+GitHub-hosted runner with a read-only token and no secrets (`Hosted checks`); a failed run keeps
+its browser report as a short-lived artifact for you to inspect. The required `check` itself runs
+on the maintainer's self-hosted runner only for the maintainer's own branches. After review, the
+maintainer integrates your contribution on a repository branch, where that required check runs
+before the merge. Nothing merges without it, and there is no local bypass. See
+[CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
 In the PR, describe the problem and resulting behavior, answer the seven review questions in at
 most fifteen lines, and include the relevant validation. Record material findings and their

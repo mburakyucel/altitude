@@ -14,8 +14,10 @@ permissions:
 jobs:
   # Keep the job id `check` and no `name:`: the self-hosted launcher and its
   # in-container pre-job hook admit only this job id, initiated by the owner.
+  # Only the repository owner's runs of branches in this repository reach the
+  # owner's machine; every other pull request runs hosted-checks.yml instead.
   check:
-    if: github.repository == 'mburakyucel/altitude' && github.event.repository.private && github.actor == 'mburakyucel' && github.triggering_actor == 'mburakyucel'
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Linux, X64, altitude-ci-docker]
     timeout-minutes: 45
     env:

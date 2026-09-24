@@ -653,7 +653,7 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
         raise LandError(f"PR #{number} refs moved while the merge candidate was being pinned "
                         f"(GitHub head {head_sha}, origin head {fetched_head})")
     return {"base": base, "branch": branch, "base_sha": base_sha, "head_sha": head_sha, "number": number,
-            "required_pr_check": _required_pr_check(root)}
+            "required_pr_check": _required_pr_check(root, base_sha)}
 
 
 def _assert_pair_current(root: Path, pair: dict) -> None:
@@ -707,7 +707,7 @@ def _prospective(root: Path, base: str, changed: list[str], test_cmd: str) -> di
     head = _need(_git(root, "rev-parse", "HEAD"), "HEAD")
     tree = _need(_git(root, "write-tree"), "the staged tree")
     workflows = _workflows(root, {"base_sha": base_sha, "head_sha": tree})
-    required = _required_pr_check(root)
+    required = _required_pr_check(root, base_sha)
     gate = "github-actions" if required or any(workflows.values()) else "local-suite"
     undetermined = []
     if changed:
@@ -912,11 +912,9 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     return merged, main_run, tests
 
 
-def _required_pr_check(root: Path) -> bool:
-    """Whether this repository requires the named current-head PR check."""
-    origin = (_git(root, "config", "--get", "remote.origin.url").stdout or "").strip()
-    repository = github_intake._REMOTE.fullmatch(origin)
-    return bool(repository and f"{repository['owner']}/{repository['repo']}".lower() == config.PR_CHECK_REPOSITORY)
+def _required_pr_check(root: Path, base_sha: str) -> bool:
+    """A base commit that ships the check workflow requires its PR `check`; a head cannot opt out by deleting it."""
+    return _git(root, "cat-file", "-e", f"{base_sha}:{config.PR_CHECK_WORKFLOW}").returncode == 0
 
 
 def _repository_turn(function):
@@ -926,7 +924,11 @@ def _repository_turn(function):
     @functools.wraps(function)
     def run(message, **kwargs):
         root = Path(kwargs.get("cwd") or Path.cwd())
-        if kwargs.get("dry_run") or not (kwargs.get("merge") or _required_pr_check(root)):
+
+        def required() -> bool:
+            base = _git(root, "rev-parse", f"origin/{kwargs.get('base', 'main')}")
+            return base.returncode == 0 and _required_pr_check(root, base.stdout.strip())
+        if kwargs.get("dry_run") or not (kwargs.get("merge") or required()):
             return {**function(message, **kwargs), "waited": 0}
         common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
         with open(Path(common) / "altitude-land.lock", "a") as lock:

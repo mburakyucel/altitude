@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- PR checks keep running once the repository is public: the owner's own branches keep the required
+  self-hosted `check`, every other pull request runs the same suite on a GitHub-hosted runner without
+  touching the owner's machine, and `alt land` requires the check wherever the base ships its
+  workflow instead of naming one repository (#469).
+
 - Incident issues publish only to the repository named by `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in
   altd's environment. A fresh installation keeps incidents on the machine and shows that reason
   in `alt incident list`; the release metadata and source origin are no longer targets (#470).
