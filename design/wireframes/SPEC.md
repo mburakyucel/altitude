@@ -457,6 +457,8 @@ words arrive: `browser` (the default, no setup) runs the browser's own speech re
 words while speaking; `local` and an OpenAI-compatible endpoint upload the recording after Stop or
 Send and show Transcribing. Words are never simulated: only recognition that produces them
 progressively shows them progressively. `VoiceStates.html` shows each state at desktop and phone width.
+Browser recognition requests native automatic punctuation where supported and preserves the
+recognizer's formatting elsewhere. Dictated fragments are not rewritten or treated as sentences.
 Explicit Send retains its transcription operation through route navigation in the current document;
 returning to its source shows the pending text and Cancel. Stop-to-edit transcription cancels on leaving.
 Reloading or closing the document ends client voice processing; it does not replay audio later.

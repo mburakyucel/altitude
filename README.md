@@ -491,6 +491,7 @@ Send transcribes and sends once. Cancel, denial or failure restores editing and 
 Voice works on a fresh installation through the browser's own speech recognition, with the words
 appearing as you speak; `alt machine set --voice` switches to the local speech service or an
 OpenAI-compatible endpoint, which transcribe after Stop or Send (see [voice input](docs/OPERATIONS.md#voice-input)).
+Browser dictation requests automatic punctuation when supported; formatting depends on the browser.
 
 Submitted text, including image captions, stays recoverable in its original conversation while
 awaiting confirmation across navigation and reload in the same browser tab. A receipt clears that recovery copy immediately;

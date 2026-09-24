@@ -10,6 +10,7 @@ type RecognitionError = { error: string };
 interface Recognizer {
   continuous: boolean;
   interimResults: boolean;
+  unspokenPunctuation?: boolean;
   lang: string;
   onresult: ((event: RecognitionEvent) => void) | null;
   onerror: ((event: RecognitionError) => void) | null;
@@ -60,6 +61,7 @@ export class RecognitionCapture {
     this.recognizer = new Constructor();
     this.recognizer.continuous = true;
     this.recognizer.interimResults = true;
+    if ("unspokenPunctuation" in this.recognizer) this.recognizer.unspokenPunctuation = true;
     if (lang) this.recognizer.lang = lang;
     this.recognizer.onresult = (event) => {
       this.finals = [];

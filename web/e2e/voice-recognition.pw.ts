@@ -56,6 +56,36 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
+for (const supported of [true, false]) {
+  test(`browser punctuation ${supported ? "supported" : "unavailable"}: progressive text and Stop preserve native formatting`, async ({ page, request }, info) => {
+    const project = await fixtureProject(request);
+    const walk = walkthrough(page, info);
+    const v = views(page, info);
+    await browserBackend(page);
+    await page.addInitScript(FAKE_RECOGNIZER + (supported ? "FixtureRecognition.prototype.unspokenPunctuation = false;" : ""));
+    await walk.open(project.path);
+    await v.field.fill("Typed prefix:");
+    await v.mic.click();
+    await expect(v.listening).toBeVisible();
+    expect(await page.evaluate("window.fixtureRecognizer.unspokenPunctuation")).toBe(supported ? true : undefined);
+    const fragments = supported ? ["Hello, world!", "Is this ready?"] : ["a fragment", "of one sentence"];
+    await walk.state("punctuation-listening", {
+      action: () => hear(page, [fragments[0]!], fragments[1]!),
+      visible: [v.field, v.stop, v.cancel],
+      hidden: [v.mic, v.transcribing],
+    });
+    await expect(v.field).toHaveValue(`Typed prefix: ${fragments.join(" ")}`);
+    await hear(page, fragments);
+    await walk.state("punctuation-stopped-editable", {
+      action: () => v.stop.click(),
+      visible: [v.field, v.mic, v.send],
+      hidden: [v.stop, v.cancel, v.transcribing],
+    });
+    await expect(v.field).toBeEditable();
+    await expect(v.field).toHaveValue(`Typed prefix: ${fragments.join(" ")}`);
+  });
+}
+
 test("browser recognition: words appear while listening, Stop lands them, Send at once, Cancel discards, a recognizer error keeps the words", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
