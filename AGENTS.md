@@ -140,16 +140,17 @@ operator's UX decision. Check the durable task conversation before moving past a
 
 ## Faults and service state
 
-Follow [L3 recovery responsibilities](personas/l3.md#recovery-and-upstream-reporting): faults stay
+Follow [L3 recovery responsibilities](personas/l3.md#recovery-and-incident-issues): faults stay
 task-local, L3 owns repair through supported verbs or one repair task, and resumes only verified
 recovery. Other tasks keep running; the operator is not assigned routine machine repair.
 
-For newly investigated Altitude incidents and incoming sanitized defect reports, L3 promptly
-triages system and role/procedure corrections, creates/reuses the issue, and assigns straightforward
-or important authorized fixes to an existing matching owner or one concrete task. Record the
-prevention owner and next action in incident evidence and the issue; if deferred, name the reason
-and next decision. This is targeted incident follow-through, not automatic backlog draining.
-External reporting/notification grants no cross-project task authority. New material choices still
+Every incident is filed as a sanitized GitHub issue. For newly investigated incidents and incoming
+issues, L3 promptly triages system and role/procedure corrections, attaches the incident to an
+existing issue when the cause is shared, and assigns straightforward or important authorized fixes
+to an existing matching owner or one concrete task. Record the prevention owner and next action on
+the issue and in incident evidence; if deferred, name the reason and next decision. Closing an
+incident closes the issue it created. This is targeted incident follow-through, not automatic backlog draining.
+An issue notification grants no cross-project task authority. New material choices still
 follow the proposal, security and UX checkpoints above.
 
 Altitude restarts itself at the next narrow quiet point after a merged change to its own code (no

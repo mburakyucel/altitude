@@ -555,8 +555,8 @@ The writer records explicit L3 selection as `heads_up: true`; these concise line
 between routine system groups. Internal calls default to the daemon actor, and automatic, L2 and
 ambiguous historical FYIs remain eligible for grouping. Selection guidance lives in the
 [L3 persona](../personas/l3.md), with the instruction loading limits described above.
-On start, altd queues one message per project listing its active tasks, unresolved faults, and a bounded
-upstream-report summary with confirmed links and missing/failed/uncertain gaps. L3
+On start, altd queues one message per project listing its active tasks and unresolved faults; open
+incidents and their issues stay in `STATE.md`. L3
 uses that inventory without repeating unchanged blocker nudges. The originating L3 checks public
 delivery evidence and local observations that the actual cause is gone, then requests the existing
 reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
@@ -710,13 +710,13 @@ resume based on older evidence; an unchanged observation preserves a supported r
 Repair-task faults (`--source recovery`) never wake L3
 again. Faults without a project notify registered `altitude`, or only update the machine fault
 ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
-conversation to its project's L3. A project's L3 reports an upstream Altitude defect through
-[`alt issue upstream`](CLI.md#upstream-altitude-defects) with a fictional or redacted reproduction;
-local incidents and project-local recovery work stay with the affected project. Reporting creates
-an issue at the daemon's configured product target. Confirmed creation or verified linkage sends one
-fixed public issue-link notification to registered local `altitude` when its Git origin matches that
-target. Without a matching project, reporting remains issue-only. The notification moves no evidence
-and creates, reuses, resumes, or coordinates no receiving-project task. The reporting L3 does not repair Altitude;
+conversation to its project's L3. Every incident becomes one sanitized
+[incident issue](CLI.md#incident-issues) at the daemon's configured product target; local
+incidents and project-local recovery work stay with the affected project. An incident from another
+managed project sends one fixed public issue-link notification to registered local `altitude` when
+its Git origin matches that target. Without a matching project, the issue stands alone. The
+notification moves no evidence and creates, reuses, resumes, or coordinates no receiving-project
+task. The reporting L3 does not repair Altitude;
 Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
 to the calling project's origin and accept no repository override. A cross-provider
 continuation is a deliberate, recorded fresh attempt based on saved work: when a worker exhausts an
@@ -761,17 +761,17 @@ Owners and helpers run relevant tests during development. This repository's self
 local full run. The branch includes current main; a branch missing it needs reconciliation
 and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
 owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
-A passing required check with its GitHub console log is sufficient delivery evidence. The runner
-retains small logs and identity receipts; failed runs also retain browser reports and traces, which
-owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
-when the export is unreadable. Unneeded completed exports are cleaned up after three days or when
-disk capacity is tight. GitHub artifact storage is unused. A bounded CI wait
+Owners verify the runner's completed local log/identity export; failed runs also retain browser
+reports and traces. Needed evidence is copied into the task through review; unneeded completed
+exports are cleaned up after three days or when disk capacity is tight. Missing export blocks
+delivery even with green GitHub checks. GitHub artifact storage is unused. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
-L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
-recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
+L3 owns the existing finite `recheck-ci` for GitHub execution; local export recovery requires
+verified retrieval from the runner. Missing runs need trigger/runner recovery. Runner or local
+storage outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
-activation does not release an operator hold.
+activation does not establish evidence retrieval or release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
@@ -866,20 +866,12 @@ describe retained worker termination; absent or collected units, unsupported fie
 stay unknown. Signal 9, exit 137, memory snapshots and cumulative OOM counters do not establish a
 historical kill or cleared pressure. No host consumers or collected history are reconstructed, and
 the read changes neither worker retention nor L3's verified-resume responsibility.
-`alt issue upstream --title '…' -` uses that same broker/MCP boundary on either engine, with a
-create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
-write tool or cross-project task authority is granted. Altd validates the public fields and returns
-an issue URL or an actionable failure; the successful receipt stays in the calling project's log.
-For system incidents, `--incident <id>` retains delivery for the source incident named by its receipt
-in the existing fault ledger, exposed through incident inspection and coordinator state. L3 judges
-whether another incident shares a cause and uses the existing verified-link or create operation.
-A confirmed URL survives repeated calls and daemon restart; a failure label cannot assign it to a
-different incident. Existing receipts retain their attribution. Uncertain is persisted before
-creation and retained after interruption, timeout, nonzero exit or unconfirmed output; creation
-cannot be repeated for that identity. The operator checks existing upstream issues, and L3 can
-attach a verified match with `--incident <id> --url <url>`, which performs only a GitHub read.
-Failed prepublication checks retain an actionable reason. No outcome resumes tasks or grants repair
-ownership; historical backfill and uncertain-result retry remain separate operator decisions.
+The incident verbs (`alt incident new|amend|publish`) use that same broker/MCP boundary on either
+engine; the daemon publishes each incident's [sanitized issue](CLI.md#incident-issues) at the
+create-only product target, records the URL or a pending reason on the incident, and lets
+`alt incident publish` retry by marker without a second issue. `--issue <url>` attaches a verified
+match with a GitHub read and closes the incident's own issue as a duplicate. No additional GitHub
+write tool or cross-project task authority is granted; no outcome resumes tasks or grants repair ownership.
 Recovery and prevention remain separate across sessions: L3 records recovery observations, the issue,
 prevention disposition and owner/next action in existing incident evidence. `watch` retains pending
 reporting, delivery or effectiveness; closure records verified prevention or an evidence-backed

@@ -230,6 +230,37 @@ elif cmd == ("pr", "edit"):
     pass
 elif cmd == ("pr", "list"):
     print(read("pr_list.json", "[]"))
+elif cmd[0] == "issue":
+    # Incident issues: the whole repository lives in issues.json; every write lands there for assertions.
+    repository = args[args.index("--repo") + 1]
+    issues = json.loads(read("issues.json", "[]"))
+    def find(target):
+        target = target.rsplit("/", 1)[-1]
+        return next(i for i in issues if str(i["number"]) == target)
+    if cmd[1] == "list":
+        fields = args[args.index("--json") + 1].split(",")
+        label = args[args.index("--label") + 1] if "--label" in args else None
+        print(json.dumps([{k: i[k] for k in fields} for i in issues if label is None or label in i["labels"]]))
+    elif cmd[1] == "create":
+        if read("issue_create_error.txt") is not None:
+            fail(read("issue_create_error.txt"))
+        number = max([100, *(i["number"] for i in issues)]) + 1
+        issues.append({"number": number, "url": f"{repository}/issues/{number}", "state": "OPEN",
+                       "title": next(a[len("--title="):] for a in args if a.startswith("--title=")),
+                       "labels": [a[len("--label="):] for a in args if a.startswith("--label=")],
+                       "body": sys.stdin.read(), "comments": [], "closed_reason": None})
+        print(issues[-1]["url"])
+    elif cmd[1] == "view":
+        fields = args[args.index("--json") + 1].split(",")
+        print(json.dumps({k: find(args[2])[k] for k in fields}))
+    elif cmd[1] == "comment":
+        find(args[2])["comments"].append(sys.stdin.read())
+    elif cmd[1] == "close":
+        issue = find(args[2])
+        issue.update(state="CLOSED", closed_reason=args[args.index("--reason") + 1])
+    else:
+        fail("fake gh: unhandled " + " ".join(args), 64)
+    open(os.path.join(d, "issues.json"), "w").write(json.dumps(issues))
 elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
 elif cmd == ("run", "view"):

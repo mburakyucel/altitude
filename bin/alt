@@ -20,10 +20,10 @@ L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
-    ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
+    ("issue", "new"), ("issue", "comment"), ("issue", "close"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "preserve-checkout", "recheck-ci", "handoff", "machine", "release")),
-    *(("incident", name) for name in ("new", "amend")),
+    *(("incident", name) for name in ("new", "amend", "publish")),
 }
 
 
@@ -346,7 +346,8 @@ def main(argv=None) -> None:
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
     inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[])
-    iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--reason", required=True)
+    iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--issue", help="attach the existing GitHub issue that tracks this cause"); iam.add_argument("--reason", required=True)
+    ipub = ics.add_parser("publish", help="create the incident's GitHub issue after a failed publication"); ipub.add_argument("id")
     ics.add_parser("list")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
@@ -699,12 +700,18 @@ def main(argv=None) -> None:
     if c == "incident":
         from altitude import incidents; p = _project(args)
         if args.icmd == "new":
-            out(incidents.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
-                                     tags=args.tag, actor=ACTOR))
+            filed = incidents.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
+                                           tags=args.tag, actor=ACTOR)
+            out({**filed, **incidents.publish_issue(p, filed["id"])})
         elif args.icmd == "amend":
-            fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status)) if v is not None}
+            fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status), ("issue", args.issue)) if v is not None}
             try:
                 out(incidents.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
+            except ValueError as e:
+                sys.exit(f"alt: {e}")
+        elif args.icmd == "publish":
+            try:
+                out(incidents.publish_issue(p, args.id))
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:

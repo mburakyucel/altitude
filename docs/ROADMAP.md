@@ -113,11 +113,10 @@ Current project and review rules live in [AGENTS.md](../AGENTS.md); completed mi
 
 ## Current product work
 
-Project L3s can report Altitude defects now through
-[`alt issue upstream`](CLI.md#upstream-altitude-defects). Reporting is create-only, uses the
-installation's product target and a fictional/redacted reproduction, and leaves local evidence and
-recovery in the affected project. Altitude's operator/coordinator selects implementation separately;
-there is no automatic upstream issue intake or cross-project repair.
+Every incident on any managed project becomes a sanitized [incident issue](CLI.md#incident-issues)
+at the installation's product target; local evidence and recovery stay in the affected project.
+Altitude's operator/coordinator selects implementation separately; there is no automatic issue-to-task
+intake or cross-project repair.
 
 The [UI specification](../design/wireframes/SPEC.md) governs the design and lists the implementation
 slices, each one task. The durable backlog is GitHub issues selected by the operator. The current priorities are:

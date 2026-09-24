@@ -1,23 +1,28 @@
 """Incident evidence and deduplicated system-fault reporting."""
 from __future__ import annotations
 import fcntl
+import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
-from . import config, state as S, tasks as T
+from . import config, engines, state as S, tasks as T
 
 STATUSES = ("open", "watch", "closed")
+ISSUE_LABEL = "incident"
+PENDING = "pending — "
 # Every bullet templates/incident.md writes, in order. A value may run over many lines, so a field ends only at
 # the NEXT one of these labels, at the amendment
 # history, or at EOF — never at a stray `- ` line or a blank line inside the value.
-INCIDENT_LABELS = ("date", "task", "project", "what happened", "evidence", "root cause", "status")
+INCIDENT_LABELS = ("date", "task", "project", "what happened", "evidence", "root cause", "status", "issue")
 # Fields `alt incident amend` may rewrite, in template order → the bullet label each one owns in incident.md.
-AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cause", "status": "status"}
+AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cause", "status": "status", "issue": "issue"}
 # ...and the incidents.jsonl column each one feeds, so a correction reaches `alt incident list`.
 INDEXED = {"cause": "cause"}
 _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS) + r"): |(amended): )", re.M)
@@ -150,34 +155,30 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
                            evidence=f"monitor/faults.json key {key}; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
-                           tags=["system-fault", kind], actor="altd", fault_key=key)
+                           tags=["system-fault", kind], actor="altd")
         rec["incident"] = inc["id"]
         faults[key] = rec
         S.write_json(FAULTS, faults)
+    issue = publish_issue(target, inc["id"])   # GitHub waits outside the fault lock
+    tracked = (f"issue {issue['issue']}" if issue.get("issue")
+               else f"issue publication pending ({issue['pending']}); retry with `alt incident publish {inc['id']}`")
     where = f"{project}/{task}" if project and task else project or target
-    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {target}/{inc['id']}."
+    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {target}/{inc['id']}; {tracked}."
           + (" Raised by a repair task, so L3 is not woken again." if repair else ""), actor="altd")
     if not repair:
         l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
-                         f"Its task is blocked and incident {target}/{inc['id']} holds the evidence. Read the evidence, record "
+                         f"Its task is blocked, incident {target}/{inc['id']} holds the evidence and {tracked}. Read the evidence, record "
                          "verified recovery and prevention follow-through with `alt incident amend`. Unblock affected "
-                         "work first through supported recovery; promptly report/reuse an issue for actionable system "
-                         "or role defects, record prevention ownership or reporting failure, and give one concise FYI.", trigger="incident")
-    return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
-
-
-def _upstream_records(faults: dict) -> dict:
-    """Publication belongs to the source incident named by its receipt, regardless of ledger slot."""
-    return {(record["project"], outcome["incident"]): (key, outcome)
-            for key, record in faults.items() if "project" in record
-            and (outcome := record.get("upstream")) and outcome.get("incident")}
+                         "work first through supported recovery; if the cause matches an existing issue, attach it with "
+                         "`alt incident amend <id> --issue <url>`; record prevention ownership on the issue and give one concise FYI.",
+                         trigger="incident")
+    return {"kind": kind, "incident": inc["id"], "count": rec["count"], "issue": issue.get("issue")}
 
 
 def index(project: str | None = None) -> list[dict]:
     path = config.project_dir(project) / "incidents.jsonl" if project else config.INCIDENT_INDEX
     if not path.exists():
         return []
-    deliveries = _upstream_records(S.read_json(FAULTS, {}) or {})
     out = []
     for line in path.read_text().splitlines():
         try:
@@ -187,51 +188,15 @@ def index(project: str | None = None) -> list[dict]:
         try:
             body = (config.project_dir(row["project"]) / "incidents" / f"{row['id']}.md").read_text()
             spans = _field_spans(body, row["id"])
-            for key, label in (("status", "status"), ("evidence", "evidence"), ("cause", "root cause")):
+            row["issue"] = None
+            for key, label in (("status", "status"), ("evidence", "evidence"), ("cause", "root cause"), ("issue", "issue")):
                 if label in spans:
                     start, end = spans[label]
-                    row[key] = body[start:end]
+                    row[key] = body[start:end].strip() or None if key == "issue" else body[start:end]
         except (OSError, ValueError):
-            row.update(status="unavailable", evidence="Incident evidence unavailable; inspect the local record.")
-        if "system-fault" in row.get("tags", []):
-            source = json.loads(row["fault_key"])[0] if row.get("fault_key") else row["project"]
-            row["upstream"] = deliveries.get((source, row["id"]), (None, {
-                "status": "missing", "url": None,
-                "reason": "No linked report. Check existing upstream issues; report only with authorization."}))[1]
+            row.update(status="unavailable", evidence="Incident evidence unavailable; inspect the local record.", issue=None)
         out.append(row)
     return out
-
-
-def upstream_delivery(project: str, incident: str, *, outcome: dict | None = None,
-                      expected: dict | None = None, notification: dict | None = None) -> dict:
-    """Read or compare-and-save publication for one incident; L3 judges which issues match."""
-    if not isinstance(incident, str) or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", incident):
-        raise ValueError("alt issue upstream: invalid incident id")
-    with _fault_lock():
-        row = next((row for row in index(project) if row["id"] == incident), None)
-        if not row or not row.get("fault_key"):
-            raise ValueError("alt issue upstream: incident has no tracked system-fault identity in this project; "
-                             "historical backfill requires separate authorization")
-        faults = S.read_json(FAULTS, {}) or {}
-        key = row["fault_key"]
-        source = json.loads(key)[0]
-        if key not in faults or not (source == project or source is None and project == "altitude"):
-            raise ValueError("alt issue upstream: incident fault identity is unavailable in this project")
-        current = row["upstream"]
-        if notification is not None:
-            expected = current
-            outcome = {**current, "notification": notification}
-        if outcome is None:
-            return current
-        if current != expected:
-            raise ValueError("alt issue upstream: delivery changed; inspect `alt incident list` before trying again")
-        receipt_key = _upstream_records(faults).get((source, incident),
-                                                  (json.dumps([source, json.loads(key)[1], incident]), None))[0]
-        faults.setdefault(receipt_key, {"project": source})["upstream"] = outcome
-        S.write_json(FAULTS, faults)
-    S.project_log(project, "incident-upstream", id=incident, **outcome)
-    S.regen_state_md(project)
-    return outcome
 
 
 def open_summary(project: str) -> str:
@@ -239,9 +204,8 @@ def open_summary(project: str) -> str:
     pending = [row for row in reversed(index(project)) if row.get("status") != "closed"]
     lines = []
     for row in pending[:10]:
-        report = row.get("upstream")
-        link = ("" if report is None else f"; report {report['url']}" if report.get("url")
-                else "; no report linked" if report["status"] == "missing" else f"; report {report['status']}")
+        issue = row.get("issue")
+        link = "; no issue" if not issue else f"; issue {issue}"
         if row.get("status") == "unavailable":
             lines.append(f"- {row['id']}: evidence unavailable, inspect the local record")
             continue
@@ -254,6 +218,241 @@ def open_summary(project: str) -> str:
         lines = [f"{len(pending)} not closed; recovery is separate from prevention.", *lines,
                  "Full evidence and closed history: `alt incident list`."]
     return "\n".join(lines)
+
+
+# ---- public issue: one sanitized GitHub issue per incident ---------------------------------------------------
+_CREDENTIAL = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
+    r"|-----BEGIN [\w ]*PRIVATE KEY-----(?:[\s\S]*?-----END [\w ]*PRIVATE KEY-----)?"
+    r"|\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
+    r"(?!\[REDACTED\]|<REDACTED>)\S{4,}"
+    r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)
+_PRIVATE = re.compile(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
+                      r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b|\.altitude/", re.I)
+_PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
+_REDACTIONS = (
+    (_CREDENTIAL, "[REDACTED]"),
+    (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
+    (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
+    (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
+    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "[id]"),
+    (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "[id]"),
+)
+
+
+def _names() -> str | None:
+    """Managed projects other than the development project itself, longest first so a prefix never wins."""
+    names = sorted((n for n in config.load_projects() if n != "altitude"), key=len, reverse=True)
+    return "|".join(re.escape(n) for n in names) or None
+
+
+def _operator() -> str | None:
+    return config.OPERATOR if config.OPERATOR and config.OPERATOR != "Operator" else None
+
+
+def sanitize(text: str) -> str:
+    """Plain words for a public issue: paths, ids, addresses, credentials, task and project names and the
+    operator's name never leave. Encoded text is decoded first so `%2Fhome` cannot slip past."""
+    text = unquote(text)
+    home = str(Path.home())
+    if home not in ("/", ""):
+        text = re.sub(re.escape(home) + _PATH_TAIL, "[path]", text)
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    if names := _names():
+        text = re.sub(rf"\b(?:{names}|altitude)/[\w.-]+", "[task]", text)
+        text = re.sub(rf"\b(?:{names})\b", "[project]", text)
+    if operator := _operator():
+        text = re.sub(rf"\b{re.escape(operator)}\b", "the operator", text, flags=re.I)
+    return text
+
+
+def check_public(text: str) -> None:
+    """The boundary every public issue field crosses; a miss in `sanitize` stays local instead of leaking."""
+    text = unquote(text)
+    home = str(Path.home()) + "/"
+    absolute_paths = re.findall(r"/[^\s`'\"<>\[\]{}()]+", text)
+    if (home in text
+            or any((os.path.normpath("/" + path.lstrip("/")) + "/").startswith(home) for path in absolute_paths)
+            or _PRIVATE.search(text)):
+        raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
+    if _CREDENTIAL.search(text):
+        raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
+    if (operator := _operator()) and re.search(rf"\b{re.escape(operator)}\b", text, re.I):
+        raise ValueError("Private incident evidence boundary: an issue is public; the operator's name stays on this machine")
+
+
+def version() -> str:
+    if config.RELEASE is not None:
+        return config.RELEASE.get("version") or "unknown"
+    return config.SOURCE.name[:12] if config.SOURCE.parent.name == ".altitude-source" else "development"
+
+
+def _gh(project: str, args: list[str], *, timeout: int, input: str | None = None) -> str:
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)
+    try:
+        result = subprocess.run(["gh", *args], input=input, cwd=config.project_path(project), env=env,
+                                capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"GitHub request unavailable or timed out ({type(exc).__name__})") from exc
+    if result.returncode:
+        raise ValueError("GitHub refused: " + " ".join((result.stderr or "gh failed").split())[:200])
+    return result.stdout
+
+
+@contextmanager
+def _incident_lock(project: str):
+    """One publisher or amender per project across processes: a retry cannot race the daemon into a second
+    issue, and an amendment never lands on a snapshot another writer has replaced."""
+    directory = config.project_dir(project) / "incidents"
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / ".lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _read(project: str, incident: str) -> tuple[Path, str, dict]:
+    path = config.project_dir(project) / "incidents" / f"{incident}.md"
+    if not path.exists():
+        raise ValueError(f"unknown incident {incident!r} in project {project!r} (no {path})")
+    body = path.read_text()
+    return path, body, _field_spans(body, incident)
+
+
+def _field(body: str, spans: dict, label: str) -> str:
+    start, end = spans.get(label, (0, 0))
+    return body[start:end].strip()
+
+
+def _set_issue(path: Path, body: str, spans: dict, value: str) -> None:
+    """Rewrite the issue bullet, or add it after the status bullet for a record filed before issues existed."""
+    if "issue" in spans:
+        start, end = spans["issue"]
+        body = body[:start] + value + body[end:]
+    else:
+        _, end = spans["status"]
+        body = body[:end] + f"\n- issue: {value}" + body[end:]
+    S.atomic_write(path, body)
+
+
+def _issue_url(url: str, repository: str) -> str:
+    if not isinstance(url, str) or not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url.strip(), re.I):
+        raise ValueError(f"an issue URL in {repository} is required")
+    return url.strip()
+
+
+def marker(project: str, incident: str) -> str:
+    """The incident id plus an opaque project digest: ids are per project, and two projects can file in one second."""
+    return f"Incident {incident} ({hashlib.sha256(project.encode()).hexdigest()[:8]})"
+
+
+def _find_or_create(project: str, incident: str, body: str, spans: dict) -> tuple[str, bool]:
+    """The marker in the body is the idempotency key: a retry after a timeout finds the issue it made."""
+    from .server import issue_repository
+    repository = issue_repository()
+    key = marker(project, incident)
+    listed = _gh(project, ["issue", "list", "--repo", repository, "--label", ISSUE_LABEL, "--state", "all",
+                           "--limit", "200", "--json", "url,body"], timeout=30)
+    for row in json.loads(listed or "[]"):
+        if key in (row.get("body") or ""):
+            return row["url"], False
+    title = sanitize(body.split("\n", 1)[0].partition(" — ")[2].strip() or incident)[:200]
+    text = "\n\n".join((
+        "## Expected\nAltitude completes the step without this failure.",
+        "## Actual\n" + sanitize(_field(body, spans, "what happened")),
+        "## Cause\n" + sanitize(_field(body, spans, "root cause")),
+        "## Reproduction\nPending triage: the coordinator adds a fictional or redacted reproduction in a comment.",
+        f"## Altitude version\n{version()}",
+        key)) + "\n"
+    check_public(title + "\n" + text)
+    url = _gh(project, ["issue", "create", "--repo", repository, f"--title={title}", f"--label={ISSUE_LABEL}",
+                        "--body-file", "-"], input=text, timeout=60).strip()
+    return _issue_url(url, repository), True
+
+
+def publish_issue(project: str, incident: str) -> dict:
+    """Create the incident's issue, or keep the failure on the record with the way back: `alt incident publish`."""
+    with _incident_lock(project):
+        path, body, spans = _read(project, incident)
+        current = _field(body, spans, "issue")
+        if current and not current.startswith(PENDING):
+            return {"id": incident, "issue": current, "created": False}
+        try:
+            url, created = _find_or_create(project, incident, body, spans)
+        except (ValueError, OSError) as exc:
+            reason = " ".join(str(exc).split())[:300]
+            _set_issue(path, body, spans, PENDING + reason)
+            S.project_log(project, "incident-issue", id=incident, status="pending", reason=reason)
+            S.regen_state_md(project)
+            return {"id": incident, "issue": None, "pending": reason}
+        _set_issue(path, body, spans, url)
+    S.project_log(project, "incident-issue", id=incident, url=url, created=created)
+    S.regen_state_md(project)
+    _notify_development(project, incident, url)   # once per record: a link found by marker is as new to the coordinator
+    return {"id": incident, "issue": url, "created": created}
+
+
+def _notify_development(project: str, incident: str, url: str) -> None:
+    """Another project's incident reaches the Altitude coordinator as one fixed public link, never as work."""
+    from . import l3
+    from .server import repository_url
+    target = "altitude"
+    if project == target or not config.is_managed(target):
+        return
+    try:
+        with config.project_activity(target) as attached:
+            if not attached or not config.is_managed(target):
+                return
+            checkout = config.project_path(target)
+            origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                                    capture_output=True, text=True, timeout=10)
+            repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+            if repository and repository.lower() == url.lower().rsplit("/issues/", 1)[0]:
+                l3.queue_upstream_issue(target, url, checkout=checkout)
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        S.project_log(project, "incident-issue", id=incident, url=url, notification="failed", reason=str(exc)[:200])
+
+
+def _attach_issue(project: str, incident: str, body: str, spans: dict, url: str) -> str:
+    """L3 judged the cause matches an existing issue: verify it, note the occurrence there and close the
+    issue this incident created as its duplicate."""
+    from .server import issue_repository
+    repository = issue_repository()
+    url = _issue_url(url, repository)
+    previous = _field(body, spans, "issue")
+    if previous.lower() == url.lower():
+        return previous
+    kept = json.loads(_gh(project, ["issue", "view", url, "--repo", repository, "--json", "url"], timeout=30)).get("url")
+    if not isinstance(kept, str) or kept.lower() != url.lower():
+        raise ValueError(f"cannot verify {url}; check GitHub authentication and issue access")
+    _gh(project, ["issue", "comment", kept, "--repo", repository, "--body-file", "-"],
+        input=f"Occurrence: incident {incident} on Altitude version {version()}.\n", timeout=60)
+    if previous and not previous.startswith(PENDING):
+        own = json.loads(_gh(project, ["issue", "view", previous, "--repo", repository, "--json", "body,state"], timeout=30))
+        if marker(project, incident) in (own.get("body") or "") and own.get("state") == "OPEN":
+            _gh(project, ["issue", "comment", previous, "--repo", repository, "--body-file", "-"],
+                input=f"Duplicate of {kept}; tracking continues there.\n", timeout=60)
+            _gh(project, ["issue", "close", previous, "--repo", repository, "--reason", "duplicate"], timeout=60)
+    return kept
+
+
+def _close_issue(project: str, incident: str, url: str, reason: str) -> None:
+    """Closing the incident comments the sanitized reason on its issue and closes the issue this incident created;
+    an issue it was attached to tracks other occurrences and stays with `alt issue close`."""
+    from .server import issue_repository
+    repository = issue_repository()
+    note = sanitize(reason)
+    check_public(note)
+    own = json.loads(_gh(project, ["issue", "view", url, "--repo", repository, "--json", "body,state"], timeout=30))
+    _gh(project, ["issue", "comment", url, "--repo", repository, "--body-file", "-"],
+        input=f"Incident closed: {note}\n", timeout=60)
+    if own.get("state") == "OPEN" and marker(project, incident) in (own.get("body") or ""):
+        _gh(project, ["issue", "close", url, "--repo", repository, "--reason", "completed"], timeout=60)
 
 
 def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
@@ -270,15 +469,21 @@ def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
     raise RuntimeError(f"cannot file an incident in {directory}: every id for {stamp} is taken")
 
 
+def _one_field(value: str) -> str:
+    """A value line that reads as a bullet would split the record on the next parse; indenting it keeps both."""
+    return _BULLET.sub(lambda m: "  " + m.group(0), value.strip())
+
+
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
-                 tags: list[str], actor: str = "l3", fault_key: str | None = None) -> dict:
-    """Write incident evidence into the project's Altitude state.
+                 tags: list[str], actor: str = "l3") -> dict:
+    """Write incident evidence into the project's Altitude state; `publish_issue` gives it its public handle.
 
     Filing an incident never creates a task or schedules a healing workflow.
-    Safe to call while holding any project lock: reserving the file takes no lock."""
+    Safe to call while holding any project lock: reserving the file takes no lock and no network."""
     template = (config.TEMPLATES / "incident.md").read_text()
-    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
-                  cause=cause.strip(), status="watch")
+    title = " ".join(title.split())
+    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=_one_field(what),
+                  evidence=_one_field(evidence), cause=_one_field(cause), status="watch", issue="")
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
     iid, path = _reserve_incident_file(d)
@@ -288,7 +493,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         path.unlink(missing_ok=True)
         raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
-           "cause": cause.strip()[:200], **({"fault_key": fault_key} if fault_key else {})}
+           "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
     _index_append(row)
@@ -376,14 +581,24 @@ def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3
             raise ValueError(f"--{key} has a line starting `{bad}`, which would read as another field next time; rephrase it")
     if "status" in fields and fields["status"] not in STATUSES:
         raise ValueError(f"status in {STATUSES}")
-    path = config.project_dir(project) / "incidents" / f"{incident}.md"
-    if not path.exists():
-        raise ValueError(f"unknown incident {incident!r} in project {project!r} (no {path})")
-    body = path.read_text()
-    spans = _field_spans(body, incident)
+    with _incident_lock(project):
+        return _amend(project, incident, reason=reason, actor=actor, fields=fields)
+
+
+def _amend(project: str, incident: str, *, reason: str, actor: str, fields: dict) -> dict:
+    path, body, spans = _read(project, incident)
+    if "issue" in fields and "issue" not in spans:
+        _set_issue(path, body, spans, "")
+        path, body, spans = _read(project, incident)
     absent = [AMENDABLE[k] for k in AMENDABLE if k in fields and AMENDABLE[k] not in spans]
     if absent:
         raise ValueError(f"{incident} has no `- {absent[0]}:` line to amend")
+    if "issue" in fields:
+        fields["issue"] = _attach_issue(project, incident, body, spans, fields["issue"])
+    if fields.get("status") == "closed":
+        linked = fields.get("issue") or _field(body, spans, "issue")
+        if linked and not linked.startswith(PENDING):
+            _close_issue(project, incident, linked, reason)
     named = _incident_task(body, spans)
     # Decided before the write, so the event can never fail after the file has changed — and so a task name that
     # has no folder is reported rather than conjured into one by append_event's mkdir.

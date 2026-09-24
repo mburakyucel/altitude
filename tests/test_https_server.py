@@ -146,6 +146,6 @@ class TestHTTPSServer(AltitudeCase):
         with mock.patch.object(config, "RELEASE", {"repository": "fictional/altitude"}), \
              mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", None), \
              mock.patch.object(server.subprocess, "run", side_effect=AssertionError("archive has no git checkout")):
-            self.assertEqual(server.upstream_issue_repository(), "https://github.com/fictional/altitude")
+            self.assertEqual(server.issue_repository(), "https://github.com/fictional/altitude")
             with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "other/product"):
-                self.assertEqual(server.upstream_issue_repository(), "https://github.com/other/product")
+                self.assertEqual(server.issue_repository(), "https://github.com/other/product")
