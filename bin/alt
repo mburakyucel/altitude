@@ -312,6 +312,8 @@ def main(argv=None) -> None:
     rn = ts.add_parser("run", help="current L2: run one command under the task's machine grant, outside the worker sandbox")
     rn.add_argument("slug"); rn.add_argument("command")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
+    dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
+                    help="where coordination tracks the report's open review findings, e.g. '#461'")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
@@ -606,7 +608,8 @@ def main(argv=None) -> None:
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):
                 sys.exit("alt task done: ALTITUDE_ATTEMPT is required for the L2")
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest,
-                       expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None))
+                       expected_attempt=int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None,
+                       findings_tracked=args.findings_tracked))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "reply":

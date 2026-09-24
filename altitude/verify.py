@@ -12,6 +12,14 @@ class VerifierFault(RuntimeError):
     """The verifier's own tooling failed (gh, network), not the L2's work."""
 
 
+OPEN_FINDINGS = "open finding on an unblocked report"
+
+
+def open_findings(report: dict | None) -> list[dict]:
+    """Review findings the owner handed back instead of fixing or dismissing."""
+    return [finding for finding in (report or {}).get("review") or [] if finding.get("disposition") == "open"]
+
+
 def gh(args: list[str], cwd: Path) -> dict | list | None:
     try:
         p = subprocess.run(["gh"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=60, env=engines.clean_env())
@@ -57,10 +65,9 @@ def _verify(project: str, slug: str) -> dict:
     for k in ("landed", "review", "blocked"):
         if k not in rep:
             out["problems"].append(f"report.json lacks `{k}`")
-    review = rep.get("review") or []
-    open_findings = [finding for finding in review if finding.get("disposition") == "open"]
-    if open_findings and not rep.get("blocked"):
-        out["problems"].append("open finding on an unblocked report")
+    unresolved = open_findings(rep)
+    if unresolved and not rep.get("blocked"):
+        out["problems"].append(OPEN_FINDINGS)
     landed = rep.get("landed") or {}
     delivery = task.get("delivery") or {}
     if delivery:
@@ -105,8 +112,8 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"{len(rep['deviations'])} deviation(s)")
     if rep.get("blocked"):
         out["signals"].append(f"blocked: {rep['blocked'][:120]}")
-    if open_findings:
-        out["signals"].append(f"{len(open_findings)} open review findings")
+    if unresolved:
+        out["signals"].append(f"{len(unresolved)} open review findings")
     sp = rep.get("spend") or {}
     if sp.get("reverts"):
         out["signals"].append(f"{sp['reverts']} revert(s)")
