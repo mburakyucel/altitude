@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Consecutive voice settings saves use the acknowledged selection immediately and preserve the
+  next credential edit when a cache notification arrives later.
+
 - **Settings → Voice input** selects the existing browser, local speech service or custom endpoint
   for every project. The compact overview opens a separate voice page; endpoint credentials stay
   write-only. Changes apply to the next recording, and a changed destination cannot reroute an
