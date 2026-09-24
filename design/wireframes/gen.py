@@ -542,9 +542,8 @@ def mheader_project(sub="L3 · Ready"):
     return (
         '<header class="mh"><div><span class="name">altitude' + I("chev-d","i sm") + '</span>'
         f'<div class="subl" style="padding-left:4px;margin-top:-6px">{sub}</div></div><span class="sp"></span>'
-        f'<details class="phone-details"><summary aria-label="Project details">{I("more")}</summary><div class="details-panel"><h2>altitude</h2>'
-        '<p>L3 answered 12 min ago · 3 tasks in flight · 3 questions need you</p><label>Engine <select aria-label="L3 engine"><option>Auto</option><option>Configured engine</option></select></label>'
-        '<p>Reset L3 conversation</p><p>Remove project</p><a href="index.html">Design boards</a></div></details></header>'
+        f'<details class="phone-details"><summary aria-label="More actions">{I("more")}</summary><div class="details-panel">'
+        '<a href="MobileSettings.html">Settings…</a><p>Reset L3 conversation</p><p>Remove project</p><a href="index.html">Design boards</a></div></details></header>'
     )
 
 def mheader_global(title="Altitude"):
@@ -737,7 +736,26 @@ def settings_content(phone=False):
         + f'<a class="setting-link" href="{target}"><span><b>Voice input</b><small>Browser recognition</small></span>{I("chev-r")}</a>'
         '<div class="card" style="margin-top:14px"><h3>Network</h3><p class="muted" style="margin:2px 0 10px">Connection details · view only</p>'
         '<div class="kv"><span>Address</span><b>https://altitude.example.test</b><span>HTTPS</span><b>On</b><span>Operator</span><b>Operator</b></div></div>'
+        + '<h2 style="margin-top:22px">This project</h2><p class="muted" style="margin-top:-6px">Applies only to that project.</p>'
+        + f'<a class="setting-link" href="{"MobileProjectSettings.html" if phone else "ProjectSettings.html"}"><span><b>altitude</b><small>L3 engine, models and reasoning effort</small></span>{I("chev-r")}</a>'
     )
+
+def default_row(engine, model, effort, phone):
+    cols = "1fr" if phone else "6rem 1fr 1fr"
+    return (f'<div style="display:grid;grid-template-columns:{cols};gap:12px;align-items:end;border-top:1px solid var(--hairline);padding-top:14px;margin-top:14px">'
+            f'<b>{engine}</b><label class="muted" style="font-size:12px">Model<span class="field ph">Default: {model}</span></label>'
+            f'<label class="muted" style="font-size:12px">Effort<span class="field">Default ({effort})</span></label></div>')
+
+def project_settings_content(phone=False):
+    heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>altitude</h1>'
+    role = lambda title, timing, claude, codex: (f'<div class="card" style="margin-top:14px"><h3>{title}</h3><p class="muted" style="margin:2px 0 0">{timing}</p>'
+        + default_row("Claude", *claude, phone) + default_row("Codex", *codex, phone) + '</div>')
+    return (heading + '<p class="muted" style="margin:0 0 14px">Applies to this project only. A model or effort chosen for one launch, such as a task created with its own effort, wins over these defaults.</p>'
+        '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h3 style="margin:0">L3 engine</h3><span class="field" style="min-width:10rem">Auto</span></div>'
+        '<p class="muted" style="margin:8px 0 0">Auto follows the project\'s routing preferences and available quota.<br>Last turn: Codex · model not reported · High effort requested · applied effort not reported</p></div>'
+        + role("L3 · project conversation", "Applies from L3's next turn, in its existing conversation.", ("fable", "Native"), ("CLI default", "Native"))
+        + role("L2 · task owners", "Applies to fresh task attempts. Started tasks keep their model and effort.", ("opus", "Native"), ("CLI default", "High"))
+        + '<p class="muted" style="font-size:12px">These choices request a model and effort; they do not confirm what the engine used. Higher effort can use more time and tokens.</p>')
 
 def voice_settings_content(phone=False):
     heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>Voice input</h1>'
@@ -751,6 +769,9 @@ def rail_settings():
 board("Settings", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail_settings() + '<main class="pane"><div class="route-content" style="max-width:720px;width:100%">' + settings_content() + '</div></main></div>')
 settings_phone_header = '<header class="mh"><span class="btn" style="padding:0 8px">' + I("chev-l") + 'Back</span><h1 style="font-size:17px;margin:0 0 0 12px">Settings</h1></header>'
 board("MobileSettings", 390, 844, '<div class="m"><div></div>' + settings_phone_header + '<div class="route-content">' + settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
+board("ProjectSettings", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail_settings() + '<main class="pane" style="overflow:auto"><div class="route-content" style="max-width:720px;width:100%">' + project_settings_content() + '</div></main></div>')
+project_settings_phone_header = '<header class="mh"><a class="btn" href="MobileSettings.html" style="padding:0 8px">' + I("chev-l") + 'Settings</a><h1 style="font-size:17px;margin:0 0 0 12px">altitude</h1></header>'
+board("MobileProjectSettings", 390, 844, '<div class="m"><div></div>' + project_settings_phone_header + '<div class="route-content" style="overflow:auto">' + project_settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
 board("VoiceSettings", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail_settings() + '<main class="pane"><div class="route-content" style="max-width:720px;width:100%">' + voice_settings_content() + '</div></main></div>')
 voice_settings_phone_header = '<header class="mh"><a class="btn" href="MobileSettings.html" style="padding:0 8px">' + I("chev-l") + 'Settings</a><h1 style="font-size:17px;margin:0 0 0 12px">Voice input</h1></header>'
 board("MobileVoiceSettings", 390, 844, '<div class="m"><div></div>' + voice_settings_phone_header + '<div class="route-content">' + voice_settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
@@ -767,13 +788,13 @@ def srow(label, note, chosen, endpoint_form=False, status=""):
 entry_desktop = ('<div class="vdesk" style="display:flex;gap:28px;align-items:flex-start">'
     '<div style="width:260px"><div class="muted" style="margin-bottom:8px">Rail, operator row</div><div class="who on" style="border:1px solid var(--border)"><span class="avatar">O</span>Operator<span style="margin-left:auto;color:var(--accent)">' + I("gear", "i sm") + '</span></div></div>'
     '<div><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock"><div class="hi">Settings…</div><hr><div>Reset L3 conversation</div><div>Remove project</div><div>Design boards</div></div></div></div>')
-entry_phone = ('<div class="compact" style="width:390px"><div class="muted" style="margin-bottom:8px">Project details sheet, three dots</div><div class="menu-mock" style="width:100%"><div><b>altitude</b></div><div class="muted">L3 answered 12 min ago · 3 tasks in flight</div><div>Engine · Auto</div><hr><div class="hi">Settings…</div><div>Reset L3 conversation</div><div>Remove project</div></div></div>')
+entry_phone = ('<div class="compact" style="width:390px"><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock" style="width:100%"><div class="hi">Settings…</div><hr><div>Reset L3 conversation</div><div>Remove project</div><div>Design boards</div></div></div>')
 
 settings_inner = (
     '<div style="padding:28px 40px 8px"><h1 style="margin:0;font-size:18px">Settings: states and entry points</h1>'
     '<p class="muted" style="margin:6px 0 18px">Settings opens a compact overview. These backend options live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
     '<div class="sgrid">'
-    + srow("Entry points", "the rail gear and the project three dots on desktop; the details sheet on phone", "browser").split('<div class="vdesk"')[0] + entry_desktop + entry_phone
+    + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone", "browser").split('<div class="vdesk"')[0] + entry_desktop + entry_phone
     + srow("Default", "browser recognition, nothing to configure", "browser")
     + srow("Local chosen", "saves at once; the composer switches on its next recording", "local", status="Saved.")
     + srow("Endpoint form", "URL required; model and key optional; a stored key is never returned", "endpoint", endpoint_form=True)
@@ -999,6 +1020,7 @@ ROUTES = [
     ("Voice input states: desktop and phone", "VoiceStates", None),
     ("Settings", "Settings", "MobileSettings"),
     ("Settings · Voice input", "VoiceSettings", "MobileVoiceSettings"),
+    ("Settings · This project", "ProjectSettings", "MobileProjectSettings"),
     ("Settings states and entry points", "SettingsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),

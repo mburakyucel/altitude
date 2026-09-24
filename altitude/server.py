@@ -1702,7 +1702,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]))
-            if api == "effort" and len(parts) == 3:
+            if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))
                 except KeyError:
@@ -1858,12 +1858,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError) as exc:
                     return self._json({"error": str(exc)}, 409)
-            if parts in (["api", "effort"], ["api", "model"]):
+            if parts == ["api", "defaults"]:
                 try:
-                    setting, value = ((f"{o['role']}_effort", o["effort"]) if parts[1] == "effort" else
-                                      (config.model_setting("l2", o["engine"]), o["model"]))
-                    dispatch.request_setting(o["project"], setting, value, "Project details", actor=config.OPERATOR_ACTOR)
-                    result = dispatch._run_setting(o["project"], setting)
+                    if o.get("setting") not in config.DEFAULT_SETTINGS:
+                        raise ValueError("unknown project default")
+                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    result = dispatch._run_setting(o["project"], o["setting"])
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
