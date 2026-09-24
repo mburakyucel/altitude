@@ -1638,6 +1638,8 @@ write-only, retained only for an unchanged URL; editing the URL clears retention
 replacement removes the key. Failed saves leave the persisted choice unchanged. A changed backend
 or URL asks the person to reload settings; concurrent model/key edits keep last-writer semantics.
 Fresh settings reads update the form as well as the composer's selection.
+The form adopts a successful save's selection immediately. Its later cache notification does not
+reset subsequent edits; a different settings read still refreshes the form.
 
 `POST /api/transcribe` is a bounded adapter for the two upload backends. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers)

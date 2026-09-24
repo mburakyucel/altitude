@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, readVoiceSettings, saveVoiceSettings, useOverview } from "../data/api";
@@ -19,12 +19,15 @@ const queryKey = ["voice-settings"];
 
 function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void }) {
   const client = useQueryClient();
+  const committed = useRef(saved);
   const [choice, setChoice] = useState(saved.backend);
   const [url, setUrl] = useState(saved.url);
   const [model, setModel] = useState(saved.model);
   const [key, setKey] = useState("");
   const [keepKey, setKeepKey] = useState(saved.key_set);
   useEffect(() => {
+    if (saved === committed.current) return;
+    committed.current = saved;
     setChoice(saved.backend);
     setUrl(saved.url);
     setModel(saved.model);
@@ -35,7 +38,8 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     mutationFn: saveVoiceSettings,
     onMutate: () => client.cancelQueries({ queryKey }),
     onSuccess: (value) => {
-      client.setQueryData(queryKey, value);
+      // Use the cache's structurally shared value so its later notification cannot reset a new edit.
+      committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
       updateVoiceSettings(value);
       setChoice(value.backend);
       setUrl(value.url);
@@ -47,10 +51,10 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const choose = (backend: VoiceBackend) => {
     save.reset();
     if (backend === "endpoint") setChoice(backend);
-    else save.mutate({ backend, selection: saved.selection });
+    else save.mutate({ backend, selection: committed.current.selection });
   };
   const endpoint = (): VoiceUpdate => ({
-    backend: "endpoint", selection: saved.selection, url: url.trim(), model: model.trim(),
+    backend: "endpoint", selection: committed.current.selection, url: url.trim(), model: model.trim(),
     ...(keepKey ? { keep_key: true } : { key }),
   });
   const stale = save.error instanceof ApiError && save.error.status === 409;
