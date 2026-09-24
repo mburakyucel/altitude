@@ -87,7 +87,7 @@ def _verify(project: str, slug: str) -> dict:
                     out["problems"].append(f"PR #{n}: GitHub head differs from the current delivery; run alt land again")
                 out["problems"].extend(_worktree_problems(
                     task, delivery, (info.get("mergeCommit") or {}).get("oid") if merged else None))
-            if merged and pr.get("merge_sha") != (info.get("mergeCommit") or {}).get("oid"):
+            if merged and not _same_commit(pr.get("merge_sha"), (info.get("mergeCommit") or {}).get("oid")):
                 out["problems"].append(f"PR #{n}: reported merge SHA differs from GitHub")
         if pr.get("merged") and not merged:
             out["problems"].append(f"PR #{n} reported merged but GitHub says {info.get('state')}")
@@ -119,6 +119,11 @@ def _verify(project: str, slug: str) -> dict:
     out["report"] = {"blocked": rep.get("blocked"), "decisions": rep.get("decisions"), "fyi": rep.get("fyi"),
                      "follow_ups": rep.get("follow_ups"), "deviations": rep.get("deviations")}
     return _spend(out, project, task, d, sp)
+
+
+def _same_commit(reported: str | None, actual: str | None) -> bool:
+    """The report names GitHub's merge commit in full or by a prefix of at least seven characters (#456)."""
+    return bool(reported and actual and len(reported) >= 7 and actual.startswith(reported))
 
 
 def _worktree_problems(task: dict, delivery: dict, merge_sha: str | None) -> list[str]:
