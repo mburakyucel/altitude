@@ -1683,6 +1683,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(overview())
             if api == "voice":
                 return self._json(voice_view())
+            if api == "folders":
+                try:
+                    return self._json(folders((q.get("path") or [None])[0]))
+                except FolderError as exc:
+                    return self._json({"error": str(exc)}, exc.status)
             if api == "changes":
                 return self._changes()
             if api == "alerts":
@@ -1863,6 +1868,11 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "projects-folder"]:
+                try:
+                    return self._json(save_projects_folder(o))
+                except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "voice"]:
                 try:
@@ -2221,16 +2231,69 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
-            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.PROJECT_ROOTS],
+            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.OPERATOR, "restart": restart_status(), "now": S.now()}
 
 
 def home_relative(path: Path) -> str:
     """A folder as First run names it: `~/Projects`, never the whole home path."""
     try:
-        return "~/" + path.expanduser().relative_to(Path.home()).as_posix()
+        relative = path.expanduser().relative_to(config.HOME)
+        return "~/" + relative.as_posix() if relative.parts else "~"
     except ValueError:
         return str(path)
+
+
+class FolderError(ValueError):
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
+def folders(raw: str | None) -> dict:
+    """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
+
+    Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
+    """
+    home = config.HOME.resolve()
+    target = Path(raw).expanduser() if raw else home
+    if not target.is_absolute():
+        raise FolderError("Choose an absolute folder path.", 400)
+    target = target.resolve()
+    if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
+        raise FolderError("Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+    if not target.is_dir():
+        raise FolderError("This folder no longer exists.", 404)
+    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": []}
+    try:
+        entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
+    except PermissionError:
+        return {**view, "readable": False}
+    managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()}
+    for entry in entries:
+        try:
+            if entry.name.startswith(".") or not entry.is_dir():
+                continue
+            resolved = Path(entry.path).resolve()
+        except OSError:
+            continue
+        if resolved.is_relative_to(home) and not any(part.startswith(".") for part in resolved.relative_to(home).parts):
+            view["folders"].append({"name": entry.name, "path": entry.path, "project": managed.get(str(resolved)),
+                                    "git": os.path.exists(os.path.join(entry.path, ".git"))})
+    return view
+
+
+def save_projects_folder(body: dict) -> dict:
+    """Apply the operator's projects folder through the same durable request as `alt machine set`."""
+    if body.keys() - {"path"}:
+        raise ValueError("Unsupported projects folder fields.")
+    path = body.get("path")
+    value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
+    dispatch.request_setting(None, "projects_folder", value, "Projects folder", actor=config.OPERATOR_ACTOR)
+    result = dispatch._run_setting(None, "projects_folder")
+    if result["status"] != "done":
+        raise ValueError(result["note"])
+    return {"roots": [home_relative(r) for r in config.project_roots()]}
 
 
 def repository_url(origin: str) -> str | None:

@@ -694,6 +694,19 @@ key itself stays in the private settings and request files under the runtime hom
 appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
 backend needs and where audio goes.
 
+### Projects folder
+
+First run lists the folders directly inside one projects folder. `ALTITUDE_ROOTS` is its initial
+value (default `~/Projects`); this replaces it with one existing absolute folder, as **Settings →
+Projects folder** does:
+
+```sh
+alt machine set --projects-folder ~/code --reason 'Projects live in ~/code'
+alt machine set --unset-projects-folder --reason 'Back to ALTITUDE_ROOTS'
+```
+
+`machine show` reports the active `projects_folder`.
+
 The operator runs machine commands from their own terminal. Neither L2 nor L3 can change the
 machine cap. A nonempty reason is required. The CLI queues one durable daemon request;
 altd applies it on its next tick, without a PR, service restart or free task slot. Repeat inspection

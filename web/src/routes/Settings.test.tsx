@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
@@ -150,5 +150,52 @@ describe("Voice settings", () => {
     await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
     await screen.findByText("Saved.");
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("Projects folder setting", () => {
+  function folderFixture(options: { fail?: () => boolean } = {}) {
+    let roots = ["~/Projects"];
+    const saves: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/voice") return json(saved);
+      if (url === "/api/overview") return json({ projects: [], queue: [], engines: [], roots, wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+      if (url === "/api/folders") return json({ path: "/home/ada", parts: [], readable: true, folders: [{ name: "code", path: "/home/ada/code", project: null, git: false }] });
+      if (url === "/api/folders?path=%2Fhome%2Fada%2Fcode") return json({ path: "/home/ada/code", parts: ["code"], readable: true, folders: [] });
+      if (url === "/api/projects-folder" && init?.method === "POST") {
+        if (options.fail?.()) return json({ error: "Settings unavailable" }, 503);
+        saves.push(JSON.parse(String(init.body)));
+        roots = ["~/code"];
+        return json({ roots });
+      }
+      return json({}, 404);
+    }));
+    return saves;
+  }
+
+  it("shows the folder on the overview and chooses another by browsing", async () => {
+    const saves = folderFixture();
+    const { user } = renderApp({ route: "/settings" });
+    await user.click(await screen.findByRole("link", { name: /Projects folder ~\/Projects/ }));
+    const browser = await screen.findByRole("region", { name: "Choose a folder" });
+    await user.click(await within(browser).findByRole("button", { name: /code/ }));
+    await user.click(await within(browser).findByRole("button", { name: "Use “code”" }));
+    await screen.findByText("Saved. First run now lists the folders in ~/code.");
+    expect(saves).toEqual([{ path: "/home/ada/code" }]);
+    expect(screen.getByText("~/code")).toBeInTheDocument();
+  });
+
+  it("keeps a failed save actionable and retries the same folder", async () => {
+    let fail = true;
+    const saves = folderFixture({ fail: () => fail });
+    const { user } = renderApp({ route: "/settings/projects-folder" });
+    const browser = await screen.findByRole("region", { name: "Choose a folder" });
+    await user.click(await within(browser).findByRole("button", { name: "Use “Home”" }));
+    await screen.findByText("Settings unavailable");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(/^Saved\./);
+    expect(saves).toEqual([{ path: "/home/ada" }]);
   });
 });

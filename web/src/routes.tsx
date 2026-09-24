@@ -73,7 +73,8 @@ export const routes: RouteObject[] = [
       { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },
       { path: "/monitor", element: <Monitor /> },
       { path: "/settings", element: <Settings /> },
-      { path: "/settings/voice", element: <Settings voice /> },
+      { path: "/settings/voice", element: <Settings page="voice" /> },
+      { path: "/settings/projects-folder", element: <Settings page="projects-folder" /> },
       // Last: a typo'd deep link lands on Needs you inside the shell, not on react-router's bare
       // error page outside it.
       { path: "*", element: <Navigate to="/" replace /> },

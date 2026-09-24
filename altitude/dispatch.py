@@ -387,7 +387,7 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-MACHINE_SETTINGS = ("wip", "voice")
+MACHINE_SETTINGS = ("wip", "voice", "projects_folder")
 
 
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
@@ -399,10 +399,10 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
         raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
     if setting not in (MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS):
         raise T.TransitionError(f"unknown {scope} setting")
-    if setting in ("wip", "voice", *config.MODEL_SETTINGS):
+    if setting in ("wip", "voice", "projects_folder", *config.MODEL_SETTINGS):
         try:
-            (config.validate_wip if setting == "wip" else config.validate_voice if setting == "voice"
-             else config.validate_project_model)(value)
+            {"wip": config.validate_wip, "voice": config.validate_voice,
+             "projects_folder": config.validate_projects_folder}.get(setting, config.validate_project_model)(value)
         except ValueError as exc:
             raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
@@ -448,6 +448,11 @@ def _run_setting(project: str | None, setting: str) -> dict:
         if entry is not None and setting in config.EFFORT_SETTINGS:
             try:
                 config.validate_project_effort(entry, setting[:2], request[setting])
+            except ValueError as exc:
+                request.update(status="refused", note=str(exc))
+        if setting == "projects_folder":  # the folder can vanish or lose access before altd drains the CLI request
+            try:
+                config.validate_projects_folder(request[setting])
             except ValueError as exc:
                 request.update(status="refused", note=str(exc))
         if entry is None:

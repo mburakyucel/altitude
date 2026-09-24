@@ -56,7 +56,7 @@ def _private(path: Path) -> None:
 
 def _safe_location(directory: Path) -> None:
     # A trusted signing key in a worker-writable tree lets project code replace the identity.
-    roots = [config.ROOT, config.SOURCE, *config.PROJECT_ROOTS]
+    roots = [config.ROOT, config.SOURCE, *config.project_roots()]
     if config.PROJECTS_FILE.exists():
         # Read the registry without load_projects(): inspecting TLS must not migrate runtime state.
         import json

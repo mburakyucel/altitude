@@ -349,6 +349,14 @@ Updates preserve configuration and user data. Altitude is source-available under
 but do not offer it as a competing product; each version becomes Apache-2.0 two years after its
 release. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
 
+First run and **Add a folder** list the folders directly inside your projects folder (`~/Projects`
+unless changed), each with **Add project**. **Choose a folder elsewhere…** browses the computer
+running Altitude, not the phone or laptop showing the page: it starts at your home folder, lists one
+folder's subfolders at a time when you open it, stays inside home and adds the current folder with one
+action; **Type a path instead** names any other folder. Nothing scans or indexes the disk, and listings
+never include files or their contents. **Settings → Projects folder** or
+`alt machine set --projects-folder PATH` changes the projects folder without a restart.
+
 Each project's **Setup** status opens a revisitable checklist of its folder, repository,
 instructions, Git guards and coordinator. Altitude performs routine setup automatically and
 shows what it created, reused or could not complete. Existing projects receive current checks
