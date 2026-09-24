@@ -781,6 +781,31 @@ describe("Composer", () => {
     expect(field).toHaveValue("Fix the timer and the tests on both sizes!");
   });
 
+  it("browser recognition: the field follows the latest words once they overflow its height, and stops following after Stop", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    const { user, field } = mount({ initial: "Fix the timer" });
+    const scrolls: number[] = [];
+    Object.defineProperty(field, "scrollHeight", { value: 640, configurable: true });
+    Object.defineProperty(field, "scrollTop", { get: () => 0, set: (top: number) => scrolls.push(top), configurable: true });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    const [recognizer] = FakeSpeechRecognition.instances;
+    scrolls.length = 0;
+    act(() => recognizer!.hear(["and the tests on both sizes"], "and then"));
+    expect(scrolls.at(-1)).toBe(640);
+    recognizer!.answersStop = false;
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    scrolls.length = 0;
+    // The last phrase that arrives while Stop waits for the recognizer stays in view too.
+    act(() => recognizer!.hear(["and the tests on both sizes and then some"]));
+    expect(scrolls.at(-1)).toBe(640);
+    act(() => recognizer!.silence());
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    scrolls.length = 0;
+    await user.type(field, "!");
+    expect(scrolls).toEqual([]);
+  });
+
   it("browser recognition: Send at once submits the draft and the recognized words through the normal path", async () => {
     installVoiceBrowser({ backend: "browser" });
     const onSubmit = vi.fn();

@@ -104,6 +104,16 @@ test("browser recognition: words appear while listening, Stop lands them, Send a
     hidden: [v.transcribing, v.main.getByRole("region", { name: /transcript/i })],
   });
   await expect(v.field).toHaveValue("Fix the timer and the tests on both");
+  const dictation = Array.from({ length: 30 }, (_, line) => `line ${line + 1} of a long dictation that keeps going past the field's height`);
+  await walk.state("02b-latest-words-stay-in-view", {
+    action: () => hear(page, ["and the tests", ...dictation], "on both sizes"),
+    visible: [v.stop, v.field],
+    hidden: [v.transcribing],
+  });
+  await expect(v.field).toHaveValue(`Fix the timer and the tests ${dictation.join(" ")} on both sizes`);
+  const scroll = await v.field.evaluate((node) => ({ top: node.scrollTop, client: node.clientHeight, height: node.scrollHeight }));
+  expect(scroll.height).toBeGreaterThan(scroll.client);
+  expect(scroll.top + scroll.client).toBeGreaterThanOrEqual(scroll.height - 1);
   await hear(page, ["and the tests", "on both sizes"]);
   await expect(v.field).toHaveValue("Fix the timer and the tests on both sizes");
   await walk.state("03-stopped-words-landed-nothing-else-appears", {

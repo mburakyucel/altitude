@@ -328,6 +328,9 @@ export default function Composer({
     const sizeField = () => {
       node.style.height = "auto";
       node.style.height = `${node.scrollHeight}px`;
+      // Recognized words land at the end of a read-only field: once it reaches its cap, follow them,
+      // including the last phrase that arrives while Stop waits for the recognizer to settle.
+      if (live !== null) node.scrollTop = node.scrollHeight;
     };
     sizeField();
     let width = node.clientWidth;

@@ -16,6 +16,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   from a file or stdin and stays in the private settings file. The desktop recording controls sit together at the right of the
   composer row with a crisp waveform; the phone row is unchanged (#317).
 
+- While listening, the composer field follows the recognized words once they pass its height, so
+  the latest words stay in view on phone and desktop (#317).
+
 - The coordinator's runtime `alt` shim reads stdin only when an argument is `-`, so a verb whose
   text is an argument returns immediately even when the tool harness leaves stdin open
   (I-20260924-054556).
