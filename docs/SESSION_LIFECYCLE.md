@@ -1133,7 +1133,8 @@ marker or resume claim, L3 turn, adversarial review, or report verification in f
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
-ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
+ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
+fault releases a window whose unit died silently. altd runs the guarded build-and-restart
 script itself.
 The web update notice is dismissible per browser for the pending update and failure identity.
 Ordinary polling, navigation, refresh and quiet-point changes preserve dismissal; a new update

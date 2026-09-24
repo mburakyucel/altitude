@@ -108,5 +108,45 @@ class TestRestartCommand(AltitudeCase):
                 restart.require_idle()
 
 
+    def test_a_failing_unit_reports_its_own_reason_at_once_and_lifts_the_hold(self):
+        """I-20260924-205802: a 10-second failure surfaced only at altd's ten-minute grace timeout."""
+        restart = load_script()
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        failure = restart.RestartError("cannot prove Altitude is quiet: /api/overview is unreachable: timed out")
+        with mock.patch.object(restart, "require_deployed_checkout", side_effect=failure), \
+                mock.patch.object(restart.incidents, "system_fault") as fault:
+            self.assertEqual(restart.main(), 1)  # nothing requested: a hand run reports only on its terminal
+            fault.assert_not_called()
+            self.assertIsNone(S.read_json(flag))
+            S.write_json(flag, {"files": ["web/src/styles.css"], "requested_at": S.now(), "unit": "u"})
+            self.assertTrue(config.restart_in_progress())
+            self.assertEqual(restart.main(), 1)
+            self.assertEqual(restart.main(), 1)  # an already failed record is reported once
+        fault.assert_called_once_with("restart", f"restart failed: {failure}")
+        pending = S.read_json(flag)
+        self.assertEqual(pending["error"], str(failure))
+        self.assertFalse(config.restart_in_progress())
+
+
+    def test_verification_failure_after_the_replacement_cleared_the_record_is_still_reported(self):
+        restart = load_script()
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        S.write_json(flag, {"files": ["altitude/server.py"], "requested_at": S.now(), "unit": "u"})
+
+        def replacement_starts_then_fails(_staging):
+            flag.unlink()  # the replacement daemon clears the record once it binds
+            raise restart.RestartError("restart verification failed; restored the prior web bundle: unhealthy")
+
+        with mock.patch.object(restart, "require_deployed_checkout"), \
+                mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
+                mock.patch.object(restart, "require_idle"), \
+                mock.patch.object(restart, "publish_and_restart", side_effect=replacement_starts_then_fails), \
+                mock.patch.object(restart.incidents, "system_fault") as fault:
+            self.assertEqual(restart.main(), 1)
+        fault.assert_called_once()
+        self.assertIn("unhealthy", fault.call_args.args[1])
+        self.assertIsNone(S.read_json(flag))  # a running replacement's open entry is not reclosed
+
+
 if __name__ == "__main__":
     unittest.main()
