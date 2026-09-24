@@ -82,12 +82,10 @@ test("compact chat keeps bottom and older reading anchors through keyboard, deta
   await walk.state("04-older-reading-keyboard", { visible: [field], hidden: phone ? [nav] : [] });
   if (phone) {
     const opener = page.getByRole("button", { name: "More actions" });
-    const details = page.getByRole("dialog", { name: "Project details" });
-    await walk.state("05-project-details-above-keyboard", { action: () => opener.click(), visible: [details, details.getByRole("combobox", { name: "L3 engine" })], hidden: [] });
-    const bounds = await details.boundingBox();
+    const menu = page.getByRole("menu", { name: "Project actions" });
+    await walk.state("05-project-actions-above-keyboard", { action: () => opener.click(), visible: [menu, menu.getByRole("menuitem", { name: "Settings…" })], hidden: [] });
+    const bounds = await menu.boundingBox();
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(511);
-    await page.keyboard.press("Shift+Tab");
-    expect(await details.evaluate((el) => el.contains(document.activeElement))).toBe(true);
     await page.keyboard.press("Escape");
     await expect(opener).toBeFocused();
     await expect.poll(offset).toBeCloseTo(olderOffset, 0);

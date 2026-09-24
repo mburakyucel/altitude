@@ -5,6 +5,21 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Each project sets its default model and reasoning effort for L3 and L2 separately on every engine,
+  so changing L3 on one engine leaves L3 on the other engine and both L2 pairs alone.
+  **Settings → This project**, opened from the project's three dots, holds these defaults, the L3
+  engine pin and the last L3 turn's requested and reported effort. The project menu now holds actions
+  only, and the phone **Project details** sheet is gone. `alt project set` adds `--l3-model`,
+  `--l3-codex-model`, `--l3-codex-effort` and `--l2-codex-effort`. `--l3-effort` and `--l2-effort`
+  now set the Claude defaults only. `GET/POST /api/defaults` replaces `/api/effort` and `/api/model`.
+  A task's own `--effort`/`--model` still wins without changing the defaults.
+
+- **Choose a folder elsewhere…** in First run browses folders on the computer running Altitude,
+  starting at your home folder and staying inside it, and adds the current folder with one action;
+  typing a path remains. Listings show folder names only, one folder at a time when you open it.
+  The projects folder First run lists is a machine setting: **Settings → Projects folder** or
+  `alt machine set --projects-folder PATH`, with `ALTITUDE_ROOTS` as its initial value (#479).
+
 - Consecutive voice settings saves use the acknowledged selection immediately and preserve the
   next credential edit when a cache notification arrives later.
 

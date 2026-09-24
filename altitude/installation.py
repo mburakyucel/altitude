@@ -314,7 +314,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
             _require_saved_environment(json.loads(settings.read_text()))
         elif prefix.exists() and any(path.name != "install.lock" for path in prefix.iterdir()):
             raise RuntimeError("Initial installation needs an empty application prefix; existing files are retained")
-        for protected in (config.ROOT, config.TLS_DIR, *config.PROJECT_ROOTS,
+        for protected in (config.ROOT, config.TLS_DIR, *config.project_roots(),
                           *(Path(project["path"]).expanduser() for project in registered.values())):
             if prefix.is_relative_to(protected.resolve()) or protected.resolve().is_relative_to(prefix):
                 raise RuntimeError("Installation prefix must be separate from runtime, TLS and project writable roots")

@@ -307,18 +307,20 @@ specific model is available. The headless plan-usage reader requires CLI 2.1.277
 login; its experimental response format and deferred live verification are described in the
 [collection contract](docs/SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
 
-Set independent **L3 effort** and **L2 effort** defaults in **Project details** (desktop More actions),
-or with `alt project set <project> --l3-effort medium --reason '…'` and `--l2-effort high`.
-Set the default **L2 model** per engine the same way: `--l2-model fable` for Claude or
-`--l2-codex-model <id>` for Codex, with `--unset-…` restoring Opus or the Codex CLI default. Auto
-routes a Claude L2 to Opus unless the project default or a task `--model` names another model; L3
-keeps Fable. Changing effort leaves model and engine pins intact. **Default** preserves existing behavior;
-**Native** requests no Altitude effort override. L3 changes apply next turn in its existing conversation.
-Fresh L2 attempts, including queued tasks, use the project default; `alt task new --effort xhigh …`
-overrides it for one task. Started tasks keep their saved effort on messages and resumes.
-Higher effort can use more time and tokens. Requested settings, launch overrides and observed
-provider effort remain distinct; [effort selection](docs/CLI.md#task-reasoning-effort) describes
-supported levels, precedence and native L1 controls.
+Each project has its own default model and reasoning effort for L3 and for L2 on every engine, so
+changing one pair leaves the others alone. **Settings → This project**, opened from the project's
+three dots, edits them beside the L3 engine pin. `alt project set <project> … --reason '…'` sets the
+same values: `--l3-model`, `--l3-effort`, `--l2-model` and `--l2-effort` for Claude, and
+`--l3-codex-model`, `--l3-codex-effort`, `--l2-codex-model` and `--l2-codex-effort` for Codex, with
+`--unset-…` restoring the default. A launch uses the pair of the engine it routes to. Unset, a Claude
+L2 runs Opus and L3 Fable, Codex uses its CLI's model, and effort is native except High for a Codex
+L2. **Native** requests no Altitude effort override. Defaults never pin an engine. L3 changes apply
+next turn in its existing conversation. Fresh L2 attempts, including queued tasks, use the defaults;
+`alt task new --effort xhigh --model …` overrides them for one task without changing them. Started
+tasks keep their saved model and effort on messages and resumes. Higher effort can use more time and
+tokens. Requested settings, launch overrides and observed provider effort remain distinct;
+[effort selection](docs/CLI.md#task-reasoning-effort) describes supported levels, precedence and
+native L1 controls.
 
 An exhausted model allowance, from a rejection or the model's own reading, excludes only that model. A reported reset schedules a retry;
 an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a
@@ -348,6 +350,14 @@ Updates preserve configuration and user data. Altitude is source-available under
 [Functional Source License](LICENSE): use it, run it inside your company and keep private forks,
 but do not offer it as a competing product; each version becomes Apache-2.0 two years after its
 release. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
+
+First run and **Add a folder** list the folders directly inside your projects folder (`~/Projects`
+unless changed), each with **Add project**. **Choose a folder elsewhere…** browses the computer
+running Altitude, not the phone or laptop showing the page: it starts at your home folder, lists one
+folder's subfolders at a time when you open it, stays inside home and adds the current folder with one
+action; **Type a path instead** names any other folder. Nothing scans or indexes the disk, and listings
+never include files or their contents. **Settings → Projects folder** or
+`alt machine set --projects-folder PATH` changes the projects folder without a restart.
 
 Each project's **Setup** status opens a revisitable checklist of its folder, repository,
 instructions, Git guards and coordinator. Altitude performs routine setup automatically and

@@ -694,6 +694,19 @@ key itself stays in the private settings and request files under the runtime hom
 appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
 backend needs and where audio goes.
 
+### Projects folder
+
+First run lists the folders directly inside one projects folder. `ALTITUDE_ROOTS` is its initial
+value (default `~/Projects`); this replaces it with one existing absolute folder, as **Settings →
+Projects folder** does:
+
+```sh
+alt machine set --projects-folder ~/code --reason 'Projects live in ~/code'
+alt machine set --unset-projects-folder --reason 'Back to ALTITUDE_ROOTS'
+```
+
+`machine show` reports the active `projects_folder`.
+
 The operator runs machine commands from their own terminal. Neither L2 nor L3 can change the
 machine cap. A nonempty reason is required. The CLI queues one durable daemon request;
 altd applies it on its next tick, without a PR, service restart or free task slot. Repeat inspection
@@ -723,7 +736,7 @@ alt project set example --unset-routing --reason 'Restore default Auto preferenc
 
 Quote the policy so the shell does not interpret `>`. Options use `engine[:model]`; commas tie
 options, and `>` starts a lower-priority tier. An omitted model uses the project's
-[default L2 model](#default-l2-model) for that engine, then the engine's role default.
+[default model](#default-models) for that role and engine, then the role default.
 Empty tiers/options, duplicate options and unknown engines are rejected. The daemon applies the
 request on its next tick and records actor, reason and outcome. No PR, restart, UI setting or free
 task slot is needed. `alt project list` shows the stored override; `alt monitor` explains each
@@ -766,9 +779,9 @@ the two launchers can use different default models. Each alternative is tried at
 eligible, the explanation identifies installation, authentication, reset or configuration actions.
 
 Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
-one task; project `--l2-engine`/`--l3-engine` pins, the composer's L3 engine choice and
+one task; project `--l2-engine`/`--l3-engine` pins, the L3 engine choice in the composer or Settings and
 `alt chat --engine …` take precedence over Auto and never silently fall back. An explicit model pin
-also remains strict. A project default L2 model is a preference, not a pin: it names the model an
+also remains strict. A project default model is a preference, not a pin: it names the model an
 Auto option on that engine uses and leaves the engine choice to the tiers. Changing preferences does not unpin them or change a running L2: resume keeps
 that attempt's engine, provider session and recorded launch model. A quota fallback is a recorded
 fresh attempt from `progress.md`. L3 retains a separate provider conversation per engine, including
@@ -854,54 +867,57 @@ and at most one named dependency, with no dependency graph or PR watcher. For is
 alone fits `--after`; their joint prerequisite uses `--wait` and explicit release after both merges
 are verified. Creating that planned task neither enables CI nor closes the issue.
 
-### Default L2 model
+### Default models
 
-Set the model a fresh L2 attempt uses on each engine, independently of engine selection:
+Set the model a fresh launch uses on each engine, per role and independently of engine selection:
 
 ```sh
 alt project set example --l2-model fable --reason 'Use Fable for Claude-routed tasks in this project'
 alt project set example --l2-codex-model gpt-6-astra --reason 'Name the Codex model instead of its CLI default'
+alt project set example --l3-model opus --reason 'Coordinate on Opus'
 alt project set example --unset-l2-model --reason 'Restore Opus'
-alt project set example --unset-l2-codex-model --reason 'Restore the Codex CLI default'
 alt project list
 ```
 
-`--l2-model` is the Claude default (registry key `l2_model`) and `--l2-codex-model` the Codex default
-(`l2_codex_model`). A value is one alias or model id without spaces; Altitude validates nothing else and
-passes it to the engine, which reports an inaccessible model as a routing rejection. The Claude aliases
-`opus`, `sonnet`, `haiku` and `fable` resolve to the current model of that family in the Claude CLI, so
-new models arrive with CLI updates without an Altitude change; a specific id can always be typed. Codex
-uses the model configured in its CLI unless a default or pin names one. Neither CLI exposes a model list,
-so Altitude offers the aliases as suggestions and does not discover models.
+Each role has one flag per engine: `--l3-model`/`--l2-model` for Claude (registry keys `l3_model`,
+`l2_model`) and `--l3-codex-model`/`--l2-codex-model` for Codex (`l3_codex_model`, `l2_codex_model`);
+`--unset-…` restores the default. A value is one alias or model id without spaces; Altitude validates
+nothing else and passes it to the engine, which reports an inaccessible model as a routing rejection.
+The Claude aliases `opus`, `sonnet`, `haiku` and `fable` resolve to the current model of that family in
+the Claude CLI, so new models arrive with CLI updates without an Altitude change; a specific id can
+always be typed. Codex uses the model configured in its CLI unless a default or pin names one. Neither
+CLI exposes a model list, so Altitude offers the aliases as suggestions and does not discover models.
 
-Precedence for a fresh attempt is the task's `alt task new --model …` pin, then the model named in the
-selected routing option, then the project default for that engine, then the role default: Opus for a
-Claude L2, Fable for L3 and the CLI default for Codex. Defaults apply at dispatch, including queued
-tasks; messages and resumes keep the attempt's saved `launch_model`. A default never pins an engine:
-with the default tiers a project whose Claude default is Fable still ties Codex first. L3 has its own
-default and is not affected. The operator and the project's L3 set these through the same reason-bearing
-requests as effort; L2 cannot. Project details reads them from `GET /api/effort/<project>` (`models`
-per engine with `value`, `default` and `choices`) and saves with `POST /api/model`
-`{"project", "engine", "model" | null}`.
+Precedence for a fresh launch is the task's `alt task new --model …` or turn pin, then the model named in
+the selected routing option, then the project default for that role and engine, then the role default:
+Opus for a Claude L2, Fable for a Claude L3 and the CLI default for Codex. L2 defaults apply at
+dispatch, including queued tasks; messages and resumes keep the attempt's saved `launch_model`. L3
+defaults apply from its next turn. A default never pins an engine: with the default tiers a project
+whose Claude default is Fable still ties Codex first. The operator and the project's L3 set these
+through the same reason-bearing requests as effort; L2 cannot.
 
 ### Task reasoning effort
 
-Set independent project defaults without changing engine/model selection:
+Set independent defaults per role and engine without changing engine/model selection:
 
 ```sh
-alt project set example --l3-effort medium --reason 'Use medium effort for coordination'
-alt project set example --l2-effort high --reason 'Use high effort for fresh task attempts'
-alt project set example --l2-effort native --reason 'Use native task configuration'
+alt project set example --l3-effort low --reason 'Light coordination on Claude'
+alt project set example --l3-codex-effort medium --reason 'Medium coordination on Codex'
+alt project set example --l2-effort high --reason 'High effort for Claude task owners'
+alt project set example --l2-codex-effort native --reason 'Use native Codex task configuration'
 alt project set example --unset-l3-effort --reason 'Restore the existing L3 default'
-alt project set example --unset-l2-effort --reason 'Restore the existing L2 default'
 alt project list
 ```
 
-The operator and the project's L3 use these reason-bearing settings requests; L2 cannot change
-project defaults. Altd applies them on its next tick, without a free worker slot or service restart.
-Project details provides the same independent defaults with immediate saves (desktop: More actions).
-Default restores existing behavior: L3 native; L2 High on Codex and native on Claude. Native explicitly
-requests no Altitude override, including for L2 engines with a High default.
+`--l3-effort`/`--l2-effort` hold the Claude defaults (registry keys `l3_effort`, `l2_effort`) and
+`--l3-codex-effort`/`--l2-codex-effort` the Codex defaults (`l3_codex_effort`, `l2_codex_effort`).
+Each accepts only the levels its engine supports. The operator and the project's L3 use these
+reason-bearing settings requests; L2 cannot change project defaults. Altd applies them on its next
+tick, without a free worker slot or service restart. **Settings → This project** provides the same
+defaults with immediate saves: `GET /api/defaults/<project>` returns each role's model/effort pair per
+engine with its setting key, default and choices, and `POST /api/defaults`
+`{"project", "setting", "value" | null}` saves one. Default restores existing behavior: native, except
+High for a Codex L2. Native explicitly requests no Altitude override, including for a Codex L2.
 
 Levels are `native`, `low`, `medium`, `high`, `xhigh` (Extra High), `max`, and `ultra`.
 The current adapters accept Low through Max on both engines and Ultra on Codex. Engine support
@@ -910,14 +926,14 @@ Unsupported pins refuse; Auto excludes unsupported engines and explains unavaila
 Effort does not create an engine/model pin. Higher effort can use more time and tokens.
 
 `alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
-overrides the project L2 default for that task. Precedence is explicit task effort, project L2
-effort, existing engine default, then native configuration when no override exists. Fresh attempts
+overrides the project defaults for that task without changing them; it is how L3 asks for more effort
+for one L2. Precedence is explicit task effort, then the project default for the routed engine, then
+the existing engine default, then native configuration when no override exists. Fresh attempts
 resolve at dispatch, including queued tasks; messages/resumes reuse their saved launch override.
-L3 resolves its project default at each turn, including in its existing conversation. A turn already
-running finishes with its original selection. No existing L2 session is migrated or edited.
-Legacy tasks without an effort field keep native behavior unless a project default applies at a fresh
-launch; legacy resumes with no saved effort remain native. Model-specific incompatibility stays a
-launch/turn failure with its diagnostic, without an application-side downgrade or engine fallback.
+L3 resolves its project default for the engine of each turn, including in its existing conversation.
+A turn already running finishes with its original selection. No existing L2 session is migrated or
+edited. Model-specific incompatibility stays a launch/turn failure with its diagnostic, without an
+application-side downgrade or engine fallback.
 
 `alt task status <slug>` exposes `effort` (explicit request, null if omitted), `launch_effort`
 (the actual launch override, null for native configuration), and `engine_reasoning_effort`

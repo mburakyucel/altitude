@@ -141,7 +141,7 @@ describe("Rail", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add a folder" }));
     const dialog = await screen.findByRole("dialog", { name: "Add a folder" });
-    expect(within(dialog).getByText("Altitude found 1 folder under ~/Projects")).toBeInTheDocument();
+    expect(within(dialog).getByText("Altitude found 1 folder in ~/Projects")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -172,7 +172,7 @@ describe("Routes", () => {
     mockFetch({ ...overview, queue: [], projects: [{ name: "removed", managed: false, path: "/tmp/removed" }] });
     localStorage.setItem("altitude.project", "removed");
     renderApp({ route: "/projects/removed/tasks/old/report" });
-    await screen.findByText("Altitude found 1 folder under ~/Projects");
+    await screen.findByText("Altitude found 1 folder in ~/Projects");
     await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
     expect(screen.queryByRole("heading", { name: "Report" })).toBeNull();
   });

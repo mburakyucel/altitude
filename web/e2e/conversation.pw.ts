@@ -512,6 +512,7 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
 });
 
 test("the engine pin: Auto and the engines the API names; the pin posts and is read back", async ({ page, request }, info) => {
+  test.skip(info.project.name === "phone", "The phone composer has no engine pill; project-settings.pw.ts walks the pin in Settings.");
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -528,7 +529,6 @@ test("the engine pin: Auto and the engines the API names; the pin posts and is r
   await overlayChat(page, project.name, (live) => ({ ...live, engine: pinned }));
 
   await walk.open(project.path);
-  if (v.phone) await page.getByRole("button", { name: "More actions" }).click();
   await walk.state("01-auto", { visible: [v.pill], hidden: [] });
   await expect(v.pill).toHaveValue("");
   expect(await v.pill.locator("option").allTextContents()).toEqual(["Auto", ...overview.engines.map((e) => e.label)]);
@@ -538,7 +538,6 @@ test("the engine pin: Auto and the engines the API names; the pin posts and is r
     hidden: [],
   });
   await expect(v.pill).toHaveValue(first.engine);
-  if (v.phone) await expect(v.status).toContainText(first.label);
   await v.pill.selectOption("");
   await expect(v.pill).toHaveValue("");
   await expect.poll(() => pins).toEqual([first.engine, null]);

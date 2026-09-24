@@ -232,8 +232,7 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
         except ValueError as exc:
             return {"engine": None, "model": None, "why": str(exc)}
     return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
-                       project=project, excluded=excluded, effort=task.get("effort") if
-                       "effort" in task or project.get("l2_effort") is not None else "native")
+                       project=project, excluded=excluded, effort=task.get("effort"))
 
 
 def pick_review(task: dict, project: dict) -> dict:
@@ -277,12 +276,12 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                 current_model: str | None = None, excluded: tuple = (), effort: str | None = None) -> dict:
     """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
 
+    An explicit launch ``effort`` wins over each option's per-role, per-engine project default.
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
     known named weekly windows. Continuity retains the current option inside that tier.
     """
     from . import engines
     project = project or {}
-    effort = effort if effort is not None else project.get(f"{role}_effort")
     pin = config.pinned_option(role, project, engine=forced, model=model)
     tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
     readings = _readings()
@@ -298,8 +297,9 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
             considered.add(option_key(option))
             engine = option["engine"]
             try:
-                option["effort"] = config.task_effort(engine, effort, role=role)
-                option["requested_effort"] = effort
+                requested = effort if effort is not None else config.default_effort(role, engine, project)
+                option["effort"] = config.task_effort(engine, requested, role=role)
+                option["requested_effort"] = requested
             except ValueError as exc:
                 skipped.append(f"{option_label(option)} unavailable: {exc}")
                 continue

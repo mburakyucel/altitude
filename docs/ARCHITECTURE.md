@@ -156,29 +156,32 @@ Task status, documents and events share the archive lock while their snapshot is
 `GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
-Project registry fields `l3_effort` and `l2_effort` store independent requested defaults; absence
-preserves existing engine defaults and `native` requests no override. `config.task_effort` owns
-engine support and resolution. `l2_model` and `l2_codex_model` store the requested default L2 model
-per engine; `config.default_model` resolves an Auto option that names no model to the project default
-for that engine, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model on
-Codex). They are preferences: only `l2_engine`/`l3_engine` and a task model pin force an engine. Task `effort` overrides the project L2 default. Routing resolves
-effort with the chosen engine/model, excludes unsupported Auto candidates and keeps pins strict.
+`config.DEFAULT_SETTINGS` names one requested model and one requested effort per role and engine
+(`l3_model`, `l3_effort`, `l2_model`, `l2_effort` on Claude; `l3_codex_model`, `l3_codex_effort`,
+`l2_codex_model`, `l2_codex_effort` on Codex); each is independent of the others. Absence preserves
+existing defaults and `native` requests no override. `config.task_effort` owns engine support and
+resolution, and a setting accepts only its own engine's levels. `config.default_model` and
+`config.default_effort` resolve an Auto option for the chosen role and engine: an option's own model,
+then the project default, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model
+on Codex). They are preferences: only `l2_engine`/`l3_engine` and task or turn pins force an engine.
+Explicit task `effort` and `model` win over the defaults without rewriting them. Routing resolves effort
+per option, excludes Auto candidates that cannot accept an explicit level and keeps pins strict.
 Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
 reuses it without resolving current project defaults or copying observed provider values.
-Legacy tasks without an effort field retain native configuration unless a project default applies
-at a fresh launch. L3 resolves each turn, including same-conversation resumes, and saves requested
-`effort` and `launch_effort` before calling the engine. Running calls retain their original selection.
+L3 resolves each turn, including same-conversation resumes, and saves requested `effort` and
+`launch_effort` before calling the engine. Running calls retain their original selection.
 Both roles clear observed `engine_reasoning_effort` for a new turn; absent observations stay unknown.
 Model compatibility and provider caps remain native decisions. Effort failures do not trigger
 application-side downgrading or engine fallback. No model capability catalog or session migration exists.
 
-`GET /api/effort/<project>` returns the saved role defaults and engine-owned choice labels;
-`POST /api/effort` saves one role through the existing settings request/apply mechanism under
-project/registry locks. Project details applies its request immediately; CLI `alt project set`
-requests are applied on the daemon tick, independently of worker capacity. A conflicting pending
-request refuses another save until applied. The controls add no persistent header rows. Neither path mutates model
-pins or running tasks. Native L1 helpers inherit or override effort through their own engine controls;
-Altitude does not create helper workers or promise a uniform L1 override.
+`GET /api/defaults/<project>` returns the L3 engine pin and each role's model/effort pair per engine
+with its setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
+the existing settings request/apply mechanism under project/registry locks. The project Settings page
+applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
+independently of worker capacity. A conflicting pending request refuses another save until applied.
+Neither path mutates engine pins or running tasks. Native L1 helpers inherit or override effort
+through their own engine controls; Altitude does not create helper workers or promise a uniform L1
+override.
 
 Global role responsibilities live in the personas; project policy lives in the repository's
 instructions, with [AGENTS.md](../AGENTS.md) authoritative for Altitude. The shared engine boundary
@@ -485,6 +488,8 @@ Identical pending requests and completed retries whose machine setting still mat
 request and event. CLI and HTTP registration, removal, engine pins and operational settings serialize
 registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
+`alt machine set --projects-folder PATH` and `--unset-projects-folder` use the same operator-only
+request path for `projects_folder`, an existing absolute directory; `machine show` reports it.
 
 Settings take effect without a PR, service restart or free task slot. Lowering the cap preserves
 running workers; launches wait until the machine running count falls below it. Reset removes the
@@ -1172,7 +1177,8 @@ compact cards in one column, answered through `POST /api/decide`), the project p
 the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
 page, and with no managed project every project route shows First run, which lists the folders under
-the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
+the projects folder (`config.project_roots()`: the machine setting `projects_folder`, else
+`ALTITUDE_ROOTS`) and starts L3 for one through `POST /api/project/add`, staying up until L3's
 first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
 narrower is the phone: one 54px identity/activity header and an 84px tab bar (Chat, Work, Needs you,
@@ -1186,7 +1192,18 @@ selected project is browser state under `localStorage`, set by the rail, the swi
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
 rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
 display name the engine seam gives, so the web code names no provider; the same read carries the
-scan roots First run names and the operator's configured name.
+projects folder First run names and the operator's configured name.
+
+First run's folder browser reads `GET /api/folders?path=<absolute path>` (no path means the home
+folder), one folder per request and only when the operator opens it; nothing is scanned, indexed or
+kept. `server.folders` resolves the path and refuses one outside the home folder or through a hidden
+(dot) folder, then returns `path`, `parts` (relative to home) and `readable`, plus one row per visible
+subfolder whose resolved target stays inside home: `name`, `path`, the registered `project` for that
+folder and whether it holds `.git`. It never returns file names, sizes or contents, and an unreadable
+folder returns `readable: false`. The browser adds through the existing `POST /api/project/add`;
+**Type a path instead** covers folders outside home. `POST /api/projects-folder` applies the
+operator's choice through the machine settings request, like `alt machine set --projects-folder`;
+TLS and installation location checks read the same `config.project_roots()`.
 
 Task, decision and project reads refresh through one change stream per browser app. The shell opens
 `GET /api/changes`, a server-sent event stream: once a second altd compares the identity, size and
@@ -1228,7 +1245,7 @@ independently, and a comment line every 15 seconds keeps an idle stream open. `P
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
-under the reply. Engine selection is in phone project details and the desktop composer's pill;
+under the reply. Engine selection is in the project's Settings page and the desktop composer's pill;
 a non-Auto pin stays named in the phone header. It pins the project's L3 to one configured engine, named as
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
