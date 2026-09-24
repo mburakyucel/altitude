@@ -40,6 +40,36 @@ class ReviewEngineTests(AltitudeCase):
             with self.assertRaises(ValueError):
                 engines._review_read(self.snapshot, {"operation": operation})
 
+    def test_long_captured_line_is_readable_in_full_through_continuation(self):
+        # I-20260924-132135: a 6887-character JSON proposal line was clipped at 2000 characters with no way on.
+        proposal = "".join(f"section {n}: " + "text " * 40 for n in range(100))
+        self.assertGreater(len(proposal), 16384, "longer than one response, far past the former 2000-character clip")
+        (self.snapshot / "context.json").write_text("{\n" + json.dumps({"proposal": proposal}) + "\n}\n")
+        read, chunks = {"operation": "read", "path": "context.json"}, []
+        while True:
+            reply = engines._review_read(self.snapshot, read)
+            chunks.extend(reply["lines"])
+            if not reply["truncated"]:
+                self.assertNotIn("next", reply)
+                break
+            self.assertGreaterEqual(reply["next"]["column"], 1)
+            read = {**read, **reply["next"]}
+        self.assertEqual("".join(chunk["text"] for chunk in chunks if chunk["line"] == 2), json.dumps({"proposal": proposal}))
+        self.assertEqual([(chunk["line"], chunk.get("column", 1)) for chunk in chunks], [(1, 1), (2, 1), (2, 16384), (3, 1)])
+        self.assertTrue(all(chunk["text"] for chunk in chunks if chunk["line"] == 2))
+        search = engines._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99"})
+        self.assertEqual([(chunk["line"], chunk.get("column", 1)) for chunk in search["lines"]], [(2, 1)])
+        self.assertTrue(search["truncated"], "a match longer than one response says so instead of silently clipping")
+        rest = engines._review_read(self.snapshot, {"operation": "search", "path": "context.json", "query": "section 99",
+                                                    **search["next"]})
+        self.assertEqual(search["lines"][0]["text"] + rest["lines"][0]["text"], json.dumps({"proposal": proposal}))
+        self.assertEqual(rest["lines"][0]["column"], search["next"]["column"])
+        (self.snapshot / "many.txt").write_text("\n".join(f"row {n}" for n in range(1, 251)) + "\n")
+        page = engines._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 51})
+        self.assertEqual((page["lines"][0]["line"], page["lines"][-1]["line"], len(page["lines"])), (51, 150, 100))
+        self.assertEqual((page["truncated"], page["next"]), (True, {"line": 151, "column": 1}))
+        self.assertFalse(engines._review_read(self.snapshot, {"operation": "read", "path": "many.txt", "line": 151})["truncated"])
+
     def test_mcp_exposes_only_captured_read_tool_and_redacts_path_failures(self):
         served = engines._review_served(self.runtime)
         requests = [{"id": 1, "method": "tools/list"},
@@ -99,7 +129,7 @@ class ReviewEngineTests(AltitudeCase):
         self.assertEqual(set(env) - {"HOME", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
         self.assertNotIn("secret", env.values())
 
-    def fixture(self, *, result=None, exitcode=0, served=True):
+    def fixture(self, *, result=None, answer=None, exitcode=0, served=True):
         if served:
             engines._review_served(self.runtime).touch()
         self.patch(engines, "review_capability", return_value={"available": True})
@@ -108,7 +138,7 @@ class ReviewEngineTests(AltitudeCase):
         payload = result if result is not None else {"text": "Needs a fix", "findings": [
             {"severity": "high", "title": "Missing check", "body": "Evidence", "path": "code.py", "line": 2}],
             "limitations": ["Tests were not executed."]}
-        record = {"result": json.dumps(payload), "usage": {"input_tokens": 20}}
+        record = {"result": json.dumps(payload) if answer is None else answer, "usage": {"input_tokens": 20}}
         program = f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit({exitcode})"
         service = self.patch(engines, "_codex_service_command", return_value=[sys.executable, "-I", "-c", program])
         return service
@@ -130,6 +160,29 @@ class ReviewEngineTests(AltitudeCase):
         result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertIn("invalid findings", result["error"])
         self.assertEqual(result["findings"], [])
+        self.fixture(answer="I reviewed the captured input but found nothing to report; no JSON follows {sorry.")
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("invalid findings", result["error"], "an answer with no JSON object still fails with the reason")
+        self.assertEqual(result["findings"], [])
+
+    def test_prose_around_the_json_result_keeps_findings_intact(self):
+        # I-20260924-132135: a Claude reviewer opened with a sentence before its fenced JSON and the review failed.
+        payload = {"text": "Two material risks.", "findings": [
+            {"severity": "high", "title": "Reader clips", "body": "Line 2161 clips at 2000.", "path": "altitude/engines.py", "line": 2161},
+            {"severity": "medium", "title": "Parser strict", "body": "Only a leading fence is stripped."}],
+            "limitations": ["Tests were not executed."]}
+        answer = ("Here is my review of the captured input {as requested}.\n\n```json\n" + json.dumps(payload, indent=2)
+                  + "\n```\n\nThe summary above stands.")
+        self.fixture(answer=answer)
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["text"], payload["text"])
+        self.assertEqual([(f["id"], f["title"], f.get("line")) for f in result["findings"]],
+                         [("F1", "Reader clips", 2161), ("F2", "Parser strict", None)])
+        self.assertEqual(result["limitations"], payload["limitations"])
+        self.fixture(answer=json.dumps(payload))
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(len(result["findings"]), 2, "a bare object still parses")
 
     def test_reviewer_that_never_reads_captured_input_fails_with_reason(self):
         # I-20260924-080541: Codex completed a review with zero coverage after its tool discovery failed.

@@ -396,7 +396,11 @@ original L2 message and text against the committed head's source tree, even befo
 main. Changes reviews capture the merge-candidate tree and diff. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
-connectors, network tools, mutation, nested helpers or task identity. Codex reaches it through its
+connectors, network tools, mutation, nested helpers or task identity. Read and search deliver text
+from a line/column cursor, at most 100 lines and 16 KiB per response; a truncated response names
+the line and column to continue from, so a long line such as a JSON-encoded proposal is readable in
+full. The result is the first complete JSON object in the reviewer's answer, fenced or bare; an
+answer without one fails as invalid findings. Codex reaches it through its
 code-mode host, the one native feature left enabled besides skipping host skill discovery: a
 JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
 sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
