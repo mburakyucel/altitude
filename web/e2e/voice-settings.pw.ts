@@ -165,6 +165,8 @@ test("Reopening voice settings replaces the cached form with a fresh machine cho
   await walk.open("/settings/voice");
   await expect(page.getByRole("radio", { name: "Local speech service", exact: true })).toBeChecked();
   await page.getByRole("link", { name: "Needs you", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Needs you", exact: true })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Local speech service", exact: true })).toBeHidden();
   const current = await savedVoice(request);
   const changed = await request.post("/api/voice", { data: {
     backend: "endpoint", selection: current.selection,
