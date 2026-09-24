@@ -7,3 +7,4 @@
 - evidence: {evidence}
 - root cause: {cause}
 - status: {status}
+- issue: {issue}

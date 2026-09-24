@@ -122,7 +122,7 @@ class TestSystemFault(AltitudeCase):
         self.assertEqual(len(self.queued()), 1)
         self.assertEqual(dispatch.resume_due(PROJECT), [])
 
-    def test_reporting_receipt_closure_and_unrelated_restart_do_not_repair_originating_task(self):
+    def test_issue_notification_closure_and_unrelated_restart_do_not_repair_originating_task(self):
         from altitude import server
         source = self.project
         checkout = self.tmp / "upstream" / "development"
@@ -138,8 +138,6 @@ class TestSystemFault(AltitudeCase):
         task.update(state="running", attempt=2, session_id="original-session", agent_id="original-worker",
                     l2_engine=config.ENGINES[0], launch_model="original-model")
         S.save_task(source, task)
-        incident = incidents.system_fault("checkout", "Local cause still present", project=source, task=task["slug"])
-        saved = S.load_task(source, task["slug"])
         url = "https://github.com/fictional/altitude/issues/42"
         github = []
         run = subprocess.run
@@ -148,24 +146,24 @@ class TestSystemFault(AltitudeCase):
             if args[0] != "gh":
                 return run(args, **kwargs)
             github.append(args[1:3])
+            if args[1:3] == ["issue", "list"]:
+                return subprocess.CompletedProcess(args, 0, "[]", "")
             return subprocess.CompletedProcess(args, 0, url + "\n", "")
 
-        with mock.patch.object(server.subprocess, "run", side_effect=github_result):
-            server.issue_write(source, "upstream", json.dumps({
-                "expected": "The toy task resumes after repair", "actual": "The toy task waits",
-                "reproduction": "Block a fictional task and inspect its status"}), actor="l3",
-                incident=incident["incident"], title="Fictional recovery defect")
-            self.assertEqual(S.load_task(source, task["slug"]), saved)
+        with mock.patch.object(incidents.subprocess, "run", side_effect=github_result):
+            incident = incidents.system_fault("checkout", "Local cause still present", project=source, task=task["slug"])
+            saved = S.load_task(source, task["slug"])
+            self.assertEqual(incident["issue"], url)
             self.assertEqual(len(self.queued()), 1)
             with mock.patch.object(l3, "_select", return_value={"engine": "claude", "why": "fixture"}), \
                  mock.patch.object(engines, "claude_print", return_value={
                      "text": "Issue received; no work assigned.", "session_id": "receiving-session", "usage": {}}):
                 self.assertTrue(l3.deliver_queued(PROJECT)["completed"])
-            server.issue_write(source, "upstream", "", actor="l3", incident=incident["incident"])
-            outcome = incidents.upstream_delivery(source, incident["incident"])
-            self.assertEqual((outcome["status"], outcome["notification"]["status"]), ("confirmed", "received"))
+            self.assertEqual(incidents.publish_issue(source, incident["incident"]), {
+                "id": incident["incident"], "issue": url, "created": False})
+        with mock.patch.object(server.subprocess, "run", side_effect=github_result):
             server.issue_write(PROJECT, "close", "", actor="l3", number=42, reason="completed")
-        self.assertEqual(github, [["issue", "create"], ["issue", "close"]])
+        self.assertEqual(github, [["issue", "list"], ["issue", "create"], ["issue", "close"]])
         with mock.patch.object(server, "log"):
             server.restart_notice()
         self.assertIsNone(incidents.system_fault("checkout", "Local cause still present", project=source, task=task["slug"]))

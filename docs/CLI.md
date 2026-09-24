@@ -330,7 +330,7 @@ and private incident evidence; recognizable credentials and tokens are rejected 
 `--reason not-planned` for work the operator decides not to pursue. Altd maps the latter to GitHub's
 `not planned` reason. Close accepts no stdin body, title, labels, or comment option; a separately
 requested public explanation uses `alt issue comment` and its existing evidence check. No other issue
-mutations or direct `gh` writes are enabled except the create-only upstream report below.
+mutations or direct `gh` writes are enabled; the daemon itself publishes [incident issues](#incident-issues).
 
 The coordinator MCP tool takes, for example,
 `{"kind":"alt","args":["issue","close","42","--reason","completed"]}`.
@@ -391,32 +391,32 @@ completes authorized work; it grants no automatic backlog intake or general L2 i
 L3 owns the next recovery action, preserving original ownership, sessions, scope, failed-check
 evidence, machine authority and holds. It verifies recovery before resume and separately assesses
 recurrence, including role/procedure failures when a tool correctly
-refuses an action. For each newly investigated actionable Altitude defect, promptly create/reuse a
-sanitized upstream issue and record the prevention owner/next action or concrete reporting failure.
+refuses an action. Each incident already has its [issue](#incident-issues); for each newly
+investigated incident, judge whether the cause matches an existing issue and attach it, then record
+the prevention owner/next action on the issue and in incident evidence.
 Establish current relevance and underlying cause before selecting repair. Prefer a simple shared
 correction for evidenced related failures; explain a narrow fix when generalization adds complexity
 without value. Old incidents may be stale and do not authorize historical repair.
 An evidence-backed non-defect/no-change disposition is valid. Use the existing incident fields:
 
 ```sh
+alt incident amend I-20260908-123456 --issue https://github.com/example/altitude/issues/42 --reason "Same cause as the tracked report"
 alt incident amend I-20260908-123456 --status watch --reason "Recovery verified; prevention pending" \
-  --evidence "Recovered: original owner continues. Prevention: https://github.com/example/altitude/issues/42; development coordinator owns triage; delivery pending."
+  --evidence "Recovered: original owner continues. Prevention: development coordinator owns the issue; delivery pending."
 alt fyi "The task is unblocked. Prevention is tracked at https://github.com/example/altitude/issues/42; the development coordinator owns triage."
 ```
 
 These are fictional examples; use the actual local incident and verified public link. Keep concise
 recovery and prevention evidence together, including delivery/effectiveness verification when known.
-`watch` retains pending reporting, delivery or effectiveness; `closed` records verified prevention
-or the reason no change is warranted. Closure alone proves neither. `alt incident list` returns
-current Markdown status/evidence/cause; unavailable records stay explicit. Coordinator state shows
-the latest five incidents not closed, with evidence limited to 600 characters and marked truncation,
-separately from upstream report outcomes. Read the full list for omitted evidence.
+`watch` retains pending delivery or effectiveness; `closed` records verified prevention
+or the reason no change is warranted and closes the issue with that reason. `alt incident list` returns
+current Markdown status/evidence/cause/issue; unavailable records stay explicit. Coordinator state
+lists open incidents with their issue link or pending reason; fault and restart messages carry no
+incident history. Read the full list for closed incidents and omitted evidence.
 
 Give one meaningful recovery/follow-through FYI and update it only when evidence or action changes.
-Unchanged repeats reuse confirmed links and remain quiet. Failed publication retains a concrete
-next action; uncertain publication is reconciled by verified linkage without duplicate creation.
-The receiving development coordinator promptly triages under its own project authority; public
-reporting grants no cross-project task control. Historical visibility authorizes no bulk backfill.
+Unchanged repeats remain quiet. The receiving development coordinator promptly triages issues under
+its own project authority; an issue grants no cross-project task control.
 
 The [L3 next-action contract](../personas/l3.md#authority-and-coordination) uses these existing records
 and verbs. A justified wait names its dependency or finite observation, owner, trigger and the decision
@@ -443,107 +443,60 @@ it is not passive host observation. L3 reconciles the owner's findings; an incon
 the owner's next step. Automatic fault retries, sandbox bypass, service control, live-provider tests
 and check bypass gain no authority from diagnosis. Full delivery checks and all holds still apply.
 
-### Upstream Altitude defects
+### Incident issues
+
+Every incident is one GitHub issue in the Altitude repository. Filing an incident creates it:
 
 ```sh
-alt issue upstream --incident I-20260908-123456 --title "Fictional resume defect" - <<'JSON'
-{
-  "expected": "The fictional Atlas task resumes once.",
-  "actual": "The task remains blocked.",
-  "reproduction": "Create a toy project, block its task, then request resume.",
-  "version": "example-build-123"
-}
-JSON
+alt incident new --title "Fictional resume defect" --what "The toy task stayed blocked after resume" \
+  --evidence "events.log 10:15 resume request; task status unchanged" --cause "not yet analysed"
+alt incident publish I-20260908-123456
+alt incident amend I-20260908-123456 --issue https://github.com/example/altitude/issues/42 --reason "Same cause"
+alt incident amend I-20260908-123456 --status closed --reason "Prevention merged and verified"
 ```
 
-Use the actual local system incident ID from `alt incident list`. The incident ID is tracking
-metadata and is never added to the public body. Reports unrelated to a system incident can omit it.
+The issue carries the label `incident` (create it once in the repository), the sanitized title,
+expected and actual behavior, the sanitized root cause, a reproduction line that reads pending
+triage until L3 adds a fictional or redacted reproduction in a comment, the Altitude version, and
+the incident id with an opaque project digest as its marker. Publication decodes the text, then
+rewrites home paths, `.altitude` and incident file references, long hex ids and UUIDs, email
+addresses, credentials and private key blocks, task references, the names of other managed projects
+and the configured operator name to `[path]`, `[id]`, `[email]`, `[REDACTED]`, `[task]`, `[project]`
+and "the operator", then applies the same private-evidence and credential refusal as project-local
+issues plus the operator name. Evidence, task, project, message ids, logs, transcripts and the fault
+ledger never leave the machine. System faults publish after their fault lock is released; the FYI
+and L3 message name the issue. One publisher or amender runs per project at a time, so a retry
+cannot race the daemon into a second issue.
 
-L3 can explicitly report an Altitude defect from any managed project. The command creates only a
-GitHub issue in the installation's Altitude issue repository. After confirmed creation or verified
-linkage, it sends one fixed issue-link notification to registered local `altitude` if that project's
-Git origin matches the upstream repository. Without a matching project it remains issue-only. It does
-not fix Altitude, create a recovery task, or copy local incidents or conversations. Altitude's
-operator/coordinator selects implementation separately. Ordinary recovery for the project's own
-problems stays in that project. Reporting does not enable automatic issue-to-task intake.
+The record's `- issue:` bullet holds the URL. When publication fails (GitHub unreachable, the
+label missing, a refused body, an unconfigured target) it holds `pending — <reason>` and the
+project log gets an `incident-issue` event; nothing retries on its own. `alt incident publish <id>`
+retries: it reuses the repository's `incident` issue whose body carries this incident's marker
+before creating, so an interrupted create never produces two issues. A record whose issue is
+already a URL returns it without GitHub. `alt incident list`, project API incident rows and
+`STATE.md` show the link or the pending reason.
 
-Stdin is a JSON object with nonempty `expected`, `actual`, and `reproduction` strings, plus optional
-`version` (an Altitude release or commit if known; omission publishes `unknown`). Other fields are
-refused. Author a small fictional or redacted reproduction, never paste operational logs, incident
-evidence or conversation transcripts. All public fields, including the title and version, pass the
-same home-path, private-evidence and credential checks as ordinary issues. These checks catch
-recognizable patterns; the author must still redact private or security-sensitive details.
-Use `[REDACTED]` for a credential placeholder.
+`--issue <url>` attaches an existing issue in the same repository when L3 judges the cause is the
+same: altd verifies it with a GitHub read, comments the occurrence there, and closes the issue this
+incident created as a duplicate with a comment naming the kept one. A hand-written or previously
+attached issue is never closed. A URL outside the repository or an unverifiable issue is refused and
+the record stays unchanged. `--status closed` comments the sanitized closure reason on the linked
+issue and closes the issue this incident created as completed when still open; an attached issue
+tracks other occurrences and stays open for `alt issue close`. A GitHub failure leaves the incident
+open so the closure can be repeated. A pending issue needs no GitHub call to close the incident.
 
-The product target seam is `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**, an
-operator-configured GitHub `owner/repository` or GitHub origin URL. Unset uses the installed
-Altitude source checkout's GitHub origin. A fork installation can configure its intended upstream
-there. An invalid or unavailable target fails with configuration instructions, with no fallback to
-the reporting project's repository. L3 cannot change this setting through the reporting verb;
-neither request fields nor the caller's environment choose the target. No `--repo`, `--target`,
-`--project`, file attachment, label, issue number, upstream comment or closure is accepted.
-
-The coordinator MCP tool receives argument arrays and a JSON string on stdin:
-
-```json
-{"kind":"alt","args":["issue","upstream","--title","Fictional resume defect","-"],"stdin":"{\"expected\":\"Resume once\",\"actual\":\"Still blocked\",\"reproduction\":\"Create a toy project, block its task, request resume\"}"}
-```
-
-The runtime `alt` shim uses the same project-bound broker. The operator CLI uses `POST /api/issue`
-with `project`, `operation: "upstream"`, `title` and `body` (the same JSON string); L2 issue writes
-remain denied. Success returns the issue URL and writes one `issue-upstream` event with actor,
-title and URL in the calling project's log, without the report body. Failures name configuration,
-GitHub authentication/access, or an unconfirmed result without echoing GitHub's private error output.
-Use the returned full URL or `owner/repo#number` whenever mentioning the upstream issue in replies,
-briefs or summaries. Bare `#number` identifies the calling project's repository; do not infer an
-upstream repository for ambiguous historical text.
-
-With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`, `failed`, and
-`uncertain` carry an actionable reason. `alt incident list` and project API incident rows include an
-`upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded
-outcomes. Coordinator state lists open incidents with their link or gap; fault and restart messages
-carry no incident history. Inspect the full list for closed incidents and reasons.
-
-The separate `upstream.notification` object reports `queued` (accepted by the local queue), `received`
-(claimed by its consumer), `unavailable` (no matching registered development project), or `failed`
-(local project/queue access failed), with a target/message ID or an actionable reason. These outcomes
-also appear in coordinator summaries and source-project `upstream-notification` events. The receiving
-project's existing queue/chat shows the fixed public link without a source conversation, private
-evidence, task instructions, or receiving task association. Notification cannot create, reuse, resume,
-or coordinate its tasks; receiving L3/operator chooses any work under its own authority.
-
-Notification deduplication uses receiving project plus normalized full issue URL across source projects
-and restarts, retaining consumed receipts in the existing project event log. `received` records the
-queue claim, not model completion; an exit after dequeue retains the queue's ordinary delivery limits.
-Queue failure never changes confirmed publication to failed publication. For a tracked report, repeat
-the confirmed incident command to retry notification only; no second issue is posted. An untracked
-report still returns its successful URL and leaves a local FYI on queue failure; do not repeat creation.
-No historical notification backfill runs when a development project is registered later.
-
-Confirmed links are reused for the same incident without another creation, including after restart.
-L3 investigates whether separate incidents share a cause, then uses `--url` to attach a matching
-issue or the ordinary create form to report a different defect. A shared fault kind does not select
-an issue. Outcomes remain attributed to the source incident in their receipt, including existing
-confirmed and uncertain publications; no historical bulk repair runs. The daemon saves uncertainty
-before publication: a timeout, interrupted request, nonzero GitHub exit or unconfirmed response may
-have created the issue and prevents another
-create. Local validation, configuration or executable failures are `failed`; a caller can explicitly
-try again after correcting those prepublication failures. No outcome triggers an automatic retry.
-
-The operator checks existing upstream issues after uncertainty. To attach a known match:
-
-```sh
-alt issue upstream --incident I-20260908-123456 --url https://github.com/example/altitude/issues/42
-```
-
-The URL must name an issue in the configured product repository. This form accepts no title or body;
-altd verifies the URL with a GitHub read before recording it. Failure leaves the earlier status intact,
-and an existing confirmed link cannot be replaced with a different URL. A late publication result
-cannot overwrite a concurrently verified link. HTTP uses the same optional `incident` and `url`
-fields. L3's general GitHub read broker remains project-local; this operation reads only the supplied
-upstream issue. Missing status does not authorize publication. Historical incidents without a tracked
-fault identity remain visibly missing; bulk publication/backfill and uncertain-result creation retries
-require a separate operator decision and are not supported by this operation.
+The target repository is `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**, an
+operator-configured GitHub `owner/repository` or GitHub origin URL. Unset uses the release metadata
+or the installed Altitude source checkout's GitHub origin. An invalid or unavailable target is a
+pending reason with configuration instructions; there is no fallback to the incident project's
+repository. An incident filed in another managed project sends the registered local `altitude`
+project one fixed issue-link notification when its Git origin matches the issue repository. The
+receiving queue and chat show the public URL and nothing else; it creates, reuses, resumes or
+coordinates no task. Pending rows and retained receipts deduplicate the full URL across source
+projects and restarts. L3 runs the incident verbs through its coordinator transport, for example
+`{"kind":"alt","args":["incident","publish","I-20260908-123456"]}`; L2 workers file incidents only
+through `alt task block --fault`. Bare `#number` in replies identifies the calling project's
+repository; incident issues are named by their full URL.
 
 ## Task file lists
 
@@ -631,7 +584,7 @@ shortcut; archive or stash removal requires an explicit operator action.
 An unlaunched task with a saved `main-unpushed` fault can requeue through explicit reason-bearing
 resume independently of deployment recovery. Restart alone does not recover or discard edits.
 
-For upstream defects, the originating L3 checks public delivery evidence and local observations
+For Altitude defects, the originating L3 checks public delivery evidence and local observations
 that the actual cause is gone before `alt task resume <slug> --reason '<verified fix and observation>'`.
 Notification receipt, issue closure and unrelated restart do not establish repair. Saved unchanged
 blockers do not generate repeated recovery nudges; new affected tasks, new blockers and changed

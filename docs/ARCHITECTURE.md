@@ -436,12 +436,12 @@ that history without interpreting its old replies or errors as a fresh startup r
 remains a separate session rotation within a managed project.
 
 `STATE.md` is regenerated from active task records and the project's incidents that are not closed.
-Incident reads project current status, evidence and cause from the existing Markdown record,
+Incident reads project current status, evidence, cause and issue from the existing Markdown record,
 excluding amendment history. Each open incident gets one line, newest first and at most ten: its
-status and title with its report link, **no report linked**, or the report's failed/uncertain status,
-followed by up to 300 characters of current evidence; an unreadable record reads **evidence unavailable** instead. This includes role-only incidents and
-confirmed reports whose prevention remains pending. Closed incidents, full evidence and report
-reasons stay available through `alt incident list`. No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
+status and title with its issue link, **no issue**, or **issue pending** with the reason, followed
+by up to 300 characters of current evidence; an unreadable record reads **evidence unavailable**
+instead. Closed incidents and full evidence stay available through `alt incident list`.
+No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
 ## Isolation and landing
@@ -736,9 +736,8 @@ positive issue number and an explicit reason, accepts no body or publishing opti
 URL and appends an `issue-close` project event with actor, number, reason, title, and URL. L2 issue
 permissions and the read-only `gh` broker remain unchanged.
 New, comment and close target only the selected project's checkout origin, with no repository
-override. L3 can explicitly file an Altitude defect with the separate create-only
-`alt issue upstream` verb through the same transport. Its product target and public reproduction
-contract are described under [faults](#faults); private evidence stays in the calling project.
+override. Incident issues are published by the daemon itself, never through this verb; their product
+target and public content are described under [faults](#faults); private evidence stays in the calling project.
 
 `alt pr close <number>` closes an explicitly selected superseded PR through the same project-bound
 coordinator transport or the operator's `POST /api/pr/close` endpoint. `server.pr_close` fixes the
@@ -767,7 +766,7 @@ A provider-reported reset schedules resumption. Fresh attempts retain the existi
 uncommitted work, and validate its checkout and adopted ancestry. Task conversations, worker evidence,
 PRs, expected files, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
-window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind
+window) with its public issue, and leaves an FYI and one message naming both in that same project's L3 queue; a repeat of that kind
 blocking another task or changing its details adds one line for L3 within that window. Full fault
 reasons are the task-local observations: unchanged blockers stay quiet even after the incident window
 expires, including alternating observations from tasks sharing a kind. Changed observations update
@@ -796,8 +795,8 @@ a changed operational contract, missing access, material machine change, unappro
 restriction waits for its decision. Machine grants, fix scope and holds bind; no new privilege or
 automatic fault retry is introduced.
 Missing evidence and unrelated delivery establish no recovery. For newly investigated
-actionable system or role/procedure defects it promptly creates/reuses a sanitized issue, records
-the prevention disposition and owner/next action (or concrete reporting failure) in incident evidence,
+incidents it judges whether the cause matches an existing issue and attaches it, records
+the prevention disposition and owner/next action in incident evidence and on the issue,
 and gives one concise recovery/follow-through FYI. `watch` retains pending reporting, delivery or
 effectiveness; `closed` records verified prevention or an evidence-backed non-defect/no-change
 disposition. Local recovery and confirmed publication alone establish neither. Unchanged repeats
@@ -836,65 +835,44 @@ begins without terminal evidence ends visibly uncertain instead of launching ove
 No probe resumes a worker, resolves a question, or releases a merge hold.
 L3 reconciles the next step when a finite probe ends and gives an evidenced heads-up for significant
 stalled work. Repeated observations stay quiet; terminal evidence promises no further scheduled check.
-Project-local repairs remain owned by the affected project. Its L3 reports Altitude implementation
-defects with [`alt issue upstream`](CLI.md#upstream-altitude-defects), a create-only exception to the
-project-local issue verbs. The daemon owns the product target seam: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`
-in altd's environment, defaulting to the installed Altitude checkout's GitHub origin. Resolution
-uses neither the calling project's origin nor a registered `altitude` project's state. The caller
-cannot override the destination, attach files, label, comment on, or close upstream issues.
+Project-local repairs remain owned by the affected project. Every incident is published as one
+GitHub issue by `incidents.publish_issue`: system faults publish after the fault lock is released,
+and `alt incident new` publishes after the record is written. The daemon owns the product target
+seam, `server.issue_repository`: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment, the
+release metadata, or the installed Altitude checkout's GitHub origin, never the calling project's
+origin. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
+the sanitized cause, a reproduction line that reads pending triage until L3 comments one, the
+Altitude version and the incident marker (incident id plus an opaque project digest). Evidence,
+task, project, logs and conversations never supply public content.
 
-The same issue parser and handler serve the project-bound broker/MCP transport and operator HTTP
-API. Upstream bodies contain only caller-authored expected behavior, actual behavior, reproduction,
-and optional version. The handler rejects recognizable credentials, home paths and private evidence
-references before invoking `gh issue create`. It returns the confirmed URL or an actionable failure,
-and records actor, title and URL in an `issue-upstream` event in the calling project. Incident evidence
-files and conversations never supply public content. Reporting creates no tasks.
-The reporting project's L3 does not repair Altitude; Altitude's operator/coordinator selects any
-implementation separately. There is no automatic intake from issues.
+`incidents.sanitize` decodes the text and rewrites home paths, `.altitude` and incident file
+references, long hex ids and UUIDs, email addresses, credentials and private key blocks, task
+references, other managed project names and the configured operator name before anything is sent;
+`incidents.check_public` then refuses the same private patterns the project-local issue verbs
+refuse plus the operator name, so a sanitizer miss stays local. A per-project incident lock
+serializes publication and amendment across the daemon and CLI, so a retry never races into a
+second issue and an amendment never lands on a replaced snapshot. Any failure (unavailable GitHub, a missing label, a refused
+body, an unconfigured target) leaves `issue: pending — <reason>` on the record and an
+`incident-issue` project event; nothing retries on its own. `alt incident publish <id>` retries: it
+lists the repository's `incident` issues and reuses the one whose body carries this incident's
+marker before creating, so an interrupted create never produces two issues. A record whose issue is
+already a URL returns it without GitHub.
 
-Confirmed creation and verified linkage notify the registered local `altitude` development project
-only when its Git origin matches the confirmed issue repository. Missing, removed, or nonmatching
-projects remain issue-only. `server.notify_upstream_issue` checks the existing registration and origin
-under the receiving project's activity guard; queue admission rechecks the same checkout under its
-project lock. The fixed server message contains only the public URL and a statement that work decisions
-belong to the receiving coordinator/operator. It carries no source project, incident, private evidence,
-conversation, task instruction, or task association, and changes no receiving task or provider session.
+`alt incident amend <id> --issue <url>` attaches an existing issue in the same repository after a
+GitHub read verifies it, comments the occurrence there, and closes the issue this incident created
+(identified by its marker) as a duplicate; a hand-written or previously attached issue is never
+closed. `--status closed` comments the sanitized closure reason on the linked issue and closes the
+issue this incident created when still open; an attached issue stays open for its other
+occurrences. A GitHub failure leaves the incident unchanged so the closure can be repeated. The
+`- issue:` bullet is added to a record filed before issues existed on first attachment.
 
-`l3.queue_upstream_issue` atomically appends to the existing queue under the receiving project lock.
-Pending rows and all retained `upstream-notification-received` project events deduplicate by receiving
-project and normalized full issue URL, including reports from other source projects and daemon restart.
-The queue claim records its event before removing the row, so the queue-to-chat gap cannot produce
-another notification. `received` means the queue consumer claimed it, not that a model completed a turn;
-an exit after dequeue retains the existing queue's delivery limits. Ordinary queue/chat surfaces show
-the notification, with no new page or task lifecycle. A receipt grants no repair or resume authority.
-
-`--incident <id>` binds reporting to a system incident in the calling project's index. Its `fault_key`
-establishes source ownership; publication belongs to the source project and `upstream.incident`
-named in the receipt. A uniform ledger lookup retains existing receipts in their original slots;
-new receipts use `[source, kind, incident]` slots in the same fault ledger. Receipt-only rows are
-excluded from fault counters. Each outcome retains status, URL, reason, actor and timestamp.
-Inspection and summaries show outcomes per incident. L3 judges matching causes and uses the existing
-create or verified-link operation; fault kinds do not determine issue identity. Repeated calls for
-one incident reuse its outcome, including uncertainty. Prior attribution and evidence remain intact.
-Unlinked historical incidents stay missing without bulk backfill. Incident creation still groups
-same-kind observations within its existing window; this reporting change does not split those records.
-
-A short fault lock compares and saves the outcome before external IO. A persisted uncertain receipt
-precedes creation, so interruption, timeout, nonzero exit or an unconfirmed response blocks another
-create. Proven prepublication failures retain actionable failed status. Confirmed delivery returns
-the known URL without publication. `--incident <id> --url <url>` verifies only that issue at the fixed
-upstream target with a GitHub read and attaches it; it can resolve uncertainty or explicitly share a
-known matching report across kinds. Failed verification retains the prior outcome. Finalization
-compares the saved receipt so a late result cannot overwrite a concurrently verified link.
-Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
-and `STATE.md` (open incidents only) expose status and gaps without granting reporting
-authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
-Publication is confirmed before notification is attempted. Its separate `notification` outcome records
-`queued`, `received`, `unavailable`, or `failed` in the existing incident outcome and source project event
-log. Queue failures retain publication success; a repeated confirmed incident command retries only the
-notification. Reports without an incident still notify after success and expose queue failure as a
-source-project FYI. Failed or uncertain publication and failed link verification never notify. There is
-no automatic publication retry or historical notification backfill.
+An incident from another managed project notifies the registered local `altitude` development
+project once, when its Git origin matches the issue repository. `l3.queue_upstream_issue`
+atomically appends to the existing queue under the receiving project lock; pending rows and retained
+`upstream-notification-received` project events deduplicate by receiving project and normalized full
+issue URL across source projects and daemon restart. The fixed message contains only the public URL
+and a statement that work decisions belong to the receiving coordinator/operator; it carries no
+source project, incident, evidence, task instruction or task association, and changes no task.
 
 A merged source-deployed Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `personas/`, `hooks/`,
@@ -1069,10 +1047,10 @@ appearing and disappearing, and saves named screenshots on passing and failing w
 Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
 workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
 runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
-GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
-with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request, and clean up unneeded completed exports after three days or
-when approaching the existing disk budget. See the
+GitHub artifact uploads, duplicate raw results and caches are excluded. Owners verify retrieval
+after container removal, preserve needed evidence in the task through review, and clean up
+unneeded completed exports after three days or when approaching the existing disk budget.
+Unavailable local evidence blocks delivery even when GitHub checks pass. See the
 [retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.

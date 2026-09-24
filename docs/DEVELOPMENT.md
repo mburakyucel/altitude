@@ -61,10 +61,9 @@ execution. Local Git repositories, scripted child processes and loopback HTTP re
 A focused module can be run with `env -u ALTITUDE_ACTOR python3 -m unittest tests.test_isolation`;
 modules use the same bootstrap. The tests do not run the production daemon or its timer.
 
-Incident IDs are project-local. Cross-project authority fixtures select a foreign incident ID
-absent from the local project, rather than assuming creation order makes IDs globally unique.
-`test_upstream_issues.py` controls the incident allocator's clock to exercise both same-second
-allocation and a second boundary while retaining real incident storage and authority checks.
+Incident IDs are project-local, so the public issue marker adds a project digest.
+`test_incident_issues.py` drives publication, retry, attachment and closure through the fake `gh`
+shim, whose `issues.json` holds every issue, body, comment and close reason for assertions.
 Independent Git fixtures created with `make_repo` use separate parent directories because each
 bare `origin.git` lives beside its checkout. The fault/recovery reporting test gives its two
 initial commits distinct timestamps so shared origins cannot hide behind identical commits.
@@ -329,12 +328,11 @@ removing the disposable container. Failed runs also retain the self-contained br
 with its screenshots and failure traces. Passing runs keep only small logs and identity receipts.
 Duplicate raw results and caches are excluded; early failures keep available diagnostics.
 
-A passing required check on the current head, with its GitHub console log, is sufficient delivery
-evidence; `alt land` verifies the head, tree and base ancestry. Owners retrieve the local export
-(browser HTML report, screenshots, traces) into their task folder only to diagnose a failed run or
-when a reviewer asks, match its run URL, attempt, head and tree to the candidate, and open it with
-`pnpm --dir web exec playwright show-report /path/to/report`. When the export is unreadable from the
-task sandbox (issue #380), the owner says so in the report and continues with the console log.
+Before delivery, owners retrieve the completed export into their task folder, match its run URL,
+attempt, head and tree to the checked candidate, and verify required evidence survived container
+removal. Open a failed report with `pnpm --dir web exec playwright show-report /path/to/report`
+and verify attachments and traces open. A green GitHub job alone does not prove successful local
+export; unavailable evidence blocks delivery and goes to L3 for recovery.
 
 The runner limits evidence to 256 MiB per job and 4 GiB for this repository. Owners remove
 unneeded completed exports older than three days, and clean up earlier when capacity is tight,
@@ -348,9 +346,10 @@ and console logs; browser reports are read locally instead of downloaded from Gi
 An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
 it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
 [`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger/runner recovery, not an invented
-run ID. Runner outages pause delivery until verified recovery and fresh CI. A probe
+run ID. Runner or local evidence outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.
-The existing GitHub artifact-capacity probe remains for projects using hosted artifacts.
+The existing GitHub artifact-capacity probe remains for projects using hosted artifacts; it cannot
+verify this repository's local exports. L3 verifies local retrieval through the runner evidence path.
 
 ### Gate activation
 

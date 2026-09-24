@@ -557,14 +557,14 @@ running worker. Irretrievable historical evidence stays unknown. When supported 
 establish recovery, L3 exposes the actual capability or authority gap. Ordinary non-invasive
 investigation is part of the owner's task and iterates without approval rounds; only missing access,
 material machine changes, unapproved spend, live-provider tests or explicit restrictions need a
-question. Fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-upstream-reporting).
+question. Fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-incident-issues).
 
-Recovery and recurrence prevention are separate responsibilities. L3 promptly reports/reuses a
-sanitized issue for actionable system or role defects and records
-prevention ownership and next action. Existing incident evidence and `watch` status keep pending
-follow-through visible in coordinator state even after recovery or confirmed publication. A concise
+Recovery and recurrence prevention are separate responsibilities. Every incident already has its
+GitHub issue; L3 attaches an existing issue when the cause is shared and records prevention
+ownership and next action on it. Existing incident evidence and `watch` status keep pending
+follow-through visible in coordinator state even after recovery. A concise
 FYI states recovery and follow-through; unchanged repeats remain quiet. Closure records verified
-prevention or an evidence-backed no-change disposition. The development coordinator triages reports
+prevention or an evidence-backed no-change disposition and closes the issue. The development coordinator triages issues
 under its own authority, on any installation. See [incident follow-through](docs/CLI.md#incident-recovery-and-prevention).
 
 For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
@@ -576,28 +576,16 @@ gives a concise heads-up when significant work remains blocked; repeated observa
 Artifact capacity needs fresh uploaded artifacts; a passing run
 with a tolerated upload error does not prove recovery. The probe leaves owner resumption to L3.
 
-A project's L3 reports an upstream Altitude defect with
-[`alt issue upstream`](docs/CLI.md#upstream-altitude-defects), supplying a fictional or redacted
-reproduction. The affected project's incident evidence, tasks and coordinator conversation stay in
-that project. After confirmed creation or verified linkage, a registered local `altitude` development
-project receives one fixed issue-link notification when its Git origin matches the upstream repository.
-Installations without that matching project remain issue-only. Altitude's operator/coordinator selects
-any implementation separately; reporting never creates, reuses, or resumes a receiving-project task.
-
-For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
-failed, or uncertain delivery with an actionable reason. `alt incident list` holds the full history;
-coordinator state lists only open incidents with their link or gap. Reporting belongs to the incident named in its receipt;
-L3 judges whether a separate incident shares a cause and links a matching issue or creates one
-through the existing command. A broad failure label does not select an issue. Known links survive
-repeated calls and restarts; an uncertain attempt blocks another creation until the operator checks
-existing issues. The coordinator can
-attach a verified match with `alt issue upstream --incident <id> --url <url>`. Reporting remains
-explicitly authorized; historical publication/backfill is a separate decision.
-Local notification status is separate from publication status in incident inspection and coordinator
-summaries. The receiving queue and chat carry only the fixed public link, with no private evidence or
-task association. Repeating a confirmed incident command retries a failed notification without posting
-another issue; the receiving project's queue and retained event receipts deduplicate the full issue URL
-across source projects and restarts.
+Every incident is a GitHub issue. Filing an incident, whether a system fault or `alt incident new`,
+creates one sanitized issue labelled `incident` in the Altitude repository and links it on the
+record; see [incident issues](docs/CLI.md#incident-issues) for what is published and what stays
+local. A failed publication stays on the record as `issue: pending — <reason>` and
+`alt incident publish <id>` retries without creating a second issue. When L3 judges that an incident
+shares its cause with an existing issue, `alt incident amend <id> --issue <url>` attaches it and
+closes the issue the incident created as a duplicate. Closing the incident comments the reason on
+its issue and closes the issue it created; an attached issue stays open for its other occurrences. An incident filed in another managed project sends the registered `altitude`
+development project one fixed issue-link notification when its Git origin matches the issue
+repository; the notification carries no evidence and creates, reuses or resumes no task.
 
 ## Remove a project
 
@@ -629,9 +617,9 @@ against isolated fictional state, with external engines replaced by deterministi
 Python module processes run alongside the ordered web phases; CI browser workers scale with
 available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
 CI retains small logs and tested commit identity on the runner host; failed runs also retain the
-self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
-failure or on a reviewer's request. Unneeded completed exports are cleaned up after three days or
-when disk capacity is tight. No GitHub artifact upload is required.
+self-contained HTML report, screenshots and traces. Owners verify local retrieval and keep needed
+evidence through review, cleaning up unneeded completed exports after three days or when disk
+capacity is tight. No GitHub artifact upload is required.
 See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
@@ -653,8 +641,6 @@ Setup friction and confusing product language are useful feedback too. Keep exam
 or redacted; send security-sensitive details privately to the maintainer through your invitation
 channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
 
-Managed projects' L3s can use `alt issue upstream --title '…' -` through their coordinator transport.
-The JSON body describes expected and actual behavior, a fictional/redacted reproduction, and the
-version if known. Altd resolves the product repository from its installation origin or the operator's
-`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting; callers cannot choose a destination or other upstream
-action. See [the command and MCP example](docs/CLI.md#upstream-altitude-defects).
+Altitude reports its own failures the same way: every incident becomes a sanitized issue in the
+repository altd resolves from its installation origin or the operator's
+`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting. See [incident issues](docs/CLI.md#incident-issues).

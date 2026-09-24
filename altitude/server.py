@@ -404,7 +404,7 @@ def _validate_l3_alt_args(args: list[str]) -> None:
         raise ValueError("only Burak may release a merge hold")
     if args[:1] == ["fyi"] and len(args) >= 3:
         S.require_task_slug(args[1])
-    if args[:2] == ["incident", "amend"]:
+    if args[:2] in (["incident", "amend"], ["incident", "publish"]):
         if len(args) < 3 or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", args[2]):
             raise ValueError("invalid incident id")
     if args[:2] == ["incident", "new"]:
@@ -1604,11 +1604,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if api == "issue":
                 try:
-                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor", "incident", "url"}:
+                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor"}:
                         raise ValueError("alt issue: unsupported fields")
                     url = issue_write(o["project"], o.get("operation"), o.get("body", ""), actor="operator",
                                       title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"),
-                                      reason=o.get("reason"), incident=o.get("incident"), url=o.get("url"))
+                                      reason=o.get("reason"))
                     return self._json({"url": url})
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
@@ -2102,18 +2102,13 @@ def issue_parser() -> argparse.ArgumentParser:
             raise ValueError(f"alt issue: {message}")
 
         def exit(self, status=0, message=None):
-            raise ValueError(message or "use alt issue new/upstream --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
+            raise ValueError(message or "use alt issue new --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
 
     parser = Parser(prog="alt issue", add_help=False)
     commands = parser.add_subparsers(dest="operation", required=True)
     new = commands.add_parser("new")
     new.add_argument("--title", required=True)
     new.add_argument("--label", action="append", dest="labels")
-    upstream = commands.add_parser("upstream")
-    upstream.add_argument("--title", default="")
-    upstream.add_argument("--incident")
-    upstream.add_argument("--url")
-    upstream.add_argument("text", choices=["-"], nargs="?")
     comment = commands.add_parser("comment")
     comment.add_argument("number", type=int)
     for command in (new, comment):
@@ -2124,8 +2119,8 @@ def issue_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def upstream_issue_repository() -> str:
-    """The installation's product seam, independent of the calling project's registry or origin."""
+def issue_repository() -> str:
+    """Where incident issues go: the installation's product seam, independent of the calling project's origin."""
     target = config.UPSTREAM_ISSUE_REPOSITORY
     if target is None and config.RELEASE is not None:
         target = config.RELEASE.get("repository")
@@ -2140,133 +2135,19 @@ def upstream_issue_repository() -> str:
         target = "https://github.com/" + target
     repository = repository_url(target or "")
     if not repository:
-        raise ValueError("alt issue upstream: operator must configure ALTITUDE_UPSTREAM_ISSUE_REPOSITORY "
-                         "in altd as the Altitude GitHub owner/repository, or install from a GitHub origin")
+        raise ValueError("operator must configure ALTITUDE_UPSTREAM_ISSUE_REPOSITORY in altd as the Altitude "
+                         "GitHub owner/repository, or install from a GitHub origin")
     return repository
 
 
-def upstream_issue_body(body: str) -> str:
-    """Accept only a deliberately authored reproduction; never read local incident/session evidence."""
-    try:
-        report = json.loads(body)
-    except ValueError:
-        report = None
-    required = {"expected", "actual", "reproduction"}
-    if (not isinstance(report, dict) or not required <= report.keys()
-            or report.keys() - required - {"version"}
-            or any(not isinstance(value, str) or not value.strip() for value in report.values())):
-        raise ValueError("alt issue upstream: stdin must be a fictional/redacted JSON object with nonempty "
-                         "expected, actual, reproduction strings and optional version; no evidence attachments")
-    return "\n\n".join(f"## {label}\n{report.get(key, 'unknown')}" for key, label in (
-        ("expected", "Expected behavior"), ("actual", "Actual behavior"),
-        ("reproduction", "Fictional/redacted reproduction"), ("version", "Altitude version"))) + "\n"
-
-
-class UpstreamUncertain(ValueError):
-    """GitHub may have accepted publication; another create is unsafe."""
-
-
-def notify_upstream_issue(project: str, url: str, incident: str | None = None) -> None:
-    """Publication has succeeded; local queue availability cannot turn it into a failed publication."""
-    target = "altitude"
-    notice = {"status": "unavailable", "reason": "No registered local Altitude development project."}
-    try:
-        if config.is_managed(target):
-            with config.project_activity(target) as attached:
-                if not attached or not config.is_managed(target):
-                    raise ValueError("Local project removal is in progress.")
-                checkout = config.project_path(target)
-                origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                                        capture_output=True, text=True, timeout=10)
-                repository = repository_url(origin.stdout) if origin.returncode == 0 else None
-                if repository and repository.lower() == url.lower().rsplit("/issues/", 1)[0]:
-                    notice = l3.queue_upstream_issue(target, url, checkout=checkout)
-                else:
-                    notice = {"status": "unavailable", "reason": "Local development repository does not match the issue."}
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        notice = {"status": "failed", "reason": "Issue publication is confirmed; local notification failed. "
-                  "Check local project/queue availability, then repeat the confirmed incident command; do not repost the issue."}
-    try:
-        if incident:
-            incidents.upstream_delivery(project, incident, notification=notice)
-        S.project_log(project, "upstream-notification", url=url, **notice)
-        if not incident and notice["status"] == "failed":
-            T.fyi(project, None, f"Upstream issue confirmed: {url}. Local notification failed; "
-                  "check local project/queue availability. Do not repost the issue.", actor="altd")
-    except (OSError, ValueError):
-        # #277: failure to record a local nudge must not invite another public issue creation.
-        log(f"Upstream issue confirmed: {url}. Local notification status could not be recorded; do not repost.")
-
-
-def issue_write(project: str, operation: str, body: str, *, actor: str,
-                incident: str | None = None, url: str | None = None, **fields) -> str:
-    """Keep incident delivery at the existing issue authority and public-content boundary."""
+def issue_write(project: str, operation: str, body: str, *, actor: str, title: str = "",
+                labels: list[str] | None = None, number: int | None = None, reason: str | None = None) -> str:
+    """Altd owns project-local issues; incident issues come from `incidents.publish_issue`."""
     if actor not in ("l3", "operator"):
         raise ValueError("alt issue: not available to an L2 worker")
-    if incident is None and url is None:
-        result = _issue_write(project, operation, body, actor=actor, **fields)
-        if operation == "upstream":
-            notify_upstream_issue(project, result)
-        return result
-    if operation != "upstream" or incident is None:
-        raise ValueError("alt issue: tracking is only available on upstream reports; --url requires --incident")
-    if any(fields.get(key) is not None for key in ("labels", "number", "reason")):
-        raise ValueError("alt issue: fields do not match the operation")
-    previous = incidents.upstream_delivery(project, incident)
-    if previous["status"] == "confirmed":
-        if url is not None and (not isinstance(url, str) or url.lower() != previous["url"].lower()):
-            raise ValueError("alt issue upstream: incident already has a different confirmed URL; inspect its linkage")
-        notify_upstream_issue(project, previous["url"], incident)
-        return previous["url"]
-    if url is None and previous["status"] == "uncertain":
-        raise ValueError("alt issue upstream: " + previous["reason"])
-    if url is not None:
-        if body or any(value is not None and value != "" for value in fields.values()):
-            raise ValueError("alt issue upstream: linking --url accepts only --incident; no public body or creation fields")
-        repository = upstream_issue_repository()
-        if not isinstance(url, str) or not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url, re.I):
-            raise ValueError("alt issue upstream: --url must identify an issue in the configured upstream repository")
-        try:
-            result = subprocess.run(["gh", "issue", "view", url, "--repo", repository, "--json", "url"],
-                                    cwd=config.project_path(project), env=engines.clean_env(),
-                                    capture_output=True, text=True, timeout=30)
-            confirmed = json.loads(result.stdout).get("url") if result.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
-            confirmed = None
-        if not isinstance(confirmed, str) or confirmed.lower() != url.lower():
-            raise ValueError("alt issue upstream: cannot verify existing issue URL; check GitHub authentication and issue access. "
-                             "Previous delivery status is retained; no issue was created.")
-        url = confirmed
-    else:
-        claim = {"status": "uncertain", "url": None, "incident": incident, "at": S.now(), "actor": actor,
-                 "reason": "Report may be in flight or interrupted. Check existing upstream issues before retrying; "
-                           "attach a verified match with `alt issue upstream --incident ID --url URL`. Creation is blocked."}
-        incidents.upstream_delivery(project, incident, outcome=claim, expected=previous)
-        previous = claim
-        try:
-            url = _issue_write(project, operation, body, actor=actor, **fields)
-        except (ValueError, OSError, subprocess.SubprocessError) as exc:
-            uncertain = isinstance(exc, (UpstreamUncertain, OSError, subprocess.SubprocessError))
-            reason = (str(exc) if isinstance(exc, ValueError) else
-                      "Report delivery bookkeeping failed. Check existing upstream issues before retrying; "
-                      "repair local recording and attach a verified match. Creation is blocked.")
-            incidents.upstream_delivery(project, incident, expected=previous, outcome={
-                **claim, "status": "uncertain" if uncertain else "failed", "reason": reason})
-            raise ValueError(reason) from exc
-    incidents.upstream_delivery(project, incident, expected=previous, outcome={
-        "status": "confirmed", "url": url, "reason": "Verified upstream issue URL; reuse this report.",
-        "incident": incident, "at": S.now(), "actor": actor})
-    notify_upstream_issue(project, url, incident)
-    return url
-
-
-def _issue_write(project: str, operation: str, body: str, *, actor: str,
-                title: str = "", labels: list[str] | None = None, number: int | None = None,
-                reason: str | None = None) -> str:
-    """Altd owns project-local issues and the create-only upstream reporting exception."""
-    if operation not in ("new", "comment", "close", "upstream"):
-        raise ValueError("alt issue: only new, comment, close, and upstream are available")
-    creating = operation in ("new", "upstream")
+    if operation not in ("new", "comment", "close"):
+        raise ValueError("alt issue: only new, comment, and close are available")
+    creating = operation == "new"
     if (not isinstance(body, str) or not isinstance(title, str)
             or labels is not None and (not isinstance(labels, list) or any(not isinstance(x, str) for x in labels))):
         raise ValueError("alt issue: body, title, and labels must be text")
@@ -2274,38 +2155,16 @@ def _issue_write(project: str, operation: str, body: str, *, actor: str,
         raise ValueError(f"alt issue {operation}: title is required")
     if operation in ("comment", "close") and (type(number) is not int or number < 1):
         raise ValueError(f"alt issue {operation}: a positive issue number is required")
-    if (not creating and (title or labels) or creating and number is not None
-            or operation == "upstream" and labels is not None
-            or operation != "close" and reason is not None):
+    if not creating and (title or labels) or creating and number is not None or operation != "close" and reason is not None:
         raise ValueError("alt issue: fields do not match the operation")
     if operation == "close" and (reason not in ISSUE_CLOSE_REASONS or body):
         raise ValueError("alt issue close: --reason completed|not-planned is required; no body is accepted")
-    if operation == "upstream":
-        body = upstream_issue_body(body)
     # Private incident evidence boundary: local evidence never leaves the machine in a public issue.
-    public_text = unquote("\n".join([body, title, *(labels or [])]))
-    home = str(Path.home()) + "/"
-    absolute_paths = re.findall(r"/[^\s`'\"<>\[\]{}()]+", public_text)
-    if (home in public_text
-            or any((os.path.normpath("/" + path.lstrip("/")) + "/").startswith(home) for path in absolute_paths)
-            or re.search(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|"
-                         r"\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
-                         r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b|\.altitude/", public_text, re.I)):
-        raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
-    if re.search(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|"
-                 r"AKIA[A-Z0-9]{16})\b|-----BEGIN [\w ]*PRIVATE KEY-----|"
-                 r"\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|"
-                 r"(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
-                 r"(?!\[REDACTED\]|<REDACTED>)[A-Za-z0-9_+/.-]{8,}|"
-                 r"https?://[^\s/@:]+:[^\s/@]+@", public_text, re.I):
-        raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
+    incidents.check_public("\n".join([body, title, *(labels or [])]))
     checkout = config.project_path(project)
-    if operation == "upstream":
-        repository = upstream_issue_repository()
-    else:
-        origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                                capture_output=True, text=True, timeout=10)
-        repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                            capture_output=True, text=True, timeout=10)
+    repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt issue: checkout origin must identify a GitHub repository")
     args = ["gh", "issue", "create" if creating else operation]
@@ -2317,26 +2176,10 @@ def _issue_write(project: str, operation: str, body: str, *, actor: str,
     args += ["--reason", reason.replace("-", " ")] if operation == "close" else ["--body-file", "-"]
     env = engines.clean_env()
     env.pop("GH_REPO", None)
-    try:
-        result = subprocess.run(args, input=body, cwd=checkout, env=env,
-                                capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
-        if operation != "upstream":
-            raise
-        error = ValueError if isinstance(exc, (FileNotFoundError, PermissionError)) else UpstreamUncertain
-        raise error("alt issue upstream: GitHub request unavailable or timed out. Operator: check for an "
-                         "existing report before retrying; verify altd's gh installation, authentication "
-                         f"and access to {repository}.") from exc
+    result = subprocess.run(args, input=body, cwd=checkout, env=env, capture_output=True, text=True, timeout=120)
     if result.returncode:
-        if operation == "upstream":
-            raise UpstreamUncertain("alt issue upstream: GitHub did not confirm the report. Operator: check for an existing "
-                             "report before retrying; verify altd's gh authentication and issue access "
-                             f"to {repository}.")
         raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
     url = f"{repository}/issues/{number}" if operation == "close" else result.stdout.strip()
-    if operation == "upstream" and not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url, re.I):
-        raise UpstreamUncertain("alt issue upstream: GitHub returned no confirmed issue URL. Operator: check for the "
-                         f"report before retrying at {repository}/issues")
     with S.project_lock(project):
         S.project_log(project, f"issue-{operation}", actor=actor,
                       title=title if creating else f"Issue #{number}", url=url,
