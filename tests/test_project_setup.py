@@ -191,6 +191,7 @@ class ProjectSetup(AltitudeCase):
         custom.unlink()
         setup.ensure_guards(self.project, slug=slug)
         git("switch", "-c", "wrong-owner", cwd=worktree)
+        (worktree / "draft.txt").write_text("unsaved\n")
         dispatch.request_task_operation(self.project, slug, "resume", "Guards repaired", actor="l3")
         with self.assertRaisesRegex(dispatch.ResumeFailure, "wrong-owner"):
             dispatch.run_task_operation(self.project, slug)

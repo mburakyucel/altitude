@@ -749,7 +749,8 @@ def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, e
     if dirty.returncode != 0 or (dirty.stdout or "").strip():
         raise T.TransitionError(f"{where}, with uncommitted changes; in the worktree, commit or discard them on "
                                 f"{actual}, then `git switch {expected}` and resume")
-    switched = git("switch", expected)
+    # Ignored files are outside `status`, so refuse to overwrite one the task branch tracks.
+    switched = git("switch", "--no-overwrite-ignore", expected)
     if switched.returncode != 0:
         raise T.TransitionError(f"{where}; switching failed: {(switched.stderr or switched.stdout).strip()[:200]}")
     S.append_event(project, slug, "task-branch-restored", left=actual, branch=expected)
@@ -1043,8 +1044,6 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         repo = config.project_path(project)
         if config.RELEASE is not None or config.SOURCE != config.REPO:
             project_setup.ensure_guards(project, slug=slug)
-        # A resume continues owned work, including edits, without needing a fresh remote base.
-        _validate_task_worktree(repo, project, slug, cwd, require_clean=False, restore_branch=True)
     except project_setup.SetupBusy as exc:
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
         T.mark_resume_held(project, slug, str(exc), expected_daemon_request=daemon_request_id,
@@ -1061,6 +1060,14 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             if engines.worker_live(engine, task, job_root=job_root):
                 raise T.TransitionError(f"{slug}: worker {task['agent_id']} is still live after stop; try again")
     except Exception as exc:
+        raise record_resume_failure(project, slug, claim["id"], exc) from exc
+    try:
+        # A resume continues owned work, including edits, without needing a fresh remote base. Branch
+        # restoration waits for the stopped worker so the checkout never changes underneath it.
+        _validate_task_worktree(repo, project, slug, cwd, require_clean=False, restore_branch=True)
+    except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
+        raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
+    except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     rows = claim["messages"]
     prompt = T.render_inbox(rows) or "Continue from your progress file."
