@@ -1,45 +1,62 @@
 # Altitude
 
-Altitude is an AI development workspace for directing software projects with coding agents.
-You focus on architecture, priorities and tradeoffs. Agents take responsibility for the work
-from investigation through implementation, checks and pull requests.
+**You lead. Altitude orchestrates. Agents ship. 24/7**
 
-Each project has an ongoing conversation with a coordinator. It assigns tasks, answers questions
-from recorded decisions and brings unresolved choices back to you. You can get into the details
-at any time: talk directly to a task owner, inspect its live session or redirect its work.
+Be the principal engineer. Set the roadmap. Own the architecture. Make executive decisions.
+Delegate the execution.
 
-Work from your computer or phone. Dictate what you want to change, answer questions and follow
-progress in the browser while agents run on your machine.
-[Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported browser.
+Altitude orchestrates your coding agents as an engineering team. Talk through strategy with your
+project orchestrator, put work in motion and make the calls that need your judgment. Task owners
+carry execution through investigation, implementation, checks and pull requests—in parallel, on
+your machine.
 
-Codex and Claude Code are supported today; one is enough. Their integrations are
-[replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
+**Speak directly to your project orchestrator from your phone.** Describe your next feature,
+settle a tradeoff or change direction. Your agents keep working on your machine after you put
+your phone away.
 
 **Early preview · Linux x86_64 · [Get started](#get-started)**
 
+<img src="docs/images/project-desktop.png" alt="Desktop: discuss Atlas's architecture with L3 while three task owners work in parallel in the adjacent Work panel." width="1440">
+
+*The actual app, with a fictional Atlas project. Set direction with L3; follow parallel delivery
+alongside the conversation.*
+
+## On your phone
+
+**Talk to L3. Steer an owner. Make the call.** The same project, wherever you are.
+
+<p>
+  <a href="docs/images/project-phone.png"><img src="docs/images/project-phone.png" alt="Phone: speak or type to L3 in the Atlas project conversation." width="250"></a>
+  <a href="docs/images/task-phone.png"><img src="docs/images/task-phone.png" alt="Phone: steer the compatibility task owner directly." width="250"></a>
+  <a href="docs/images/decision-phone.png"><img src="docs/images/decision-phone.png" alt="Phone: choose a seven-day or thirty-day rollback window in Needs you." width="250"></a>
+</p>
+
+[Watch the phone walkthrough](docs/images/phone-walkthrough.webm) ·
+[Explore the desktop and phone walkthrough](docs/WALKTHROUGH.md)
+
+*Real interface, fictional data. The recording follows project chat, task steering and a decision.*
+
+## One conversation. An engineering team behind it.
+
 <picture>
-  <source media="(max-width: 600px)" srcset="docs/images/project-phone.png">
-  <img src="docs/images/project-desktop.png" alt="Atlas project conversation: agreed migration constraints alongside three active tasks." width="1440">
+  <source media="(max-width: 600px)" srcset="docs/images/orchestration-phone.svg">
+  <img src="docs/images/orchestration.svg" alt="You set roadmap, architecture and executive decisions with L3. L3 orchestrates parallel L2 owners, each accountable for delivery and any L1 helpers. You can steer owners directly." width="1200">
 </picture>
 
-*The actual app with fictional data. L3 is the project coordinator; L2 agents own tasks.
-[Explore the walkthrough](docs/WALKTHROUGH.md).*
+**Delegate the follow-through.** L3 works through architecture and priorities with you, briefs
+task owners, tracks delivery and answers questions from decisions you've already made. Unresolved
+choices reach **Needs you**; independent work keeps moving.
 
-## How it works
+**Give every task an owner.** Each L2 owns an isolated worktree and delivery through a PR. It can
+enlist L1 helpers and remains accountable for their work. Your project's checks and review govern
+delivery; request a merge hold when you want the final say before merging.
 
-Suppose you are changing a search service's index format. Agree the API contract and rollout
-constraints with the coordinator, then ask it to assign the independent work: client compatibility,
-a resumable backfill and performance checks. Each task gets an owner and an isolated Git worktree;
-owners can delegate bounded work to helpers.
+**Take the controls at any depth.** Talk directly to an owner, inspect its live session or redirect
+the work. Move between project strategy and implementation detail from the same browser, on your
+computer or [your phone](docs/OPERATIONS.md#on-iphone).
 
-Open the compatibility task to say, “Keep pagination tokens valid across the cutover.” Your message
-goes directly to its owner. The coordinator answers a retry question from the agreed contract;
-how long to keep the old index needs your cost and rollback judgment, so it comes to **Needs you**.
-Other tasks can continue.
-
-Owners deliver through pull requests with the project's checks and review. Ask for a merge hold
-when you want to review before merging; otherwise owners can merge when those requirements are met.
-Results inform the next discussion in the project conversation.
+Codex and Claude Code are supported today; one is enough. Their integrations are
+[replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
 ## Get started
 
