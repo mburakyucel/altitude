@@ -133,7 +133,9 @@ was built from (one anonymous request to `api.github.com`) and does nothing when
 version is current or newer. Otherwise it downloads that release's archive and its `.sha256`
 from the release, then installs it exactly as an archive update does. `alt update --version
 v0.1.1` installs a named newer published release, including a `-rc.N` candidate, without the
-lookup; it refuses an older version, which `alt recover` restores. Every download stays on HTTPS.
+lookup; it refuses an older version, which `alt recover` restores. Every download hop stays on
+HTTPS, the verified archive must be the requested version, and the version is compared with the
+installed one again under the installation lock, so a concurrent update cannot cause a downgrade.
 `alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
 you already have, with no network access. Installation checks the archive and manifest before
 selecting an immutable version. Activation waits for dispatch,

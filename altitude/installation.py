@@ -20,7 +20,7 @@ import sys
 import tarfile
 import tempfile
 import time
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
 VERSION = re.compile(r"v0\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?\Z")
@@ -97,12 +97,19 @@ def version_key(version: str) -> tuple:
     return int(match[1]), int(match[2]), int(match[3]) if match[3] else float("inf")
 
 
+class _HTTPSRedirects(HTTPRedirectHandler):
+    """Every hop of a release download stays on HTTPS, so no plain-HTTP hop can redirect it elsewhere."""
+
+    def redirect_request(self, request, response, code, message, headers, url):
+        if not url.startswith("https://"):
+            raise ValueError("A release download was redirected away from HTTPS")
+        return super().redirect_request(request, response, code, message, headers, url)
+
+
 def _get(url: str, limit: int) -> bytes:
     """One HTTPS GET with no identifying headers beyond a generic User-Agent."""
     request = Request(url, headers={"User-Agent": "altitude", "Accept": "application/vnd.github+json"})
-    with urlopen(request, timeout=60) as response:
-        if not response.geturl().startswith("https://"):
-            raise ValueError("A release download was redirected away from HTTPS")
+    with build_opener(_HTTPSRedirects).open(request, timeout=60) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("Release download exceeds its size limit")
@@ -147,7 +154,7 @@ def update(version: str | None = None) -> dict:
         archive = Path(folder) / f"altitude-{version}.tar.gz"
         archive.write_bytes(_get(base, ARCHIVE_LIMIT))
         checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
-        return {**install(archive, checksum[0] if checksum else "", _prefix()), "updated": True,
+        return {**install(archive, checksum[0] if checksum else "", _prefix(), newer=version), "updated": True,
                 "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
@@ -398,7 +405,9 @@ def service(operation: str) -> dict | str:
         return native
 
 
-def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
+def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: str | None = None) -> dict:
+    """Verify, stage and activate an archive. `newer` names the published release an update expects:
+    the verified archive must be that version, and newer than the one installed when the lock is held."""
     global __package__
     prefix = (prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
     if sys.version_info < (3, 12):
@@ -406,6 +415,8 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
     with tempfile.TemporaryDirectory(prefix="altitude-stage-") as folder:
         stage = Path(folder)
         release = extract(archive, checksum, stage)
+        if newer is not None and release["version"] != newer:
+            raise ValueError(f"The {newer} release contains {release['version']}; the installed application is unchanged")
         # The standalone installer imports only the verified application tree.
         if __package__ in (None, ""):
             sys.dont_write_bytecode = True
@@ -435,7 +446,9 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
                 raise RuntimeError("The current application path is not an owned version link")
             previous = os.readlink(current) if current.is_symlink() else None
             if previous:
-                metadata(_version_path(prefix, previous))
+                installed = metadata(_version_path(prefix, previous))["version"]
+                if newer is not None and version_key(newer) <= version_key(installed):
+                    raise ValueError(f"Altitude {installed} is already installed; {newer} is not newer")
             service = platform.service_path()
             previous_service = service.read_text() if service.exists() else None
             native = _require_owned_unit()

@@ -1,6 +1,7 @@
 """Real private archives and lifecycle state; native service effects stay in fixtures."""
 import hashlib
 import io
+import http.server
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -611,13 +613,38 @@ class PublishedReleaseCase(InstallationCase):
 class PublishedUpdate(PublishedReleaseCase):
     """`alt update` without an archive."""
 
-    def test_download_redirected_to_plain_http_is_refused(self):
-        response = mock.MagicMock()
-        response.__enter__.return_value.geturl.return_value = "http://example.com/altitude-v0.1.1.tar.gz"
-        with mock.patch.object(installation, "urlopen", return_value=response):
-            with self.assertRaisesRegex(ValueError, "redirected away from HTTPS"):
-                self.download(f"{self.RELEASES}/download/v0.1.1/altitude-v0.1.1.tar.gz", 1024)
-        response.__enter__.return_value.read.assert_not_called()
+    def test_every_download_redirect_hop_must_stay_on_https(self):
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/next")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # The first hop of a real download is always HTTPS; a plain-HTTP hop after it is refused before it is requested.
+        with self.assertRaisesRegex(ValueError, "redirected away from HTTPS"):
+            self.download(f"http://127.0.0.1:{server.server_port}/first", 1024)
+
+    def test_the_archive_must_be_the_requested_release_and_newer_under_the_lock(self):
+        mislabelled, digest = self.archive("v0.0.9")
+        download = f"{self.RELEASES}/download/v0.1.1/altitude-v0.1.1.tar.gz"
+        self.published.update({download: mislabelled.read_bytes(), download + ".sha256": digest.encode()})
+        with self.assertRaisesRegex(ValueError, "The v0.1.1 release contains v0.0.9"):
+            installation.update("v0.1.1")
+        # Another update activated v0.2.0 while this one was downloading v0.1.1.
+        newer, digest = self.archive("v0.2.0", edited=True)
+        installation.install(newer, digest, self.prefix)
+        self.publish("v0.1.1")
+        with self.assertRaisesRegex(ValueError, "Altitude v0.2.0 is already installed; v0.1.1 is not newer"):
+            installation.update("v0.1.1")
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.2.0")
+        self.assertFalse((self.prefix / "versions/v0.1.1").exists())
 
     def test_latest_release_is_downloaded_verified_and_activated(self):
         download = self.publish("v0.1.1", latest={"tag_name": "v0.1.1", "prerelease": False, "draft": False})
