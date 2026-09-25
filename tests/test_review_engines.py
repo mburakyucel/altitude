@@ -10,7 +10,7 @@ import sys
 import time
 from unittest.mock import patch
 
-from altitude import config, engines, route
+from altitude import config, engines, platform, route
 
 
 class ReviewEngineTests(AltitudeCase):
@@ -134,13 +134,13 @@ class ReviewEngineTests(AltitudeCase):
             engines._review_served(self.runtime).touch()
         self.patch(engines, "review_capability", return_value={"available": True})
         self.patch(engines, "_review_command", return_value=["fixture-only"])
-        self.patch(engines, "_unit_active", return_value=False)
+        self.patch(platform, "job_active", return_value=False)
         payload = result if result is not None else {"text": "Needs a fix", "findings": [
             {"severity": "high", "title": "Missing check", "body": "Evidence", "path": "code.py", "line": 2}],
             "limitations": ["Tests were not executed."]}
         record = {"result": json.dumps(payload) if answer is None else answer, "usage": {"input_tokens": 20}}
         program = f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit({exitcode})"
-        service = self.patch(engines, "_codex_service_command", return_value=[sys.executable, "-I", "-c", program])
+        service = self.patch(platform, "job_command", return_value=[sys.executable, "-I", "-c", program])
         return service
 
     def test_result_process_lifecycle_without_duration_deadline(self):
@@ -234,7 +234,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_unavailable_inspection_refuses_before_launch_or_prompt(self):
         self.fixture()
-        self.patch(engines, "_unit_active", side_effect=RuntimeError("user bus unavailable"))
+        self.patch(platform, "job_active", side_effect=RuntimeError("user bus unavailable"))
         spawn = self.patch(engines.subprocess, "Popen")
         started = self.patch(engines, "review_stop")
         result = engines.review("No model call", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
@@ -375,7 +375,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_unit_only_restart_receipt_keeps_unknown_until_terminal_evidence(self):
         worker = {"unit": "altitude-review-" + "b" * 32 + ".service", "pid": None, "started_ticks": None}
-        active = self.patch(engines, "_unit_active", return_value=False)
+        active = self.patch(platform, "job_active", return_value=False)
         status = self.patch(engines, "service_status", return_value={"load_state": "not-found", "state": "inactive"})
         self.assertIsNone(engines.review_active(worker))
         stop = self.patch(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", ""))
@@ -393,8 +393,23 @@ class ReviewEngineTests(AltitudeCase):
         self.assertIsNone(engines.review_active({"unit": "altitude.service"}))
         self.assertFalse(engines.review_stop({"unit": "altitude.service"}))
         worker = {"unit": "altitude-review-" + "a" * 32 + ".service", "pid": os.getpid(), "started_ticks": "wrong"}
-        self.patch(engines, "_unit_active", side_effect=RuntimeError("unknown"))
+        self.patch(platform, "job_active", side_effect=RuntimeError("unknown"))
         self.assertIsNone(engines.review_active(worker))
+
+    def test_a_launcher_that_exits_at_once_reads_as_ended_not_unknown(self):
+        proc = self.tmp / "proc"
+        stat = proc / "4242" / "stat"
+        stat.parent.mkdir(parents=True)
+        self.patch(platform, "PROC", proc)
+        for state, running in (("R", True), ("Z", False)):
+            stat.write_text("4242 (py) " + " ".join([state, *["0"] * 18, "777", *["0"] * 10]))
+            with self.subTest(state=state):
+                self.assertEqual(platform.process_start(4242), "777")
+                worker = {"unit": "altitude-review-" + "c" * 32 + ".service", "pid": 4242, "started_ticks": "777"}
+                self.assertIs(engines._review_launcher(worker), running)
+                self.assertIsNone(engines._review_launcher({**worker, "started_ticks": "Z"}))
+        stat.unlink()
+        self.assertIs(engines._review_launcher(worker), False)
 
     def test_missing_adapter_refuses_without_process(self):
         self.patch(engines, "review_capability", return_value={"available": False, "why": "Unsupported confinement"})

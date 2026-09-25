@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from tests.support import REPO, AltitudeCase, add_worktree, make_repo
-from altitude import config, dispatch, engines, server, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 
 class TestServiceLifecycle(unittest.TestCase):
@@ -59,7 +59,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
         # I-20260907-171446: replacement altd adopts both engines from records and units, without registry polling.
         with mock.patch.dict(engines._codex_processes, {}, clear=True), \
              mock.patch.object(engines, "claude_agents", side_effect=AssertionError("unexpected registry polling")), \
-             mock.patch.object(engines, "_unit_active", return_value=True) as unit_active:
+             mock.patch.object(platform, "job_active", return_value=True) as unit_active:
             self.assertEqual(dispatch.poll(self.project), [])
             self.assertCountEqual([call.args[0] for call in unit_active.call_args_list],
                                   ["test-claude.service", "test-codex.service"])

@@ -4,7 +4,7 @@ import json
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, state as S
+from altitude import config, engines, platform, state as S
 
 
 MODEL_ERROR = "There's an issue with the selected model (fable). It may not exist or you may not have access to it."
@@ -144,7 +144,7 @@ class TestFailureEvidence(AltitudeCase):
                 "item": {"type": "file_change"}}])):
                 paths["stdout"].write_text(stream(init, *activity, failed))
                 with self.subTest(engine=engine, live=live, activity=activity), \
-                     mock.patch.object(engines, "_unit_active", return_value=live), \
+                     mock.patch.object(platform, "job_active", return_value=live), \
                      mock.patch.object(engines, "_codex_session_model", return_value={}):
                     row = engines.worker(engine, {"agent_id": engine}, job_root=self.tmp)
                 self.assertEqual(row["sessionId"], "session")

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from tests.support import AltitudeCase, make_repo
-from altitude import config, server, state as S, tasks as T, terminal
+from altitude import config, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
 
@@ -323,9 +323,9 @@ class TestAgentRefusal(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.proc = self.tmp / "proc"
-        self.patch(terminal, "PROC", self.proc)
-        self.client = terminal._hex_address(*self.PEER)[0]
-        self.server = terminal._hex_address(*self.LOCAL)[0]
+        self.patch(platform, "PROC", self.proc)
+        self.client = platform._hex_address(*self.PEER)[0]
+        self.server = platform._hex_address(*self.LOCAL)[0]
         self.altd = os.getpid()
 
     def layout(self, holder_cgroup: str, holder_parent: int = 1) -> bool:
@@ -360,7 +360,7 @@ class TestAgentRefusal(AltitudeCase):
 
     def test_a_client_on_the_other_address_family_is_still_identified(self):
         # A review found an IPv6 client reaching an IPv4 address was missed in tcp and passed as remote.
-        mapped = lambda address: terminal._hex_address(f"::ffff:{address[0]}", address[1])[0]
+        mapped = lambda address: platform._hex_address(f"::ffff:{address[0]}", address[1])[0]
         for cgroup, refused in (("/app.slice/altitude-codex-a.service", True), ("/app.slice/app-chrome-1.scope", False)):
             with self.subTest(cgroup=cgroup):
                 shutil.rmtree(self.proc, ignore_errors=True)
@@ -393,11 +393,11 @@ class TestAgentRefusal(AltitudeCase):
     def test_ipv6_rows_are_matched(self):
         peer, local = ("::1", 51000), ("::1", 8443)
         fake_proc(self.proc, {4000: (1, "/app.slice/altitude-codex-a.service", [9])},
-                  [(terminal._hex_address(*peer)[0], terminal._hex_address(*local)[0], 9)], family="6")
+                  [(platform._hex_address(*peer)[0], platform._hex_address(*local)[0], 9)], family="6")
         self.assertTrue(terminal.agent_connection(peer, local))
 
     def test_a_real_connection_from_altd_itself_is_refused(self):
-        self.patch(terminal, "PROC", Path("/proc"))
+        self.patch(platform, "PROC", Path("/proc"))
         listener = socket.create_server(("127.0.0.1", 0))
         self.addCleanup(listener.close)
         client = socket.create_connection(listener.getsockname())

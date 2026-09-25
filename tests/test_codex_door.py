@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import config, dispatch, engines, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 PROJECT = "door"
 
@@ -68,9 +68,9 @@ class TestCodexAdapter(AltitudeCase):
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
              mock.patch.object(engines, "codex_sandbox", return_value=["s1", "s2"]), \
              mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
-             mock.patch.object(engines, "_codex_service_command",
+             mock.patch.object(platform, "job_command",
                                side_effect=lambda unit, command, env: ["svc", unit, *command]), \
-             mock.patch.object(engines, "_unit_active", return_value=False):
+             mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
                                    extra_env={"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "1"}, **kw)
         return res, procs
@@ -116,9 +116,9 @@ class TestCodexAdapter(AltitudeCase):
                                        "session_id": None, "stopped": None})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thr-9"}\n')
         paths["stderr"].write_text("boom\n")
-        with mock.patch.object(engines, "_unit_active", return_value=True):
+        with mock.patch.object(platform, "job_active", return_value=True):
             self.assertEqual(engines.codex_worker(wid, job_root=self.job_root)["state"], "working")
-        with mock.patch.object(engines, "_unit_active", return_value=False):
+        with mock.patch.object(platform, "job_active", return_value=False):
             row = engines.codex_worker(wid, job_root=self.job_root)
             self.assertEqual((row["state"], row["status"], row["detail"], row["sessionId"]),
                              ("failed", "exited", "boom\n", "thr-9"))
@@ -137,25 +137,37 @@ class TestCodexAdapter(AltitudeCase):
         paths["stdout"].write_text("")
         done = subprocess.CompletedProcess([], 0, "", "")
         with mock.patch.object(engines.subprocess, "run", return_value=done) as run, \
-             mock.patch.object(engines, "_unit_active", return_value=False):
+             mock.patch.object(platform, "job_active", return_value=False):
             self.assertEqual(engines.codex_stop(wid, job_root=self.job_root), "Codex worker stopped")
             self.assertEqual(engines.codex_worker(wid, job_root=self.job_root)["state"], "stopped")
-        self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", "altitude-codex-w-stop.service"])
+        self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", "altitude-codex-w-stop.service"])
         with mock.patch.object(engines.subprocess, "run", return_value=done), \
-             mock.patch.object(engines, "_unit_active", return_value=True):
+             mock.patch.object(platform, "job_active", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "still running"):
                 engines.codex_stop(wid, job_root=self.job_root)
+
+    def test_a_timed_out_turn_stops_its_unit_with_the_inherited_environment(self):
+        proc = mock.Mock(pid=4242)
+        proc.communicate.side_effect = [subprocess.TimeoutExpired("codex", 0), ("", "")]
+        with mock.patch.object(engines.subprocess, "Popen", return_value=proc), \
+             mock.patch.object(platform, "job_stop") as stop, self.assertRaises(subprocess.TimeoutExpired):
+            engines.codex_exec("Prompt", cwd=self.worktree, timeout=0)
+        stop.assert_called_once()
+        self.assertEqual(stop.call_args.kwargs, {})
+        self.assertEqual(len(stop.call_args.args), 1)
+        self.assertTrue(stop.call_args.args[0].startswith(engines.CODEX_UNIT_PREFIX))
+        proc.kill.assert_called_once()
 
     def test_service_launcher_is_synchronous_and_scrubs_the_user_bus_before_codex_starts(self):
         child_env = {"PATH": os.environ["PATH"], "ALTITUDE_PROJECT": "altitude", "ALTITUDE_TASK": "task"}
         script = ('import json, os; print(json.dumps({'
                   '"project": os.environ.get("ALTITUDE_PROJECT"), "task": os.environ.get("ALTITUDE_TASK"), '
                   '"secret": os.environ.get("MANAGER_FAKE_SECRET"), "bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS")}))')
-        command = engines._codex_service_command("altitude-codex-test.service", [sys.executable, "-c", script], child_env)
+        command = platform.job_command("altitude-codex-test.service", [sys.executable, "-c", script], child_env)
         for flag in ("--wait", "--pipe", "--property=NoNewPrivileges=no", "--property=KillMode=control-group"):
             self.assertIn(flag, command)
         child = command[command.index("--") + 1:]
-        self.assertEqual(child[:2], [engines.ENV_BIN, "-i"])
+        self.assertEqual(child[:2], [platform.ENV_BIN, "-i"])
         result = subprocess.run(child, capture_output=True, text=True, check=True,
                                 env={"PATH": os.environ["PATH"], "MANAGER_FAKE_SECRET": "must-not-cross",
                                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
@@ -175,7 +187,7 @@ class TestCodexAdapter(AltitudeCase):
                                    communicate=lambda text, timeout=None: seen.update(stdin=text) or (stdout, ""))
 
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines, "_codex_service_command", side_effect=lambda unit, command, env: command):
+             mock.patch.object(platform, "job_command", side_effect=lambda unit, command, env: command):
             out = engines.codex_exec("hello", cwd=self.worktree, effort="high", resume="thr-l3",
                                      extra_env={"ALTITUDE_ACTOR": "l3"})
         self.assertEqual(seen["cmd"][:3], [config.CODEX_BIN, "exec", "resume"])

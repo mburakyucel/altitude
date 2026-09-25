@@ -7,7 +7,7 @@ import sys
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, state as S
+from altitude import config, engines, platform, state as S
 
 
 class _Input(io.BytesIO):
@@ -52,7 +52,7 @@ class TestForegroundUnits(AltitudeCase):
                 with self.assertRaisesRegex(RuntimeError, "intercepted"):
                     execute("Probe evidence", cwd=self.repo, timeout=37, durable_timeout=True)
                 cmd = popen.call_args.args[0]
-                self.assertEqual(cmd[0], engines.SYSTEMD_RUN_BIN)
+                self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
                 for flag in ("--property=RuntimeMaxSec=37", "--property=TimeoutStopSec=5",
                              "--property=KillMode=control-group", "--property=SendSIGKILL=yes"):
                     self.assertIn(flag, cmd)
@@ -65,7 +65,7 @@ class TestForegroundUnits(AltitudeCase):
             for resume in (False, True):
                 with self.subTest(model=model, resume=resume), \
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
-                     mock.patch.object(engines, "_unit_active", return_value=True), \
+                     mock.patch.object(platform, "job_active", return_value=True), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: _Process(kw["stdout"])) as popen:
                     result = self.launch(resume=resume, model=model)
                     self.assertEqual(result["returncode"], 0)
@@ -73,13 +73,13 @@ class TestForegroundUnits(AltitudeCase):
                     self.assertEqual((row["state"], row["sessionId"], row["engine_model"]),
                                      ("working", "session", "observed-model"))
                     cmd = popen.call_args.args[0]
-                    self.assertEqual(cmd[0], engines.SYSTEMD_RUN_BIN)
+                    self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
                     for flag in ("--user", "--wait", "--pipe", f"--unit={row['unit']}",
                                  "--property=KillMode=control-group", "--property=SendSIGKILL=yes"):
                         self.assertIn(flag, cmd)
                     self.assertNotIn("--service-type=forking", cmd)
                     child = cmd[cmd.index("--") + 1:]
-                    self.assertEqual(child[:2], [engines.ENV_BIN, "-i"])
+                    self.assertEqual(child[:2], [platform.ENV_BIN, "-i"])
                     self.assertIn("ALTITUDE_TASK=worker", child)
                     self.assertFalse(any(arg.startswith("DBUS_SESSION_BUS_ADDRESS=") for arg in child))
                     cli = child[child.index(config.CLAUDE_BIN):]
@@ -113,7 +113,7 @@ class TestForegroundUnits(AltitudeCase):
                     return proc
                 with mock.patch.object(engines, "claude_agents", return_value=[]), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-                     mock.patch.object(engines, "_unit_active", side_effect=lambda _unit: processes[-1].poll() is None):
+                     mock.patch.object(platform, "job_active", side_effect=lambda _unit, _env: processes[-1].poll() is None):
                     result = self.launch(model="fable")
                     processes[-1].wait(timeout=5)
                     row = engines.worker("claude", {"agent_id": result["agent"]["id"]}, job_root=self.job_root)
@@ -126,17 +126,17 @@ class TestForegroundUnits(AltitudeCase):
 
     def test_incident_171446_resume_rejects_another_session_and_stops_its_unit(self):
         with mock.patch.object(engines, "claude_agents", return_value=[]), \
-             mock.patch.object(engines, "_unit_active", return_value=False), \
+             mock.patch.object(platform, "job_active", return_value=False), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: _Process(kw["stdout"], "wrong")), \
              mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
             result = self.launch(resume=True)
         self.assertEqual(result["returncode"], 1)
         self.assertIn("different", result["stderr"])
-        self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", result["agent"]["unit"]])
+        self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", result["agent"]["unit"]])
 
     def test_incident_171446_startup_exception_stops_the_unbound_unit(self):
         with mock.patch.object(engines, "claude_agents", return_value=[]), \
-             mock.patch.object(engines, "_unit_active", return_value=False), \
+             mock.patch.object(platform, "job_active", return_value=False), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: _Process(kw["stdout"])), \
              mock.patch.object(engines, "_worker_events", side_effect=OSError("output disk unavailable")), \
              mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
@@ -144,7 +144,7 @@ class TestForegroundUnits(AltitudeCase):
                 self.launch()
         record = S.read_json(next(self.job_root.glob("*.json")))
         self.assertTrue(record["stopped"])
-        self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", record["unit"]])
+        self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", record["unit"]])
         self.assertNotIn(record["id"], engines._codex_processes)
 
     def test_incident_171446_launch_and_resume_stop_only_the_named_orphan_first(self):
@@ -159,7 +159,7 @@ class TestForegroundUnits(AltitudeCase):
             with self.subTest(resume=resume), \
                  mock.patch.object(engines, "claude_agents", return_value=rows), \
                  mock.patch.object(engines, "claude_stop", side_effect=lambda worker: order.append(worker)), \
-                 mock.patch.object(engines, "_unit_active", return_value=True), \
+                 mock.patch.object(platform, "job_active", return_value=True), \
                  mock.patch.object(engines.subprocess, "Popen", side_effect=popen):
                 self.launch(resume=resume)
             self.assertEqual(order, ["orphan", "launch"])
@@ -196,7 +196,7 @@ class TestForegroundUnits(AltitudeCase):
         paths["stderr"].write_text("")
         for key in ("stdout", "stderr"):
             os.utime(paths[key], (100, 100))
-        with mock.patch.object(engines, "_unit_active", return_value=False):
+        with mock.patch.object(platform, "job_active", return_value=False):
             row = engines.worker("claude", {"agent_id": "worker"}, job_root=self.job_root)
         self.assertEqual(engines.worker_detail("claude", row)[1].timestamp(), 100)
 
@@ -205,7 +205,7 @@ class TestForegroundUnits(AltitudeCase):
         unit = engines._claude_unit("worker")
         S.write_json(paths["record"], {"engine": "claude", "id": "worker", "unit": unit})
         for alive in (True, False):
-            with self.subTest(alive=alive), mock.patch.object(engines, "_unit_active", return_value=alive), \
+            with self.subTest(alive=alive), mock.patch.object(platform, "job_active", return_value=alive), \
                  mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
                  mock.patch.object(engines, "claude_stop") as registry_stop:
                 if alive:
@@ -215,7 +215,7 @@ class TestForegroundUnits(AltitudeCase):
                 else:
                     engines.remove_l2_worker("claude", "worker", job_root=self.job_root)
                     self.assertTrue(S.read_json(paths["record"])["stopped"])
-                self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", unit])
+                self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", unit])
                 registry_stop.assert_not_called()
 
     def test_incident_171446_legacy_adoption_requires_unit_and_session_transcript(self):
@@ -227,10 +227,10 @@ class TestForegroundUnits(AltitudeCase):
         transcript = config.HOME / ".claude/projects/project/legacy-session.jsonl"
         transcript.parent.mkdir(parents=True)
         with mock.patch.object(engines, "claude_agents", side_effect=AssertionError("poll must not read registry")), \
-             mock.patch.object(engines, "_unit_active", return_value=True) as active:
+             mock.patch.object(platform, "job_active", return_value=True) as active:
             self.assertFalse(engines.worker_live("claude", task, job_root=self.job_root))
             transcript.write_text('{"type":"assistant","message":{"content":[]}}\n')
             self.assertTrue(engines.worker_live("claude", task, job_root=self.job_root))
-            active.assert_called_with(engines._claude_unit("project/old-1"))
+            self.assertEqual(active.call_args.args[0], engines._claude_unit("project/old-1"))
             active.return_value = False
             self.assertFalse(engines.worker_live("claude", task, job_root=self.job_root))

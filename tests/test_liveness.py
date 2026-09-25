@@ -7,7 +7,7 @@ import time
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import state as S, engines, dispatch, server, tasks as T
+from altitude import state as S, engines, dispatch, server, tasks as T, platform
 
 
 class TestDeadWorker(AltitudeCase):
@@ -51,7 +51,7 @@ class TestDeadWorker(AltitudeCase):
                     "errors": ["provider rejected the request"]}) if stream == "result" else
                     '{"type":"assistant","message":{"content":"last provider output before exit"}}' if stream == "stdout" else "")
                 paths["stderr"].write_text("launcher could not open settings" if stream == "stderr" else "")
-                with mock.patch.object(engines, "_unit_active", return_value=False), \
+                with mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(server.incidents, "system_fault") as fault:
                     item = dispatch.poll(self.project)[0]
                     self.assertTrue(item["died"])
