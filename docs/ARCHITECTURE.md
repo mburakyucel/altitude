@@ -150,8 +150,9 @@ rollouts leave the observation unknown and are retried while the turn runs. The 
 kept separately, so recording a default does not turn it into an override on resume. Status, task
 header chips, and the Monitor API expose the observation; old records remain readable.
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
-an unavailable task read, including a poll crossing the task directory's archive move, returns
-HTTP 404 without a failure traceback. Subsequent reads resolve the archived task normally.
+a missing task returns HTTP 404 without a failure traceback. Archival only renames the live task
+folder into the archive, so a status read that misses the live record reads the archived one; polls
+and action responses crossing the move return the archived task and state.
 Task status, documents and events share the archive lock while their snapshot is read.
 `GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
