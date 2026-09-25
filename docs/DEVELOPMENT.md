@@ -275,7 +275,7 @@ exports remain available to existing workers. Changes to code, personas, hooks, 
 and scripts require normal activation. Tests use disposable repositories and state for this path;
 ordinary dispatch and resume never clean, stash or reset deployment edits.
 Archive installations instead pin their immutable version's resources. Build archives through
-[the private builder](RELEASING.md#build-a-private-archive); tests never install into the operator's
+[the release builder](RELEASING.md#build-the-release-files); tests never install into the operator's
 home, modify OS trust or run user services. A phone viewport is not physical phone TLS acceptance.
 
 Detached-project reads currently return HTTP 500 with an unknown-project error while the UI
@@ -310,6 +310,8 @@ by `alt land` in every repository whose base commit ships that workflow; owners 
 relevant tests during development instead of repeating a full local suite at every landing.
 Python, web unit tests, typecheck/build and both browser viewports must execute and pass.
 No unrun or failed phase is green; live-provider validation stays deferred.
+`.github/workflows/release.yml` runs only for a pushed `v0.*` tag and publishes that checked commit's
+release; see [publish a release](RELEASING.md#publish-a-release).
 
 Every other pull request, from a fork or from an author other than the repository owner, runs the
 same `make check` through `.github/workflows/hosted-checks.yml` on a GitHub-hosted runner with a

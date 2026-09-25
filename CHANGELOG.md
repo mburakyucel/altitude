@@ -205,3 +205,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   recovery. Version publication is explicit; merged changes continue activating automatically.
 - Live-provider testing, including the real tiny validation task, is deferred under the operator's
   testing policy. See the [coverage limits](docs/DEVELOPMENT.md#coverage-and-limits).
+
+- One command installs the latest published release on Linux:
+  `curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`.
+  The script checks the machine and names the fix for anything missing, downloads the release's
+  archive and installer, runs them only when they match the checksums built into the script, and
+  prints the address, certificate fingerprint and next steps. On macOS it stops before downloading
+  and reports what it found. Pushing an approved `v0.*` tag publishes the release: a workflow
+  checks the commit's main `check` run and its dated changelog section, then builds, attests and
+  uploads the archive, `install.py`, `install.sh` and `SHA256SUMS`.

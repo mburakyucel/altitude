@@ -27,10 +27,41 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-Obtain `install.py`, the versioned `.tar.gz` archive and its SHA-256 checksum from a published
-[release](RELEASING.md), or from the maintainer while none is published. The example version below is a placeholder, not a published release.
-Verify the source of the installer and checksum; a checksum from the same untrusted download
-does not establish authenticity. Run these commands as the account that will use Altitude:
+On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs the
+latest published release as the account that will use Altitude:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+```
+
+`install.sh` belongs to one published release. It checks the machine first and stops with the fix
+when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
+`openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
+each against the SHA-256 written into the script when the release was built, runs
+`install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
+steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
+Nothing is run from a download that does not match, and nothing runs as root. The script is one
+function called on its last line, so a download cut off midway does nothing. `latest` names the
+newest stable release; a release candidate installs from its own tag, for example
+`https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh`.
+
+The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
+To verify the script before running it, download it and check its build provenance with the GitHub
+CLI; the release workflow attests every release file:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh &&
+  gh attestation verify install.sh --repo mburakyucel/altitude &&
+  sh install.sh
+```
+
+On macOS the command stops before downloading anything and reports the macOS version, chip and
+Python it found; the native macOS runtime is not delivered yet ([#225](https://github.com/mburakyucel/altitude/issues/225)).
+
+The same installer runs by hand from the release files, for example offline or with a private
+archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
+and verify the checksum's source; a checksum from the same untrusted download does not establish
+authenticity.
 
 ```sh
 python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>'

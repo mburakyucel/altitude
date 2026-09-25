@@ -83,7 +83,9 @@ Remaining before public release:
   the [CLA](../CLA.md). A CLA-checking bot is an optional repository setting the maintainer may add.
 - Maintainer actions on release day, in this order: review the
   [history audit](https://github.com/mburakyucel/altitude/issues/233) result, enable private
-  vulnerability reporting in the repository's security settings, review branch protection, apply
+  vulnerability reporting in the repository's security settings, review branch protection, add a
+  tag ruleset reserving `v*` tags to the maintainer and turn on immutable releases
+  ([publish a release](RELEASING.md#publish-a-release)), apply
   the repository description and topics below, then flip visibility.
 - Recommended description: **“Persistent project orchestration for coding agents: project direction,
   directly reachable task owners, isolated worktrees and checked PRs.”** Recommended topics:

@@ -57,10 +57,11 @@ preserves review and publication decisions; it does not establish hosted billing
    validation tasks. Any changed code gives a new candidate and new evidence. A version's
    notes and observations must identify which SHA was observed.
 6. Present the readiness record and proposed notes to the operator for the publication decision.
-   Approval names the version and SHA. Then deliver the dated changelog section through a PR
-   and publish the immutable source tag/GitHub release only as authorized. If that PR changes
-   the release SHA, repeat the deterministic gate on the final SHA before publishing it.
-   Use the same source for notes and tag; an early preview remains labeled as such.
+   Approval names the version and SHA. Then deliver the dated changelog section
+   (`## v0.1.0 — 2026-10-01`) through a PR. If that PR changes the release SHA, repeat the
+   deterministic gate on the final SHA before publishing it. The operator publishes by pushing
+   the approved tag to that SHA ([publish a release](#publish-a-release)). Use the same source for
+   notes and tag; an early preview remains labeled as such.
 
 The readiness record can be a small file attached to the task report; it needs no new daemon
 record or release service. Include: version, candidate SHA, included PRs, previous known-good
@@ -107,7 +108,31 @@ scanned: a clean run is evidence within that coverage, not a guarantee. Bring an
 (history rewrite, credential rotation, file removal, visibility change) to the operator as a
 decision; the audit itself changes nothing.
 
-## Build a private archive
+## Publish a release
+
+Pushing a `v0.*` tag runs `.github/workflows/release.yml` on a GitHub-hosted runner with GitHub's
+own token and no other secrets; it never creates a tag. The job refuses to publish unless the
+tag's commit is on `main`, that exact commit has a successful push `check` run of the self-hosted
+workflow, and `CHANGELOG.md` has the version's dated section. It then builds the release files from
+the tag, attests their build provenance and creates the GitHub release with that section as its
+notes. A `-rc.N` tag is published as a prerelease; any other version becomes the latest release,
+which the [one-command install](SETUP.md#install-the-application) fetches.
+
+```sh
+git tag v0.1.0 <approved SHA>
+git push origin v0.1.0
+```
+
+Two repository settings make the tag the operator's approval: a tag ruleset that lets only the
+operator create, move or delete `v*` tags, and immutable releases, so a published release's tag and
+files cannot change. GitHub offers artifact attestations to private repositories only on Enterprise
+plans, so the job attests once the repository is public and skips that step while it is private.
+Release files cannot be downloaded without signing in while the repository is private.
+
+A failed job publishes nothing; fix the cause and re-run the job. A release that published wrong
+content is followed by a new version, never by moving its tag or replacing its files.
+
+## Build the release files
 
 From the clean, committed candidate checkout, with the locked web build tools available:
 
@@ -115,18 +140,21 @@ From the clean, committed candidate checkout, with the locked web build tools av
 python3.12 scripts/build_release.py --version v0.1.0-rc.1 --output /tmp/altitude-release
 ```
 
-Use the approved candidate label. The builder exports the exact Git revision, installs frozen web
-dependencies and builds the UI, then emits the application archive, `install.py` and archive SHA-256
-file. The manifest records source identity and every packaged file hash. The archive contains the
+The release workflow runs the same command with `--notes`, which also writes the version's changelog
+section and refuses a version without one. The builder exports the exact Git revision, installs
+frozen web dependencies and builds the UI, then emits the application archive, its SHA-256 file,
+`install.py`, `install.sh` and `SHA256SUMS`. `install.sh` is `scripts/install.sh` with the version,
+repository and the SHA-256 of the archive and `install.py` filled in; the unfilled template refuses
+to run. The manifest records source identity and every packaged file hash. The archive contains the
 CLI, Python daemon, built UI, personas, hooks, templates, schemas, the license and third-party
-notices; users need no source build.
-Existing archive names are immutable. Building artifacts creates no tag, GitHub release or public
-publication. Publish the installer and checksum only as the operator authorizes.
+notices; users need no source build. Existing archive names are immutable. Building the files by
+hand creates no tag, GitHub release or public publication.
 
 Record archive checksum and install/update/recovery evidence alongside candidate checks. The initial
-runtime target is Ubuntu 24.04 x86_64; macOS 15/26 Apple silicon remains pending native confinement
-and host validation. Deterministic fixtures do not establish physical Mac, fresh-machine, browser
-trust or live provider compatibility. No public support claim precedes that evidence.
+runtime target is Ubuntu 24.04 x86_64; on macOS, `install.sh` stops before downloading anything
+until the native runtime and host validation exist. Deterministic fixtures do not establish
+physical Mac, fresh-machine, browser trust or live provider compatibility. No public support claim
+precedes that evidence.
 
 ## Recovery
 
