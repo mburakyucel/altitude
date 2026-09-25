@@ -688,17 +688,17 @@ The same request path selects the transcription backend every composer uses:
 
 ```sh
 alt machine set --voice browser --reason 'Recognize in the browser'   # the default
-alt machine set --voice local --reason 'Transcribe with the local speech service'
+alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'My speech server'
 alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
 alt machine set --unset-voice --reason 'Back to the default'
 ```
 
-`--voice` accepts `browser`, `local` or an `http(s)` URL without credentials or a query string;
-`--voice-model` and `--voice-key-file` (a file, or `-` for stdin) accompany a URL only, so the key
-is never on a command line. `machine show` reports `voice` with an endpoint key shown as `set`; the
-key itself stays in the private settings and request files under the runtime home and never
-appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
-backend needs and where audio goes.
+`--voice` accepts `browser` or the `http(s)` URL of an OpenAI-compatible speech service, without
+credentials or a query string; `--voice-model` and `--voice-key-file` (a file, or `-` for stdin)
+accompany a URL only, so the key is never on a command line. `machine show` reports `voice` with
+a key shown as `set`; the key itself stays in the private settings and request files under the
+runtime home and never appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
+backend needs, where audio goes and how to run a speech service.
 
 ### Projects folder
 

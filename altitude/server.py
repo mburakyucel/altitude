@@ -15,11 +15,9 @@ import ssl
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import traceback
-import wave
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,12 +78,11 @@ def design_viewer_url(project: str) -> str | None:
     return f"/{DESIGN_ROUTE}/{quote(project)}/{DESIGN_ENTRY}" if (root / DESIGN_ENTRY).is_file() else None
 
 
-# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server adapts those containers to
-# the machine's chosen backend: the path-based protocol of the existing local faster-whisper server,
-# or one OpenAI-compatible transcription endpoint. Browser recognition never uploads. Altitude owns
-# no speech model.
+# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording
+# unchanged to the machine's speech service, one OpenAI-compatible `audio/transcriptions` endpoint
+# on this computer, the network or a hosted provider. Browser recognition never uploads. Altitude
+# owns no speech model.
 VOICE_MAX_BODY = 16 << 20
-VOICE_MAX_SECONDS = 600
 VOICE_TYPES = {
     "audio/mp4": ".m4a",
     "audio/webm": ".webm",
@@ -96,8 +93,6 @@ VOICE_TYPES = {
     "audio/aac": ".aac",
     "audio/x-m4a": ".m4a",
 }
-VOICE_SOCKET = os.environ.get("WHISPER_SOCKET", "/tmp/whisper-server.sock")
-VOICE_BRIDGE = os.environ.get("WHISPER_BRIDGE", "127.0.0.1:8890")
 
 
 class VoiceInputError(RuntimeError):
@@ -106,27 +101,6 @@ class VoiceInputError(RuntimeError):
     def __init__(self, message: str, status: int):
         super().__init__(message)
         self.status = status
-
-
-def _whisper_connection() -> socket.socket | None:
-    """Reach the desktop Whisper socket directly, or its existing loopback bridge."""
-    direct = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        direct.connect(VOICE_SOCKET)
-        return direct
-    except OSError:
-        direct.close()
-    try:
-        host, port = VOICE_BRIDGE.rsplit(":", 1)
-        return socket.create_connection((host, int(port)), timeout=5)
-    except (OSError, TypeError, ValueError):
-        return None
-
-
-def _wav_seconds(path: Path) -> float:
-    with wave.open(str(path), "rb") as audio:
-        rate = audio.getframerate()
-        return audio.getnframes() / rate if rate else 0.0
 
 
 def _voice_selection(setting: dict) -> str:
@@ -151,16 +125,16 @@ def save_voice(body: dict) -> dict:
     if body.get("selection") != _voice_selection(current):
         raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
     backend = body.get("backend")
-    if backend in config.VOICE_BACKENDS:
+    if backend == "browser":
         if body.keys() - {"backend", "selection"}:
-            raise ValueError("Endpoint fields apply only to a custom endpoint.")
-        value = backend
+            raise ValueError("Service fields apply only to your speech service.")
+        value = "browser"
     elif backend == "endpoint":
         value = {"url": body.get("url")}
         for field in ("model", "key"):
             text = body.get(field, "")
             if not isinstance(text, str):
-                raise ValueError(f"The voice endpoint {field} must be text.")
+                raise ValueError(f"The speech service {field} must be text.")
             if text.strip():
                 value[field] = text.strip()
         keep_key = body.get("keep_key", False)
@@ -168,13 +142,13 @@ def save_voice(body: dict) -> dict:
             raise ValueError("Keep key must be true or false.")
         if keep_key:
             if "key" in body:
-                raise ValueError("Choose either keeping or replacing the endpoint key.")
+                raise ValueError("Choose either keeping or replacing the key.")
             if current["backend"] != "endpoint" or current["url"] != value["url"]:
-                raise ValueError("A saved key can only be kept for the same endpoint URL.")
+                raise ValueError("A saved key can only be kept for the same service URL.")
             if current.get("key"):
                 value["key"] = current["key"]
     else:
-        raise ValueError("Choose browser recognition, local speech service, or a custom endpoint.")
+        raise ValueError("Choose browser recognition or your speech service.")
     dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR)
     result = dispatch._run_setting(None, "voice")
     if result["status"] != "done":
@@ -183,7 +157,7 @@ def save_voice(body: dict) -> dict:
 
 
 def transcribe_voice(raw: bytes, content_type: str, *, setting: dict | None = None) -> str:
-    """Transcribe one bounded browser recording through the machine's backend, retaining no audio."""
+    """Transcribe one bounded browser recording through the machine's speech service, retaining no audio."""
     media_type = content_type.split(";", 1)[0].strip().lower()
     extension = VOICE_TYPES.get(media_type)
     if extension is None:
@@ -191,9 +165,7 @@ def transcribe_voice(raw: bytes, content_type: str, *, setting: dict | None = No
     setting = config.voice_setting() if setting is None else setting
     if setting["backend"] == "browser":
         raise VoiceInputError("Voice now runs in the browser on this installation. Try again.", 409)
-    if setting["backend"] == "endpoint":
-        return _transcribe_endpoint(raw, media_type, extension, setting)
-    return _transcribe_local(raw, extension)
+    return _transcribe_endpoint(raw, media_type, extension, setting)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -207,7 +179,7 @@ _ENDPOINT_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def _transcribe_endpoint(raw: bytes, media_type: str, extension: str, setting: dict) -> str:
-    """One OpenAI-compatible `audio/transcriptions` request; the endpoint decodes the browser's container."""
+    """One OpenAI-compatible `audio/transcriptions` request; the service decodes the browser's container."""
     boundary = uuid.uuid4().hex
     body = b"".join([
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{setting['model']}\r\n".encode(),
@@ -219,101 +191,33 @@ def _transcribe_endpoint(raw: bytes, media_type: str, extension: str, setting: d
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"}
     if setting.get("key"):
         headers["Authorization"] = f"Bearer {setting['key']}"
-    request = urllib.request.Request(setting["url"], data=body, headers=headers, method="POST")
+    # The URL carries no credentials (config.validate_voice), so naming it tells the user what to fix.
+    service = setting["url"]
+    request = urllib.request.Request(service, data=body, headers=headers, method="POST")
     try:
         with _ENDPOINT_OPENER.open(request, timeout=120) as response:
             payload = json.loads(response.read(1 << 20).decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
-        log(f"voice endpoint refused the recording: HTTP {exc.code}")
+        log(f"voice service refused the recording: HTTP {exc.code}")
         raise VoiceInputError(
-            "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+            f"Your speech service at {service} answered HTTP {exc.code}. Check its URL, model and key. "
+            "Your draft is unchanged.", 503
         ) from exc
     except TimeoutError as exc:
-        raise VoiceInputError("Transcription took too long. Try again.", 504) from exc
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        log(f"voice endpoint unreachable: {exc.reason if isinstance(exc, urllib.error.URLError) else type(exc).__name__}")
+        raise VoiceInputError(f"Your speech service at {service} took too long. Try again.", 504) from exc
+    except (urllib.error.URLError, OSError) as exc:
+        log(f"voice service unreachable: {exc.reason if isinstance(exc, urllib.error.URLError) else type(exc).__name__}")
         raise VoiceInputError(
-            "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+            f"Couldn't reach your speech service at {service}. Check that it's running. Your draft is unchanged.", 503
         ) from exc
+    except ValueError as exc:
+        raise VoiceInputError(f"Your speech service at {service} returned an invalid response.", 502) from exc
     text = payload.get("text") if isinstance(payload, dict) else None
     if not isinstance(text, str):
-        raise VoiceInputError("Voice transcription returned an invalid response.", 502)
+        raise VoiceInputError(f"Your speech service at {service} returned an invalid response.", 502)
     if not text.strip():
         raise VoiceInputError("No speech was detected. Your draft is unchanged.", 422)
     return text.strip()
-
-
-def _transcribe_local(raw: bytes, extension: str) -> str:
-    """Convert the recording with ffmpeg and send the WAV path to the local speech service."""
-    try:
-        with tempfile.TemporaryDirectory(prefix="altitude-voice-") as work:
-            source = Path(work) / f"recording{extension}"
-            wav = Path(work) / "recording-16k.wav"
-            source.write_bytes(raw)
-            try:
-                converted = subprocess.run(
-                    [
-                        "ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(source),
-                        "-t", str(VOICE_MAX_SECONDS + 1), "-ar", "16000", "-ac", "1",
-                        "-acodec", "pcm_s16le", "-f", "wav", str(wav),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=45,
-                )
-            except FileNotFoundError as exc:
-                raise VoiceInputError("Voice transcription is unavailable on this host.", 503) from exc
-            except subprocess.TimeoutExpired as exc:
-                raise VoiceInputError("The recording took too long to prepare. Try a shorter clip.", 504) from exc
-            if converted.returncode != 0 or not wav.is_file():
-                raise VoiceInputError("The recording could not be read. Try recording it again.", 422)
-            try:
-                seconds = _wav_seconds(wav)
-            except (OSError, EOFError, wave.Error) as exc:
-                raise VoiceInputError("The recording could not be read. Try recording it again.", 422) from exc
-            if seconds > VOICE_MAX_SECONDS:
-                raise VoiceInputError(f"Recordings are limited to {VOICE_MAX_SECONDS // 60} minutes.", 413)
-
-            upstream = _whisper_connection()
-            if upstream is None:
-                raise VoiceInputError(
-                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
-                )
-            try:
-                upstream.settimeout(120)
-                upstream.sendall(str(wav).encode())
-                upstream.shutdown(socket.SHUT_WR)
-                chunks: list[bytes] = []
-                total = 0
-                while True:
-                    chunk = upstream.recv(65536)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > (1 << 20):
-                        raise VoiceInputError("Voice transcription returned an invalid response.", 502)
-                    chunks.append(chunk)
-            except socket.timeout as exc:
-                raise VoiceInputError("Transcription took too long. Try again.", 504) from exc
-            except OSError as exc:
-                raise VoiceInputError(
-                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
-                ) from exc
-            finally:
-                upstream.close()
-
-            text = b"".join(chunks).decode("utf-8", "replace").strip()
-            if text.startswith("ERROR:"):
-                raise VoiceInputError(
-                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
-                )
-            if not text:
-                raise VoiceInputError("No speech was detected. Your draft is unchanged.", 422)
-            return text
-    except VoiceInputError:
-        raise
-    except OSError as exc:
-        raise VoiceInputError("Voice transcription is unavailable on this host.", 503) from exc
 
 
 def image_capability(project: str, slug: str | None = None) -> dict:

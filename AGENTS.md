@@ -26,10 +26,10 @@ providers, or their hardware sits behind a named seam. The operator seam is one
 configured name and role: personas, docs, and UI text say "the operator" or read the configured name.
 The engine seam is `altitude/engines.py`, `altitude/route.py`, and `altitude/config.py`: no other
 file spells a provider name or assumes a given engine exists, Altitude runs with any single engine
-alone, and adding or removing an engine touches only the seam. The capability seam is local services
-(the speech socket, `ffmpeg`, a GPU): optional, detected, and degrading to an explicit unavailable
-state, as voice input does. New code obeys the rule; existing code migrates only when a PR already
-touches it, never as its own project. `tests/test_project_layers.py` ratchets the counts so mentions
+alone, and adding or removing an engine touches only the seam. The capability seam is optional
+services (a configured speech service, `ffmpeg`, a GPU): detected or configured, and degrading to an
+explicit unavailable state, as voice input does. New code obeys the rule; existing code migrates
+only when a PR already touches it, never as its own project. `tests/test_project_layers.py` ratchets the counts so mentions
 outside a seam can only fall.
 
 Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. A change

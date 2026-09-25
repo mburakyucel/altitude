@@ -5,8 +5,8 @@ import { renderApp, setViewport } from "../test/render";
 
 const saved = { backend: "endpoint", selection: "endpoint-one", url: "https://speech.example.test/transcribe", model: "", key_set: true };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
-function fixture() {
-  let setting = { ...saved };
+function fixture(initial: Record<string, unknown> = saved) {
+  let setting = { ...initial };
   const calls: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input) === "/api/voice") {
@@ -18,6 +18,7 @@ function fixture() {
       return json(setting);
     }
     if (String(input) === "/api/overview") return json({ projects: [], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+    if (String(input) === "/api/machine") return json({ operator: null, incident_repository: null, altitude_repository: "fixture/altitude", terminal: false });
     return json({}, 404);
   }));
   return calls;
@@ -38,7 +39,7 @@ describe("Voice settings", () => {
     const pending: (() => void)[] = [];
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
-      await user.click(screen.getByRole("button", { name: "Save endpoint" }));
+      await user.click(screen.getByRole("button", { name: "Save service" }));
       expect(screen.getByLabelText("API key (optional)")).toBeDisabled();
       expect(screen.getByText("Saving…")).toBeVisible();
       release();
@@ -60,18 +61,20 @@ describe("Voice settings", () => {
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
       await user.click(screen.getByRole("button", { name: "Replace" }));
-      await user.click(screen.getByRole("button", { name: "Save endpoint" }));
+      await user.click(screen.getByRole("button", { name: "Save service" }));
       await screen.findByText("Saved.");
       await user.type(screen.getByLabelText("API key (optional)"), "next-fixture-key");
       await act(async () => flush());
       expect(screen.getByLabelText("API key (optional)")).toHaveValue("next-fixture-key");
-      await user.click(screen.getByRole("button", { name: "Save endpoint" }));
+      await user.click(screen.getByRole("button", { name: "Save service" }));
       await waitFor(() => expect(calls[1]).toMatchObject({ key: "next-fixture-key" }));
       await screen.findByText("Key set · never shown");
       await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
       await waitFor(() => expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked());
-      await user.click(screen.getByRole("radio", { name: "Local speech service" }));
-      await waitFor(() => expect(calls.at(-1)).toMatchObject({ backend: "local", selection: "browser-selection" }));
+      await user.click(screen.getByRole("radio", { name: "Your speech service" }));
+      await user.type(screen.getByLabelText("Service URL"), "http://127.0.0.1:8080/v1/audio/transcriptions");
+      await user.click(screen.getByRole("button", { name: "Save service" }));
+      await waitFor(() => expect(calls.at(-1)).toMatchObject({ backend: "endpoint", selection: "browser-selection" }));
     } finally {
       notifyManager.setScheduler(defaultScheduler);
       await act(async () => flush());
@@ -82,9 +85,9 @@ describe("Voice settings", () => {
     setViewport(width);
     const calls = fixture();
     const { user } = renderApp({ route: "/settings" });
-    await user.click(await screen.findByRole("link", { name: "Voice input Custom endpoint" }));
+    await user.click(await screen.findByRole("link", { name: "Voice input Your speech service · speech.example.test" }));
     await screen.findByText("Key set · never shown");
-    const url = screen.getByLabelText("Endpoint URL");
+    const url = screen.getByLabelText("Service URL");
     await user.clear(url);
     await user.type(url, "https://new.example.test/transcribe");
     expect(screen.queryByText("Key set · never shown")).toBeNull();
@@ -92,14 +95,36 @@ describe("Voice settings", () => {
     await user.click(screen.getByRole("link", { name: "‹ Settings" }));
     expect(screen.queryByRole("radio")).toBeNull();
     expect(calls).toHaveLength(0);
-    await user.click(screen.getByRole("link", { name: "Voice input Custom endpoint" }));
+    await user.click(screen.getByRole("link", { name: "Voice input Your speech service · speech.example.test" }));
     await screen.findByText("Key set · never shown");
-    expect(screen.getByLabelText("Endpoint URL")).toHaveValue(saved.url);
+    expect(screen.getByLabelText("Service URL")).toHaveValue(saved.url);
     await user.click(screen.getByRole("button", { name: "Replace" }));
-    await user.click(screen.getByRole("button", { name: "Save endpoint" }));
+    await user.click(screen.getByRole("button", { name: "Save service" }));
     await screen.findByText("Saved.");
     expect(calls[0]).toMatchObject({ key: "", url: saved.url, selection: saved.selection });
     expect(calls[0]).not.toHaveProperty("keep_key");
+  });
+
+  it.each([390, 1440])("asks only for a URL, keeps the hosted key and model one click away, and names the host (%s)", async (width) => {
+    setViewport(width);
+    const calls = fixture({ backend: "browser", selection: "browser-selection", url: "", model: "", key_set: false });
+    const { user } = renderApp({ route: "/settings" });
+    await user.click(await screen.findByRole("link", { name: "Voice input Browser recognition" }));
+    await user.click(await screen.findByRole("radio", { name: "Your speech service" }));
+    expect(calls).toHaveLength(0);
+    expect(screen.getByText(/using the standard OpenAI transcription API/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "How to run one" })).toHaveAttribute("href", "https://github.com/fixture/altitude/blob/main/docs/OPERATIONS.md#your-speech-service");
+    expect(screen.queryByLabelText("Model (optional)")).toBeNull();
+    expect(screen.queryByLabelText("API key (optional)")).toBeNull();
+    await user.type(screen.getByLabelText("Service URL"), "http://127.0.0.1:8080/v1/audio/transcriptions");
+    await user.click(screen.getByRole("button", { name: "Hosted provider? Add a key or model" }));
+    expect(screen.getByLabelText("Model (optional)")).toHaveAttribute("placeholder", "Default: whisper-1");
+    await user.type(screen.getByLabelText("API key (optional)"), "hosted-fixture-key");
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await screen.findByText("Saved.");
+    expect(calls).toEqual([{ backend: "endpoint", selection: "browser-selection", url: "http://127.0.0.1:8080/v1/audio/transcriptions", model: "", key: "hosted-fixture-key" }]);
+    await user.click(screen.getByRole("link", { name: "‹ Settings" }));
+    await screen.findByRole("link", { name: "Voice input Your speech service · 127.0.0.1:8080" });
   });
 
   it("shows save failure with the draft and retries the same choice", async () => {
@@ -113,7 +138,7 @@ describe("Voice settings", () => {
     const { user } = renderApp({ route: "/settings/voice" });
     await user.click(await screen.findByRole("radio", { name: "Browser recognition" }));
     await screen.findByText("Settings unavailable");
-    expect(screen.getByRole("radio", { name: "Custom endpoint" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Your speech service" })).toBeChecked();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText("Saved.");
@@ -127,7 +152,7 @@ describe("Voice settings", () => {
     const { user, router } = renderApp({ route: "/settings/voice" });
     await screen.findByText("Key set · never shown");
     await user.click(screen.getByRole("link", { name: "Settings" }));
-    await screen.findByRole("link", { name: "Voice input Custom endpoint" });
+    await screen.findByRole("link", { name: "Voice input Your speech service · speech.example.test" });
     setViewport(390);
     await user.click(await screen.findByRole("button", { name: "‹ Back" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
@@ -145,7 +170,7 @@ describe("Voice settings", () => {
     await user.click(await screen.findByRole("radio", { name: "Browser recognition" }));
     await user.click(await screen.findByRole("button", { name: "Reload settings" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(screen.getByRole("radio", { name: "Custom endpoint" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Your speech service" })).toBeChecked();
     stale = false;
     await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
     await screen.findByText("Saved.");

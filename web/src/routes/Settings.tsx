@@ -12,17 +12,23 @@ import { useViewport } from "../shell/breakpoints";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = {
-  browser: "Browser recognition", local: "Local speech service", endpoint: "Custom endpoint",
+  browser: "Browser recognition", endpoint: "Your speech service",
 };
 const explanations: Record<VoiceBackend, string> = {
   browser: "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies.",
-  local: "Audio is transcribed on the computer running Altitude after you stop. Requires a configured local speech service and ffmpeg.",
-  endpoint: "Audio goes to your chosen service after you stop. Its storage policy and any charges apply.",
+  endpoint: "After you stop, Altitude sends the recording to a speech-to-text service you run or choose, using the standard OpenAI transcription API. It can run on this computer, on another machine on your network, or be a hosted provider. Audio goes only to that address; its storage policy and any charges apply.",
 };
 const queryKey = ["voice-settings"];
+const DEFAULT_MODEL = "whisper-1";
+
+/** Where recordings go, as the overview row names it: the service's host, never its key. */
+function voiceSummary(settings: VoiceSettings) {
+  if (settings.backend === "browser") return labels.browser;
+  try { return `${labels.endpoint} · ${new URL(settings.url).host}`; } catch { return labels.endpoint; }
+}
 type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; value: VoiceUpdate; error: Error };
 
-function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void }) {
+function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload: () => void; repository?: string }) {
   const client = useQueryClient();
   const committed = useRef(saved);
   const [choice, setChoice] = useState(saved.backend);
@@ -30,6 +36,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const [model, setModel] = useState(saved.model);
   const [key, setKey] = useState("");
   const [keepKey, setKeepKey] = useState(saved.key_set);
+  const [hosted, setHosted] = useState(saved.key_set || (saved.model !== "" && saved.model !== DEFAULT_MODEL));
   useEffect(() => {
     if (saved === committed.current) return;
     committed.current = saved;
@@ -38,6 +45,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     setModel(saved.model);
     setKey("");
     setKeepKey(saved.key_set);
+    setHosted(saved.key_set || (saved.model !== "" && saved.model !== DEFAULT_MODEL));
   }, [saved]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
   const reset = () => setSave({ status: "idle" });
@@ -72,21 +80,24 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   return <>
     <form className="settings-card" onSubmit={(event) => { event.preventDefault(); void submit(endpoint()); }}>
       <fieldset disabled={save.status === "saving"}>
-        <legend>Transcription backend</legend>
-        {(["browser", "local", "endpoint"] as const).map((backend) => <div className="voice-option" key={backend}>
+        <legend>Transcription</legend>
+        {(["browser", "endpoint"] as const).map((backend) => <div className="voice-option" key={backend}>
           <label className="voice-choice">
             <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)} />
             <span>{labels[backend]}</span>
           </label>
           <p className="text-muted text-meta">{explanations[backend]}</p>
           {backend === "endpoint" && choice === "endpoint" ? <div className="voice-endpoint">
-            <label>Endpoint URL<input type="url" required value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" onChange={(event) => { setUrl(event.target.value); setKeepKey(false); reset(); }} /></label>
-            <label>Model (optional)<input value={model} placeholder="Default: whisper-1" onChange={(event) => { setModel(event.target.value); reset(); }} /></label>
-            {keepKey ? <div className="voice-key-set"><span>Key set · never shown</span><button type="button" className="link" onClick={() => { setKeepKey(false); reset(); }}>Replace</button></div>
-              : <label>API key (optional)<input type="password" autoComplete="new-password" value={key} onChange={(event) => { setKey(event.target.value); reset(); }} /></label>}
-            {!keepKey && saved.key_set ? <p className="text-meta text-muted">Leave blank to remove the stored key. A stored key is never sent to a changed URL.</p> : null}
-            <p className="text-meta text-muted">Changes are saved only with Save endpoint.</p>
-            <button type="submit" className="btn btn-primary">Save endpoint</button>
+            <label>Service URL<input type="url" required value={url} placeholder="http://127.0.0.1:8080/v1/audio/transcriptions" onChange={(event) => { setUrl(event.target.value); setKeepKey(false); reset(); }} /></label>
+            <p className="text-meta text-muted">The full address of its <code>/v1/audio/transcriptions</code> endpoint.{repository ? <>{" "}<a href={`https://github.com/${repository}/blob/main/docs/OPERATIONS.md#your-speech-service`} target="_blank" rel="noopener noreferrer">How to run one</a></> : null}</p>
+            {hosted ? <>
+              <label>Model (optional)<input value={model} placeholder={`Default: ${DEFAULT_MODEL}`} onChange={(event) => { setModel(event.target.value); reset(); }} /></label>
+              {keepKey ? <div className="voice-key-set"><span>Key set · never shown</span><button type="button" className="link" onClick={() => { setKeepKey(false); reset(); }}>Replace</button></div>
+                : <label>API key (optional)<input type="password" autoComplete="new-password" value={key} onChange={(event) => { setKey(event.target.value); reset(); }} /></label>}
+              {!keepKey && saved.key_set ? <p className="text-meta text-muted">Leave blank to remove the stored key. A stored key is never sent to a changed URL.</p> : null}
+            </> : <button type="button" className="link voice-hosted" onClick={() => setHosted(true)}>Hosted provider? Add a key or model</button>}
+            <p className="text-meta text-muted">Changes are saved only with Save service.</p>
+            <button type="submit" className="btn btn-primary">Save service</button>
           </div> : null}
         </div>)}
       </fieldset>
@@ -95,7 +106,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
         <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
-    <p className="text-meta text-muted">Changes apply to your next recording. Altitude deletes temporary recordings after transcription. External services control their own audio retention.</p>
+    <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings; the speech service that transcribes them controls its own retention.</p>
   </>;
 }
 
@@ -217,9 +228,9 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           : <div><h2>This machine</h2><p className="text-meta text-muted">Applies to every project in this Altitude installation.</p></div>}
         {settings.isPending ? <p role="status">Loading settings…</p>
           : settings.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
-            : voice ? <VoiceForm key={reloadKey} saved={settings.data} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />
+            : voice ? <VoiceForm key={reloadKey} saved={settings.data} repository={machine.data?.altitude_repository} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />
               : <Link className="settings-row" to="/settings/voice" state={state}>
-                <span><strong>Voice input</strong>{" "}<small>{labels[settings.data.backend]}</small></span><span aria-hidden>›</span>
+                <span><strong>Voice input</strong>{" "}<small>{voiceSummary(settings.data)}</small></span><span aria-hidden>›</span>
               </Link>}
         {!voice ? <>
           <Link className="settings-row" to="/settings/name" state={state}>
