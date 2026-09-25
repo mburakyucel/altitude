@@ -10,7 +10,7 @@ acceptance, parent issue and remaining scope; completing a task need not complet
 [incremental delivery](CLI.md#incremental-issue-delivery).
 
 ```text
-Burak
+The operator
   ├─ project direction and roadmap ───────────────► L3
   │                                                  │
   │                                                  └─ dispatches L2 task owners
@@ -45,8 +45,8 @@ memory store. Project-local authority, proposal checkpoints, merge holds and ver
 remain governed by the existing boundaries.
 
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
-the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
-Burak messages it directly without routing through L3. Messages queue on the task and reach the
+the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
+the operator messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
@@ -885,7 +885,8 @@ A provider-reported reset schedules resumption. Fresh attempts retain the existi
 uncommitted work, and validate its checkout and adopted ancestry. Task conversations, worker evidence,
 PRs, expected files, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
-window) with its public issue, and leaves an FYI and one message naming both in that same project's L3 queue; a repeat of that kind
+window), publishes its issue when a target is configured, and leaves an FYI and one message with the
+incident and publication status in that same project's L3 queue; a repeat of that kind
 blocking another task or changing its details adds one line for L3 within that window. Full fault
 reasons are the task-local observations: unchanged blockers stay quiet even after the incident window
 expires, including alternating observations from tasks sharing a kind. Changed observations update
@@ -954,9 +955,9 @@ begins without terminal evidence ends visibly uncertain instead of launching ove
 No probe resumes a worker, resolves a question, or releases a merge hold.
 L3 reconciles the next step when a finite probe ends and gives an evidenced heads-up for significant
 stalled work. Repeated observations stay quiet; terminal evidence promises no further scheduled check.
-Project-local repairs remain owned by the affected project. Every incident is published as one
-GitHub issue by `incidents.publish_issue`: system faults publish after the fault lock is released,
-and `alt incident new` publishes after the record is written. The daemon owns the product target
+Project-local repairs remain owned by the affected project. With publication configured,
+`incidents.publish_issue` publishes each incident as one GitHub issue: system faults publish after
+the fault lock is released, and `alt incident new` publishes after the record is written. The daemon owns the product target
 seam, `server.issue_repository`: `config.incident_repository()`, the machine setting
 `incident_repository` when saved (`false` is off), else `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in
 altd's environment, and nothing else; off keeps every incident on the machine as a pending record
@@ -1037,6 +1038,8 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+### Conversation-audit pilot
+
 `audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
 it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,
 reviewed exchange identities and finding-supply receipts. Sessions wait twelve hours and four new
@@ -1073,6 +1076,8 @@ replay. L3 verifies current tasks/issues and later evidence before action. No is
 dispatcher or instruction editor belongs to the reviewer. Unavailable optional audit evidence never
 blocks ordinary conversation. Model-quality evaluation is separately authorized and reported;
 deterministic fixtures establish application behavior only.
+
+### Image input
 
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
@@ -1113,6 +1118,8 @@ Fresh L2 attempts carry delivered image-message captions and deduplicated canoni
 the same task. Larger sets use native visual readers; history does not become pending delivery again.
 See [image delivery and recovery](SESSION_LIFECYCLE.md#image-delivery-and-recovery).
 
+### Task usage
+
 Task token accounting is passive. `usage.py` retains each recorded task owner identity before a
 resume or recovery replaces it, and asks `engines.py` for normalized local observations. The daemon
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
@@ -1138,6 +1145,8 @@ parentage kind, owning session, depth when known, and the owning session's recor
 request counters and optional unsplit provider totals remain separate; neither is added again to
 task totals. Missing native evidence yields null counts; a readable native source with no discovered
 helpers yields an observed empty set with partial coverage. No spawn-completeness claim is made.
+
+### Validation and release
 
 The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make check`
 runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2e/*.pw.ts` suite.
@@ -1193,6 +1202,8 @@ See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-
 published private-preview version and release notes. They add no runtime lifecycle state and
 do not gate automatic activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
+
+### Conversations and navigation
 
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
@@ -1367,6 +1378,8 @@ Loading, empty, missing, denied and unsupported states are explicit; Retry clear
 while reading, and copy failure leaves the full path selectable. Reads are uncached. Closing the
 tab preserves the source conversation and draft. This feature introduces no provider coupling.
 
+### Message delivery and voice
+
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
 its run order and Remove until
@@ -1374,7 +1387,7 @@ its turn starts, when the row becomes the turn's bubble and typing indicator. Qu
 user history row and publishes the active record under the same lifecycle guard used by the API's
 history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
 queue. The claimed turn reuses its admission and route choice, so the text stays visible through
-handoff and is delivered once. A control takes Burak's chat back off the queue only while it
+handoff and is delivered once. A control takes the operator's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
 file in the project directory, so a reload, another device and a restart all see the same pending
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
@@ -1487,6 +1500,8 @@ entry index indicates an in-app predecessor. With no such predecessor, app Back 
 task entry with the owning project's L3 conversation. Browser Back remains native, and links to
 other pages or tasks still push entries. `web/e2e/task-navigation.pw.ts` exercises Back and Forward
 with real browser history at both viewports.
+
+### Work and attention
 
 The task card (`web/src/components/TaskCard.tsx`, spec §3.5) is one component in two sizes: the
 bordered card under an L3 reply that created the task and the row in the work panel. Its meta line
@@ -1687,6 +1702,8 @@ heads-ups from historical automatic calls that inherited `by: "l3"`; history is 
 nor classified by text. The [L3 persona](../personas/l3.md) owns selection guidance.
 There is no project inbox file and no `fyis` in the digest or overview.
 
+### Voice backend
+
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
 settings file: `browser` (the default), `local`, or an endpoint object with `url`, optional `model`
 and optional `key`. `GET /api/voice` reports backend, URL, model, a `key_set` boolean and an opaque
@@ -1729,6 +1746,8 @@ transcribing, restores the editable field after cancel or error, and leaves the 
 progressive enhancement. Phone access uses an explicitly configured private HTTPS address whose
 certificate covers that address. Safari can use the microphone after the CA is trusted on the phone;
 typing remains available without speech services.
+
+### Design evidence
 
 The same server serves each project's wireframe boards. `GET /design/<project>` redirects to
 `/design/<project>/design/wireframes/index.html`, read from that project's own deployment checkout on
@@ -1778,6 +1797,8 @@ their revision and link back to its historical question; current question metada
 replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.
+
+### Monitor and live sessions
 
 The Monitor page reads `/api/monitor`; no hold, incident, route or follow-up work is derived from
 those readings. Its separate update section reads the shared overview and offers the existing

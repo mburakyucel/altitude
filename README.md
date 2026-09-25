@@ -1,708 +1,94 @@
 # Altitude
 
-**Persistent project orchestration for coding agents.**
+Altitude is an AI development workspace for directing software projects with coding agents.
+You focus on architecture, priorities and tradeoffs. Agents take responsibility for the work
+from investigation through implementation, checks and pull requests.
 
-Altitude gives each software project an ongoing conversation with **L3, its project
-orchestrator**. Discuss architecture, priorities and what should happen next. L3 dispatches
-**L2 task owners**, each responsible for concrete work from its brief through checks and a PR.
-You can talk directly to any owner while the work runs.
+Each project has an ongoing conversation with a coordinator. It assigns tasks, answers questions
+from recorded decisions and brings unresolved choices back to you. You can get into the details
+at any time: talk directly to a task owner, inspect its live session or redirect its work.
 
-Several tasks can move forward in isolated worktrees while L3 keeps the project direction in
-view. Questions go to L3 first: it answers from the brief, repository docs and recorded decisions,
-and brings you the calls that need your judgment. Task reports preserve delivery outcomes;
-reports needing follow-up return to the project conversation, where you decide what comes next.
+Work from your computer or phone. Dictate what you want to change, answer questions and follow
+progress in the browser while agents run on your machine.
+[Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported browser.
 
-**Engine-agnostic by design.** Codex and Claude Code are supported today; further CLI engines are
-part of the [roadmap](docs/ROADMAP.md#engines-platforms-and-distribution). Each integration connects
-the engine's native sessions and tools to the same project and task workflow.
+Codex and Claude Code are supported today; one is enough. Their integrations are
+[replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
-<picture>
-  <source media="(max-width: 600px)" srcset="docs/images/orchestration-phone.svg">
-  <img src="docs/images/orchestration.svg" alt="You discuss direction with L3 and can steer each L2 directly. L3 dispatches task owners in separate worktrees. Owners return questions and results to L3; only decisions needing you are escalated. Each code task delivers through checks and a PR." width="960">
-</picture>
-
-## One project, several fronts of work
-
-You are moving **Atlas**, a search service, to a versioned index. Existing clients must keep
-working, backfills must resume safely, and search latency must stay within budget.
-
-In the project conversation, agree the API contract and rollout constraints with L3. Then ask it
-to dispatch the independent work: **client compatibility**, **resumable backfill**, and a
-**performance baseline**. Each gets its own L2, brief, expected files and worktree. The performance
-owner can measure the current system while the other two implement against the agreed contract.
-L3 uses the results to coordinate the next rollout task.
+**Early preview · Linux x86_64 · [Get started](#get-started)**
 
 <picture>
   <source media="(max-width: 600px)" srcset="docs/images/project-phone.png">
-  <img src="docs/images/project-desktop.png" alt="Atlas project conversation: the operator sets index-migration constraints, L3 describes three independent tasks, and the desktop work panel shows their active work." width="1440">
+  <img src="docs/images/project-desktop.png" alt="Atlas project conversation: agreed migration constraints alongside three active tasks." width="1440">
 </picture>
 
-*The actual web app, rendered with fictional projects, messages and session data. This is an
-illustrative engineering scenario, not a recorded delivery. [Open the captures and walkthrough](docs/WALKTHROUGH.md).*
+*The actual app with fictional data. L3 is the project coordinator; L2 agents own tasks.
+[Explore the walkthrough](docs/WALKTHROUGH.md).*
 
-[Full-size desktop](docs/images/project-desktop.png) · [Phone](docs/images/project-phone.png)
+## How it works
 
-Open the compatibility task and tell its L2, “Keep pagination tokens valid across the cutover.”
-Its durable conversation sits beside the live engine session. Meanwhile, the backfill owner's
-retry question goes to L3, which answers from the agreed idempotency rule. A different question
-— whether to retain the old index for seven or thirty days — needs your cost and rollback
-judgment, so L3 escalates it to **Needs you**. The other work can continue.
+Suppose you are changing a search service's index format. Agree the API contract and rollout
+constraints with the coordinator, then ask it to assign the independent work: client compatibility,
+a resumable backfill and performance checks. Each task gets an owner and an isolated Git worktree;
+owners can delegate bounded work to helpers.
 
-The owners deliver separate, checked PRs. A merge hold leaves a PR for your review; otherwise an
-owner can merge after the applicable checks and review. L3 can inspect the reports and handle
-follow-up, so the next discussion can address rollout readiness with the work in view.
+Open the compatibility task to say, “Keep pagination tokens valid across the cutover.” Your message
+goes directly to its owner. The coordinator answers a retry question from the agreed contract;
+how long to keep the old index needs your cost and rollback judgment, so it comes to **Needs you**.
+Other tasks can continue.
 
-Concurrent `alt land` calls in this repository wait their turn through publication, CI waiting
-and merge; other repositories serialize merging invocations. Each
-turn incorporates current main and validates a fresh candidate. Waiting is visible with its
-duration and bounded to one hour; failure or process exit releases the turn. Owners keep the
-command running without asking L3 for a landing window. Conflicts, external ref changes, failed
-checks and holds still stop delivery. After its own push, landing briefly re-reads a lagging PR
-view while requiring the remote branch to match the pushed head. See
-[landing contention](docs/CLI.md#concurrent-landings).
-
-Owners and helpers run relevant tests during development. This repository's self-hosted PR
-`check` runs the full suite; `alt land` requires it to pass for the current merge content.
-The branch includes current main, and each new head needs fresh PR checks; `alt land --dry-run`
-previews the base, head and gate without publishing. Altitude serializes
-final validation and merges. Runner outages pause merges. Review and merge holds still apply,
-and merges outside Altitude remain unprotected. CI reports stay on the runner host with bounded
-retention and cleanup; GitHub supplies checks and logs without artifact uploads. Owners verify
-local failure reports and preserve needed evidence through review. Other projects keep their own gates. See
-[CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
-
-Launches, landing and restart builds preserve Node already on PATH. When it is absent, they
-use the installed nvm default and its package-manager shims without loading shell profiles.
-New archive installations save the discovered tool path for their service.
-Run dependency installation inside `web` so Corepack reads its pinned pnpm version.
-See [toolchain setup](docs/DEVELOPMENT.md#noninteractive-toolchain).
-
-One active task can deliver several PRs. When authorized work remains after a merge, the same owner
-continues in its existing conversation and worktree and runs `alt land` again. It puts only the
-follow-up changes onto current main and opens another PR, with its own checks and review holds.
-Running it without new work creates nothing. Earlier deliveries remain recorded, and the final
-report covers all of them. See [continuation after merge](docs/CLI.md#continue-after-a-pr-merges).
-
-A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
-continue that owner's session, attempt and worktree with the same PR, objective and review holds.
-L3 can also request continuation with `alt task resume <slug> --reason '…'`. The previous report
-stays in task history. Every resumed code-owner turn rechecks delivery and writes a fresh report,
-including replayed guidance that adds no work, retaining all deliveries and exact remaining scope.
-A chat acknowledgement cannot complete that turn. A saved message is not proof that the
-worker has restarted: capacity and recovery waits remain visible. Done, archived and rejected tasks
-remain read-only; reopening their lifecycle is a separate, unsettled product decision.
-An exited worker whose transient unit has been collected can resume once systemd confirms it is
-inactive; unavailable or ambiguous status keeps the task blocked to prevent overlapping workers.
-Temporary project setup contention keeps launches queued and authorized resumes pending. The daemon
-continues after the setup lock is released, preserving the saved session, messages, questions and
-merge holds. Actual setup or worktree provenance failures still require verified recovery.
-
-Large or complex issues can move through small, reviewable increments that keep supported user journeys
-working. L3 records the breakdown and delivery evidence in the issue; each task completes its agreed
-increment, and follow-up work can come later within the operator's authorization. The parent stays open
-until cumulative delivery satisfies its full scope and required acceptance. See
-[incremental delivery](docs/CLI.md#incremental-issue-delivery) and
-[issue closure and reconciliation](docs/CLI.md#delivery-linked-issue-completion); merge holds still apply.
-
-L3 completes authorized superseded-PR cleanup with [`alt pr close <number>`](docs/CLI.md#superseded-pr-closure).
-L2 hands over authorization and replacement-delivery evidence; L3 verifies that scope before closing.
-The command targets the project's repository, retains branches, and returns the verified PR state
-and URL. The operator can use the same verb. Unconfirmed results remain explicit.
-
-An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
-Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason '…' --message '…'`.
-The owner inspects and incorporates its history in the task worktree first. Adoption records that
-specific PR and original head. Commit messages need no ownership labels or repair. Updates go to
-the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
-commit history without requesting branch deletion. An explicitly assigned next PR can be adopted
-after the previous merge and its preserved history are verified on main; earlier receipts remain
-immutable. Checks bind to the current base and head. Nonrequired skipped checks do not block delivery;
-required checks must succeed, and hosted CI needs at least one actual success. Failed or pending
-checks still block. Task scope and merge holds still apply.
-
-Operator decisions in task chat, project chat and the UI authorize delivery within their actual scope,
-including routine integration. L3 applies [recorded merge approval](docs/CLI.md#recorded-merge-approval)
-to each held PR after reviewing the original source and later corrections. The daemon verifies
-authority, question evidence, the hold and PR identity; the owner completes review and current-candidate
-checks. Each held follow-up needs its own scoped release, and a renewed hold requires approval of that
-renewed requirement. Design feedback, unresolved conditions and revoked permission cannot authorize merge.
-
-## How the work stays coherent
-
-- **Project continuity.** One persistent L3 conversation holds direction across tasks. Discuss
-  tradeoffs, change priorities, or return after delivery; follow-up and escalations feed back
-  into that conversation.
-- **Coordination and durable feedback.** L3 tracks the roadmap and next steps, and sends owners
-  sourced updates when their current work is affected. It handles authorized continuation,
-  persists reusable feedback through the task/PR path, and recommends scoped corrections for
-  missing capabilities. It uses judgment about who needs context and when. The
-  [L3 persona](personas/l3.md) owns these responsibilities; its reports distinguish queued,
-  merged and effective changes.
-- **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
-  session, and follow its PR and report. A replacing public update and recorded activity show what
-  is visible from the current worker. Messages stay separate and individually removable while waiting
-  for the engine's next checkpoint, which takes the remaining batch in arrival order. Sending and
-  uncertain handoffs cannot be removed; delivery is labeled only when evidenced. Stop holds queued
-  messages until an explicit correction or Continue
-  resumes the saved session; file edits and the draft remain intact.
-  Steering accepted before a clean completion is finalized keeps the owner reachable for the next turn.
-  An explicit question block survives worker exit and restart; older queued messages do not
-  resume it. A later message or explicit Resume brings the session back.
-- **Independent execution.** Briefs describe the problem, outcome and material project constraints;
-  brainstorming stays tentative. Owners choose the approach and account for relevant system
-  implications, including how to investigate, implement and use native helpers.
-  Worktrees isolate changes; planned files guide coordination. Owners review selected changes and
-  all outgoing history for scope and privacy before `alt land` publishes through their assigned PR.
-  Shared-file changes still need rebasing and reconciliation by their owners.
-  Builds, tests and installs inside the workspace run autonomously. A change the workspace or
-  sandbox cannot make, such as a service configuration, needs the operator's yes to one concrete
-  purpose; the recorded grant then lets the owner run commands through Altitude outside its sandbox,
-  with each command and its output recorded on the task, until the purpose is done or the grant is
-  revoked. The owner never hands terminal commands back to the operator for authorized work.
-- **Selective attention.** Needs you collects unresolved dilemmas in clearly named project sections,
-  the selected project first, each heading collapsing or reopening its items, and full project names
-  wrapping when needed. Each item
-  makes the task's purpose and actual choice clear with one question or a small group together,
-  concise actions, and the material consequences needed to answer. Detailed reasoning and history
-  stay accessible in the owning conversation. The model can ask a plain question, offer one
-  recommended quick action, or offer two to three choices with a recommendation. **Other…** opens a
-  small field beside that question; plain questions show it directly. **Send N answers** submits any
-  mix of choices, custom answers and follow-up questions, with nothing preselected. The send row
-  follows the questions and scrolls with them on phone and desktop. Sent members show
-  **Sent to L2** in the conversation and leave the attention count; remaining members stay answerable.
-  The L2 interprets every response: “21 days” supplies a direction, while “Why seven?” invites discussion.
-  Sending saves the response; its meaning determines what is agreed. Ordinary chat retains voice input;
-  question fields accept text. When guidance reaches the owner, it
-  checks each question before lengthy analysis: valid choices stay visible; doubtful ones are withdrawn
-  with a reason in chat and re-asked when ready, even with identical wording. Independent questions stay
-  answerable. A clear answer settles only its stated scope; requested revisions remain required.
-  Withdrawal records no decision. A compact **Question withdrawn** row expands to its history without answer controls. L3 handles
-  questions the record settles and receives context when a block publishes or revises operator-directed questions,
-  so it can coordinate scope or record-backed portions while operator approvals remain visible.
-  Re-parking unchanged questions does not repeat the notification. The owner can close an unnecessary escalation by citing L3's answer
-  and recording why existing authority settles it. Genuine operator decisions stay open, and merge
-  holds retain their separate approval rules. L3 receives faults for recovery. Its selected heads-ups
-  stay visible as compact lines in the project's conversation while routine events stay grouped
-  behind Show. Monitor shows engine routing, usage windows and observed sessions,
-  including missing or stale readings. Each usage window appears independently: an absent window
-  is explicit, zero remains a reading, and available figures stay visible when stale.
-- **Project work at a glance.** Work lists every current project task once, including tasks
-  on your turn, running, planned, queued, waiting on L3 or paused by their owner. **Your turn ·
-  N questions** or **Your turn · review PR #N** marks what waits for you; replying hands the task
-  back to its L2 (**L2 replying to you**) until it asks again. A held review-ready PR asks for
-  review itself, with **Approve merge**, unless the owner's open question already links it. Once you
-approve the current head, a later wait on something else reads, for example, **Waiting on L3 · PR #N approved**
-instead of asking again; a new head, a new hold or a later message about the PR asks again. An unassigned pause reads **Paused** with a neutral dot;
-  **Stopped by you** identifies an operator stop.
-  **Planned · waits for …**
-  keeps decided short-term work visible with one reason, without a worker or WIP slot.
-  Create it with `alt task new --wait '…'` or `--after <task>` and a written brief; a named
-  dependency releases it when archived done, while L3 or the operator can explicitly release
-  either wait with `alt task release <slug> --reason '…'`. Messages stay saved for launch without
-  releasing the task or replacing the original brief's authority. Issues remain the long-term backlog.
-  Compact status rows open the owning conversation at its question when one needs you;
-  questions and quick answers live in Needs you
-  and that chat. Recent completed tasks, with or without a PR, stay under **Done this week** and
-  open their findings. Only global Needs you has an attention badge: unanswered questions plus
-  operational attention items, labelled separately
-  in summaries. Answering changes attention immediately; execution status changes when observed.
-  Unknown or stale reads are explicit, and Back returns to the originating Work or Needs you view.
-- **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
-  owner/helper breakdowns, and retain the final observation with the archived task.
-
-Task token accounting reads existing local engine records without model calls. Input includes cache
-reads and writes once; output includes any reported reasoning subset. These are observed token
-counts, separate from context occupancy, quota percentages and billing. Task details and the report
-show coverage and freshness: missing records stay unknown or partial, and native helpers are counted
-only when local parentage supports attribution. Provider aggregates that cannot split helper usage
-say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
-
-**L1** means a bounded helper used by an L2, not a separate task owner. The L2
-remains accountable; delegation suits bounded independent work and is optional for small tasks.
-Each helper assignment explicitly directs it to read the shared [L1 persona](personas/l1.md)
-from the activated installation. L2 supplies the task-specific context, scope and expected evidence;
-repository rules remain separate. See [helper instruction delivery](docs/SESSION_LIFECYCLE.md#native-helper-instructions).
-Expand **L2 usage details** in Monitor to see observed unique helpers across recorded attempts,
-their attributable tokens, and per-helper identity and owner attempt context. Direct helpers and
-descendants are distinguished when native parentage supports it; otherwise depth stays unknown.
-Counts include observed identities without token counters and remain partial, never a definitive
-total spawned. The same breakdown stays available in task and report details after archival.
-
-L2 proactively seeks **independent adversarial review** for complex proposals before code and for
-complex implementations; simple work stays light by judgment. The task menu offers **Review proposal**
-and **Review changes**. Each existing review opens its saved status, findings and L2 dispositions in
-the task conversation without invoking a reviewer; reviewing again is an explicit action in details.
-Proposal review captures the exact original L2 proposal message and can proceed while its approval
-question stays open. It grants no implementation approval and never establishes acceptance of changes.
-One read-only reviewer uses an eligible alternate engine when available, otherwise a separate
-same-engine invocation with an explicit fallback reason. An owner can instead select the engine and
-model for one request; an unavailable selection is refused, never substituted, and project defaults stay
-unchanged. Engine/model and account-allowance uncertainty stay visible. The reviewer uses one additional machine slot and captured source and context.
-Focused scope replaces a duration cutoff; L2 observes the run and can cancel if it gets stuck or goes
-off scope. It cannot edit, run tests or approve merging. No automatic retry or engine switch follows launch.
-Review launches require working service inspection. Interruption stops the reviewer unit as well as
-its launcher; uncertain termination retains capacity for recovery. Planned activation waits for the
-review result. Capacity contention keeps an accepted request pending for a later explicit run.
-Every accepted request waits for L2 assessment or authorized withdrawal before merge. Later proposal,
-code or context changes are labelled separately; proposal evidence never substitutes for changes review.
-See [requesting and assessing review](docs/CLI.md#cross-engine-review).
-
-## Configure concurrency
-
-All projects share one persistent concurrency limit, defaulting to **80 running tasks across the
-machine**. Blocked tasks free their capacity. Eligible ready resumes receive available slots before
-fresh tasks across all projects; operator waits, unresolved faults, future resume times, busy project
-setup and unavailable engines reserve no capacity. Inspect the limit and pending requests with `alt machine show`:
-
-```sh
-alt machine show
-alt machine set --wip 120 --reason 'Allow more parallel tasks across this machine'
-alt machine set --unset-wip --reason 'Restore the machine default of 80'
-```
-
-Only the operator changes this limit. Altd applies requests on its next tick without a free task
-slot or service restart. Stored project overrides impose no limit. Lowering the machine limit lets
-running work continue and holds launches until capacity is available. The default of 80 is
-configurable above 80. See [concurrency commands and validation](docs/CLI.md#concurrency-limits).
-Capacity waits apply to pending launches; running owners see no admission hold in task status.
-
-## Engines that can evolve with the work
-
-Altitude supplies project coordination, task ownership and delivery boundaries. The CLI engine
-supplies execution tools, context management and native subagents; repository instructions,
-skills and hooks shape how it works. Execution strategy stays with the owner rather than a
-prescribed sequence of specialist stages.
-
-Required background work stays within the owner's active session until its results are consumed.
-The native Stop hook returns an owner with in-flight background tasks to its wait/result tools;
-explicit task blocks and operator Stop remain available. See [coverage and limits](docs/SESSION_LIFECYCLE.md#polling-and-cleanup).
-
-Repository rules stay with each project. Altitude's authoritative rules are in [AGENTS.md](AGENTS.md);
-`CLAUDE.md` imports that file. Both engines receive an explicit instruction-file path on fresh and
-resumed L2/L3 turns, including L3's scratch directory outside the checkout. Projects with only
-`CLAUDE.md` remain supported without changing their files. Global personas own role responsibilities,
-AGENTS.md owns this project's policy, and the [CLI reference](docs/CLI.md) describes commands.
-Personas retain essential operating guidance without depending on another project's copy of
-Altitude documentation. See [instruction loading and activation limits](docs/SESSION_LIFECYCLE.md#repository-instructions).
-
-Worker launch does not establish browser-sandbox availability. Before deployment verification that
-requires it, the owner checks the intended browser with its sandbox enabled inside the worker and
-reports an unavailable capability through the existing fault/recovery path when launch fails.
-Altitude's fictional UI harness does not prove this capability or authorize disabling required
-protections. See [browser verification and recovery](docs/DEVELOPMENT.md#browser-verification-and-recovery).
-
-Both project roles can use one installed engine with Auto. Configure project preference tiers with
-`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`: commas tie options,
-and `>` puts the next tier below them. Auto chooses the highest available tier, compares meaningful
-weekly headroom within a tie, and falls back when an option is missing or exhausted. For a
-Claude-only account with Opus, use `--routing 'claude:opus'`. Unknown access or quota stays unknown;
-it does not mean unavailable or imply a subscription entitlement. Explicit engine/model pins stay
-strict, and routing changes preserve running task attempts and their provider conversations.
-See [routing configuration and examples](docs/CLI.md#automatic-routing-preferences).
-
-Quota collection runs every five minutes without an interactive session. Native account readers
-supply current weekly evidence; failed or unavailable reads remain unknown, and readings expire
-after thirty minutes. Monitor lists each routed model's own weekly allowance when the provider
-reports one, and says plainly when it does not: shared account headroom never shows that a
-specific model is available. The headless plan-usage reader requires CLI 2.1.277 or later and a subscription
-login; its experimental response format and deferred live verification are described in the
-[collection contract](docs/SESSION_LIFECYCLE.md#context-and-prompt-cache-evidence).
-
-Each project has its own default model and reasoning effort for L3 and for L2 on every engine, so
-changing one pair leaves the others alone. **Settings → This project**, opened from the project's
-three dots, edits them beside the L3 engine pin. `alt project set <project> … --reason '…'` sets the
-same values: `--l3-model`, `--l3-effort`, `--l2-model` and `--l2-effort` for Claude, and
-`--l3-codex-model`, `--l3-codex-effort`, `--l2-codex-model` and `--l2-codex-effort` for Codex, with
-`--unset-…` restoring the default. A launch uses the pair of the engine it routes to. Unset, a Claude
-L2 runs Opus and L3 Fable, Codex uses its CLI's model, and effort is native except High for a Codex
-L2. **Native** requests no Altitude effort override. Defaults never pin an engine. L3 changes apply
-next turn in its existing conversation. Fresh L2 attempts, including queued tasks, use the defaults;
-`alt task new --effort xhigh --model …` overrides them for one task without changing them. Started
-tasks keep their saved model and effort on messages and resumes. Higher effort can use more time and
-tokens. Requested settings, launch overrides and observed provider effort remain distinct;
-[effort selection](docs/CLI.md#task-reasoning-effort) describes supported levels, precedence and
-native L1 controls.
-
-An exhausted model allowance, from a rejection or the model's own reading, excludes only that model. A reported reset schedules a retry;
-an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a
-fresh attempt from their saved work. For owners already blocked by an exited worker, L3 can
-request an explicit [provider handoff](docs/CLI.md#explicit-provider-handoff). The same task keeps
-its worktree, edits, PRs, questions, history and merge holds; ordinary Resume retains its session.
-
-Additional engines, including **OpenCode as a candidate**, require integration and verification
-of their session, permission, authentication and usage behavior. The architecture is intended to
-accommodate different model providers and billing/access arrangements too.
-See the [engine boundary](docs/ARCHITECTURE.md#engine-integration-boundary) for current integration
-limits, and the [roadmap](docs/ROADMAP.md#engines-platforms-and-distribution) for engines, macOS
-support and installable distribution.
+Owners deliver through pull requests with the project's checks and review. Ask for a merge hold
+when you want to review before merging; otherwise owners can merge when those requirements are met.
+Results inform the next discussion in the project conversation.
 
 ## Get started
 
-**Early preview software.** The versioned Linux x86_64 archive includes the
-CLI, daemon and built UI. Ubuntu 24.04 is the initial target; native macOS and clean-machine
-acceptance remain pending. Installation needs Python 3.12+, Git, authenticated GitHub CLI,
-OpenSSL, a systemd user manager and one authenticated coding CLI. Node and a source checkout are
-only needed for development. Managed projects use `main`, `origin/main` and GitHub PR delivery.
+Altitude runs for one person on a Linux x86_64 machine with a systemd user manager. Ubuntu 24.04
+is the initial target; clean-machine and provider acceptance remain pending. You need Python 3.12+,
+Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
+coding account's allowance and normal charges.
 
-Follow [setup](docs/SETUP.md) to install the release archive, trust its local HTTPS
-certificate and start your first project conversation. Fresh installs bind to localhost; phone
-access requires an explicitly configured private network and certificate trust on that device.
-Updates preserve configuration and user data. Altitude is source-available under the
-[Functional Source License](LICENSE): use it, run it inside your company and keep private forks,
-but do not offer it as a competing product; each version becomes Apache-2.0 two years after its
-release. Compatibility beyond Ubuntu 24.04 x86_64 is not established.
+1. Obtain a trusted preview installer, archive and checksum from the maintainer. There is no public
+   release yet.
+2. Follow the [installation steps](docs/SETUP.md#install-the-application) and run `alt doctor`.
+   The archive includes the CLI, daemon and web app; installation enables a per-user service and
+   saves its tool PATH.
+3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device), open the printed
+   HTTPS URL and use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
-While no project is managed, Altitude opens with First run on phone and desktop: four skippable
-steps, each also a row in **Settings → This machine**. **Your name** comes filled in from
-`ALTITUDE_OPERATOR` or Git's `user.name`; screens and agents use it where they would say “the
-operator”. **What the agents need** reuses the doctor checks (GitHub CLI and coding agents signed in,
-Git installed) and shows the command to run in your own terminal with **Check again**; the browser
-never takes a password or token. **Report Altitude’s own faults?** keeps incidents on this computer
-by default; turning publishing on fills in Altitude's repository, which you can replace with a fork.
-**Add your projects** shows the projects folder with **Change…** and offers **Add all**.
+<details>
+<summary>Ask your coding agent to help install</summary>
 
-First run and **Add a folder** list the folders directly inside your projects folder (`~/Projects`
-unless changed), each with **Add project**. **Choose a folder elsewhere…** browses the computer
-running Altitude, not the phone or laptop showing the page: it starts at your home folder, lists one
-folder's subfolders at a time when you open it, stays inside home and adds the current folder with one
-action; **Type a path instead** names any other folder. Nothing scans or indexes the disk, and listings
-never include files or their contents. **Settings → Projects folder** or
-`alt machine set --projects-folder PATH` changes the projects folder without a restart.
+Paste into Claude Code or Codex on the machine that will run Altitude. This is assisted setup;
+unattended installation is not yet validated.
 
-Each project's **Setup** status opens a revisitable checklist of its folder, repository,
-instructions, Git guards and coordinator. Altitude performs routine setup automatically and
-shows what it created, reused or could not complete. Existing projects receive current checks
-and missing requirements without losing their conversations or repeating healthy setup.
-**Retry** repeats supported setup; **Discuss with L3** opens the existing conversation for help.
-Status reads crossing a completed repair refresh its operation and verified guard receipts together,
-and a retry accepted during a status read runs as soon as that read finishes.
-L3 can request bounded repair even when tasks cannot launch, and programmatic checks verify the
-result before a step is complete. Custom hooks require your integration choice. See
-[project setup and repair](docs/SETUP.md#project-setup-and-repair).
+```text
+Help me install Altitude using https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md
+and the instructions shipped with the selected version. Check prerequisites and my normal
+engine/tool PATH first. Use only installer, archive and checksum sources I approve; verify
+the checksum and stop if anything is unavailable. Ask before privileged commands or changes
+to existing configuration, services or shell profiles. Keep localhost HTTPS and security and
+authority safeguards. Leave authentication and certificate trust to me in my own terminal or
+browser; never read or copy credentials or private keys. Stop and explain refused or failed
+checks. Run alt doctor and report anything unverified. Do not discover repositories, register
+projects or start tasks; I will choose my project in the app.
+```
 
-Existing source deployments can [prepare their current TLS setting](docs/OPERATIONS.md#preserve-source-tls-before-upgrading)
-from the verified archive before upgrading. The operator reviews and explicitly applies one service
-override; preparation preserves the running process, certificate identity and network binding.
-Verification failures name the changed fields without printing environment values.
-
-Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
-to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
-deletions remain blocked.
-The real-Git automatic-GC regression also runs with open stdin and captured output, so validation
-does not depend on the caller closing its input stream.
-
-## Project conversations
-
-The compact update notice has **Details** and **Close** on phone and desktop. Closing it stays
-remembered in this browser across navigation and refresh for the same update; a new update or
-new activation failure can appear again. **Monitor → Altitude update** retains status, details
-and the available **Restart** action. Dismissal never changes activation or fault handling.
-Every toast also has Close; inline errors and task questions retain their own recovery controls.
-
-An operator-started, seven-day conversation-audit pilot reviews recent Altitude exchanges at most
-twice daily, after four new exchanges. It uses a configurable reviewer, ordinary inspection tools
-and the ordinary session timeout. Private findings accompany L3's next project chat turn; L3 checks
-later corrections and existing ownership before deciding action. No new activity means no review,
-and unchanged findings produce no repeated notification. The pilot samples the last 48 hours,
-stops after seven days or fourteen attempts, and records observed usage separately from estimates.
-See [pilot controls and evidence limits](docs/CLI.md#conversation-audit-pilot).
-
-Desktop task chat has a compact navigation/title/actions row and visible state, model, PR and merge-hold
-chips. Long titles wrap; attempt, context and token usage open in Task details. Project headers use
-compact spacing, keeping their status and controls visible.
-
-Phone chat keeps project/task identity and a short activity status in one header, with text,
-microphone and send controls together in a compact composer. Last-answer time, engine selection,
-task metadata and operational actions open in details. Blocked and merge-held status stay distinct;
-full reasons are available there, while actionable failures and the original question remain visible.
-Bottom navigation hides during detected software keyboard use and returns on dismissal; sending
-keeps the keyboard open. Drafts,
-selection and older-message reading position survive the change; task Conversation/Live session
-tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
-
-Attach screenshots or photos in either project or task chat with **Add images**, or paste an image
-on desktop. Preview and remove selections, add typed or dictated text, and send them together;
-image-only messages work too. Sent thumbnails open a full image viewer on phone and desktop.
-PNG, JPEG and static WebP are supported: up to four images, 10 MiB each, 20 MiB total, 25 megapixels
-and 8192 pixels per side. Other formats and unsupported color encodings need an exported sRGB copy.
-
-Images remain private within the existing Altitude access boundary and are sent to the selected
-agent's provider with the message. Managed copies remove metadata, preserve orientation and convert
-supported color profiles to sRGB. They survive reload, task archive and worktree cleanup; accepted
-images follow conversation retention, while unreferenced uploads expire after 24 hours. Selection
-alone creates no server copy. A failed or uncertain send offers a safe retry, and unavailable image
-input or missing content is explicit. Image capability reads coordinate with project removal;
-a removed project returns the ordinary image-access denial. Closing a client during an image error reply
-is an ordinary disconnect, without an unhandled server exception. A temporary local converter check
-failure can recover on a later image operation without restarting Altitude. Fresh task attempts receive
-previously delivered image context
-with its captions and source messages. L3 can give its assigned L2 the relevant image through the
-[existing task commands](docs/CLI.md#image-handoffs). This covers operator input; agent-produced
-results and downloadable deliverables remain outside this increment of issue #230.
-
-PR and issue references in L3 and L2 prose, decisions, and reports are clickable, including saved
-messages. `PR #250` and `pull request #250` open the project's pull request; `issue #247` and
-`#247` use GitHub's issue route, which also resolves pull requests. `owner/repo#247` names its own
-repository. Links open in a new tab. Existing links and code stay intact; unqualified references
-stay text when the project's GitHub repository is unavailable.
-
-Absolute file paths and `file:///` references in conversation prose use the same ordinary link
-style. Open one to read the document in a separate browser tab on desktop or phone; the conversation
-and draft stay in place. The reader shows the full target and Copy path, renders Markdown with a
-Raw toggle, and displays `.txt` files as plain text. Reading commands never executes them.
-
-File reading is limited to regular UTF-8 `.md`/`.txt` documents directly in the selected project's
-task folders, including archived tasks, up to 1 MiB. Anyone with Altitude's existing private web
-access can read any eligible document, including one never mentioned in chat. Other machine paths,
-symlinks and nested files are unavailable; their full reference remains visible for copying.
-Missing or unreadable files show an error with Retry. Embedded HTML and remote images do not run
-or load, and code in conversation messages remains code.
-
-Generated replies, briefs and summaries preserve upstream references as full URLs or
-`owner/repo#number`. Bare references keep their local meaning; ambiguous historical text is not
-assigned a guessed upstream repository.
-
-Within an L2 task, Conversation and Live session are local views. Switching between them adds no
-browser history entries. On phone, swipe left to Live session and right to Conversation, or use the
-labeled tabs. The swipe follows your finger: release past half the screen (or a quick flick) switches,
-a shorter drag springs back, and either end gives resistance instead of wrapping. Vertical scrolling, text selection, form controls and horizontally scrollable session
-content keep their gestures. View switches preserve the draft, selection, images and reading position
-without reopening the keyboard. Browser Back and the task's Back control return to the preceding page;
-on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
-opens the live session, including after reload.
-Scrolling up in Live session pauses following; Follow returns to the newest output.
-
-Stop, Continue and Check status share one consistently styled button in the task header, visible
-from both views. The phone title dropdown opens task details, including View question. Desktop
-keeps its split view and panel toggle; an overlay puts the task action in its own header. Conditional
-question and Latest jumps float above the composer, appear only while their destinations are
-offscreen, and share one question jump when both lead to the bottom. The tabs and panel toggle
-provide live-session navigation without a separate row beside the composer.
-
-An L2 question with attached evidence shows **View preview · vN** in Needs you and its owning
-question. When the open question scrolls out of view, use its question jump, then View preview.
-Work opens that same question from the task row. The preview opens saved
-screenshots and text in another browser tab, leaving the original view and draft in place;
-closing that tab returns there. **Back to question** opens the exact discussion and decision controls.
-The captured title identifies a design proposal or implementation review without relabelling old evidence.
-Each version keeps its captured content; a replacement advances the question revision and earlier
-links remain identifiable. Interactive wireframes are represented by screenshots of their states;
-submitted HTML does not execute. Viewing or discussing a proposal leaves its question open, and
-accepting a design leaves any merge hold intact. See [publishing a task design](docs/CLI.md#task-design-previews).
-The [model-to-UI flow](docs/ARCHITECTURE.md#from-model-judgment-to-a-task-question-or-preview)
-explains how owners invoke the CLI, how coordinator transports differ, and where questions,
-previews and decisions persist.
-
-At the end of the task conversation, fresh public L2 words appear in an expandable two-line preview
-that scrolls with chat. The preview disappears after 60 seconds without fresh public words or recorded
-activity; missing, untimed and unavailable output leaves no box. Live session keeps the separate
-recorded-activity status and older output under existing retention, without duplicate replies
-or model-generated summaries. Stop is directly accessible in both views on phone and desktop.
-Desktop Escape stops only when no input, dialog, recording, menu or overlay owns the key. Stopping
-keeps the draft editable; only confirmed termination enables correction or Continue. Continue keeps
-the unsent draft, while sending a correction resumes with earlier queued messages followed by that
-correction. Switching views preserves the draft and selection. Finished tasks are read-only.
-
-Project conversations keep their own history, waiting messages and unsent text. Drafts stay in this
-client session across project switches and route changes; a turn already sent finishes in its original project. Returning
-to that project shows its saved history and any active turn. Retry sends to the displayed project.
-An image already shown in history stays there when its admission receipt arrives; it does not
-reappear in the waiting queue.
-Leaving, including switching to Live session, cancels voice input that has not been sent and releases
-the microphone. Once you press Send, transcription finishes and sends to the original project or task
-even after navigation or view switches. Returning while
-it is pending shows its status; a failure preserves the original text for recovery there. Another
-conversation's draft stays independent. While the microphone opens, records or transcribes, the text stays readable
-and read-only, with its activity indicator inside the composer. Stop adds the transcript for editing;
-Send transcribes and sends once. Cancel, denial or failure restores editing and preserves the draft.
-Voice works on a fresh installation through the browser's own speech recognition, with the words
-appearing as you speak. **Settings → Voice input**, reached from the project’s three dots or the
-desktop rail’s operator row, switches to the local speech service or an
-OpenAI-compatible endpoint, which transcribe after Stop or Send (see [voice input](docs/OPERATIONS.md#voice-input)).
-Browser dictation requests automatic punctuation when supported; formatting depends on the browser.
-The setting applies to every project; `alt machine set --voice` changes the same setting from the CLI.
-
-Submitted text, including image captions, stays recoverable in its original conversation while
-awaiting confirmation across navigation and reload in the same browser tab. A receipt clears that recovery copy immediately;
-without one, the existing refusal or unconfirmed-delivery hint accompanies the recovered text.
-Recovery never resends automatically or infers delivery from matching text. If the browser cannot
-save a recovery copy, the message remains in the composer and is not submitted. Ordinary unsent
-project text stays client-side until reload; unsent image selection is released on leaving. If a later recovery update fails, the latest text stays
-available across in-app navigation and the composer asks you to keep the tab open until it can save.
-Needs you, the rail and the Work panel refresh within about a second of a task or decision change,
-including while a reply streams, through the shell's one change stream; after a lost connection or
-a restart the page reconnects and rereads current records.
-Needs you offers an alert for each new decision, granted per device. A device that a push service can
-wake alerts with Altitude closed; otherwise alerts arrive while an Altitude page is open, and the
-switch says which it is. The alert names the project and task only, opens that decision, and repeats
-for none of refresh, reconnection or other tasks' activity. A push carries nothing: the device asks
-Altitude what is waiting, and says only that a decision is waiting when it cannot reach it. Without
-permission, notification support or a reachable push service, Needs you is unchanged.
-Conversation polling continues while replies stream,
-and a queued message moves into history as part of the server's guarded turn admission.
-
-An accepted project or task message stays sent if its response stream, a later refresh, or the
-immediate worker wake fails. Task polling replaces the pending preview with the saved message,
-even before the send response arrives. The composer stays cleared and keeps any new draft. A refused send
-restores recoverable text with Retry; an unconfirmed delivery preserves the text and asks you to
-check the conversation before sending again. A failed assistant answer belongs to the sent turn.
-
-Every fresh L3 provider session receives the project's latest 20 prior operator and assistant chat
-messages, oldest first, as labeled historical context. This includes discussion with the same
-provider before rotation. Server-triggered reports, restarts and other system events do not consume
-those slots; the current turn is excluded. Each message includes at most 800 characters of text,
-with longer text marked `[truncated]`. Resumed sessions keep native conversation history and receive
-only a bounded handoff of human messages missed while another provider handled L3. The conversation
-view loads the latest human messages and system events as separate allowances, so a burst of system
-events never hides your recent messages. No tool
-transcripts or generated summaries are replayed.
-
-Owners and the coordinator share [project inspection commands](docs/CLI.md#inspection) for task records,
-PRs, checkout status and historical evidence. Owner history, tool-summary, PR and repository reads stay
-bound to their launch project; mutation and publication permissions remain separate. Coordinator Git
-reads include full diffs and historical files, with external diff and text-conversion helpers disabled.
-The existing service read includes bounded loaded TLS settings, owned drop-in presence on disk and
-in the service manager, definition-reload state, and process identity for recovery comparisons.
-Unavailable evidence stays unknown; native omission of an empty environment-file list is recognized.
-An active process alone does not establish TLS restoration.
-Admitted worker reads also expose native termination results, invocation/start/exit identity,
-and memory accounting/limits. Missing or collected units and unsupported fields stay explicit;
-signal 9, exit 137 or a memory snapshot alone does not establish OOM or verified recovery.
-See [service inspection](docs/CLI.md#loaded-service-evidence) for the read and its limits.
-For decisions beyond the handoff, either role uses [`alt l3 search "literal text"`](docs/CLI.md#historical-evidence-search).
-It searches the project's human conversation and active/archived task conversations, reports and
-digests, returning original excerpts, dates, speaker attribution and stable source references.
-Matching records appear newest first with adjacent context; clipped text and omitted results are
-explicit. Tasks without a resolvable status record are counted and listed in partial results;
-corrupt or unreadable evidence returns an error. Historical evidence preserves context for judgment;
-current instructions and task records govern action. Lookup makes no model calls and writes no memory.
-
-## Project faults
-
-Isolated tasks progress independently of the deployment checkout. Fresh worktrees start from freshly
-fetched `origin/main`; resume validates the owner's existing worktree without fetching or changing
-deployment. Staged, working and untracked deployment edits stay untouched. Task launch uses the
-activated installation's committed CLI, personas, hooks, templates and schemas; deployment and
-activation failures remain separately visible while otherwise valid tasks continue.
-When another worktree's fetch changes the same remote base during a fetch, dispatch and
-self-deployment fetch once more after the specific stale-reference error. Progress requires that
-fresh fetch to succeed; unrelated errors and a failed second fetch remain visible.
-
-To preserve deployment edits for an authorized reconciliation, L3 or the operator can use
-[`alt task preserve-checkout <slug> --reason '…'`](docs/CLI.md#dirty-checkout-recovery)
-for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
-changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
-snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
-The task owner inspects and applies authorized changes in its isolated worktree, selects what to
-stage, and delivers through a PR. Expected files are [coordination guidance](docs/CLI.md#task-file-lists).
-Archives remain local until explicit operator removal; Altitude never pushes or deletes them.
-Existing stash records and stashes remain readable and recoverable. Explicit resume can requeue
-an unlaunched task with a saved deployment-dirt fault; deployment recovery remains separate.
-
-A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
-notification in the owning project. Unchanged saved blockers stay quiet across restarts and incident
-windows. Another affected task, a new blocker, or changed details still gets a coordinator notification.
-Repair-task faults do not wake the
-coordinator again. Machine faults without a project notify the registered `altitude` project, or
-remain in the machine fault ledger when it is absent.
-
-The originating coordinator checks public delivery evidence and local observations that the actual
-cause is gone before requesting a reason-bearing resume of the original session. Notification receipt,
-issue closure and unrelated restarts do not establish repair. Coordinator messages to faulted tasks
-remain readable without waking them; direct operator discussion remains available. Landing checks
-and merge holds still apply.
-
-L3 keeps unfinished work actionable with an owned next step, a meaningful finite observation or a
-genuine decision. Legitimate waits name their dependency and follow-through; they need no continuously
-running worker. Irretrievable historical evidence stays unknown. When supported diagnosis cannot
-establish recovery, L3 exposes the actual capability or authority gap. Ordinary non-invasive
-investigation is part of the owner's task and iterates without approval rounds; only missing access,
-material machine changes, unapproved spend, live-provider tests or explicit restrictions need a
-question. Fix scope and holds remain. See the [recovery contract](personas/l3.md#recovery-and-incident-issues).
-
-Recovery and recurrence prevention are separate responsibilities. Every incident already has its
-GitHub issue; L3 attaches an existing issue when the cause is shared and records prevention
-ownership and next action on it. Existing incident evidence and `watch` status keep pending
-follow-through visible in coordinator state even after recovery. A concise
-FYI states recovery and follow-through; unchanged repeats remain quiet. Closure records verified
-prevention or an evidence-backed no-change disposition and closes the issue. The development coordinator triages issues
-under its own authority, on any installation. See [incident follow-through](docs/CLI.md#incident-recovery-and-prevention).
-
-For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
-blocked task: a faulted owner, or an owner parked on a question while its required check queues. Status
-names its next action and time. The daemon follows relevant fresh CI, reruns one selected run only for
-a fault, preserves uncertain submission evidence, and delivers terminal
-results durably to that project's L3, including unchanged failures. L3 reconciles the next step and
-gives a concise heads-up when significant work remains blocked; repeated observations stay quiet.
-Artifact capacity needs fresh uploaded artifacts; a passing run
-with a tolerated upload error does not prove recovery. The probe leaves owner resumption to L3.
-
-Every incident is a GitHub issue. Filing an incident, whether a system fault or `alt incident new`,
-creates one sanitized issue labelled `incident` in the Altitude repository and links it on the
-record; see [incident issues](docs/CLI.md#incident-issues) for what is published and what stays
-local. A failed publication stays on the record as `issue: pending — <reason>` and
-`alt incident publish <id>` retries without creating a second issue. When L3 judges that an incident
-shares its cause with an existing issue, `alt incident amend <id> --issue <url>` attaches it and
-closes the issue the incident created as a duplicate. Closing the incident comments the reason on
-its issue and closes the issue it created; an attached issue stays open for its other occurrences. An incident filed in another managed project sends the registered `altitude`
-development project one fixed issue-link notification when its Git origin matches the issue
-repository; the notification carries no evidence and creates, reuses or resumes no task.
-
-## Remove a project
-
-In the project's **More actions** menu, **Remove project** detaches L3 and stops Altitude
-management. Finish or reject unfinished tasks and wait for their workers and any L3 turn first.
-The repository, remaining worktrees, history, provider sessions and queued messages stay on disk.
-Add the same folder and project name again to attach L3, restore its history and resume waiting
-messages. Removing the last project opens First run; otherwise a remaining project is selected.
-`alt project remove <name>` uses the same checks. See [project lifecycle](docs/CLI.md#project-lifecycle).
+</details>
 
 ## Documentation
 
 | Start here | Go deeper |
 | --- | --- |
-| [Setup](docs/SETUP.md) | [Architecture and engine boundary](docs/ARCHITECTURE.md) |
-| [Rendered walkthrough](docs/WALKTHROUGH.md) | [Engine and session lifecycle](docs/SESSION_LIFECYCLE.md) |
+| [Setup](docs/SETUP.md) | [Architecture](docs/ARCHITECTURE.md) · [Session lifecycle](docs/SESSION_LIFECYCLE.md) |
+| [Walkthrough](docs/WALKTHROUGH.md) | [CLI reference](docs/CLI.md) · [Operations](docs/OPERATIONS.md) |
 | [Contributing](CONTRIBUTING.md) | [Development and checks](docs/DEVELOPMENT.md) |
-| [Release checkpoints](docs/RELEASING.md) | [Changelog](CHANGELOG.md) |
-| [CLI usage](docs/CLI.md) | [Service operations and mobile access](docs/OPERATIONS.md) |
-| [Roadmap and release prerequisites](docs/ROADMAP.md) | [Design boards and UI specification](design/wireframes/README.md) |
-
-For an archive installation, [operations](docs/OPERATIONS.md#installed-application-lifecycle) documents
-versioned updates and recovery. Source deployments use [automatic activation](docs/OPERATIONS.md#service-lifecycle)
-and the operator's `make restart` command. Browser target and installation instructions
-are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
-
-Every PR runs `make check` in CI: Python, web tests, typecheck/build and phone/desktop browser flows
-against isolated fictional state, with external engines replaced by deterministic fixtures.
-Python module processes run alongside the ordered web phases; CI browser workers scale with
-available CPUs. Every required phase must pass, with per-phase timings and aggregate Python counts.
-CI retains small logs and tested commit identity on the runner host; failed runs also retain the
-self-contained HTML report, screenshots and traces, which owners retrieve only to diagnose a
-failure or on a reviewer's request. When the retained evidence reaches the runner's budget, L3
-coordinates a measured cleanup of exports no open work needs. No GitHub artifact upload is required.
-See [delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
-Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
-curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
-These repeated checks make no model calls. Live-provider validation is deferred; the
-[coverage matrix](docs/DEVELOPMENT.md#coverage-and-limits) records what the tests establish.
-Daily preview readiness checkpoints and as-needed releases select a validated source version and curated notes;
-the operator decides whether to publish it. Source-deployed merged changes continue activating automatically.
-
-The [project rules](AGENTS.md#working-rules-for-every-pr) govern implementation and review;
-the architecture and lifecycle pages describe the current system. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;
-[issue #219](https://github.com/mburakyucel/altitude/issues/219) tracks this onboarding milestone
-and the remaining repository-presentation work.
+| [Roadmap](docs/ROADMAP.md) | [Release checkpoints](docs/RELEASING.md) · [Changelog](CHANGELOG.md) |
 
 ## Feedback
 
-[Open an issue](https://github.com/mburakyucel/altitude/issues/new/choose) with what you tried,
-expected behavior, actual behavior, and a small reproducible example; an idea template covers
-proposals. Setup friction and confusing product language are useful feedback too. Keep examples
-fictional or redacted. Report vulnerabilities privately as the [security policy](SECURITY.md)
-describes. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
+[Open an issue](https://github.com/mburakyucel/altitude/issues/new/choose) with a bug, idea or
+confusing part of setup. Keep examples fictional or redacted. Report vulnerabilities privately
+using the [security policy](SECURITY.md).
 
-Altitude records its own failures as incidents. They stay on your machine until you turn on
-incident reports in First run or **Settings → Incident reports** (or set
-`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment); every incident then becomes a
-sanitized issue in the repository named there, Altitude's own unless you choose a fork. See [incident issues](docs/CLI.md#incident-issues).
+Altitude is source-available under the [Functional Source License](LICENSE).

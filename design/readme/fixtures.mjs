@@ -29,6 +29,12 @@ export function fixtures() {
     { role: 'assistant', text: 'Three L2 owners are working in separate worktrees.\n\n**Compatibility** covers the v1 contract and cursors. **Backfill** implements resumable batches. **Performance** measures the existing index while those changes are built.\n\nI will use their reports to coordinate rollout readiness. You can steer each owner directly from its task.', trigger: 'chat', turn_id: 't2', engine: 'codex', at: ago(30) },
   ];
   return {
+    setup: { project: 'atlas', status: 'ready', steps: [], operation: null },
+    images: {
+      available: true, max_count: 4, max_bytes: 10 * 1024 * 1024,
+      max_total_bytes: 20 * 1024 * 1024, max_pixels: 25_000_000, max_dimension: 8192,
+    },
+    voice: { backend: 'browser', selection: 'fixture-browser', url: '', model: '', key_set: false },
     overview: {
       projects: [
         { name: 'atlas', managed: true, counts: { running: 3, blocked: 0 }, l3: { session_id: 'fixture-l3' } },

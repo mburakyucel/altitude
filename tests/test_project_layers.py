@@ -45,8 +45,6 @@ PROVIDER_BASELINE = {
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "docs/ARCHITECTURE.md": 4,
-    "docs/SESSION_LIFECYCLE.md": 3,
     "web/src/routes/Task.test.tsx": 1,
 }
 

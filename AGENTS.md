@@ -1,7 +1,8 @@
 # Working in Altitude
 
-Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
-description; Git history is the archive.
+Read `README.md` for the public introduction and `docs/ARCHITECTURE.md` for the active system
+description before changing behavior. Follow the relevant lifecycle, setup and operations links
+there; Git history is the archive.
 
 `AGENTS.md` is the authoritative project rule source for both engines; `CLAUDE.md` imports it.
 Current system behavior and useful rationale live in the linked documentation. Ask the operator
@@ -57,9 +58,10 @@ development/admin exposure grants no new privilege model, generic flag framework
   isolated worktree/branch and PR, explicit scope/exclusions, unrelated-work preservation and
   review of all outgoing history. L3 remains read-only on the deployment checkout and changes
   operational state only through documented `alt` verbs.
-- Ship the docs with the change: a PR that changes behavior updates `README.md`,
-  `docs/ARCHITECTURE.md`, and `docs/SESSION_LIFECYCLE.md` wherever they describe that behavior, in
-  the same PR and in present tense.
+- Ship the docs with the change: update the linked system documentation wherever it describes
+  changed behavior, including architecture, session lifecycle, setup and operations as applicable.
+  Update `README.md` when its public introduction, workflow or getting-started guidance changes.
+  Keep these updates in the same PR and in present tense.
 - Major UX changes, cost-accruing infrastructure, identity, or security changes hold for operator review.
   A hold report explains the strategy and decisions made. Explicit task authorization governs the hold.
 - [L2 delivery and completion](personas/l2.md#delivery-and-completion) owns landing, holds,

@@ -5,6 +5,18 @@ versioned index; Harbor is a second fictional project. Every message, task, usag
 tool result below is fixture data rendered by the real web application. The captures demonstrate
 the interface, not a migration that an agent actually delivered.
 
+## Who carries the work
+
+You set direction and make decisions that need your judgment. Each project has a persistent
+coordinator (L3); each task has an owner (L2) responsible for investigation through delivery.
+An owner can delegate bounded work to native helpers (L1) and remains responsible for the result.
+You can talk to an owner directly as well as through the project conversation.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/orchestration-phone.svg">
+  <img src="images/orchestration.svg" alt="The operator directs the project coordinator and can steer task owners directly. Each owner chooses and integrates its own native helpers." width="1200">
+</picture>
+
 ## Keep the project direction in one conversation
 
 In **Atlas**, discuss the migration with L3, the project's persistent orchestrator. Preserve the
@@ -65,8 +77,8 @@ recommend seven days for the pilot, but the storage cost and rollback window nee
 It escalates that question. The other task owners can continue while this one waits.
 
 **Needs you** gathers unanswered operator questions across projects. Open a question to read its
-context and discuss it in the owning L2 conversation. Explicit quick choices answer a single
-question immediately; a group lets you pick answers and send them together. You can also type,
+context and discuss it in the owning L2 conversation. Pick choices, then use **Send N answers**
+to submit them; even a single choice stays staged until you send it. You can also type,
 “Keep the old index for seven days; include that limit in the rollout notes.” The owner records
 that decision against your message. A follow-up keeps the question open, and a saved answer does
 not by itself mean work has resumed or a merge hold has been released.
