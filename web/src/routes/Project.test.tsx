@@ -32,7 +32,6 @@ const project = {
   ],
   archive: [
     { slug: "old-thing", state: "done", title: "Old thing", updated: ago(60 * 24 * 2) },
-    { slug: "older-thing", state: "done", title: "Older thing", updated: ago(60 * 24 * 20) },
   ],
   decisions: [],
   incidents: [],
@@ -284,6 +283,23 @@ describe("Project page", () => {
     fold.click();
     expect(fold.closest("details")).toHaveAttribute("open");
     expect(within(panel).getByRole("link", { name: /^Shipped/ })).toHaveAccessibleName("Shipped · Done · PR #212 merged");
+  });
+
+  // §3.7: the server sends every task finished in the last seven days, newest first; nothing is capped.
+  it("lists every task done this week in the order received, with matching counts", async () => {
+    const archive = Array.from({ length: 25 }, (_, n) => ({
+      slug: `finished-${n}`, state: n % 5 ? "done" : "rejected", title: `Finished ${n}`, updated: ago(60 * (n + 1)),
+    }));
+    mockFetch({ overview: { ...overview, queue: [] }, project: { ...project, archive } });
+    setViewport(1440);
+    renderApp({ route: "/projects/altitude" });
+
+    const panel = await screen.findByRole("region", { name: "Work" });
+    expect(within(panel).getByText("2 current · 25 done this week")).toBeInTheDocument();
+    const fold = within(panel).getByText("Done this week (25)");
+    fold.click();
+    const rows = within(fold.closest("details") as HTMLElement).getAllByRole("link");
+    expect(rows.map((row) => row.getAttribute("href"))).toEqual(archive.map((t) => `/projects/altitude/tasks/${t.slug}`));
   });
 
   it.each([390, 1440])("shows a planned row beside running work through release and launch at %ipx", async (width) => {

@@ -4,7 +4,7 @@ import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
-import { agoText, when } from "../data/observed";
+import { agoText } from "../data/observed";
 import { attentionSummary } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
 import { handling } from "../components/SystemLine";
@@ -30,7 +30,6 @@ function str(value: unknown): string {
 
 // ---- the work panel (SPEC.md §3.7) ------------------------------------------------------------
 
-const WEEK_MS = 7 * 86_400_000;
 /** The section-move fade (§3.7). */
 export const MOVE_MS = 200;
 
@@ -53,10 +52,8 @@ export function WorkPanel({
   const current = [...new Map([...tasks, ...decisions.filter((d) => !tasks.some((t) => t.slug === d.slug)
     && !project.data?.archive?.some((t) => t.slug === d.slug))]
     .map((t) => [t.slug, t])).values()].filter((t) => sectionOf(t) === "active");
-  const doneThisWeek = (project.data?.archive ?? []).filter((t) => {
-    const at = when(t.updated);
-    return (t.state === "done" || t.state === "rejected") && at != null && Date.now() - at < WEEK_MS;
-  });
+  // The server sends every task finished in the last seven days, newest first.
+  const doneThisWeek = project.data?.archive ?? [];
   // §3.7: a row whose task just changed section fades in where it now belongs (200ms). The mark
   // outlives the render that noticed the move so the animation finishes whatever refetches meanwhile.
   const sections = useRef(new Map<string, string>());

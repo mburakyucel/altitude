@@ -534,7 +534,7 @@ releasing the task. There is no release button in Work or the task conversation.
 | Release, then launch | The same row shows Queued and its dispatch hold, then Running when observed; the planned reason disappears. |
 | Answer, withdrawal or follow-up | The row keeps its order. Answers and withdrawals reduce its question count; a wake alone changes none. |
 | Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
-| Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides the most recently finished tasks (up to twenty) from the last seven days, with or without a PR, and is absent when none exist. A no-code completion also posts a task-linked FYI to the project conversation. |
+| Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides every task finished in the last seven days, newest first, with or without a PR, and is absent when none exist. A no-code completion also posts a task-linked FYI to the project conversation. |
 | Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
 
 Work and Needs you add no voice controls. Listening, transcribing, denied and send-failure states

@@ -1,5 +1,6 @@
 """No-code tasks close directly; code changes cannot bypass the PR/report gate."""
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
@@ -30,11 +31,18 @@ class TestDirectL2Completion(AltitudeCase):
         self.assertFalse((S.task_dir("p", task["slug"]) / "report.json").exists())
 
     def test_completed_no_code_tasks_stay_in_work_with_findings_and_a_coordinator_handoff(self):
-        # #296: many later-named archived tasks must not hide the newest no-code completions from Work.
+        # #296: Done this week lists every task finished in the last seven days by finish time, newest
+        # first, whatever the slugs; older completions stay out.
+        week = datetime.now(timezone.utc) - timedelta(days=7)
         for n in range(25):
             S.write_json(S.archive_dir("p") / f"zz-earlier-{n:02}" / "status.json",
-                         {"slug": f"zz-earlier-{n:02}", "state": "done", "title": f"Earlier {n}",
-                          "updated": "2026-01-01T00:00:00+00:00", "prs": [n + 1]})
+                         {"slug": f"zz-earlier-{n:02}", "state": "rejected" if n % 5 == 0 else "done",
+                          "title": f"Earlier {n}", "prs": [n + 1],
+                          "updated": (week + timedelta(hours=n + 1)).isoformat(timespec="seconds")})
+        S.write_json(S.archive_dir("p") / "zz-last-week" / "status.json",
+                     {"slug": "zz-last-week", "state": "done", "title": "Last week",
+                      "updated": (week - timedelta(days=1)).isoformat(timespec="seconds")})
+        finished, completed = [f"zz-earlier-{n:02}" for n in reversed(range(25))], set()
         for title, engine in (("Architecture proposal", "claude"), ("Backlog review", "codex")):
             task, _ = self.task(title)
             task["l2_engine"] = engine
@@ -44,9 +52,9 @@ class TestDirectL2Completion(AltitudeCase):
             server.on_l2_finished("p", {"task": S.load_task("p", task["slug"]), "died": True,
                                         "agent": {"id": "worker", "state": "done"}})
             self.assertEqual(S.load_task("p", task["slug"])["state"], "done")
-            archive = server.project_view("p")["archive"]
-            self.assertEqual(archive[-1]["slug"], task["slug"])
-            self.assertEqual(len(archive), 20)
+            completed.add(task["slug"])  # both may finish within the same second
+            listed = [row["slug"] for row in server.project_view("p")["archive"]]
+            self.assertEqual((set(listed[:len(completed)]), listed[len(completed):]), (completed, finished))
             self.assertIn(f"{title} findings: keep the queue.",
                           [row["text"] for row in T.task_messages("p", task["slug"])])
             fyi = l3.chat_history("p")[-1]
