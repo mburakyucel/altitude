@@ -85,12 +85,25 @@ def _capacity(task):
     return None
 
 
-def _git(root, *args, binary=False, stdin=None):
+def _git(root, *args, binary=False, stdin=None, conflict_ok=False):
     result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", *args],
                             cwd=root, input=stdin, capture_output=True, timeout=120, env=config.subprocess_env())
-    if result.returncode:
-        raise T.TransitionError("Review checkpoint unavailable: " + result.stderr.decode(errors="replace")[-300:].strip())
-    return result.stdout if binary else result.stdout.decode().strip()
+    if result.returncode and not (conflict_ok and result.returncode == 1):
+        reason = (result.stderr.strip() or result.stdout.strip()).decode(errors="replace")[-300:].strip()
+        raise T.TransitionError(f"Review checkpoint unavailable: git {args[0]} failed: "
+                                + (reason or f"exit status {result.returncode}"))
+    output = result.stdout if binary else result.stdout.decode().strip()
+    return (output, result.returncode == 1) if conflict_ok else output
+
+
+def _candidate_tree(root, base, head):
+    output, conflicted = _git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, head, conflict_ok=True)
+    lines = output.splitlines()
+    if conflicted:
+        paths = ", ".join(dict.fromkeys(lines[1:])) or "unnamed paths"
+        raise T.TransitionError(f"The task branch conflicts with current main in {paths}. "
+                                "Reconcile the branch with origin/main and commit, then retry.")
+    return lines[0]
 
 
 def _context(project, task):
@@ -118,7 +131,7 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
     tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
-            _git(root, "merge-tree", "--write-tree", base, head).splitlines()[0]) if candidate else None
+            _candidate_tree(root, base, head)) if candidate else None
     context = _context(project, task)
     identity = {"head": head, "base": base, "tree": tree}
     if proposal_id:
@@ -253,6 +266,9 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             raise T.TransitionError(why)
         if why := _capacity(task):
             raise T.TransitionError(why)
+        if subject == "changes":
+            root = Path(task["worktree"])
+            _candidate_tree(root, _git(root, "rev-parse", "origin/main"), _git(root, "rev-parse", "HEAD"))
         choice = route.pick_review(task, config.project(project), **(selection or {}))
         if not choice.get("engine"):
             raise T.TransitionError(choice.get("why") or "No second engine is available.")

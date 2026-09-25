@@ -414,7 +414,8 @@ and 64 MiB per tree, so removed content is bounded before creating the diff. Con
 request, original authority messages and corrections, decisions,
 and default-all or selected L2 evidence, bounded to 64 KiB. Proposal capture also binds the exact
 original L2 message and text against the committed head's source tree, even before code differs from
-main. Changes reviews capture the merge-candidate tree and diff. Missing proposal input prevents invocation. Image evidence needs a
+main. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
+refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. Read and search deliver text

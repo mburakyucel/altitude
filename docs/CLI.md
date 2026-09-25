@@ -1331,6 +1331,9 @@ Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subjec
 skipped by the operator's UI action. A proposal request can continue an owner with an approval
 question solely to prepare, run and assess review, preserving that question and its approval requirement.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
+Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
+with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
+main and commit before retrying.
 `run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The 64 KiB context limit fails explicitly.

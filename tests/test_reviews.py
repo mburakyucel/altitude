@@ -331,6 +331,40 @@ class TestReviews(AltitudeCase):
         self.assertIn("links", result["error"])
         self.engine.assert_not_called()
 
+    def test_conflict_with_current_main_names_paths_and_records_no_request(self):
+        def move_main(text):
+            (self.repo / "value.py").write_text(text)
+            git("add", "value.py", cwd=self.repo)
+            git("commit", "-q", "-m", "Move main", cwd=self.repo)
+            git("push", "-q", "origin", "main", cwd=self.repo)
+
+        def assert_conflict(error):
+            self.assertIn("conflicts with current main in value.py", error)
+            self.assertIn("Reconcile the branch with origin/main", error)
+
+        review = self.request()
+        move_main("VALUE = 'main'\n")
+        failed = self.run_review(review)
+        self.assertEqual(failed["state"], "failed")
+        assert_conflict(failed["error"])
+        self.engine.assert_not_called()
+        with self.assertRaises(T.TransitionError) as refused:
+            self.request(previous=review["id"])
+        assert_conflict(str(refused.exception))
+        self.assertEqual([r["id"] for r in S.load_task(self.project, self.slug)["reviews"]], [review["id"]])
+
+        git("merge", "-q", "-X", "ours", "-m", "Reconcile main", "origin/main", cwd=self.worktree)
+        completed = self.run_review(self.request(previous=review["id"]))
+        self.assertEqual(completed["state"], "completed")
+        move_main("VALUE = 'moved again'\n")
+        with self.assertRaises(T.TransitionError) as refused:
+            self.assess(completed)
+        assert_conflict(str(refused.exception))
+        self.assertFalse(S.load_task(self.project, self.slug)["reviews"][-1].get("reconciled"))
+        with self.assertRaises(T.TransitionError) as silent:
+            reviews._git(self.worktree, "rev-parse", "--verify", "-q", "missing")
+        self.assertTrue(str(silent.exception).endswith("git rev-parse failed: exit status 1"))
+
     def test_owner_can_edit_during_review_but_snapshot_stays_exact(self):
         checkpoint = self.pair()["head_sha"]
         def edit_after_capture(prompt, **kwargs):
