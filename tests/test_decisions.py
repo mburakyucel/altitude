@@ -340,7 +340,7 @@ class TestDecisionApi(AltitudeCase):
 
     def request(self, method: str, path: str, body: dict | None = None) -> tuple[int, bytes]:
         raw = json.dumps(body).encode() if body is not None else b""
-        head = f"{method} {path} HTTP/1.0\r\nHost: x\r\n"
+        head = f"{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n"
         if body is not None:
             head += f"Content-Type: application/json\r\nContent-Length: {len(raw)}\r\n"
         host, port = self.httpd.server_address
