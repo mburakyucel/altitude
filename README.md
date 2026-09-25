@@ -1,25 +1,23 @@
 # Altitude
 
-**You lead. Altitude orchestrates. Agents ship. 24/7**
+**You lead. Altitude orchestrates. Agents ship.**
 
-Be the principal engineer. Set the roadmap. Own the architecture. Make executive decisions.
-Delegate the execution.
+Be the principal engineer. Set the roadmap. Own the architecture. Make the calls.
 
-Altitude orchestrates your coding agents as an engineering team. Talk through strategy with your
-project orchestrator, put work in motion and make the calls that need your judgment. Task owners
-carry execution through investigation, implementation, checks and pull requests—in parallel, on
-your machine.
+Altitude turns your Claude Code or Codex agents into an engineering team. Your project
+orchestrator works through strategy with you and puts work in motion. Task owners carry it
+through investigation, implementation, checks and pull requests: in parallel, each in its own
+worktree, on your machine and your coding account.
 
-**Speak directly to your project orchestrator from your phone.** Describe your next feature,
-settle a tradeoff or change direction. Your agents keep working on your machine after you put
-your phone away.
+**Steer from your phone, by voice.** Describe the next feature, settle a tradeoff or step into
+any task. The work keeps going on your machine after you put the phone away.
 
 **Early preview · Linux x86_64 · [Get started](#get-started)**
 
 <img src="docs/images/project-desktop.png" alt="Desktop: discuss Atlas's architecture with L3 while three task owners work in parallel in the adjacent Work panel." width="1440">
 
-*The actual app, with a fictional Atlas project. Set direction with L3; follow parallel delivery
-alongside the conversation.*
+*The actual app, with a fictional Atlas project. Set direction with L3, your project orchestrator;
+follow parallel delivery alongside the conversation.*
 
 ## On your phone
 
@@ -55,7 +53,7 @@ delivery; request a merge hold when you want the final say before merging.
 the work. Move between project strategy and implementation detail from the same browser, on your
 computer or [your phone](docs/OPERATIONS.md#on-iphone).
 
-Codex and Claude Code are supported today; one is enough. Their integrations are
+One engine is enough, and each integration is
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
 ## Get started
