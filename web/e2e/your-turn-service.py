@@ -1,4 +1,6 @@
 """Real turn, review and label storage for the "your turn" walkthrough; only the L2 engine is a fixture."""
+import time
+
 from service_support import configure, serve
 from tests.support import add_worktree, git, make_repo
 from tests.fakes import FakeL2
@@ -61,6 +63,9 @@ def main():
     fault = running("Repair checkout")
     T.block("atlas", fault, "Checkout unavailable.", actor="altd", updates={"fault": "checkout", "waiting_on": "l3"})
     dispatch.stop("atlas", running("Stopped validation"), by=T.OPERATOR_MESSAGE_ROLE)
+    # Records keep whole seconds and an approval counts only in a later second than the hold, which an
+    # operator never beats; serving from the next second keeps a fast walkthrough from beating it either.
+    time.sleep(1 - time.time() % 1)
 
     class Handler(server.Handler):
         def do_POST(self):
