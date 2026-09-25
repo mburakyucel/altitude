@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude has a mark: an A whose left side climbs in three steps to the summit, on the accent tile.
+  It appears beside "Altitude" in the desktop rail and the phone header's global tabs, as the
+  browser-tab icon, as the iPhone Home Screen icon and in the README.
+
 - A newly generated certificate authority vouches only for loopback, private-network addresses,
   private names (`.local`, `.internal`, `home.arpa`) and a DNS name configured when it is created,
   so trusting it on a device cannot expose public websites. Existing certificate authorities and

@@ -6,6 +6,7 @@ import { useTask } from "../data/api";
 import type { Overview } from "../data/api";
 import { useTaskBack } from "../components/useTaskBack";
 import FirstRun from "../routes/FirstRun";
+import { BrandMark } from "./BrandMark";
 import { Overlay } from "./Overlay";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
 import { setSelectedProject } from "./scope";
@@ -88,8 +89,10 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
   const isProject = Boolean(name) && managed.some((p) => p.name === name);
   // Hidden chevron and no sheet when exactly one project is managed and no folder is unmanaged.
   const switchable = isProject && (managed.length > 1 || unmanagedFolders(data).length > 0);
+  // Global tabs name the product, with its mark.
+  const global = !taskMatch && !decisionMatch && !isProject;
   const title = taskMatch ? task.data?.title || taskMatch.params.slug
-    : decisionMatch ? from === "needs" ? "Needs you" : name : isProject ? name : "Altitude";
+    : decisionMatch ? from === "needs" ? "Needs you" : name : global ? "Altitude" : name;
   const titleContent = <span className="phone-heading">
     <span className="truncate">{title}</span>
     {status ? <span className="phone-status" aria-live="polite">{status}</span> : null}
@@ -133,7 +136,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
           {titleContent}
           <span aria-hidden>⌄</span>
         </button>
-      ) : titleContent}
+      ) : <>{global ? <BrandMark size={22} /> : null}{titleContent}</>}
       </h1>
       {attention ? <Link className="icon-btn phone-needs" to="/" aria-label={`Needs you, ${attention.label}`}>
         <span className="badge">{attention.text}</span>

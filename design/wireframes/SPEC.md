@@ -97,8 +97,8 @@ small group; a question link names its durable ID and revision and focuses the o
 - **Phone, width < 1024.** Header 54px, content, composer where the page has one, tab bar 84px
   (Chat, Work, Needs you, Monitor). The phone is specified at portrait 390 wide; landscape is
   unsupported and has no rules of its own. Chat and Work are the selected project's; Needs you and Monitor
-  are global. The header shows the project name with a chevron on project tabs and "Altitude" on
-  global tabs, so scope is always readable. The project name opens the switcher sheet (§3.11).
+  are global. The header shows the project name with a chevron on project tabs and the mark (22px, §3.1)
+  with "Altitude" on global tabs, so scope is always readable. The project name opens the switcher sheet (§3.11).
 - A task conversation opened from a phone tab pushes over that tab with a back control.
   Its Conversation/Live session tabs remain visible. The bottom tab bar hides only while software
   keyboard use is detected and returns when it closes, even when the input remains focused.
@@ -143,6 +143,13 @@ Anatomy, top to bottom: brand; **Needs you** with a count badge; "Projects" sect
 (add a folder); one row per managed project with a state dot and the name;
 "N folders not managed" line; engine readout; **Monitor**; the operator row with the configured
 name and the theme toggle.
+
+The brand is the Altitude mark, 24px, then "Altitude" in card-title type. The mark is an A whose left
+side climbs in three steps (L1, L2, L3) to the summit, drawn as a white line on an `--accent` tile
+with a 7/32 corner radius, so it follows the theme. It is decoration beside the name, not a link.
+`web/src/shell/BrandMark.tsx` draws it in the app. `web/public/altitude-mark.svg` is the same drawing
+in the light accent, used as the browser-tab icon and in the README. `web/public/apple-touch-icon.png`
+renders it at 180px with square corners, because iOS rounds Home Screen icons itself.
 
 Data: `GET /api/overview` (`projects[].managed`, `projects[].counts`, `projects[].l3`, `queue`,
 `quota`, and the second engine's windows). Engine names come from the engine seam; the rail never

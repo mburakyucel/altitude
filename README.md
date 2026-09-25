@@ -1,4 +1,4 @@
-# Altitude
+# <img src="web/public/altitude-mark.svg" alt="" width="32" height="32"> Altitude
 
 **You lead. Altitude orchestrates. Agents ship.**
 

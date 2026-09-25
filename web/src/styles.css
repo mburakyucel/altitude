@@ -559,6 +559,9 @@
   gap: 4px;
 }
 .rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 4px 12px 12px;
   font-size: var(--text-card-title);
   font-weight: 600;
@@ -647,6 +650,7 @@
   font-size: var(--text-card-title);
   font-weight: 600;
 }
+.phone-title .brand-mark { flex: none; margin-right: 4px; }
 .phone-title-button { width: 100%; }
 .phone-title-button {
   min-height: var(--target-min);
