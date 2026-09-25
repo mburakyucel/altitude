@@ -651,6 +651,8 @@ class PublishedUpdate(PublishedReleaseCase):
         result = installation.update()
         self.assertEqual((result["version"], result["updated"]), ("v0.1.1", True))
         self.assertEqual(result["notes"], f"{self.RELEASES}/tag/v0.1.1")
+        self.assertEqual(set(result), {"version", "updated", "service", "url", "notes"})
+        self.assertNotIn(str(self.home), json.dumps(result))
         self.assertEqual(self.requests, ["https://api.github.com/repos/example/altitude/releases/latest",
                                          download, download + ".sha256"])
         self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.1")

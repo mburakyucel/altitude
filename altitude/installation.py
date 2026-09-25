@@ -154,8 +154,10 @@ def update(version: str | None = None) -> dict:
         archive = Path(folder) / f"altitude-{version}.tar.gz"
         archive.write_bytes(_get(base, ARCHIVE_LIMIT))
         checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
-        return {**install(archive, checksum[0] if checksum else "", _prefix(), newer=version), "updated": True,
-                "notes": f"https://github.com/{repository}/releases/tag/{version}"}
+        result = install(archive, checksum[0] if checksum else "", _prefix(), newer=version)
+    # Devices already trust this installation, so the summary leaves out its paths and trust steps.
+    return {"version": version, "updated": True, "service": result["service"], "url": result["url"],
+            "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
 def _settings() -> Path:
