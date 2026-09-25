@@ -14,7 +14,7 @@ class TestImageErrorDisconnects(AltitudeCase):
     def request(self, method, *, failure=None, write=1, path=None):
         body = b"{" if method == "POST" else b""
         path = path or ("/api/chat" if method == "POST" else "/api/images/unmanaged/image")
-        raw = (f"{method} {path} HTTP/1.0\r\nContent-Length: {len(body)}\r\n\r\n".encode()
+        raw = (f"{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: {len(body)}\r\n\r\n".encode()
                + body)
         connection = mock.Mock()
         connection.makefile.return_value = io.BytesIO(raw)

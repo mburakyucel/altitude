@@ -107,6 +107,9 @@ class TestDesignViewer(AltitudeCase):
                 self.assertEqual(headers["content-type"], ctype)
                 self.assertEqual(got, body)
                 self.assertEqual(headers["content-length"], str(len(body)))
+                # Project content runs in an opaque origin, without Altitude's authority.
+                self.assertEqual(headers["content-security-policy"], "sandbox allow-scripts")
+                self.assertEqual(headers["x-content-type-options"], "nosniff")
 
     def test_nothing_is_cached_so_an_edit_is_never_hidden(self):
         _, headers, _ = self._get(f"/design/{self.project}/design/wireframes/index.html")
