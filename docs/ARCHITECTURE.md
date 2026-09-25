@@ -553,7 +553,10 @@ evidence available through inspection commands.
 ## Isolation and landing
 
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
-based on the exact fetched `origin/main`. Ownership belongs to the task and PR; commit messages,
+based on the exact fetched `origin/main`. Dispatch and resume switch a clean worktree found on another
+branch back to its task branch and record a `task-branch-restored` event naming the branch it left, which
+keeps its commits; a dirty worktree, detached HEAD or missing task branch faults `task-git-provenance`
+with the Git step that recovers it. Ownership belongs to the task and PR; commit messages,
 including historical labels, are ordinary text. Before mutation or publication, trusted landing
 validates the current worker, registered checkout and repository, and excludes PRs or branches
 owned by other active tasks. Protected branches require the guarded landing path. Landing

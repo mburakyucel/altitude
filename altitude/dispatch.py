@@ -684,14 +684,17 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
         return worktree
 
     task = S.load_task(project, slug)
-    _validate_task_worktree(repo, project, slug, worktree,
+    _validate_task_worktree(repo, project, slug, worktree, restore_branch=True,
                            require_clean=not bool(task.get("attempt") and task.get("worktree") == str(worktree)))
     return worktree
 
 
 def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
-                            *, require_clean: bool) -> None:
-    """Validate an already-created L2 checkout before either a fresh launch or a resume."""
+                            *, require_clean: bool, restore_branch: bool = False) -> None:
+    """Validate an already-created L2 checkout before either a fresh launch or a resume.
+
+    With `restore_branch`, a clean checkout left on another branch returns to its task branch first.
+    """
     import subprocess
 
     expected_path = (repo / config.WORKTREE_ROOT / slug).resolve()
@@ -699,9 +702,13 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
         raise T.TransitionError(f"task worktree for {project}/{slug} must be {expected_path}, got {worktree}")
     expected_branch = f"worktree-{slug}"
     actual = _git_branch(worktree)
+    if actual and actual != expected_branch and restore_branch:
+        _restore_task_branch(project, slug, worktree, actual, expected_branch)
+        actual = _git_branch(worktree)
     if actual != expected_branch:
         raise T.TransitionError(
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
+            + ("" if actual else f"; in the worktree, branch any commits to keep, then `git switch {expected_branch}` and resume")
         )
     if config.RELEASE is not None or config.SOURCE != config.REPO:
         # #348: a worktree-specific custom hook selection must not evade project guard verification.
@@ -725,6 +732,27 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
                 f"existing task worktree {worktree} is dirty"
                 + (f": {detail}" if detail else " — preserve or clean it before dispatch")
             )
+
+
+def _restore_task_branch(project: str, slug: str, worktree: Path, actual: str, expected: str) -> None:
+    """#524: switch a clean checkout back to its task branch; the branch it leaves keeps its commits."""
+    import subprocess
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(worktree), *args], capture_output=True, text=True, timeout=60)
+
+    where = f"task worktree {worktree} is on {actual}, expected {expected!r}"
+    if git("show-ref", "--verify", "--quiet", f"refs/heads/{expected}").returncode != 0:
+        raise T.TransitionError(f"{where}, and that branch is missing; in the worktree, recreate {expected} "
+                                "at the task's latest commit and switch to it, then resume")
+    dirty = git("status", "--porcelain", "--untracked-files=all")
+    if dirty.returncode != 0 or (dirty.stdout or "").strip():
+        raise T.TransitionError(f"{where}, with uncommitted changes; in the worktree, commit or discard them on "
+                                f"{actual}, then `git switch {expected}` and resume")
+    switched = git("switch", expected)
+    if switched.returncode != 0:
+        raise T.TransitionError(f"{where}; switching failed: {(switched.stderr or switched.stdout).strip()[:200]}")
+    S.append_event(project, slug, "task-branch-restored", left=actual, branch=expected)
 
 
 def build_brief(project: str, slug: str) -> str:
@@ -1016,7 +1044,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         if config.RELEASE is not None or config.SOURCE != config.REPO:
             project_setup.ensure_guards(project, slug=slug)
         # A resume continues owned work, including edits, without needing a fresh remote base.
-        _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
+        _validate_task_worktree(repo, project, slug, cwd, require_clean=False, restore_branch=True)
     except project_setup.SetupBusy as exc:
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
         T.mark_resume_held(project, slug, str(exc), expected_daemon_request=daemon_request_id,
