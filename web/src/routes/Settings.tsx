@@ -21,6 +21,9 @@ const explanations: Record<VoiceBackend, string> = {
 const queryKey = ["voice-settings"];
 const DEFAULT_MODEL = "whisper-1";
 
+/** A saved key or non-default model belongs to a hosted provider, so its fields stay open. */
+const hostedFields = (settings: VoiceSettings) => settings.key_set || (settings.model !== "" && settings.model !== DEFAULT_MODEL);
+
 /** Where recordings go, as the overview row names it: the service's host, never its key. */
 function voiceSummary(settings: VoiceSettings) {
   if (settings.backend === "browser") return labels.browser;
@@ -36,7 +39,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
   const [model, setModel] = useState(saved.model);
   const [key, setKey] = useState("");
   const [keepKey, setKeepKey] = useState(saved.key_set);
-  const [hosted, setHosted] = useState(saved.key_set || (saved.model !== "" && saved.model !== DEFAULT_MODEL));
+  const [hosted, setHosted] = useState(hostedFields(saved));
   useEffect(() => {
     if (saved === committed.current) return;
     committed.current = saved;
@@ -45,7 +48,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
     setModel(saved.model);
     setKey("");
     setKeepKey(saved.key_set);
-    setHosted(saved.key_set || (saved.model !== "" && saved.model !== DEFAULT_MODEL));
+    setHosted(hostedFields(saved));
   }, [saved]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
   const reset = () => setSave({ status: "idle" });
@@ -62,6 +65,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
       setModel(value.model);
       setKey("");
       setKeepKey(value.key_set);
+      setHosted(hostedFields(value));
       setSave({ status: "saved" });
     } catch (error) {
       setSave({ status: "failed", value: update, error: error as Error });

@@ -95,6 +95,7 @@ test("Voice settings persist backend choices and write-only hosted credentials",
   await walk.state("05-replace-key-with-empty-removes-it", { visible: [key, page.getByText("Leave blank to remove the stored key.", { exact: false })], hidden: [keySet] });
   await save.click();
   await expect.poll(async () => (await savedVoice(request)).key_set).toBe(false);
+  await expect(model).toHaveValue("fixture-model"); // a saved custom model keeps the hosted fields open
   await key.fill("fictional-settings-key");
   await save.click();
   await expect(keySet).toBeVisible();

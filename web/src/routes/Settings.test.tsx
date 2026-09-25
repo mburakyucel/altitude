@@ -44,7 +44,7 @@ describe("Voice settings", () => {
       expect(screen.getByText("Saving…")).toBeVisible();
       release();
       await screen.findByText("Saved.");
-      expect(screen.getByLabelText("API key (optional)")).toBeEnabled();
+      expect(screen.getByLabelText("Service URL")).toBeEnabled();
     } finally {
       release();
       notifyManager.setScheduler(defaultScheduler);
@@ -63,6 +63,7 @@ describe("Voice settings", () => {
       await user.click(screen.getByRole("button", { name: "Replace" }));
       await user.click(screen.getByRole("button", { name: "Save service" }));
       await screen.findByText("Saved.");
+      await user.click(screen.getByRole("button", { name: "Hosted provider? Add a key or model" }));
       await user.type(screen.getByLabelText("API key (optional)"), "next-fixture-key");
       await act(async () => flush());
       expect(screen.getByLabelText("API key (optional)")).toHaveValue("next-fixture-key");
@@ -125,6 +126,17 @@ describe("Voice settings", () => {
     expect(calls).toEqual([{ backend: "endpoint", selection: "browser-selection", url: "http://127.0.0.1:8080/v1/audio/transcriptions", model: "", key: "hosted-fixture-key" }]);
     await user.click(screen.getByRole("link", { name: "‹ Settings" }));
     await screen.findByRole("link", { name: "Voice input Your speech service · 127.0.0.1:8080" });
+  });
+
+  it("closes the hosted fields once a save leaves no key and the default model", async () => {
+    const calls = fixture();
+    const { user } = renderApp({ route: "/settings/voice" });
+    await user.click(await screen.findByRole("button", { name: "Replace" }));
+    await user.click(screen.getByRole("button", { name: "Save service" }));
+    await screen.findByText("Saved.");
+    expect(calls[0]).toMatchObject({ key: "", model: "" });
+    expect(screen.queryByLabelText("API key (optional)")).toBeNull();
+    expect(screen.getByRole("button", { name: "Hosted provider? Add a key or model" })).toBeVisible();
   });
 
   it("shows save failure with the draft and retries the same choice", async () => {
