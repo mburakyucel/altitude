@@ -129,11 +129,14 @@ def status_path(project: str, slug: str) -> Path:
 
 
 class TaskNotFound(KeyError):
-    """The resolved task status is absent, including an archive crossing its read."""
+    """Neither the live nor the archived task status exists."""
 
 
 def load_task(project: str, slug: str) -> dict:
-    t = read_json(status_path(project, slug))
+    """Archival only renames a live task folder into the archive, so a read that misses the live
+    status after the move finds it there."""
+    slug = require_task_slug(slug)
+    t = read_json(tasks_dir(project) / slug / "status.json") or read_json(archive_dir(project) / slug / "status.json")
     if not t:
         raise TaskNotFound(f"no task {slug!r} in {project!r}")
     return t

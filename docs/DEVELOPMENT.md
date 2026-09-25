@@ -117,8 +117,9 @@ Cleanup releases fixture gates and finishes HTTP requests and background work be
 broker sockets; unfinished work or logged background failures fail the walkthrough.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
-The task-read regression archives a real task between path resolution and status read: the crossing
-poll returns ordinary 404, a subsequent archived read succeeds, and corrupt state still logs a failure.
+The task-read regressions archive a real task between the live status lookup and its read: the
+crossing poll and task action response return the archived record, a missing task returns ordinary
+404, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
 Question-response and failed-setup checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
