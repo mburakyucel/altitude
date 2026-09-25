@@ -3,7 +3,8 @@
 A terminal is a shell on a pseudo-terminal owned by altd, in a session of its own. It ends when the
 operator closes it, when the shell exits, when its task finishes, or when altd stops: nothing keeps it
 alive beyond altd's own process, and its end stops every process still in its session. A bounded replay buffer lets a reconnecting page resume where it left off; nothing typed or
-printed is stored anywhere. Only opening and closing are recorded, on the task or project log.
+printed is stored anywhere, and an ended terminal is dropped at once: its open streams read how it ended.
+Only opening and closing are recorded, on the task or project log.
 
 Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full
 command access as the operator, outside every worker sandbox and the machine-grant approval flow.
@@ -38,8 +39,6 @@ WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
 #: The environment variable every process a terminal starts inherits, so its end finds those that left its session.
 MARK = "ALTITUDE_TERMINAL"
-#: This altd process. A page that attached under another boot knows a restart closed its terminal.
-BOOT = uuid.uuid4().hex
 #: Where process and socket facts are read; tests point these at fixture trees.
 PROC = Path("/proc")
 #: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
@@ -174,6 +173,9 @@ def _read(term: Terminal) -> None:
         term.reason = term.reason or "exited"
         term.ended = True
         term.cond.notify_all()
+    with _lock:
+        if _terminals.get((term.project, term.slug)) is term:
+            del _terminals[(term.project, term.slug)]
     _record(term, "closed", reason=term.reason, exit_code=code)
 
 
@@ -224,9 +226,9 @@ def _running(project: str, slug: str | None, ident) -> Terminal:
 
 def view(term: Terminal | None) -> dict:
     if term is None:
-        return {"state": "none", "boot": BOOT, "enabled": enabled()}
+        return {"state": "none", "enabled": enabled()}
     with term.cond:
-        return {"state": "exited" if term.ended else "running", "id": term.id, "boot": BOOT, "enabled": enabled(),
+        return {"state": "exited" if term.ended else "running", "id": term.id, "enabled": enabled(),
                 "folder": str(term.folder), "offset": term.end, "exit_code": term.exit_code,
                 "reason": term.reason, "busy": None if term.ended else _busy(term)}
 
@@ -284,6 +286,8 @@ def resize(project: str, slug: str | None, ident, cols, rows) -> None:
     term = _running(project, slug, ident)
     try:
         with term.io:
+            if term.fd < 0:  # the shell exited after the check above
+                raise OSError
             _winsize(term.fd, rows, cols)
     except OSError as exc:
         raise TerminalError("The terminal has closed.", 410) from exc
@@ -328,14 +332,6 @@ def _stop_session(term: Terminal, sig: int) -> None:
             pass
         finally:
             os.close(handle)
-
-
-def forget(project: str, slug: str | None, ident) -> None:
-    """Drop an ended terminal's replay once the page has read how it ended."""
-    with _lock:
-        term = _terminals.get((project, slug))
-        if term is not None and term.ended and ident == term.id:
-            del _terminals[(project, slug)]
 
 
 def sweep() -> None:

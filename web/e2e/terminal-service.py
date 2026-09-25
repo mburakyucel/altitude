@@ -5,7 +5,6 @@ walkthrough cannot cause from the page: a lost stream, a finished task, an agent
 import os
 import socket
 import threading
-import uuid
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
@@ -68,8 +67,6 @@ def main():
                     terminal.close(*key)
                     with term.cond:
                         term.cond.wait_for(lambda: term.ended, 5)
-                    terminal._terminals.pop(key, None)
-                terminal.BOOT = uuid.uuid4().hex
                 held.clear()
                 return self._json({"ok": True})
             return super().do_POST()

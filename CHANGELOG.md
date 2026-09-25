@@ -5,6 +5,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The terminal answers faster and gets out of the way. Keystrokes reuse one connection, so an echo
+  takes one network round trip instead of about three (at a 40 ms phone link, 132 ms becomes 49 ms).
+  Showing the terminal opens it; the amber note, the folder lines and the Open step are gone, and a
+  dim first line says where it runs as you. When the shell exits, or the terminal ends any other way,
+  the view returns to Live session or the project, with a short notice unless it was your Close or a
+  clean exit. Ctrl+V pastes, Ctrl+C copies selected text, the phone key row has Paste, and losing the
+  connection shows a badge without resizing the shell. An ended terminal keeps no output.
+
 - A held PR's **Approve merge** card stays beside an open question that names the PR unless that
   question offers its own options, so the operator always has a one-tap approval.
 

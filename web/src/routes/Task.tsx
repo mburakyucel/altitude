@@ -691,8 +691,24 @@ function TaskPage({
     <Link to={`${base}/live${location.search}`} replace state={location.state} aria-current={terminalRoute ? undefined : "page"}>Live session</Link>
     <Link to={`${base}/terminal${location.search}`} replace state={location.state} aria-current={terminalRoute ? "page" : undefined}>Terminal</Link>
   </nav> : undefined;
-  const terminal = <Terminal project={project} task={task.slug} keys={phone}
-    head={phone ? undefined : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
+  const tabs = (close: ReactNode) => <nav className="task-tabs" aria-label="Task views">
+    <NavLink className="task-tab" to={`${base}${location.search}`} replace state={location.state} end>
+      Conversation
+    </NavLink>
+    <NavLink className="task-tab" to={`${base}/live${location.search}`} replace state={location.state}>
+      Live session
+    </NavLink>
+    {terminalOffered ? close ? <div className="task-tab-close">
+      <NavLink className="task-tab" to={`${base}/terminal${location.search}`} replace state={location.state}>Terminal</NavLink>
+      {close}
+    </div> : <NavLink className="task-tab" to={`${base}/terminal${location.search}`} replace state={location.state}>
+      Terminal
+    </NavLink> : null}
+  </nav>;
+  // The shell's end, however it ends, returns to Live session.
+  const terminal = <Terminal project={project} task={task.slug} keys={phone} closeIcon={phone}
+    onLeave={() => void navigate(`${base}/live${location.search}`, { replace: true, state: location.state })}
+    head={phone ? tabs : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
   const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
   const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseScope>;
 
@@ -707,17 +723,7 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
-        <nav className="task-tabs" aria-label="Task views">
-          <NavLink className="task-tab" to={`${base}${location.search}`} replace state={location.state} end>
-            Conversation
-          </NavLink>
-          <NavLink className="task-tab" to={`${base}/live${location.search}`} replace state={location.state}>
-            Live session
-          </NavLink>
-          {terminalOffered ? <NavLink className="task-tab" to={`${base}/terminal${location.search}`} replace state={location.state}>
-            Terminal
-          </NavLink> : null}
-        </nav>
+        {terminalRoute ? null : tabs(null)}
         {terminalRoute ? <div className="task-views">{terminal}</div> : <div className="task-views">
           {/* Both views stay laid out; the idle one is invisible until a drag reveals it (SPEC.md §3.10). */}
           <div className="task-track" ref={swipe.track} data-live={liveRoute || undefined}>

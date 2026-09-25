@@ -3,22 +3,21 @@
 .task-body > .terminal-panel, .project-body > .terminal-panel { width: var(--live-w); flex: none; border-left: 1px solid var(--border); }
 .overlay .terminal-panel { width: 100%; height: 100%; }
 .overlay[data-side="right"] .overlay-panel:has(> .terminal-panel) { width: var(--live-w); }
-.terminal-body { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 10px; padding: 10px 16px 16px; overflow-y: auto; }
-.terminal-where { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
-.terminal-where p { min-width: 0; }
-.terminal-folder { margin-top: -6px; overflow: hidden; direction: rtl; text-align: left; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
-.terminal-close { min-height: 36px; padding: 0 10px; flex: none; }
-.terminal-warning { padding: 8px 12px; border: 1px solid var(--chip-claimed-border); border-radius: var(--radius-control); background: var(--chip-claimed-bg); color: var(--chip-claimed-text); font-size: var(--text-meta); }
-.terminal-stopped { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.terminal-body { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; padding: 0 12px 12px; overflow-y: auto; }
+.terminal-close { min-height: 36px; padding: 0 14px; flex: none; }
+.terminal-stopped { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--chip-claimed-border); border-radius: var(--radius-control); background: var(--chip-claimed-bg); color: var(--chip-claimed-text); font-size: var(--text-meta); }
 .terminal-stopped .btn { min-height: 36px; flex: none; }
 .terminal-note { padding: 10px 12px; border-radius: var(--radius-control); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); }
 .terminal-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
 .terminal-card h3 { font-weight: 600; }
 .terminal-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .terminal-card-actions .btn { min-height: 40px; }
-.terminal-screen { min-height: 160px; flex: 1; padding: 10px 0 10px 12px; overflow: hidden; border-radius: var(--radius-card); background: #111827; }
+.terminal-frame { position: relative; display: flex; min-height: 160px; flex: 1; flex-direction: column; }
+.terminal-screen { min-height: 0; flex: 1; padding: 8px 0 8px 10px; overflow: hidden; border-radius: var(--radius-card); background: #111827; }
+/* Over the screen, so losing the connection does not resize the shell. */
+.terminal-reconnecting { position: absolute; top: 8px; right: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(229, 231, 235, 0.92); color: #111827; font-size: var(--text-meta); font-weight: 500; pointer-events: none; }
 .terminal-screen .xterm { height: 100%; }
-.terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 0 0; }
+.terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 8px 0; }
 .terminal-keys button { min-width: 0; min-height: var(--target-min); flex: 1 1 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-weight: 500; }
 .terminal-keys button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
 
@@ -27,7 +26,14 @@
 .panel-switch a { display: flex; min-height: 32px; align-items: center; padding: 0 14px; border-radius: 8px; color: var(--text-secondary); font-weight: 500; text-decoration: none; }
 .panel-switch a[aria-current="page"] { background: var(--surface); color: var(--text-primary); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08); }
 
-/* Phone: the task's third tab and the project's full-screen view. */
+/* Phone: the task's third tab and the project's full-screen view, the screen edge to edge. */
 .task-page[data-phone] .terminal-panel { background: transparent; }
+.task-page[data-phone] .terminal-body, .terminal-page .terminal-body { padding: 0 0 8px; }
+.task-page[data-phone] .terminal-card, .terminal-page .terminal-card, .task-page[data-phone] .terminal-note, .terminal-page .terminal-note { margin: 8px 12px 0; }
+.task-page[data-phone] .terminal-screen, .terminal-page .terminal-screen { border-radius: 0; }
+/* The running terminal's tab carries its × and the tab underline spans both. */
+.task-tab-close { display: flex; min-width: 0; border-bottom: 2px solid var(--accent); }
+.task-tab-close .task-tab { min-width: 0; flex: 1; padding-left: 28px; border-bottom: 0; }
+.terminal-close-icon { width: 36px; min-width: 36px; flex: none; align-self: center; color: var(--text-secondary); }
 .terminal-page { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .terminal-page .phone-header .btn { min-height: 44px; }

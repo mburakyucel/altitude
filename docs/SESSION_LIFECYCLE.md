@@ -1253,7 +1253,9 @@ Stop, Continue, Resume and review act only on the worker. Files the operator cha
 are ordinary worktree changes that the L2 sees and delivers with its PR. The task records only
 `terminal` events for opened and closed.
 
-A terminal outlives page visits, reconnects and view switches. It ends when the operator closes it,
+A terminal outlives page visits, reconnects and view switches; showing its view opens one when none
+is running, and its end, however it ends, returns the page to Live session (a project terminal returns
+to the project). It ends when the operator closes it,
 when its shell exits (its end stops everything still running in it), when the operator turns the machine setting off, or when altd stops. It also
 ends at the next tick after its task becomes done or rejected, before that task's worktree is
 cleaned up. An altd restart after a merged change to Altitude ends every open terminal; the restart
