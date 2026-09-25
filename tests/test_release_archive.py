@@ -70,7 +70,8 @@ class ReleaseArchive(AltitudeCase):
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         (self.repo / "web").mkdir()
         (self.repo / "web/package.json").write_text('{}\n')
-        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "scripts/install.sh"):
+            (self.repo / name).parent.mkdir(exist_ok=True)
             (self.repo / name).write_text((REPO / name).read_text())
         git("add", ".", cwd=self.repo)
         git("commit", "-m", "Fictional release source", cwd=self.repo)
@@ -103,6 +104,17 @@ class ReleaseArchive(AltitudeCase):
         self.assertEqual((release["commit"], release["repository"]), (expected, "https://github.com/example/altitude"))
         self.assertEqual(builds, [["install", "--frozen-lockfile"], ["build"]])
         self.assertEqual((output / "install.py").read_bytes(), (package / "altitude/installation.py").read_bytes())
+        installer = hashlib.sha256((output / "install.py").read_bytes()).hexdigest()
+        script = (output / "install.sh").read_text()
+        self.assertIn("VERSION='v0.1.0-rc.1'", script)
+        self.assertIn("REPOSITORY='https://github.com/example/altitude'", script)
+        self.assertIn(f"ARCHIVE_SHA256='{checksum}'", script)
+        self.assertIn(f"INSTALLER_SHA256='{installer}'", script)
+        self.assertNotIn("@", script.split("case")[0].split("set -eu")[1])
+        self.assertTrue(os.access(output / "install.sh", os.X_OK))
+        self.assertEqual((output / "SHA256SUMS").read_text().splitlines(), [
+            f"{checksum}  {archive.name}", f"{installer}  install.py",
+            f"{hashlib.sha256(script.encode()).hexdigest()}  install.sh"])
         for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
             self.assertEqual((package / name).read_text(), (REPO / name).read_text())
         self.assertFalse((package / ".git").exists())

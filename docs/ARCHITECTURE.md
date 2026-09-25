@@ -1269,8 +1269,10 @@ host diagnosis follows existing machine authority. No browser broker or new perm
 See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-recovery).
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
-published private-preview version and release notes. They add no runtime lifecycle state and
-do not gate automatic activation of merged changes. The UI and testing rules remain in the
+published private-preview version and release notes. Pushing the approved tag runs the release
+workflow, which checks that commit's main `check` run, builds and attests the archive, `install.py`
+and the generated `install.sh`, and publishes them as the GitHub release that the one-command install
+fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
 
 ### Conversations and navigation

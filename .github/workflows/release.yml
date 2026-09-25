@@ -1,0 +1,66 @@
+name: Release
+
+# Pushing an approved version tag publishes that release (docs/RELEASING.md). The tag's exact commit
+# must be on main with a successful required `check` run, and CHANGELOG.md must carry the version's
+# dated section. This job then builds, attests and uploads; it never creates a tag. It runs on a
+# GitHub-hosted runner with GitHub's own token, so a release build never touches the owner's machine.
+on:
+  push:
+    tags: ['v0.*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Verify the approved commit
+        run: |
+          test "$(git rev-parse "refs/tags/$VERSION^{commit}")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$VERSION does not point at a commit on main"; exit 1; }
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/self-hosted-checks.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq '.total_count')
+          test "$passed" -gt 0 ||
+            { echo "::error::$GITHUB_SHA has no successful check run on main"; exit 1; }
+
+      - name: Build the release files
+        run: |
+          corepack enable
+          python3 scripts/build_release.py --version "$VERSION" --output "$RUNNER_TEMP/release" --notes "$RUNNER_TEMP/notes.md"
+
+      # GitHub offers artifact attestations to private repositories only on Enterprise plans.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/release/SHA256SUMS
+
+      - name: Publish the release
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          case "$VERSION" in *-rc.*) kind=--prerelease ;; *) kind=--latest ;; esac
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag "$kind" \
+            --title "Altitude $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            "altitude-$VERSION.tar.gz" "altitude-$VERSION.tar.gz.sha256" install.py install.sh SHA256SUMS

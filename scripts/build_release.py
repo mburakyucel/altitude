@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Build an application archive from one clean committed source revision. No publication."""
+"""Build the release files from one clean committed source revision: the application archive, its
+checksum, the standalone installer, the one-command install script and SHA256SUMS. No publication."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -61,13 +63,39 @@ def build(version: str, output: Path) -> Path:
                 if path.is_file():
                     bundle.add(path, arcname=str(path.relative_to(package)), recursive=False)
         shutil.copyfile(source / "altitude/installation.py", output / "install.py")
-    (output / (archive.name + ".sha256")).write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + "\n")
+        script = (source / "scripts/install.sh").read_text()
+    digests = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (archive, output / "install.py")}
+    (output / (archive.name + ".sha256")).write_text(digests[archive.name] + "\n")
+    script = install_script(script, version, repository, digests[archive.name], digests["install.py"])
+    (output / "install.sh").write_text(script)
+    (output / "install.sh").chmod(0o755)
+    digests["install.sh"] = hashlib.sha256(script.encode()).hexdigest()
+    (output / "SHA256SUMS").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(digests.items())))
     return archive
+
+
+def install_script(template: str, version: str, repository: str, archive_sha256: str, installer_sha256: str) -> str:
+    """The one-command install script for this release, carrying the checksums of what it downloads."""
+    for name, value in (("VERSION", version), ("REPOSITORY", repository),
+                        ("ARCHIVE_SHA256", archive_sha256), ("INSTALLER_SHA256", installer_sha256)):
+        template = template.replace(f"@{name}@", value)
+    return template
+
+
+def notes(version: str, changelog: str) -> str:
+    """The release notes: CHANGELOG's dated section for exactly this version."""
+    match = re.search(rf"^## {re.escape(version)} \u2014 \d{{4}}-\d{{2}}-\d{{2}}\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
+    if not match or not match.group(1).strip():
+        raise ValueError(f"CHANGELOG.md has no dated section '## {version} \u2014 YYYY-MM-DD' with notes")
+    return match.group(1).strip() + "\n"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--notes", type=Path, help="also write this version's CHANGELOG section here; required to publish")
     arguments = parser.parse_args()
+    if arguments.notes:
+        arguments.notes.write_text(notes(arguments.version, (REPO / "CHANGELOG.md").read_text()))
     print(build(arguments.version, arguments.output))

@@ -5,6 +5,15 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- One command installs the latest published release on Linux:
+  `curl -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`.
+  The script checks the machine and names the fix for anything missing, downloads the release's
+  archive and installer, runs them only when they match the checksums built into the script, and
+  prints the address, certificate fingerprint and next steps. On macOS it stops before downloading
+  and reports what it found. Pushing an approved `v0.*` tag publishes the release: a workflow
+  checks the commit's main `check` run and its dated changelog section, then builds, attests and
+  uploads the archive, `install.py`, `install.sh` and `SHA256SUMS`.
+
 - The terminal answers faster and gets out of the way. Keystrokes reuse one connection, so an echo
   takes one network round trip instead of about three (at a 40 ms phone link, 132 ms becomes 49 ms).
   Showing the terminal opens it; the amber note, the folder lines and the Open step are gone, and a
