@@ -616,7 +616,7 @@ export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
 const VoiceSchema = z.object({
-  backend: z.enum(["browser", "local", "endpoint"]), selection: z.string(),
+  backend: z.enum(["browser", "endpoint"]), selection: z.string(),
   url: z.string(), model: z.string(), key_set: z.boolean(),
 });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
@@ -744,7 +744,7 @@ export function usePrerequisites() {
   });
 }
 
-/** Upload one browser-native audio blob for the server's local service or configured endpoint. */
+/** Upload one browser-native audio blob for the server to forward to the machine's speech service. */
 export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
   const result = VoiceTranscriptSchema.parse(
     await api("/api/transcribe", {

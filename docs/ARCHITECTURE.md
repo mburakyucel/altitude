@@ -1537,8 +1537,8 @@ saving cancels an older Settings query, and an earlier composer read cannot over
 selection. Each recording holds its initial identity.
 Words are never
 simulated. The composer owns microphone
-permission, capture state, a 595-second client stop below the server's 600-second
-decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
+permission, capture state, a 595-second stop just under the ten-minute recording limit,
+transcription, cancellation, and focus. A landed transcript is appended to the
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
 prefix, separated from dictated text by one space when it does not already end in whitespace. Its
 send control is an arrow in an accent circle in every state, with no visible text and an accessible
@@ -1779,47 +1779,46 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `browser` (the default), `local`, or an endpoint object with `url`, optional `model`
-and optional `key`. `GET /api/voice` reports backend, URL, model, a `key_set` boolean and an opaque
-selection identity over backend and destination; it never returns the key. `alt machine set --voice`
-requests a change through the same durable request that carries `wip`, and the CLI, `machine show`
-and the event log show a key only as `set`.
+settings file: `browser` (the default) or a speech-service object with `url`, optional `model` and
+optional `key`; any other stored value reads as `browser`. `GET /api/voice` reports backend, URL,
+model, a `key_set` boolean and an opaque selection identity over backend and destination; it never
+returns the key. `alt machine set --voice` requests a change through the same durable request that
+carries `wip`, and the CLI, `machine show` and the event log show a key only as `set`.
 
-`/settings` shows a compact Voice input summary under This machine and read-only connection
-details (the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds
-the three backend choices. Project three-dot menus and the desktop operator row open Settings.
-`POST /api/voice` saves through the same durable request/apply path as the CLI, with no restart or
-provider probe. Browser/local save immediately; endpoint fields use Save endpoint. Its key is
-write-only, retained only for an unchanged URL; editing the URL clears retention, and a blank
-replacement removes the key. Failed saves leave the persisted choice unchanged. A changed backend
-or URL asks the person to reload settings; concurrent model/key edits keep last-writer semantics.
-Fresh settings reads update the form as well as the composer's selection.
-The form owns saving/error/saved state and disables inputs before sending, independently of query
-notifications. It adopts a successful save's selection before enabling edits. Its later cache
-notification does not reset subsequent edits; a different settings read still refreshes the form.
+`/settings` shows a compact Voice input summary under This machine and read-only connection details
+(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
+backend choices and names the saved service's host in its summary. Project three-dot menus and the
+desktop operator row open Settings. `POST /api/voice` saves through the same durable request/apply
+path as the CLI, with no restart or provider probe. Browser recognition saves immediately; the
+speech-service URL uses Save service, with model and key behind a hosted-provider disclosure that
+opens when either is saved. Its key is write-only, retained only for an unchanged URL; editing the
+URL clears retention, and a blank replacement removes the key. Failed saves leave the persisted
+choice unchanged. A changed backend or URL asks the person to reload settings; concurrent model/key
+edits keep last-writer semantics. Fresh settings reads update the form as well as the composer's
+selection. The form owns saving/error/saved state and disables inputs before sending, independently
+of query notifications. It adopts a successful save's selection before enabling edits. Its later
+cache notification does not reset subsequent edits; a different settings read still refreshes the
+form.
 
-`POST /api/transcribe` is a bounded adapter for the two upload backends. It accepts the
-browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers)
-and limits the upload to 16 MiB. With `local` it asks `ffmpeg` for at most 601 seconds of 16 kHz
-mono PCM so a decoded clip over the 600-second product limit is rejected without unbounded output,
-converts in a unique temporary directory, sends the WAV path through `/tmp/whisper-server.sock`
-with the existing `127.0.0.1:8890` Whisper bridge as fallback, then removes the entire directory on
-success or failure. With an endpoint it posts the recording unchanged as an OpenAI-compatible
-`audio/transcriptions` multipart request (bearer key when configured, `whisper-1` unless a model is
-named) and returns the endpoint's `text`; a redirect is refused so the key never follows it, and
-the URL carries no credentials or query string. With `browser` it refuses uploads so a page that
-read the backend earlier reads it again. It neither persists raw audio nor owns or starts a speech model.
-The upload's `X-Voice-Selection` identifies the backend and destination selected at capture start.
-Missing or stale selections are refused before forwarding audio; accepted requests use one settings
-snapshot. No old settings are retained for replay. The typed draft survives a refused upload.
+`POST /api/transcribe` is a bounded adapter for the speech service. It accepts the browser's
+declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers), limits the
+upload to 16 MiB and posts the recording unchanged as one OpenAI-compatible `audio/transcriptions`
+multipart request (bearer key when configured, `whisper-1` unless a model is named), returning the
+service's `text`. The service decodes the container; Altitude runs no converter. A redirect is
+refused so the key never follows it, and the URL carries no credentials or query string. With
+`browser` it refuses uploads so a page that read the backend earlier reads it again. It never writes
+audio to disk and neither owns nor starts a speech model. The upload's `X-Voice-Selection`
+identifies the backend and destination selected at capture start. Missing or stale selections are
+refused before forwarding audio; accepted requests use one settings snapshot. No old settings are
+retained for replay. The typed draft survives a refused upload.
 
-Unreadable media, timeouts, a refused or unreachable endpoint and an unavailable Whisper service
-become concise client errors while converter paths, endpoint status codes and diagnostics stay in the
-private server log; the key never appears in either. The composer announces recording and
-transcribing, restores the editable field after cancel or error, and leaves the microphone as
-progressive enhancement. Phone access uses an explicitly configured private HTTPS address whose
-certificate covers that address. Safari can use the microphone after the CA is trusted on the phone;
-typing remains available without speech services.
+An unsupported media type, a timeout, an unreachable service, an HTTP refusal and a reply without
+text become concise client errors that name the configured service URL, so the person can fix it;
+diagnostics stay in the private server log, and the key appears in neither. The composer announces
+recording and transcribing, restores the editable field after cancel or error, and leaves the
+microphone as progressive enhancement. Phone access uses an explicitly configured private HTTPS
+address whose certificate covers that address. Safari can use the microphone after the CA is trusted
+on the phone; typing remains available without speech services.
 
 ### Design evidence
 

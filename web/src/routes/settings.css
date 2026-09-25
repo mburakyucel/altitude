@@ -24,6 +24,7 @@
 .voice-endpoint .btn { align-self: flex-start; min-height: 44px; }
 .voice-key-set { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: var(--text-meta); color: var(--text-muted); }
 .voice-key-set .link { text-decoration: underline; }
+.voice-endpoint .voice-hosted { align-self: flex-start; min-height: 44px; }
 .settings-card fieldset:disabled { opacity: .6; }
 .settings-card > [role] { margin-top: 12px; }
 .settings-section { display: flex; flex-direction: column; gap: 14px; }

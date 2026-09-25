@@ -61,8 +61,7 @@ def install_offline_guards() -> None:
     os.environ.update({"CLAUDE_BIN": str(OFFLINE_BIN / "claude"), "CODEX_BIN": str(OFFLINE_BIN / "codex"),
                        "PATH": f"{OFFLINE_BIN}:{os.environ.get('PATH', '')}", "GIT_TERMINAL_PROMPT": "0",
                        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-                       "GIT_ALLOW_PROTOCOL": "file", "ALTITUDE_TIMERS": "0",
-                       "WHISPER_SOCKET": str(SUITE / "unavailable-speech.sock"), "WHISPER_BRIDGE": "127.0.0.1:0"})
+                       "GIT_ALLOW_PROTOCOL": "file", "ALTITUDE_TIMERS": "0"})
 
 
 def _offline_audit(event, args):

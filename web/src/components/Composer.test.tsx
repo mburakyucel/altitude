@@ -1001,7 +1001,7 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
   });
 
-  it.each(["browser", "local"] as const)("%s backend: the X returns focus to the microphone, never the field, so no phone keyboard opens; Escape returns to the field", async (backend) => {
+  it.each(["browser", "endpoint"] as const)("%s backend: the X returns focus to the microphone, never the field, so no phone keyboard opens; Escape returns to the field", async (backend) => {
     installVoiceBrowser({ backend });
     stubTranscribe("never used");
     const { user, field } = mount({ initial: "Keep this" });
@@ -1117,7 +1117,7 @@ describe("Composer", () => {
   });
 
   it("upload backend: a 409 from a changed installation shows the server's words and reads the backend again", async () => {
-    installVoiceBrowser({ backend: "local", recognition: true });
+    installVoiceBrowser({ backend: "endpoint", recognition: true });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser", selection: "fixture-browser", url: "", model: "", key_set: false });
       if (String(input).includes("/api/transcribe")) return jsonResponse({ error: "Voice now runs in the browser on this installation. Try again." }, 409);
@@ -1172,7 +1172,7 @@ describe("Composer", () => {
     act(() => updateVoiceSettings({ backend: "endpoint", selection: "new-destination", url: "https://speech.example.test", model: "", key_set: false }));
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Keep this spoken"));
-    expect(fetchMock).toHaveBeenCalledWith("/api/transcribe", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-local" }) }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/transcribe", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-endpoint" }) }));
   });
 
   it("combines a draft and a transcript with one space, and formats the timer", () => {
