@@ -655,10 +655,11 @@ the receipt before resuming a blocked owner, who completes review and current-ca
 A follow-up restores the original review requirement for its own scoped release; an explicit renewed
 hold requires approval of that renewed requirement. Failed reconciliation follows L3's recovery path.
 
-Voice capture does not add a lifecycle state. Browser recognition requests native automatic
-punctuation when supported; otherwise the browser's formatting is preserved. Altitude does not
-rewrite dictated words. With the default browser backend, recognized words
-appear in the read-only draft while listening and **Stop** lands them without a transcription step;
+Voice capture does not add a lifecycle state. Browser recognition of English is punctuated and
+capitalized on the device by a bundled model as each phrase is finalized; Altitude never rewrites
+dictated words. With the default browser backend, recognized words
+appear in the read-only draft while listening and **Stop** lands them once the last phrase is
+punctuated, without a transcription step;
 with your speech service, **Stop** transcribes the bounded recording
 into the editable draft. The send arrow lands or transcribes, appends and sends at once. Both sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text

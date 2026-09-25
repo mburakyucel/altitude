@@ -310,11 +310,19 @@ or replaced CA needs explicit new trust on every device. External certificate pa
 or overwritten. Existing configured TLS paths and exposure remain operator choices.
 
 With the `browser` backend, recognized words appear in the draft while you speak, and the field keeps
-the latest words in view. Altitude enables the browser's automatic punctuation when its recognizer
-exposes `unspokenPunctuation`; browsers without it retain their own formatting. This requires no
-extra installation or service. [Chrome documents support from version 151](https://developer.chrome.com/release-notes/151#web_speech_api_unspoken_punctuation);
-this is not a guarantee of punctuation on Safari or other browsers. Altitude does not insert periods
-at recognition-fragment boundaries or replace spoken words with punctuation. With your
+the latest words in view. English dictation gets sentence punctuation and capitals on every browser
+from a small model bundled with Altitude that runs in the page on the device's CPU: no install, GPU,
+service or cost, and the text never leaves the device for it. The device downloads the model (about
+23 MB) from your Altitude server the first time you dictate and keeps it cached. Each phrase is
+punctuated once the recognizer finalizes it; the phrase still being recognized shows as heard. The
+model adds only `.` `,` `?` and capitals; it never changes, adds or removes a word, leaves words
+such as `U.S.` or `google.com` exactly as recognized, and slips now and then (a capital on a common
+noun; numbers stay as words). **Stop** or Send releases the microphone and waits for the last
+phrase's punctuation under the transcribing status: at most ten seconds, or three while the model is
+still downloading. Words it has not reached land as recognized and the composer says why: "Added
+without punctuation: still loading" or, when the model cannot run (for example Safari before
+16.4), "Added without punctuation: this browser could not run it". Other recognition languages keep
+the recognizer's own formatting. With your
 speech service, the browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where
 available and uploads the recording when you stop; Altitude forwards it without keeping it, and
 audio is never part of task or chat state. Either way a recording becomes text through

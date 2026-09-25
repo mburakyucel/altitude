@@ -1514,15 +1514,29 @@ transcription service or server-side audio queue.
 The composer reads the installation's voice backend and destination identity from `GET /api/voice` and
 shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
 browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event).
-It requests `unspokenPunctuation` when the recognizer exposes that capability, without rewriting
-the returned words or inserting punctuation at recognition-fragment boundaries. Unsupported
-recognizers retain their own formatting. This adds no model, download or transcription service.
+For English recognition it punctuates on the device: `web/src/punctuation` loads a bundled
+punctuation and true-casing model (1-800-BAD-CODE `punctuation_fullstop_truecase_english`,
+Apache-2.0, reduced to a 16k English vocabulary with 4-bit weights) on a minimal single-threaded
+onnxruntime-web build, in a Web Worker, on the first capture of the page. Vite emits both under the
+hashed, immutable `/assets/`; `scripts/punctuation` records how they are built from pinned upstream
+sources.
+Each finalized phrase is sent with up to sixteen earlier words as context; the model may revise the
+last four earlier words (a phrase end becoming a comma) and earlier punctuation stays fixed. Output
+is checked word by word: only letter case and one trailing `.` `,` or `?` may differ from the
+recognized word, and words with inner marks (`U.S.`, `google.com`) are context only, so words are
+never rewritten. A recognizer revision of a final phrase drops the punctuation from the first changed
+word. Interim words show as heard. Stop releases the microphone when the recognizer ends, then waits
+for the remaining punctuation up to ten seconds, or three while the model is still loading; words it
+has not reached land as recognized and the composer says whether the model was loading or could not
+run. A request the worker does not answer in ten seconds discards the worker, and the next capture
+loads afresh. No text leaves the device and no
+server component is involved.
 The composer runs one capture state machine for every backend: recognized words appear after the
 typed draft while listening (the field scrolls to keep the latest words in view once they pass its
 height), the last phrase may change until final, the recognizer restarts when
 the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
-and Stop waits at most three seconds for the recognizer's last phrase before landing the words; no
-upload follows. A recognizer refusal is the denied state, and because a refusal can be temporary, the
+and Stop waits at most three seconds for the recognizer's last phrase, then for its punctuation, before
+landing the words; no upload follows. A recognizer refusal is the denied state, and because a refusal can be temporary, the
 next tap asks again; any other recognizer error is the failed state and keeps the words already shown.
 Cancel, including cancelling a voice Send or leaving the composer, discards the words and restores
 editing at once while it aborts the recognizer. That capture's microphone stream is released when

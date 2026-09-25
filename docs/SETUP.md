@@ -334,8 +334,9 @@ wildcard bind is certified for `localhost` only) and arrange firewall/network ac
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
 for update/recovery and source deployments. Voice input works out of the box through the browser's
-own speech recognition; a speech service of your own is optional
-(see [voice input](OPERATIONS.md#voice-input)). Typing remains available without either.
+own speech recognition, with English punctuated on the device by a model bundled in the archive; a
+speech service of your own is optional (see [voice input](OPERATIONS.md#voice-input)). Typing
+remains available without either.
 Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).
 The overview shows the saved backend; the Voice input page holds its options. Browser recognition
 saves immediately. **Your speech service** requires the URL of an OpenAI-compatible
