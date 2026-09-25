@@ -809,7 +809,7 @@ and Needs you; View question stays in task details, useful from Live session. A 
 with it after fresh checks of the current head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review; an open operator question that links or names the PR
 is that review, so the separate card stays away until the question closes. After **Approve merge**, a later park
-on another dependency shows that wait with "PR #N approved" and no card, including after routine integration
+on another dependency shows that wait and no card (the CLI and queue add "PR #N approved"), including after routine integration
 gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 

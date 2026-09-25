@@ -214,8 +214,8 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
         approve_and_park("Wait, only merge PR #42 after the export lands.")
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a later word about the PR re-asks")
-        approve_and_park("Approved: merge PR #42.")
-        self.assertEqual(T.decisions(self.project), [])
+        approve_and_park("Approved: merge PR #42 at aaaaaaa.")
+        self.assertEqual(T.decisions(self.project), [], "an earlier card's approval still counts")
         moved = S.load_task(self.project, slug)
         moved["delivery"] = {"number": 42, "head": "b" * 40, "at": "2026-01-01T00:00:00+00:00"}
         S.save_task(self.project, moved)

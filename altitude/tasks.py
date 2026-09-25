@@ -2024,10 +2024,12 @@ def approved_pr(project: str, task: dict) -> int | None:
     second = lambda at: datetime.fromisoformat(at.replace("Z", "+00:00")).replace(microsecond=0)
     since = second(holds[-1] if holds else "1970-01-01T00:00:00+00:00")
     approved, names = False, _names_pr(number)
+    # The card's message; earlier cards also named the head they showed, which records no restriction.
+    card = re.compile(rf"Approved: merge PR #{number}( at [0-9a-f]{{7}})?\.")
     for row in task_messages(project, task["slug"]):
         if row.get("role") != OPERATOR_MESSAGE_ROLE or row.get("removed_at") or second(row["at"]) <= since:
             continue
-        if row.get("text", "").strip() == f"Approved: merge PR #{number}.":
+        if card.fullmatch(row.get("text", "").strip()):
             approved = True
         elif names.search(row.get("text", "")):
             approved = False  # a later word about the PR may condition or revoke it

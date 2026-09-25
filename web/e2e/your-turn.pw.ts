@@ -177,11 +177,17 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
   expect((await request.post("/fixture/integrate")).ok()).toBe(true);
   await walk.open("/projects/atlas/tasks/release-notes");
   await walk.state("08c-integrated-head-stays-approved", {
-    visible: [v.main.getByText("Waiting on L3 · PR #42 approved").first(), v.bubble("Approved: merge PR #42.")],
+    visible: [v.main.getByText("Waits for L3").first(), v.bubble("Approved: merge PR #42.")],
     hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true }), v.main.getByText("Your turn · review PR #42")],
   });
+  await walk.open("/projects/atlas?tab=work");
+  const work = page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Release notes ·/ });
+  await walk.state("08d-integrated-head-work-row", {
+    visible: [work.getByText("Waits for L3", { exact: true })],
+    hidden: [work.getByText(/Your turn/)],
+  });
   await walk.open("/");
-  await walk.state("08d-integrated-head-stays-out-of-needs-you", {
+  await walk.state("08e-integrated-head-stays-out-of-needs-you", {
     visible: [v.article("Index rollout"), v.badge(2)],
     hidden: [v.article("Release notes")],
   });
