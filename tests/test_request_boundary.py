@@ -14,6 +14,9 @@ class TestRequestBoundary(AltitudeCase):
         self.setenv("ALTITUDE_TIMERS", "0")
         self.patch(server, "log", new=lambda _message: None)
         self.patch(server, "overview", new=lambda: {"state": "ready"})
+        settings = config.ROOT / "settings.json"
+        saved = settings.read_bytes() if settings.exists() else None
+        self.addCleanup(lambda: settings.write_bytes(saved) if saved is not None else settings.unlink(missing_ok=True))
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()

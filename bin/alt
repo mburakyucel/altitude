@@ -488,10 +488,12 @@ def main(argv=None) -> None:
             ap.error("project setup --repair requires --reason; reads accept no reason")
         tls = config.TLS
         ca = config.TLS_DIR / "ca.crt"
+        from altitude import access
         from urllib.parse import quote
         endpoint = "task/review/run" if review_run else "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
-                                         data=None if setup_command and not args.repair else json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+                                         data=None if setup_command and not args.repair else json.dumps(payload).encode(),
+                                         headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
         try:
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
             with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:

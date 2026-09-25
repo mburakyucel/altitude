@@ -259,6 +259,10 @@ leaves any other page's origin in place. A JSON body is at most 1 MiB; image mes
 recordings have their own limits. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
 
+altd creates `machine.key` in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside
+every runtime, source and project root) when it starts. Only the operator's account can read it; the
+`alt` CLI and the restart script send it as `X-Altitude-Key` with their requests to altd.
+
 ### Project setup
 
 `project_setup.py` owns the concrete folder, repository, instructions, guards and coordinator

@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -2687,6 +2687,11 @@ def main(host: str | None = None, port: int | None = None) -> None:
             raise SystemExit(1) from e
     host = host or config.HOST
     port = port or config.PORT
+    try:
+        access.prepare()
+    except OSError as exc:
+        log(f"cannot prepare the private access store ({exc}); refusing to start")
+        raise SystemExit(1) from exc
     try:
         context = tls.check(host) if config.TLS else None
     except (tls.TLSFailure, OSError) as exc:
