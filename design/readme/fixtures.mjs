@@ -15,6 +15,12 @@ export function fixtures() {
     message('c2', 'burak', 'Keep pagination tokens valid across the cutover. Clients must not restart an in-flight search.', 18),
     message('c3', 'l2', 'I will bind each token to its index generation. New searches can move to v2 while existing cursors finish on v1. The tests will cross the switch in both directions.', 17),
   ];
+  const activity = 'Contract tests pass. I am checking rollback across index generations.';
+  compatibility.activity = {
+    generation: compatibility.session_id, state: 'available',
+    commentary: { id: 'fixture-activity', text: activity, at: ago(0.25), time_kind: 'source' },
+    observation: { at: ago(0.25), label: 'Assistant output' },
+  };
   const backfill = task('resumable-backfill', 'Build resumable index backfill', 'claude', 32);
   backfill.messages = [
     message('b1', 'l2', 'Can a retried batch rewrite a document that already reached the new index?', 20),
@@ -53,14 +59,45 @@ export function fixtures() {
     tasks,
     transcript: {
       project: 'atlas', slug: compatibility.slug, engine: 'codex', session_id: compatibility.session_id,
-      cursor: 5, redaction: 'Fictional fixture data; no provider logs are read.',
+      cursor: 6, redaction: 'Fictional fixture data; no provider logs are read.',
       events: [
         { seq: 0, source: 'platform', kind: 'boundary', type: 'state', at: ago(34), text: 'queued → running' },
         { seq: 1, source: 'codex', kind: 'message', type: 'assistant', role: 'assistant', at: ago(18), text: 'The cursor currently holds an offset. I am checking where the index generation can travel with it.' },
         { seq: 2, source: 'codex', kind: 'command', type: 'command', tool: 'shell', tool_use_id: 'fixture-command', at: ago(16), text: 'rg -n "cursor|generation" src/search', summary: 'rg -n "cursor|generation" src/search', output: 'src/search/cursor.ts:12: export function decodeCursor(token)\nsrc/search/index.ts:48: const generation = activeIndex()', status: 'completed' },
         { seq: 3, source: 'codex', kind: 'message', type: 'assistant', role: 'assistant', at: ago(15), text: 'The compatibility boundary is small: decode the token, select its generation, preserve the response shape. I will cover old cursors, new searches and rollback in the contract suite.' },
         { seq: 4, source: 'codex', kind: 'command', type: 'command', tool: 'shell', tool_use_id: 'fixture-tests', at: ago(12), text: 'pnpm test -- search-contract', summary: 'pnpm test -- search-contract', output: '18 contract tests passed', status: 'completed' },
+        { seq: 5, source: compatibility.l2_engine, kind: 'message', type: 'assistant', role: 'assistant', at: ago(0.25), text: activity },
       ],
     },
   };
+}
+
+// A later moment in the same fictional migration: engineering needs a product decision.
+export function askRetention(data) {
+  const task = data.tasks.find(t => t.slug === 'resumable-backfill');
+  const question = {
+    project: 'atlas', slug: task.slug, title: task.title,
+    id: 'retention-window', revision: 1, anchor_id: 'retention-question',
+    kind: 'asks', asked_by: 'l3', audience: 'operator', status: 'open', state: 'blocked',
+    asked: now, since: now, resolution: null,
+    question: 'How long should we keep the old index for rollback?',
+    options: [
+      { key: 'seven', label: '7 days', text: 'Keep the old index for seven days.' },
+      { key: 'thirty', label: '30 days', text: 'Keep the old index for thirty days.' },
+    ],
+    recommended_key: 'seven',
+    recommendation: {
+      text: 'Keep it for seven days.', label: '7 days',
+      why: 'Covers the pilot and a full traffic cycle. Thirty days gives a longer rollback window but keeps both indexes on disk.',
+    },
+  };
+  task.state = 'blocked';
+  task.question = question;
+  task.questions = [question];
+  task.question_group = { id: question.id, revision: 1, anchor_id: question.anchor_id, questions: [question] };
+  task.messages.push({ id: question.anchor_id, role: 'l2', text: question.question, at: now });
+  data.overview.queue = [question];
+  data.overview.projects[0].counts = { running: 2, blocked: 1, needs_you: 1 };
+  data.overview.wip = { per_project: { atlas: 2 }, machine: 2, waiting: [] };
+  return question;
 }

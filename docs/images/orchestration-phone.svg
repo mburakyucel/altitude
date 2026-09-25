@@ -1,31 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="390" height="594" viewBox="0 0 390 594" role="img" aria-labelledby="title desc">
-  <title id="title">Project direction and directly reachable task owners</title>
-  <desc id="desc">You talk to L3 about project direction and to any L2 about its task. L3 dispatches owners, answers questions and receives results. Each code task has its own worktree, checks and PR.</desc>
-  <rect width="390" height="594" rx="16" fill="#111a2c"/>
-  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="22" y="34" fill="#a5b4fc" font-size="12" font-weight="600" letter-spacing="1.5">ONE PROJECT, ONGOING DIRECTION</text>
-    <rect x="22" y="53" width="346" height="71" rx="10" fill="#243149" stroke="#445570"/>
-    <text x="40" y="83" fill="#ffffff" font-size="21" font-weight="600">You</text>
-    <text x="40" y="106" fill="#c8d3e5" font-size="16">Direction + decisions</text>
-    <text x="148" y="151" fill="#a5b4fc" font-size="16">↕ conversation</text>
-    <rect x="22" y="170" width="346" height="85" rx="10" fill="#293660" stroke="#818cf8"/>
-    <text x="40" y="204" fill="#ffffff" font-size="21" font-weight="600">L3 · Project orchestrator</text>
-    <text x="40" y="232" fill="#e0e7ff" font-size="15">Architecture, priorities, coordination</text>
-    <text x="38" y="284" fill="#e0e7ff" font-size="15">↓ Briefs</text>
-    <text x="148" y="284" fill="#e0e7ff" font-size="15">↑ Questions + results</text>
-    <path d="M13 89H6V491H22" fill="none" stroke="#8d9db8" stroke-width="1.5" stroke-dasharray="4 5"/>
-    <g fill="#1c2940" stroke="#445570">
-      <rect x="22" y="305" width="346" height="64" rx="10"/>
-      <rect x="22" y="382" width="346" height="64" rx="10"/>
-      <rect x="22" y="459" width="346" height="64" rx="10"/>
-    </g>
-    <g fill="#ffffff" font-size="18" font-weight="600">
-      <text x="40" y="330">L2 · Task owner</text><text x="40" y="407">L2 · Task owner</text><text x="40" y="484">L2 · Task owner</text>
-    </g>
-    <g fill="#c8d3e5" font-size="15">
-      <text x="40" y="353">Worktree → checks → PR</text><text x="40" y="430">Worktree → checks → PR</text><text x="40" y="507">Worktree → checks → PR</text>
-    </g>
-    <text x="22" y="552" fill="#c8d3e5" font-size="15">Steer any L2 directly. Work can run in parallel.</text>
-    <text x="22" y="577" fill="#c8d3e5" font-size="15">L3 answers first; your calls come to you.</text>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="880" viewBox="0 0 390 880" role="img" aria-labelledby="title desc">
+<title id="title">You lead. Altitude orchestrates. Agents ship.</title>
+<desc id="desc">You set roadmap, architecture and executive decisions with L3, your project orchestrator. Three independent L2 owners work in parallel on compatibility, backfill and performance. Each owns a worktree, checks and PR, with optional L1 helpers. You can steer any owner directly.</desc><defs>
+<linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101e33"/><stop offset="1" stop-color="#080f1e"/></linearGradient>
+<linearGradient id="focus" x2="1" y2="1"><stop stop-color="#253557"/><stop offset="1" stop-color="#162442"/></linearGradient>
+<marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#8da6d8" stroke-width="1.4"/></marker></defs>
+<rect width="390" height="880" rx="24" fill="url(#bg)"/>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<text x="22" y="32" font-size="12" fill="#9eb5e0" font-weight="700" letter-spacing="1.8">YOU LEAD. AGENTS SHIP.</text>
+<rect x="22" y="52" width="346" height="123" rx="16" fill="#122d31" stroke="#3d8d82"/>
+<text x="42" y="78" font-size="13" fill="#8de3cb" font-weight="700" letter-spacing=".7">YOU · PRINCIPAL ENGINEER</text>
+<text x="42" y="112" font-size="21" fill="#fff" font-weight="650">Roadmap · Architecture</text>
+<text x="42" y="143" font-size="18" fill="#c3cee0" >Executive decisions</text>
+<path d="M195 183V211" fill="none" stroke="#8da6d8" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<rect x="22" y="220" width="346" height="120" rx="16" fill="url(#focus)" stroke="#6483bb"/>
+<text x="42" y="250" font-size="13" fill="#b3caff" font-weight="700" letter-spacing=".5">L3 · PROJECT ORCHESTRATOR</text>
+<text x="42" y="282" font-size="23" fill="#fff" font-weight="650">Reasons with you.</text>
+<text x="42" y="312" font-size="17" fill="#c3cee0" >Assigns work. Drives delivery.</text>
+<text x="50" y="371" font-size="12" fill="#9eb5e0" font-weight="700" letter-spacing="1">PARALLEL OWNERS</text>
+<path d="M195 340V350H30V749" fill="none" stroke="#8da6d8" stroke-width="2"/>
+<path d="M30 450H44" fill="none" stroke="#8da6d8" stroke-width="2" marker-end="url(#arrow)"/><path d="M30 599H44" fill="none" stroke="#8da6d8" stroke-width="2" marker-end="url(#arrow)"/><path d="M30 748H44" fill="none" stroke="#8da6d8" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="52" y="389" width="316" height="137" rx="16" fill="#152238" stroke="#304260"/><text x="72" y="417" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="72" y="449" font-size="21" fill="#fff" font-weight="650">Compatibility</text><text x="72" y="477" font-size="15" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="68" y="492" width="284" height="25" rx="8" fill="#0d182a"/><text x="80" y="510" font-size="13" fill="#9baccc" >L1 helpers · as needed</text>
+<rect x="52" y="538" width="316" height="137" rx="16" fill="#152238" stroke="#304260"/><text x="72" y="566" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="72" y="598" font-size="21" fill="#fff" font-weight="650">Backfill</text><text x="72" y="626" font-size="15" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="68" y="641" width="284" height="25" rx="8" fill="#0d182a"/><text x="80" y="659" font-size="13" fill="#9baccc" >L1 helpers · as needed</text>
+<rect x="52" y="687" width="316" height="137" rx="16" fill="#152238" stroke="#304260"/><text x="72" y="715" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="72" y="747" font-size="21" fill="#fff" font-weight="650">Performance</text><text x="72" y="775" font-size="15" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="68" y="790" width="284" height="25" rx="8" fill="#0d182a"/><text x="80" y="808" font-size="13" fill="#9baccc" >L1 helpers · as needed</text>
+<text x="22" y="856" font-size="16" fill="#8de3cb" >Steer any owner directly. Stay in command.</text>
+</g></svg>

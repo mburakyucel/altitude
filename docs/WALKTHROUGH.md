@@ -91,6 +91,18 @@ to submit them; even a single choice stays staged until you send it. You can als
 that decision against your message. A follow-up keeps the question open, and a saved answer does
 not by itself mean work has resumed or a merge hold has been released.
 
+<picture>
+  <source media="(max-width: 600px)" srcset="images/decision-phone.png">
+  <img src="images/decision-desktop.png" alt="Needs you: L3 brings the old-index retention decision to the operator, with seven-day and thirty-day choices." width="1440">
+</picture>
+
+[Full-size desktop](images/decision-desktop.png) · [Phone decision](images/decision-phone.png) ·
+[Watch the phone walkthrough](images/phone-walkthrough.webm)
+
+The silent recording follows the real interface through the project, work, task and live-session
+views, sends a fictional task message, then selects and sends the seven-day answer. All responses
+are fixtures; it demonstrates the interaction, not live agents or voice recognition.
+
 The [current decision boards](../design/wireframes/CONVERSATION_FIRST.md) illustrate these states;
 [phone/desktop walkthroughs](DEVELOPMENT.md#browser-walkthroughs) retain implementation evidence
 outside Git.

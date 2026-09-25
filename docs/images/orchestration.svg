@@ -1,41 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="436" viewBox="0 0 960 436" role="img" aria-labelledby="title desc">
-  <title id="title">One project conversation. Several task owners.</title>
-  <desc id="desc">You discuss direction with L3, the persistent project orchestrator. L3 dispatches L2 owners and receives questions and results. You can steer each owner directly. Every code task has an isolated worktree, checks and a PR.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#a5b4fc" stroke-width="1.4"/></marker>
-  </defs>
-  <rect width="960" height="436" rx="20" fill="#111a2c"/>
-  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="32" y="38" fill="#a5b4fc" font-size="13" font-weight="600" letter-spacing="2">THE PROJECT CONTINUES ACROSS TASKS</text>
-    <rect x="32" y="65" width="196" height="99" rx="12" fill="#243149" stroke="#445570"/>
-    <text x="52" y="102" fill="#ffffff" font-size="24" font-weight="600">You</text>
-    <text x="52" y="133" fill="#c8d3e5" font-size="17">Direction + decisions</text>
-    <path d="M244 114H377" fill="none" stroke="#a5b4fc" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-    <text x="309" y="94" fill="#c8d3e5" font-size="14" text-anchor="middle">conversation</text>
-    <rect x="398" y="65" width="530" height="99" rx="12" fill="#293660" stroke="#818cf8"/>
-    <text x="420" y="102" fill="#ffffff" font-size="24" font-weight="600">L3 · Project orchestrator</text>
-    <text x="420" y="133" fill="#e0e7ff" font-size="17">Architecture, priorities, coordination</text>
-    <path d="M130 164V207H32V291H48" fill="none" stroke="#8d9db8" stroke-width="1.5" stroke-dasharray="4 5"/>
-    <text x="49" y="196" fill="#c8d3e5" font-size="14">Steer any L2 directly</text>
-    <path d="M663 164V218M192 218H768" fill="none" stroke="#a5b4fc" stroke-width="2"/>
-    <path d="M192 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M480 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M768 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
-    <text x="422" y="195" fill="#e0e7ff" font-size="15">Briefs ↓</text>
-    <text x="708" y="195" fill="#e0e7ff" font-size="15">↑ Questions + results</text>
-    <path d="M886 256V183H854V169" fill="none" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arrow)"/>
-    <g fill="#1c2940" stroke="#445570">
-      <rect x="56" y="269" width="272" height="96" rx="12"/>
-      <rect x="344" y="269" width="272" height="96" rx="12"/>
-      <rect x="632" y="269" width="272" height="96" rx="12"/>
-    </g>
-    <g fill="#ffffff" font-size="21" font-weight="600">
-      <text x="76" y="303">L2 · Task owner</text><text x="364" y="303">L2 · Task owner</text><text x="652" y="303">L2 · Task owner</text>
-    </g>
-    <g fill="#c8d3e5" font-size="16">
-      <text x="76" y="336">Worktree → checks → PR</text><text x="364" y="336">Worktree → checks → PR</text><text x="652" y="336">Worktree → checks → PR</text>
-    </g>
-    <circle cx="62" cy="402" r="4" fill="#a5b4fc"/>
-    <text x="76" y="407" fill="#c8d3e5" font-size="16">Independent work in parallel. Questions go to L3 first; your calls come to you.</text>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+<title id="title">You lead. Altitude orchestrates. Agents ship.</title>
+<desc id="desc">You are the principal engineer, setting roadmap, architecture and executive decisions. L3 reasons with you and orchestrates parallel L2 owners for compatibility, backfill and performance. Every owner delivers through a checked PR and can delegate to L1 helpers. Questions and results return to L3; you can steer any owner directly.</desc><defs>
+<linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101e33"/><stop offset="1" stop-color="#080f1e"/></linearGradient>
+<linearGradient id="focus" x2="1" y2="1"><stop stop-color="#253557"/><stop offset="1" stop-color="#162442"/></linearGradient>
+<marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#8da6d8" stroke-width="1.4"/></marker></defs>
+<rect width="1200" height="620" rx="24" fill="url(#bg)"/>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<text x="48" y="49" font-size="14" fill="#9eb5e0" font-weight="700" letter-spacing="2">ONE CONVERSATION. PARALLEL DELIVERY.</text>
+<rect x="48" y="90" width="306" height="160" rx="16" fill="#122d31" stroke="#3d8d82"/>
+<text x="72" y="121" font-size="13" fill="#8de3cb" font-weight="700" letter-spacing="2">YOU</text>
+<text x="72" y="160" font-size="27" fill="#fff" font-weight="650">Principal engineer</text>
+<text x="72" y="194" font-size="18" fill="#c3cee0" >Roadmap · Architecture</text><text x="72" y="225" font-size="18" fill="#c3cee0" >Executive decisions</text>
+<path d="M366 171H428" fill="none" stroke="#8da6d8" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<rect x="440" y="90" width="712" height="160" rx="16" fill="url(#focus)" stroke="#6483bb"/>
+<text x="466" y="121" font-size="13" fill="#b3caff" font-weight="700" letter-spacing="1.6">L3 · ORCHESTRATION</text>
+<text x="466" y="163" font-size="29" fill="#fff" font-weight="650">Your project orchestrator</text>
+<text x="466" y="203" font-size="20" fill="#c3cee0" >Reasons with you. Assigns work. Drives delivery.</text>
+<path d="M796 250V294M552 294H1040" fill="none" stroke="#8da6d8" stroke-width="2"/>
+<path d="M552 294V330" fill="none" stroke="#8da6d8" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/><path d="M796 294V330" fill="none" stroke="#8da6d8" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/><path d="M1040 294V330" fill="none" stroke="#8da6d8" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="462" y="277" font-size="14" fill="#aebfdb" >Briefs down</text>
+<text x="1130" y="277" font-size="14" fill="#aebfdb" text-anchor="end">Questions &amp; results up</text>
+<rect x="440" y="342" width="224" height="184" rx="16" fill="#152238" stroke="#304260"/><text x="460" y="370" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="460" y="402" font-size="24" fill="#fff" font-weight="650">Compatibility</text><text x="460" y="430" font-size="17" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="456" y="461" width="192" height="46" rx="8" fill="#0d182a"/><text x="468" y="489" font-size="15" fill="#9baccc" >L1 helpers · as needed</text><rect x="684" y="342" width="224" height="184" rx="16" fill="#152238" stroke="#304260"/><text x="704" y="370" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="704" y="402" font-size="24" fill="#fff" font-weight="650">Backfill</text><text x="704" y="430" font-size="17" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="700" y="461" width="192" height="46" rx="8" fill="#0d182a"/><text x="712" y="489" font-size="15" fill="#9baccc" >L1 helpers · as needed</text><rect x="928" y="342" width="224" height="184" rx="16" fill="#152238" stroke="#304260"/><text x="948" y="370" font-size="12" fill="#9ab2dc" font-weight="700" letter-spacing="1.3">L2 · TASK OWNER</text><text x="948" y="402" font-size="24" fill="#fff" font-weight="650">Performance</text><text x="948" y="430" font-size="17" fill="#c3cee0" >Worktree · Checks · PR</text><rect x="944" y="461" width="192" height="46" rx="8" fill="#0d182a"/><text x="956" y="489" font-size="15" fill="#9baccc" >L1 helpers · as needed</text>
+<path d="M72 250V430Q72 445 87 445H426" fill="none" stroke="#5fbdad" stroke-width="2" stroke-dasharray="5 6" marker-end="url(#arrow)"/>
+<text x="96" y="379" font-size="23" fill="#8de3cb" font-weight="650">Stay in command.</text>
+<text x="96" y="409" font-size="18" fill="#c3cee0" >Steer any owner directly.</text>
+<line x1="48" y1="558" x2="1152" y2="558" stroke="#2b3b54"/>
+<text x="48" y="590" font-size="20" fill="#e2eafa" >Your judgment at the top. Accountable execution underneath.</text>
+</g></svg>

@@ -4,7 +4,7 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { fixtures, now } from './fixtures.mjs';
+import { fixtures, askRetention, now } from './fixtures.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(resolve(root, 'web/package.json'));
@@ -35,6 +35,7 @@ try {
       ...(phone ? devices['Pixel 7'] : {}),
       viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
       deviceScaleFactor: 2, locale: 'en-US', timezoneId: 'UTC', colorScheme: 'light',
+      ...(phone ? { recordVideo: { dir: resolve(evidence, 'video'), size: { width: 390, height: 844 } } } : {}),
     });
     const page = await context.newPage();
     await page.clock.setFixedTime(new Date(now));
@@ -62,6 +63,14 @@ try {
         task.messages.push(message);
         body = { ok: true, message };
       }
+      else if (path === '/api/decide' && request.method() === 'POST') {
+        const sent = request.postDataJSON();
+        expect(sent).toEqual({ project: 'atlas', slug: 'resumable-backfill', question_id: 'retention-window', revision: 1, option_key: 'seven' });
+        const task = data.tasks.find(t => t.slug === sent.slug);
+        task.question.response = { text: 'Keep the old index for seven days.', at: now, message_id: 'retention-answer' };
+        data.overview.queue = [];
+        body = { question: task.question };
+      }
       if (!body) {
         errors.push(`Unexpected fixture request: ${request.method()} ${path}`);
         return route.fulfill({ status: 404, json: { error: 'No fixture' } });
@@ -73,6 +82,8 @@ try {
       await expect(page.locator('body')).not.toContainText('Could not load');
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error(`${file}: horizontal overflow`);
       await page.screenshot({ path: resolve(publish ? images : evidence, `${file}-${name}.png`) });
+      // Give the phone recording time to show each real interface state.
+      if (phone) await page.waitForTimeout(1400);
     }
     // The phone capture uses a recent conversation excerpt so it starts at a complete message.
     // The endpoint returns a history window; no component or layout is changed for capture.
@@ -99,9 +110,21 @@ try {
       await expect(page.getByRole('region', { name: 'Live session', exact: true })).toContainText('compatibility boundary');
       await capture('session');
     }
+    const question = askRetention(data);
+    await page.goto(`${origin}/`);
+    await expect(page.getByRole('heading', { name: 'Needs you', exact: true })).toBeVisible();
+    await expect(page.getByText(question.question, { exact: true })).toBeVisible();
+    await capture('decision');
+    await page.getByRole('button', { name: /7 days/ }).click();
+    await expect(page.getByRole('button', { name: 'Send 1 answer', exact: true })).toBeEnabled();
+    await capture('decision-selected', false);
+    await page.getByRole('button', { name: 'Send 1 answer', exact: true }).click();
+    await expect(page.getByText('Nothing needs you.', { exact: true })).toBeVisible();
+    await capture('decision-sent', false);
     if (errors.length) throw new Error(errors.join('\n'));
     await context.close();
-    console.log(`${name}: project → work → task → direct message → session; no console errors or viewport overflow`);
+    if (phone) await page.video().saveAs(resolve(images, 'phone-walkthrough.webm'));
+    console.log(`${name}: project → work → task → direct message → session → decision → answer; no console errors or viewport overflow`);
   }
 } finally {
   await browser.close();
