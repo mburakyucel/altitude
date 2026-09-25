@@ -69,7 +69,7 @@ def _public_voice_request(request):
 
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
-        return Path(args.file).read_text()
+        return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
     if getattr(args, "text", None) and args.text != "-":
         return args.text
     return sys.stdin.read()
@@ -370,7 +370,7 @@ def main(argv=None) -> None:
                     help="where coordination tracks the report's open review findings, e.g. '#461'")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
-    rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
+    rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
     review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
@@ -728,10 +728,14 @@ def main(argv=None) -> None:
         elif tc == "reply":
             if ACTOR != "l2":
                 sys.exit("alt task reply: only the current L2 may use this command")
-            slug = args.slug or os.environ.get("ALTITUDE_TASK")
+            slug = os.environ.get("ALTITUDE_TASK")
             attempt = os.environ.get("ALTITUDE_ATTEMPT")
             if not slug or not attempt:
                 sys.exit("alt task reply: ALTITUDE_TASK and ALTITUDE_ATTEMPT are required")
+            words = args.text[1:] if args.text[:1] == [slug] else args.text
+            if len(words) > 1:
+                sys.exit("alt task reply: give one text or -, optionally after this task's slug")
+            args.text = words[0] if words else "-"
             out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt)))
         elif tc in ("show", "status"):
             from altitude import status

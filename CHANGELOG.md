@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- `alt task reply` accepts its task's slug before the text, as `alt task block` and the other
+  owner verbs do, so `alt task reply "$ALTITUDE_TASK" - <<'EOF'` reads stdin; `--file -` reads
+  stdin for every text-taking verb.
+
 - **Settings → Voice input** offers Browser recognition and **Your speech service**: any
   OpenAI-compatible `/v1/audio/transcriptions` server on this computer, your network or a hosted
   provider. It asks only for the URL; a key and model sit behind **Hosted provider? Add a key or
