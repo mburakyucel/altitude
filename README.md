@@ -4,13 +4,15 @@
 
 Be the principal engineer. Set the roadmap. Own the architecture. Make the calls.
 
-Altitude turns your Claude Code or Codex agents into an engineering team. Your project
-orchestrator works through strategy with you and puts work in motion. Task owners carry it
-through investigation, implementation, checks and pull requests: in parallel, each in its own
-worktree, on your machine and your coding account.
+Altitude is a self-hosted workspace where one developer leads Claude Code or Codex agents as an
+engineering team. Your project orchestrator works through strategy with you and puts work in
+motion. Task owners carry it through investigation, implementation, checks and pull requests: in
+parallel, each in its own worktree, on your machine and your coding account.
 
 **Steer from your phone, by voice.** Describe the next feature, settle a tradeoff or step into
 any task. The work keeps going on your machine after you put the phone away.
+[Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
+browser.
 
 **Early preview · Linux x86_64 · [Get started](#get-started)**
 
@@ -20,8 +22,6 @@ any task. The work keeps going on your machine after you put the phone away.
 follow parallel delivery alongside the conversation.*
 
 ## On your phone
-
-**Talk to L3. Steer an owner. Make the call.** The same project, wherever you are.
 
 <p>
   <a href="docs/images/project-phone.png"><img src="docs/images/project-phone.png" alt="Phone: speak or type to L3 in the Atlas project conversation." width="250"></a>
