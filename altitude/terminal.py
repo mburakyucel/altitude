@@ -36,6 +36,8 @@ CLOSE_GRACE_SECONDS = 2.0
 #: How long input waits for a program that has stopped reading it before the request is refused.
 WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
+#: The environment variable every process a terminal starts inherits, so its end finds those that left its session.
+MARK = "ALTITUDE_TERMINAL"
 #: This altd process. A page that attached under another boot knows a restart closed its terminal.
 BOOT = uuid.uuid4().hex
 #: Where process and socket facts are read; tests point these at fixture trees.
@@ -118,31 +120,31 @@ def _controlling_terminal() -> None:  # runs in the child between fork and exec
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
-def _env() -> dict[str, str]:
-    return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+def _env(ident: str) -> dict[str, str]:
+    return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor", MARK: ident}
 
 
 def open_terminal(project: str, slug: str | None) -> dict:
     """Start the terminal, or return the one already running for this task or project."""
-    if not enabled():
-        raise TerminalError("Terminal is off. Turn it on in Settings › This machine.", 403)
     path = folder(project, slug)
-    with _lock:
+    with _lock:  # held while registering, so turning the terminal off either sees this one or refuses it
+        if not enabled():
+            raise TerminalError("Terminal is off. Turn it on in Settings › This machine.", 403)
         term = _terminals.get((project, slug))
         if term is not None and not term.ended:
             return view(term)
-        master, child = os.openpty()
+        master, child, ident = *os.openpty(), uuid.uuid4().hex
         try:
             _winsize(master, 24, 80)
             os.set_blocking(master, False)
-            proc = subprocess.Popen(shell_command(), stdin=child, stdout=child, stderr=child, cwd=path, env=_env(),
+            proc = subprocess.Popen(shell_command(), stdin=child, stdout=child, stderr=child, cwd=path, env=_env(ident),
                                     start_new_session=True, preexec_fn=_controlling_terminal)
         except OSError as exc:
             os.close(master)
             raise TerminalError(f"Could not start the shell: {exc}") from exc
         finally:
             os.close(child)
-        term = Terminal(project, slug, path, proc, master)
+        term = Terminal(project, slug, path, proc, master, ident)
         _terminals[(project, slug)] = term
     _record(term, "opened")
     threading.Thread(target=_read, args=(term,), name=f"terminal:{project}:{slug or ''}", daemon=True).start()
@@ -306,11 +308,11 @@ def close(project: str, slug: str | None, reason: str = "closed", ident=None) ->
 
 
 def _stop_session(term: Terminal, sig: int) -> None:
-    """Signal every process in the terminal's session: the shell, its foreground command and its jobs,
-    including those that ignore a hang-up. A process that started a session of its own has left it.
-    Each process is held by a pidfd before its session is checked, so a pid reused by an unrelated
-    process in between is never signalled."""
-    session = term.proc.pid
+    """Signal every process the terminal started: those in its session (the shell, its foreground command
+    and its jobs, including those that ignore a hang-up) and those that left it (`setsid`, daemons) but
+    still carry its mark. Each process is held by a pidfd before it is checked, so a pid reused by an
+    unrelated process in between is never signalled."""
+    session, mark = term.proc.pid, f"{MARK}={term.id}".encode()
     for entry in PROC.iterdir():
         if not entry.name.isdigit():
             continue
@@ -320,7 +322,7 @@ def _stop_session(term: Terminal, sig: int) -> None:
             continue
         try:
             fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            if int(fields[3]) == session:
+            if int(fields[3]) == session or mark in (entry / "environ").read_bytes().split(b"\0"):
                 signal.pidfd_send_signal(handle, sig)
         except (OSError, IndexError, ValueError):
             pass
@@ -353,7 +355,9 @@ def sweep() -> None:
 
 
 def close_all() -> None:
-    for project, slug in list(_terminals):
+    with _lock:
+        keys = list(_terminals)
+    for project, slug in keys:
         close(project, slug, "closed")
 
 

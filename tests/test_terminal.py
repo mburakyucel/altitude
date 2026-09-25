@@ -180,7 +180,8 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertEqual(terminal.status(self.project, None)["reason"], "closed")
         self.wait(lambda: not self.session(shell))
 
-    def test_the_shell_exiting_ends_the_terminal_while_a_detached_process_holds_it(self):
+    def test_the_shell_exiting_ends_the_terminal_and_the_process_that_left_its_session(self):
+        # A review found a detached process still held the terminal open, then that it outlived the end.
         self.turn(True)
         self.open()
         marker = "300.417"
@@ -188,12 +189,34 @@ class TestTerminalLifecycle(TerminalCase):
         self.type(f"setsid sleep {marker} & sleep .2; exit 4\n")
         self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
         self.assertEqual(terminal.status(self.project, None)["exit_code"], 4)
+        self.wait(lambda: not self._marked(marker))
 
-    def _kill_marked(self, marker):
+    def test_close_stops_a_process_that_left_its_session(self):
+        self.turn(True)
+        self.patch(terminal, "CLOSE_GRACE_SECONDS", .3)
+        self.open()
+        marker = "300.418"
+        self.addCleanup(self._kill_marked, marker)
+        self.type(f"setsid nohup sleep {marker} >/dev/null 2>&1 &\n")
+        self.wait(lambda: self._marked(marker))
+        terminal.close(self.project, None)
+        self.wait(lambda: not self._marked(marker))
+
+    def _marked(self, marker):
+        found = []
         for entry in Path("/proc").iterdir():
             try:
-                if entry.name.isdigit() and (entry / "cmdline").read_bytes() == f"sleep\0{marker}\0".encode():
-                    os.kill(int(entry.name), signal.SIGKILL)
+                if (entry.name.isdigit() and (entry / "cmdline").read_bytes() == f"sleep\0{marker}\0".encode()
+                        and (entry / "stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"):
+                    found.append(int(entry.name))
+            except (OSError, IndexError):
+                continue
+        return found
+
+    def _kill_marked(self, marker):
+        for pid in self._marked(marker):
+            try:
+                os.kill(pid, signal.SIGKILL)
             except OSError:
                 continue
 
@@ -237,6 +260,21 @@ class TestTerminalLifecycle(TerminalCase):
         self.open()
         terminal.close_all()
         self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
+
+    def test_an_open_racing_the_switch_going_off_starts_no_shell(self):
+        # A review found an open that had passed the switch could register its shell after turning off closed all.
+        self.turn(True)
+        place = terminal.folder
+
+        def switched_off_meanwhile(project, slug):
+            self.turn(False)
+            terminal.close_all()
+            return place(project, slug)
+        self.patch(terminal, "folder", side_effect=switched_off_meanwhile)
+        with self.assertRaises(terminal.TerminalError) as caught:
+            self.open()
+        self.assertEqual(caught.exception.status, 403)
+        self.assertNotIn((self.project, None), terminal._terminals)
 
 
 def fake_proc(root: Path, processes: dict[int, tuple[int, str, list[int]]], connections: list[tuple[str, str, int]],

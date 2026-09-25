@@ -880,17 +880,19 @@ that guidance grants no permission expansion by itself.
 `terminal.py` gives the operator one login shell per task worktree or project folder. It is off until
 the operator turns on the `terminal` machine setting (`POST /api/terminal-access`, which uses the
 same request and `machine-set` event as the other machine settings; turning it off closes every
-open terminal). altd starts the shell on a pseudo-terminal in a session of its own, as the operator
+open terminal, and an open in progress either registers before that or is refused). altd starts the shell on a pseudo-terminal in a session of its own, as the operator
 and outside every worker sandbox. The shell and its children live only as long as altd: there is no
 multiplexer and no persistence. A task terminal opens in the task's worktree while the
 task is neither done nor rejected; a project terminal opens in the registered project folder. The
 tick's `terminal.sweep()` closes a task's terminal once the task is done, rejected or gone, and a
 project's once it is no longer managed. Opening returns the running terminal when one exists.
-Closing sends SIGHUP to every process in the terminal's session, then SIGKILL to whatever remains
-after two seconds, including commands that ignore the hang-up. Each process is held by a pidfd before
-its session is checked, so a reused pid is never signalled. The terminal ends when its shell
-exits, even while a process that started a session of its own still holds the pseudo-terminal; the
-end kills anything left in the session. The status names the foreground command when it is not the
+Every process the shell starts inherits `ALTITUDE_TERMINAL=<terminal id>`. Closing sends SIGHUP to
+every process in the terminal's session or carrying its mark, including those that left the session
+(`setsid`, daemons), then SIGKILL to whatever remains after two seconds, including commands that
+ignore the hang-up. A process that clears its environment and leaves the session escapes. Each
+process is held by a pidfd before it is checked, so a reused pid is never signalled. The terminal
+ends when its shell exits, even while a process that left its session still holds the
+pseudo-terminal; the end kills everything the terminal started that is still running. The status names the foreground command when it is not the
 shell, so the page can confirm before stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
@@ -922,8 +924,8 @@ that socket and none of altd, anything altd started (a Claude L3 turn runs as al
 own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands) does.
 A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
-does not proxy any path altd would route to the terminal (`terminalRequest`, which drops empty and dot
-segments as altd does), because altd would see the proxy as the client. This stops a worker from
+does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
+altd does, and also its decoded, dot-resolved form; a path with `;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
 using the terminal to leave its sandbox and bypass the machine-grant flow. The check has known
 limits. A process an agent starts outside those units, through the user service manager or a
 scheduler, is not recognized. Claude L2 workers have no OS sandbox, so they can already change the
