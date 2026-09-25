@@ -80,15 +80,15 @@ export default function Terminal({ project, task, keys, head, closeLabel, onClos
   // A shell the operator closed (here, in another tab, or by turning the terminal off) returns to Ready.
   useEffect(() => {
     if (data?.state !== "exited" || data.reason !== "closed") return;
-    void terminalSend(project, "forget", { task }).catch(() => undefined)
+    void terminalSend(project, "forget", { task, id: data.id! }).catch(() => undefined)
       .then(() => { set({ ...data, state: "none" }); });
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Leaving an ended terminal drops its replay: the last output stays readable only until then.
-  const endedHere = data?.state === "exited";
+  const endedHere = data?.state === "exited" ? data.id : undefined;
   useEffect(() => {
     if (!endedHere) return;
-    return () => { void terminalSend(project, "forget", { task }).catch(() => undefined); };
+    return () => { void terminalSend(project, "forget", { task, id: endedHere }).catch(() => undefined); };
   }, [endedHere, project, task]);
 
   // Opening replaces an ended terminal here; a running one is returned as it is.
@@ -113,7 +113,7 @@ export default function Terminal({ project, task, keys, head, closeLabel, onClos
         if (now.busy) { setConfirm(now.busy); return; }
       }
       setConfirm(null);
-      await terminalSend(project, "close", { task });
+      await terminalSend(project, "close", { task, id: data!.id! });
       onClosed?.();
     } catch (error) {
       setCloseError((error as Error).message);

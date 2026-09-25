@@ -30,7 +30,8 @@ function bytes(base64: string): Uint8Array {
 /**
  * One running or ended terminal on screen. It replays the server's buffer from the start, follows the
  * output stream, and after a lost connection resumes from the last offset it drew; a replaced terminal
- * or an altd restart ends it through `onEnd`. Typed input is sent in order, one request at a time.
+ * or an altd restart ends it through `onEnd`. Typed input is sent in order, one request at a time, and
+ * every request names terminal `id`, so nothing reaches a terminal that replaced it.
  */
 export default function TerminalScreen({ project, task, id, keys, onEnd, onReconnecting }: {
   project: string;
@@ -72,7 +73,7 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
       report.current.onEnd(status);
     };
     const connect = () => {
-      const stream = terminalStream(project, task, offset);
+      const stream = terminalStream(project, task, id, offset);
       stream.addEventListener("output", (event) => {
         const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string };
         term.write(bytes(chunk.data));
@@ -103,12 +104,12 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
     let pending = "";
     let sending = false;
     const flush = async () => {
-      if (sending || !pending) return;
+      if (done || sending || !pending) return;
       sending = true;
       const data = pending;
       pending = "";
       try {
-        await terminalSend(project, "input", { task, data });
+        await terminalSend(project, "input", { task, id, data });
       } catch {
         // A closed terminal reports its end on the stream; a lost connection shows Reconnecting.
       }
@@ -131,7 +132,7 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
       clearTimeout(resize);
       resize = setTimeout(() => {
         fit.fit();
-        if (!done) void terminalSend(project, "resize", { task, cols: term.cols, rows: term.rows }).catch(() => undefined);
+        if (!done) void terminalSend(project, "resize", { task, id, cols: term.cols, rows: term.rows }).catch(() => undefined);
       }, RESIZE_MS);
     };
     const observer = new ResizeObserver(size);

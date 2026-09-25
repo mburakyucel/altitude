@@ -717,14 +717,15 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize, close and forget: each answers ok or the server's error. */
-export function terminalSend(project: string, action: "input" | "resize" | "close" | "forget", body: { task?: string; data?: string; cols?: number; rows?: number }) {
+/** Input, resize, close and forget for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
+export function terminalSend(project: string, action: "input" | "resize" | "close" | "forget", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
 
-/** The output stream from `offset`: `output` events carry base64 bytes and the next offset, `end` the final status. */
-export function terminalStream(project: string, task: string | undefined, offset: number): EventSource {
-  return new EventSource(`${terminalPath(project)}/stream${terminalQuery(task) || "?"}${task ? "&" : ""}offset=${offset}`);
+/** Terminal `id`'s output from `offset`: `output` events carry base64 bytes and the next offset, `end` the final status. */
+export function terminalStream(project: string, task: string | undefined, id: string, offset: number): EventSource {
+  const query = new URLSearchParams({ ...(task ? { task } : {}), id, offset: String(offset) });
+  return new EventSource(`${terminalPath(project)}/stream?${query}`);
 }
 
 const PrerequisitesSchema = z.object({

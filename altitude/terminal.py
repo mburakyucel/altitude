@@ -1,8 +1,8 @@
 """The operator's terminal: one login shell per task worktree or project folder, run by altd.
 
-A terminal is a shell on a pseudo-terminal owned by altd. It ends when the operator closes it, when the
-shell exits, when its task finishes, or when altd stops: nothing keeps it alive beyond altd's own
-process. A bounded replay buffer lets a reconnecting page resume where it left off; nothing typed or
+A terminal is a shell on a pseudo-terminal owned by altd, in a session of its own. It ends when the
+operator closes it, when the shell exits, when its task finishes, or when altd stops: nothing keeps it
+alive beyond altd's own process, and its end stops every process still in its session. A bounded replay buffer lets a reconnecting page resume where it left off; nothing typed or
 printed is stored anywhere. Only opening and closing are recorded, on the task or project log.
 
 Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full
@@ -15,11 +15,13 @@ import ipaddress
 import os
 import pwd
 import re
+import select
 import signal
 import struct
 import subprocess
 import termios
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +32,9 @@ REPLAY_BYTES = 256 * 1024
 READ_BYTES = 65536
 INPUT_LIMIT = 65536
 CLOSE_GRACE_SECONDS = 2.0
+#: How long input waits for a program that has stopped reading it before the request is refused.
+WRITE_SECONDS = 2.0
+POLL_SECONDS = 0.2
 #: This altd process. A page that attached under another boot knows a restart closed its terminal.
 BOOT = uuid.uuid4().hex
 #: Where process and socket facts are read; tests point these at fixture trees.
@@ -52,7 +57,7 @@ class Terminal:
     folder: Path
     proc: subprocess.Popen
     fd: int
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)  # tells a page a replaced terminal from its own
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)  # every request names it: a replaced terminal refuses
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
     exit_code: int | None = None
@@ -60,6 +65,7 @@ class Terminal:
     ended: bool = False
     cond: threading.Condition = field(default_factory=threading.Condition)  # output and ending
     io: threading.Lock = field(default_factory=threading.Lock)  # the descriptor: held to use it or close it
+    closing: bool = False  # Close was asked for: a waiting write gives up
 
     @property
     def end(self) -> int:
@@ -127,6 +133,7 @@ def open_terminal(project: str, slug: str | None) -> dict:
         master, child = os.openpty()
         try:
             _winsize(master, 24, 80)
+            os.set_blocking(master, False)
             proc = subprocess.Popen(shell_command(), stdin=child, stdout=child, stderr=child, cwd=path, env=_env(),
                                     start_new_session=True, preexec_fn=_controlling_terminal)
         except OSError as exc:
@@ -142,20 +149,19 @@ def open_terminal(project: str, slug: str | None) -> dict:
 
 
 def _read(term: Terminal) -> None:
-    while True:
-        try:
-            chunk = os.read(term.fd, READ_BYTES)
-        except OSError:  # EIO: every process holding the terminal has gone
-            chunk = b""
+    """Collect output until the shell has exited and its last output is read. The shell's exit ends the
+    terminal even while a process that left the session still holds the pseudo-terminal open."""
+    while term.proc.poll() is None:
+        chunk = _drain(term, POLL_SECONDS)
+        if chunk is None:
+            break
+        _keep(term, chunk)
+    _stop_session(term, signal.SIGKILL)
+    for _ in range(REPLAY_BYTES // READ_BYTES):  # what was written before the end, bounded
+        chunk = _drain(term, 0)
         if not chunk:
             break
-        with term.cond:
-            term.buffer += chunk
-            if len(term.buffer) > REPLAY_BYTES:
-                drop = len(term.buffer) - REPLAY_BYTES
-                del term.buffer[:drop]
-                term.start += drop
-            term.cond.notify_all()
+        _keep(term, chunk)
     code = term.proc.wait()
     with term.io:
         os.close(term.fd)
@@ -168,6 +174,28 @@ def _read(term: Terminal) -> None:
     _record(term, "closed", reason=term.reason, exit_code=code)
 
 
+def _drain(term: Terminal, wait: float) -> bytes | None:
+    """Output ready within `wait` seconds: b"" when there is none, None once nothing holds the terminal."""
+    if not select.select([term.fd], [], [], wait)[0]:
+        return b""
+    try:
+        return os.read(term.fd, READ_BYTES) or None
+    except BlockingIOError:
+        return b""
+    except OSError:  # EIO: every process holding the terminal has gone
+        return None
+
+
+def _keep(term: Terminal, chunk: bytes) -> None:
+    with term.cond:
+        term.buffer += chunk
+        if len(term.buffer) > REPLAY_BYTES:
+            drop = len(term.buffer) - REPLAY_BYTES
+            del term.buffer[:drop]
+            term.start += drop
+        term.cond.notify_all()
+
+
 def _get(project: str, slug: str | None) -> Terminal:
     term = _terminals.get((project, slug))
     if term is None:
@@ -175,8 +203,17 @@ def _get(project: str, slug: str | None) -> Terminal:
     return term
 
 
-def _running(project: str, slug: str | None) -> Terminal:
+def _named(project: str, slug: str | None, ident) -> Terminal:
+    """The terminal a request names. A page still showing a terminal that was replaced must not type into,
+    resize, close or read its successor."""
     term = _get(project, slug)
+    if ident != term.id:
+        raise TerminalError("This terminal was replaced.", 410)
+    return term
+
+
+def _running(project: str, slug: str | None, ident) -> Terminal:
+    term = _named(project, slug, ident)
     if term.ended:
         raise TerminalError("The terminal has closed.", 410)
     return term
@@ -210,27 +247,38 @@ def _busy(term: Terminal) -> str | None:
         return "A command"
 
 
-def write(project: str, slug: str | None, data: str) -> None:
+def write(project: str, slug: str | None, ident, data: str) -> None:
+    """Type `data`. A program that stops reading its input fills the terminal's queue; the write then gives
+    up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal."""
     if not isinstance(data, str) or len(data) > INPUT_LIMIT:
         raise TerminalError("Send terminal input as text.", 400)
-    term = _running(project, slug)
+    term = _running(project, slug, ident)
     raw = data.encode()
+    deadline = time.monotonic() + WRITE_SECONDS
     with term.io:
         while raw:
+            if term.fd < 0 or term.closing:
+                raise TerminalError("The terminal has closed.", 410)
             try:
                 raw = raw[os.write(term.fd, raw):]
+                continue
+            except BlockingIOError:
+                pass
             except OSError as exc:
                 raise TerminalError("The terminal has closed.", 410) from exc
+            if time.monotonic() >= deadline:
+                raise TerminalError("The terminal is not reading input. Press Ctrl+C or close it.")
+            select.select([], [term.fd], [], POLL_SECONDS)
 
 
 def _winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def resize(project: str, slug: str | None, cols, rows) -> None:
+def resize(project: str, slug: str | None, ident, cols, rows) -> None:
     if not all(isinstance(n, int) and not isinstance(n, bool) and 2 <= n <= 1000 for n in (cols, rows)):
         raise TerminalError("Terminal size must be whole columns and rows.", 400)
-    term = _running(project, slug)
+    term = _running(project, slug, ident)
     try:
         with term.io:
             _winsize(term.fd, rows, cols)
@@ -238,40 +286,47 @@ def resize(project: str, slug: str | None, cols, rows) -> None:
         raise TerminalError("The terminal has closed.", 410) from exc
 
 
-def close(project: str, slug: str | None, reason: str = "closed") -> None:
-    """End the shell and its foreground command; the reader records the close once they have gone."""
+def close(project: str, slug: str | None, reason: str = "closed", ident=None) -> None:
+    """End the terminal: hang up every process in its session, then kill whatever outlasts the grace
+    period. The reader records the close once the shell has gone. `ident`, when a page asks, names the
+    terminal it shows."""
     term = _terminals.get((project, slug))
-    if term is None or term.ended:
+    if term is None or term.ended or ident is not None and ident != term.id:
         return
     with term.cond:
         term.reason = reason
-    groups = {term.proc.pid}
-    with term.io:
-        try:
-            groups.add(os.tcgetpgrp(term.fd))
-        except OSError:
-            pass
-    _signal(groups, signal.SIGHUP)
+        term.closing = True
+    _stop_session(term, signal.SIGHUP)
     try:
         term.proc.wait(CLOSE_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
-        _signal(groups, signal.SIGKILL)
+        pass
+    _stop_session(term, signal.SIGKILL)
 
 
-def _signal(groups: set[int], sig: int) -> None:
-    for group in groups:
-        if group > 0:
+def _stop_session(term: Terminal, sig: int) -> None:
+    """Signal every process in the terminal's session: the shell, its foreground command and its jobs,
+    including those that ignore a hang-up. A process that started a session of its own has left it."""
+    session = term.proc.pid
+    for entry in PROC.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(fields[3]) == session:
             try:
-                os.killpg(group, sig)
+                os.kill(int(entry.name), sig)
             except OSError:
                 pass
 
 
-def forget(project: str, slug: str | None) -> None:
+def forget(project: str, slug: str | None, ident) -> None:
     """Drop an ended terminal's replay once the page has read how it ended."""
     with _lock:
         term = _terminals.get((project, slug))
-        if term is not None and term.ended:
+        if term is not None and term.ended and ident == term.id:
             del _terminals[(project, slug)]
 
 
@@ -296,10 +351,14 @@ def close_all() -> None:
         close(project, slug, "closed")
 
 
-def read(project: str, slug: str | None, offset: int, wait: float) -> tuple[bytes, int, bool, bool]:
+def stream(project: str, slug: str | None, ident) -> Terminal:
+    """The terminal a page reads output from; a stream stays with it even if another page replaces it."""
+    return _named(project, slug, ident)
+
+
+def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bool]:
     """Output after `offset`, waiting up to `wait` seconds for some: (data, next offset, missed, ended).
     `missed` says output before the replay buffer's start is gone."""
-    term = _get(project, slug)
     with term.cond:
         if offset >= term.end and not term.ended:
             term.cond.wait(wait)
@@ -331,8 +390,9 @@ def _socket_inode(peer: tuple, local: tuple) -> int | None:
     return None
 
 
-def _altitude_processes() -> set[int]:
-    """altd, its descendants (L3 turns, terminal shells) and every process in an Altitude service unit."""
+def _processes() -> tuple[set[int], set[int]]:
+    """(every process whose parent and unit could be read, the Altitude ones among them): altd, its
+    descendants (L3 turns, terminal shells) and every process in an Altitude service unit."""
     parents: dict[int, int] = {}
     owned: set[int] = set()
     for entry in PROC.iterdir():
@@ -342,7 +402,7 @@ def _altitude_processes() -> set[int]:
         try:
             stat = (entry / "stat").read_text()
             cgroup = (entry / "cgroup").read_text()
-        except OSError:  # the process exited while being read
+        except OSError:  # the process exited while being read: it cannot vouch for a connection
             continue
         parents[pid] = int(stat.rsplit(")", 1)[1].split()[1])
         if any(ALTITUDE_UNIT.fullmatch(part) for line in cgroup.splitlines() for part in line.split("/")):
@@ -358,11 +418,12 @@ def _altitude_processes() -> set[int]:
                 descendants.add(child)
                 frontier.append(child)
     owned |= descendants
-    return owned
+    return set(parents), owned
 
 
-def _owns(pid: int, inode: int) -> bool:
-    target = f"socket:[{inode}]"
+def _holds(pid: int, target: str) -> bool:
+    """Whether the process visibly holds the socket. Unreadable descriptors (another user's process, or
+    one made undumpable) prove nothing either way."""
     try:
         for fd in (PROC / str(pid) / "fd").iterdir():
             try:
@@ -379,8 +440,9 @@ def agent_connection(peer: tuple, local: tuple) -> bool:
     """Whether this connection comes from Altitude itself rather than the operator's browser.
 
     A connection from another host is the operator's (Altitude has no login: reaching it is the access). On
-    this host, the client socket's owning process decides: altd, anything it started, and anything in an
-    Altitude service unit is refused. A loopback connection whose client cannot be identified is refused.
+    this host the client socket must be found in a process outside Altitude, and in none of altd, anything
+    it started, or anything in an Altitude service unit. A client whose descriptors cannot be read is not
+    identified, so an agent process that hides its descriptors is refused.
     Limits: a process an agent starts outside these units, through the user service manager or a scheduler,
     is not recognised, and a worker whose engine runs without an OS sandbox can already change the
     operator's files directly. Reading this host's process table is Linux-specific."""
@@ -388,6 +450,10 @@ def agent_connection(peer: tuple, local: tuple) -> bool:
         inode = _socket_inode(peer, local)
         if inode is None:
             return ipaddress.ip_address(peer[0]).is_loopback
-        return any(_owns(pid, inode) for pid in _altitude_processes())
+        target = f"socket:[{inode}]"
+        readable, owned = _processes()
+        if any(_holds(pid, target) for pid in owned):
+            return True
+        return not any(_holds(pid, target) for pid in readable - owned)
     except (OSError, ValueError):
         return True

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -1602,6 +1603,14 @@ class Handler(BaseHTTPRequestHandler):
                 or origin and urlparse(origin).netloc != self.headers.get("Host")
                 or json_body and self.headers.get_content_type() != "application/json"):
             return "Terminal requests must come from Altitude's own page."
+        # Over plain HTTP a DNS-rebinding page names its own host in both Origin and Host; HTTPS refuses it
+        # at the certificate. Without TLS the terminal answers only an address or localhost.
+        host = urlparse(f"//{self.headers.get('Host') or ''}").hostname or ""
+        if not isinstance(self.connection, ssl.SSLSocket) and host != "localhost":
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                return "Over plain HTTP, open the terminal at Altitude's address or localhost."
         if terminal.agent_connection(self.client_address, self.connection.getsockname()):
             return "Terminal requests from Altitude's own agents are refused."
         return None
@@ -1614,14 +1623,15 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3:
             return self._json(terminal.status(project, slug))
         if len(parts) == 4 and parts[3] == "stream":
-            return self._terminal_stream(project, slug, int((q.get("offset") or ["0"])[0]))
+            return self._terminal_stream(project, slug, (q.get("id") or [None])[0], int((q.get("offset") or ["0"])[0]))
         return self._json({"error": "unknown api"}, 404)
 
-    def _terminal_stream(self, project: str, slug: str | None, offset: int) -> None:
-        """Server-sent output from `offset`: `output` events carry base64 bytes and the next offset; `end`
-        carries how the terminal ended. The page reconnects with its own offset after a lost connection."""
+    def _terminal_stream(self, project: str, slug: str | None, ident: str | None, offset: int) -> None:
+        """Server-sent output of terminal `ident` from `offset`: `output` events carry base64 bytes and the
+        next offset; `end` carries how it ended. The page reconnects with its own offset after a lost
+        connection."""
         try:
-            terminal.read(project, slug, offset, 0)
+            term = terminal.stream(project, slug, ident)
         except terminal.TerminalError as exc:
             return self._json({"error": str(exc)}, exc.status)
         self.send_response(200)
@@ -1635,7 +1645,7 @@ class Handler(BaseHTTPRequestHandler):
         while True:
             if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1):
                 return
-            data, offset, missed, ended = terminal.read(project, slug, offset, TERMINAL_WAIT_SECONDS)
+            data, offset, missed, ended = terminal.read(term, offset, TERMINAL_WAIT_SECONDS)
             if data or missed:
                 payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed})
                 self.wfile.write(f"event: output\ndata: {payload}\n\n".encode())
@@ -1647,7 +1657,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b": keepalive\n\n")
                 quiet = 0.0
             if ended:
-                self.wfile.write(f"event: end\ndata: {json.dumps(terminal.status(project, slug))}\n\n".encode())
+                self.wfile.write(f"event: end\ndata: {json.dumps(terminal.view(term))}\n\n".encode())
                 self.wfile.flush()
                 return
             self.wfile.flush()
@@ -1668,20 +1678,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(view)
         if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close", "forget"):
             return self._json({"error": "unknown api"}, 404)
-        project, action, slug = unquote(parts[2]), parts[3], body.get("task")
+        project, action, slug, ident = unquote(parts[2]), parts[3], body.get("task"), body.get("id")
         if slug is not None and not isinstance(slug, str):
             return self._json({"error": "Name the task as text."}, 400)
+        if action != "open" and not isinstance(ident, str):
+            return self._json({"error": "Name the terminal."}, 400)
         try:
             if action == "open":
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
-                terminal.write(project, slug, body.get("data"))
+                terminal.write(project, slug, ident, body.get("data"))
             elif action == "resize":
-                terminal.resize(project, slug, body.get("cols"), body.get("rows"))
+                terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
             elif action == "close":
-                terminal.close(project, slug)
+                terminal.close(project, slug, ident=ident)
             else:
-                terminal.forget(project, slug)
+                terminal.forget(project, slug, ident)
             return self._json({"ok": True})
         except terminal.TerminalError as exc:
             return self._json({"error": str(exc)}, exc.status)
@@ -2766,6 +2778,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     finally:
         srv.server_close()
         stop_l3_verb_brokers()
+        terminal.close_all()
 
 
 def tls_init(ip: str | None = None) -> dict:

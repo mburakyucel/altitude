@@ -1254,7 +1254,7 @@ are ordinary worktree changes that the L2 sees and delivers with its PR. The tas
 `terminal` events for opened and closed.
 
 A terminal outlives page visits, reconnects and view switches. It ends when the operator closes it,
-when its shell exits, when the operator turns the machine setting off, or when altd stops. It also
+when its shell exits (its end stops everything still running in it), when the operator turns the machine setting off, or when altd stops. It also
 ends at the next tick after its task becomes done or rejected, before that task's worktree is
 cleaned up. An altd restart after a merged change to Altitude ends every open terminal; the restart
 banner and an open terminal's notice say so in advance. Terminals never hold that quiet point. A

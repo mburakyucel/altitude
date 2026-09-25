@@ -880,42 +880,52 @@ that guidance grants no permission expansion by itself.
 `terminal.py` gives the operator one login shell per task worktree or project folder. It is off until
 the operator turns on the `terminal` machine setting (`POST /api/terminal-access`, which uses the
 same request and `machine-set` event as the other machine settings; turning it off closes every
-open terminal). altd starts the shell on a pseudo-terminal in its own session and process group, as
-the operator and outside every worker sandbox. The shell and its children live only as long as altd:
-there is no multiplexer and no persistence. A task terminal opens in the task's worktree while the
+open terminal). altd starts the shell on a pseudo-terminal in a session of its own, as the operator
+and outside every worker sandbox. The shell and its children live only as long as altd: there is no
+multiplexer and no persistence. A task terminal opens in the task's worktree while the
 task is neither done nor rejected; a project terminal opens in the registered project folder. The
 tick's `terminal.sweep()` closes a task's terminal once the task is done, rejected or gone, and a
 project's once it is no longer managed. Opening returns the running terminal when one exists.
-Closing sends SIGHUP to the shell's group and the foreground job's group, then SIGKILL after two
-seconds. The status names the foreground command when it is not the shell, so the page can confirm
-before stopping it.
+Closing sends SIGHUP to every process in the terminal's session, then SIGKILL to whatever remains
+after two seconds, including commands that ignore the hang-up. The terminal ends when its shell
+exits, even while a process that started a session of its own still holds the pseudo-terminal; the
+end kills anything left in the session. The status names the foreground command when it is not the
+shell, so the page can confirm before stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
-/api/terminal/<project>/stream?task=&offset=` is server-sent events: `output` events carry base64
+/api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
 bytes, the next offset and whether older output was dropped, and `end` carries the final status. A
 reconnecting page resumes from its own offset. `GET /api/terminal/<project>?task=` returns the
 status: state (`none`, `running` or `exited`), terminal id, the altd `boot` id, the setting, folder,
 exit code, end reason and the foreground command. A page that last saw another boot shows that a
 restart ended its terminal. `POST /api/terminal/<project>/{open,input,resize,close,forget}` with
-`{task?, data?, cols?, rows?}` drive it; `forget` drops an ended terminal's replay once its page
-leaves. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
+`{task?, id, data?, cols?, rows?}` drive it; `forget` drops an ended terminal's replay once its page
+leaves. Every request after `open` names the terminal `id`, and a stream stays with the terminal it
+named, so a page still showing a replaced terminal cannot type into, resize, close or read its
+successor. Input waits up to two seconds for a program that has stopped reading it, and gives up at
+once when Close is asked for, so a full input queue never holds Close or the setting. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
 Every terminal request is refused unless it comes from Altitude's own page and not from Altitude
 itself. `Sec-Fetch-Site`, when present, must be `same-origin` or `none`. An `Origin` must name the
-request's `Host`, and POST bodies must be `application/json`. This stops another site open in the
-operator's browser from typing into a shell. Then `terminal.agent_connection` finds the client end of
-the TCP connection in `/proc/net/tcp{,6}` and refuses it when a process holding that socket is altd,
-anything altd started (a Claude L3 turn runs as altd's child in altd's own cgroup), or any process in
-an `altitude*.service` unit (workers, reviews, machine commands). A loopback client that cannot be
-identified is refused; a client on another host is the operator's browser. This stops a worker from
+request's `Host`, and POST bodies must be `application/json`. Without TLS the `Host` must also be an
+address or `localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which
+HTTPS refuses at the certificate. This stops another site open in the operator's browser from typing
+into a shell. Then `terminal.agent_connection` finds the client end of the TCP connection in
+`/proc/net/tcp{,6}`. A loopback client is allowed only when a process outside Altitude visibly holds
+that socket and none of altd, anything altd started (a Claude L3 turn runs as altd's child in altd's
+own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands) does.
+A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
+its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
+does not proxy terminal requests, because altd would see the proxy as the client. This stops a worker from
 using the terminal to leave its sandbox and bypass the machine-grant flow. The check has known
 limits. A process an agent starts outside those units, through the user service manager or a
 scheduler, is not recognized. Claude L2 workers have no OS sandbox, so they can already change the
 operator's files directly. Reading the process table is Linux-specific. Altitude has no login, so
 anyone who can open it can use the terminal once it is on. That is the same trust as its other
-operator controls, and the Settings copy says so.
+operator controls, and the Settings copy says so. Altitude stores nothing typed; the operator's own
+shell keeps its history as it does in any terminal.
 
 ## Faults
 

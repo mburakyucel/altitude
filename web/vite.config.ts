@@ -12,7 +12,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      "/api": { target: API, secure: false, changeOrigin: true },
+      // The terminal is not proxied: behind the proxy altd would see the proxy as the client, and could no
+      // longer refuse a request from one of its own agents (docs/ARCHITECTURE.md#operator-terminal).
+      "/api": { target: API, secure: false, changeOrigin: true, bypass: (req) => (req.url?.startsWith("/api/terminal") ? false : undefined) },
       "/digest.wav": { target: API, secure: false, changeOrigin: true },
     },
   },
