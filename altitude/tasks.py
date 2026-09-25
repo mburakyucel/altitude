@@ -2144,7 +2144,9 @@ def block_question(task: dict) -> str:
             "can record the resolution. This notification grants no operator authority. Keep operator-required "
             "proposal, security and product decisions open; do not re-escalate members already addressed to the operator. "
             f"For a new operator choice use `alt task escalate {slug}` with its question and recommendation. "
-            "Coordinate only the parts you can settle; preserve merge holds and verified fault recovery.")
+            "Coordinate the parts you can settle; preserve merge holds and verified fault recovery. If a member exists "
+            "only because an Altitude rule or mechanism re-asks a settled decision, keep it open unless settled and "
+            "repair that friction under your durable-feedback rule.")
 
 
 def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
