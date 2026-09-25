@@ -659,7 +659,7 @@ Voice capture does not add a lifecycle state. Browser recognition requests nativ
 punctuation when supported; otherwise the browser's formatting is preserved. Altitude does not
 rewrite dictated words. With the default browser backend, recognized words
 appear in the read-only draft while listening and **Stop** lands them without a transcription step;
-with the local speech service or a configured endpoint, **Stop** transcribes the bounded recording
+with your speech service, **Stop** transcribes the bounded recording
 into the editable draft. The send arrow lands or transcribes, appends and sends at once. Both sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and

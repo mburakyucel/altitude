@@ -4,9 +4,9 @@ import type { VoiceBackend, VoiceSettings } from "../data/api";
 
 /*
  * The installation's transcription backend, read once per document from `GET /api/voice`. "browser"
- * runs the browser's own recognition; "local" and "endpoint" upload the recording for the server to
- * transcribe. Until the read answers, the composer shows no microphone; a failed read is retried
- * while a composer is mounted.
+ * runs the browser's own recognition; "endpoint" uploads the recording for the server to forward to
+ * the machine's speech service. Until the read answers, the composer shows no microphone; a failed
+ * read is retried while a composer is mounted.
  */
 const RETRY_MS = 5000;
 let known: VoiceSettings | null = null;

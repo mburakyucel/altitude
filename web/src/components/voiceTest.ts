@@ -100,7 +100,7 @@ export class FakeSpeechRecognition {
 }
 
 export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean } = {}) {
-  const backend = options.backend ?? "local";
+  const backend = options.backend ?? "endpoint";
   const recognition = options.recognition ?? backend === "browser";
   FakeMediaRecorder.instances = [];
   FakeSpeechRecognition.instances = [];

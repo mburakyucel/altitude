@@ -14,6 +14,15 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   checks the commit's main `check` run and its dated changelog section, then builds, attests and
   uploads the archive, `install.py`, `install.sh` and `SHA256SUMS`.
 
+- **Settings → Voice input** offers Browser recognition and **Your speech service**: any
+  OpenAI-compatible `/v1/audio/transcriptions` server on this computer, your network or a hosted
+  provider. It asks only for the URL; a key and model sit behind **Hosted provider? Add a key or
+  model**, and **How to run one** links a worked whisper.cpp example. Errors name the service's URL.
+  The `local` backend, its private socket/bridge protocol and the `WHISPER_SOCKET`/`WHISPER_BRIDGE`
+  variables are removed, and voice no longer needs `ffmpeg`. A machine set to `local` now uses
+  browser recognition; point it at an OpenAI-compatible server with
+  `alt machine set --voice http://127.0.0.1:<port>/v1/audio/transcriptions`.
+
 - The terminal answers faster and gets out of the way. Keystrokes reuse one connection, so an echo
   takes one network round trip instead of about three (at a 40 ms phone link, 132 ms becomes 49 ms).
   Showing the terminal opens it; the amber note, the folder lines and the Open step are gone, and a

@@ -17,7 +17,7 @@ class SilentEventSource extends EventTarget {
 beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);
   // Composers read the installation's voice backend once; tests name it instead (upload path by default).
-  presetVoiceBackend("local");
+  presetVoiceBackend("endpoint");
 });
 
 afterEach(() => {

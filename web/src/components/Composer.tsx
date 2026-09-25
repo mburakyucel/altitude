@@ -18,7 +18,7 @@ import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
  * Stop or Send. Both run the same recorder-shaped state machine.
  */
 
-/** The server decodes at most ten minutes; five seconds under it absorbs timer delay and container padding. */
+/** Recordings stop five seconds under ten minutes, absorbing timer delay and container padding. */
 export const MAX_RECORDING_MS = 595_000;
 const LAST_MINUTE_MS = 60_000;
 const MAX_UPLOAD_BYTES = 16 << 20;

@@ -41,8 +41,7 @@ class TestIsolation(unittest.TestCase):
         env = dict(os.environ, CODEX_HOME="/operator/provider", CLAUDE_CONFIG_DIR="/operator/provider",
                    OPENAI_API_KEY="fixture-secret", ANTHROPIC_API_KEY="fixture-secret", GH_TOKEN="fixture-secret",
                    DBUS_SESSION_BUS_ADDRESS="unix:path=/operator/bus", ALTITUDE_ACTOR="l2", ALTITUDE_TASK="live-task",
-                   ALTITUDE_OPERATOR="Private operator", ALTITUDE_PRIMARY_ENGINE="unconfigured-provider",
-                   WHISPER_SOCKET="/operator/speech.sock", WHISPER_BRIDGE="127.0.0.1:8890")
+                   ALTITUDE_OPERATOR="Private operator", ALTITUDE_PRIMARY_ENGINE="unconfigured-provider")
         script = """from tests.support import SUITE, config
 import os
 from pathlib import Path
@@ -53,10 +52,6 @@ for key in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GH_TOKEN', 'DBUS_SESSION_BUS
 assert config.ROOT.is_relative_to(SUITE)
 assert config.OPERATOR is None and config.operator_name() is None
 assert 'ALTITUDE_PRIMARY_ENGINE' not in os.environ
-from altitude import server
-assert Path(server.VOICE_SOCKET).is_relative_to(SUITE)
-assert server.VOICE_BRIDGE == '127.0.0.1:0'
-assert server._whisper_connection() is None
 """
         result = subprocess.run([sys.executable, "-c", script], cwd=REPO, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

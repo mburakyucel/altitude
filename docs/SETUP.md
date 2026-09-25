@@ -308,7 +308,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
-| `alt machine set --voice` | Transcription backend: `browser` (default, no setup), `local` (`ffmpeg` and the local speech service) or the URL of an OpenAI-compatible endpoint with an optional model and key. See [voice input](OPERATIONS.md#voice-input). |
+| `alt machine set --voice` | Transcription backend: `browser` (default, no setup) or the URL of your OpenAI-compatible speech service, with an optional model and key for hosted providers. See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,
@@ -334,12 +334,14 @@ wildcard bind is certified for `localhost` only) and arrange firewall/network ac
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
 for update/recovery and source deployments. Voice input works out of the box through the browser's
-own speech recognition; `ffmpeg` and a local speech service are needed only for the `local` backend
-(see [voice input](OPERATIONS.md#voice-input)). Typing remains available without any of them.
+own speech recognition; a speech service of your own is optional
+(see [voice input](OPERATIONS.md#voice-input)). Typing remains available without either.
 Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).
-The overview shows the saved backend; the Voice input page holds its options. Browser and local
-choices save immediately. Custom endpoint requires a URL, with optional model and key, then
-**Save endpoint**. It needs no `ffmpeg`; the endpoint’s own setup and charges apply.
+The overview shows the saved backend; the Voice input page holds its options. Browser recognition
+saves immediately. **Your speech service** requires the URL of an OpenAI-compatible
+`/v1/audio/transcriptions` endpoint, then **Save service**; a hosted provider's key and model sit
+behind **Hosted provider? Add a key or model**. [Your speech service](OPERATIONS.md#your-speech-service)
+has a worked example of running one on this computer; the service's own setup and charges apply.
 Installation downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work

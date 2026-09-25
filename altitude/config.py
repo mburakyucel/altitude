@@ -272,34 +272,33 @@ def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
 
 
-# The capability seam for speech: the browser's own recognition needs nothing installed; the local
-# speech service and a transcription endpoint are the machine's explicit choices.
-VOICE_BACKENDS = ("browser", "local")
+# The capability seam for speech: the browser's own recognition needs nothing installed; the
+# machine's own speech service is one OpenAI-compatible `audio/transcriptions` URL it chooses.
 VOICE_DEFAULT_MODEL = "whisper-1"
 
 
 def voice_setting() -> dict:
-    """The transcription backend: browser recognition (default), the local speech service, or one endpoint."""
-    value = machine_settings().get("voice", "browser")
+    """The transcription backend: browser recognition (default) or the machine's speech service."""
+    value = machine_settings().get("voice")
     if isinstance(value, dict):
         return {"backend": "endpoint", "model": VOICE_DEFAULT_MODEL, **value}
-    return {"backend": value}
+    return {"backend": "browser"}
 
 
 def validate_voice(value) -> None:
-    if value is None or value in VOICE_BACKENDS:
+    if value is None or value == "browser":
         return
     if not isinstance(value, dict) or not value or set(value) - {"url", "model", "key"}:
-        raise ValueError("voice must be browser, local, or an endpoint with a URL")
+        raise ValueError("voice must be browser or the URL of your speech service")
     url = value.get("url")
     parts = urlsplit(url) if isinstance(url, str) else None
     if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError("the voice endpoint must be an http(s) URL")
+        raise ValueError("the speech service must be an http(s) URL")
     if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
-        raise ValueError("the voice endpoint URL carries no credentials, query or fragment; give the key separately")
+        raise ValueError("the speech service URL carries no credentials, query or fragment; give the key separately")
     for field in ("model", "key"):
         if field in value and (not isinstance(value[field], str) or not value[field].strip()):
-            raise ValueError(f"the voice endpoint {field} must be nonempty text")
+            raise ValueError(f"the speech service {field} must be nonempty text")
 
 
 def public_voice(value):

@@ -1176,23 +1176,26 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers Browser recognition (default), Local speech service and Custom endpoint.
-Descriptions state where audio goes and optional setup/charges. Browser/local save immediately;
-endpoint opens a URL plus optional model/key form with **Save endpoint**. Back discards unsaved
-endpoint edits. Saving stays on the page. Keys are write-only: **Key set · never shown** has a
-**Replace** control; a blank replacement removes it. Editing the URL clears retained-key selection;
-no stored key follows a new destination. A successful save updates only the next capture. Uploads
-bind to their original backend/destination and refuse a changed selection before forwarding audio.
+The voice page offers Browser recognition (default) and Your speech service. Descriptions state
+where audio goes and any setup or charges. Browser saves immediately; Your speech service opens a
+**Service URL** form with **Save service**, a line naming the OpenAI-compatible
+`/v1/audio/transcriptions` endpoint and a **How to run one** link to the setup docs. Model and key
+stay behind **Hosted provider? Add a key or model** and are shown directly once a key or a
+non-default model is saved. Back discards unsaved service edits. Saving stays on the page. Keys are
+write-only: **Key set · never shown** has a **Replace** control; a blank replacement removes it.
+Editing the URL clears retained-key selection; no stored key follows a new destination. A
+successful save updates only the next capture. Uploads bind to their original backend/destination
+and refuse a changed selection before forwarding audio. The overview row names the service's host.
 
 | State | What appears and what actions do |
 | --- | --- |
 | Loading | Loading settings…; no selected default or editable controls. |
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
-| Saved browser/local | Chosen radio, Saved.; endpoint form absent. |
-| Endpoint editing | URL required, optional model/key; explicit save; overview still reflects persisted choice. |
+| Saved browser | Chosen radio, Saved.; service form absent. |
+| Service editing | URL required; hosted link reveals optional model/key; explicit save; overview still reflects persisted choice. |
 | Saving | Saving… and disabled controls until the request answers. |
 | Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
-| Saved endpoint | Saved.; key entry clears and becomes Key set when configured. Returning shows Custom endpoint summary. |
+| Saved service | Saved.; key entry clears and becomes Key set when configured. Returning shows Your speech service · host. |
 
 Under **This project**, opened from a project, one row names that project and opens
 `/settings/projects/<name>`; a direct visit lists every managed project under **Projects** instead.

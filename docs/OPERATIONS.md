@@ -237,29 +237,57 @@ setting selects the backend; typing is never affected.
 | `alt machine set --voice …` | How it works | Words appear | Where audio goes | Needs |
 | --- | --- | --- | --- | --- |
 | `browser` (default) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
-| `local` | The browser records; Altitude converts with `ffmpeg` and asks the local faster-whisper socket, with the loopback bridge as fallback. | after Stop or Send | stays on this machine | `ffmpeg` and the local speech service |
-| an `https://…` URL | The browser records; Altitude posts the recording to that URL as an OpenAI-compatible `audio/transcriptions` request and returns its `text`. `--voice-model` names the model (default `whisper-1`) and `--voice-key-file` supplies the bearer key from a file or stdin. A redirecting endpoint is refused so the key never follows it. | after Stop or Send | to that URL | the endpoint; no `ffmpeg` |
+| a service URL | The browser records; Altitude posts the recording unchanged to [your speech service](#your-speech-service) as an OpenAI-compatible `audio/transcriptions` request and returns its `text`. `--voice-model` names the model (default `whisper-1`) and `--voice-key-file` supplies the bearer key from a file or stdin; both matter only to hosted providers. A redirecting service is refused so the key never follows it. | after Stop or Send | to that URL only: this computer, another machine on your network, or a hosted provider | a running service |
 
 ```sh
 alt machine show
-alt machine set --voice local --reason 'Transcribe on this machine'
+alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'My speech server'
 alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
 alt machine set --unset-voice --reason 'Back to browser recognition'
 ```
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request;
 the key stays in that file and the request file, and `alt machine show` and the event log show it
-only as `set`. **Settings → Voice input** edits the same setting: browser/local save immediately,
-and a custom endpoint uses **Save endpoint**. The stored key is never returned to the page; it is
-retained only for an unchanged URL. **Replace** with a blank field removes it. Back discards unsaved
-endpoint edits. Settings also shows read-only connection details.
-Use HTTPS when entering an endpoint key from another device: the browser sends that key to
-Altitude in the save request, and an HTTP connection does not encrypt it.
+only as `set`. **Settings → Voice input** edits the same setting: Browser recognition saves
+immediately, and **Your speech service** asks for its URL and uses **Save service**; model and key
+sit behind **Hosted provider? Add a key or model**. The stored key is never returned to the page; it
+is retained only for an unchanged URL. **Replace** with a blank field removes it. Back discards
+unsaved edits. The overview row names the service's host. Settings also shows read-only connection
+details.
+Use HTTPS when entering a key from another device: the browser sends that key to Altitude in the
+save request, and an HTTP connection does not encrypt it.
+
+When the service cannot be reached, refuses the recording or answers without text, the composer
+names the configured URL (never the key) so you can fix it; your draft stays.
 
 A Settings read or save updates the next capture in that browser document. Other documents and CLI changes
 are picked up when opening Settings, on reload or after a stale upload is refused. Recordings identify their selected backend
-and destination; changing either cannot silently reroute unfinished audio. Altitude deletes its
-temporary recordings; external speech services control their own retention.
+and destination; changing either cannot silently reroute unfinished audio. Altitude keeps no
+recordings; the speech service that transcribes them controls its own retention.
+
+### Your speech service
+
+Altitude speaks one standard interface to a speech-to-text service: OpenAI's audio transcription
+API. It sends `POST <URL>` as `multipart/form-data` with `file` (the browser's recording, unchanged:
+AAC/mp4 from Safari, opus/webm from Chromium), `model` and `response_format=json`, with
+`Authorization: Bearer <key>` when a key is set, and reads `text` from the JSON reply. Many servers
+implement it, locally and hosted. The service decodes the browser's container, so a local server
+must accept compressed audio or convert it itself; Altitude runs no converter and owns no model.
+
+A worked example with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s bundled server on the
+computer running Altitude (flag names follow that server's `--help`; check yours):
+
+```sh
+# Build whisper.cpp and download a model as its README describes, then:
+whisper-server -m models/ggml-base.en.bin --host 127.0.0.1 --port 8080 \
+  --inference-path /v1/audio/transcriptions --convert   # --convert decodes browser audio with ffmpeg
+alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'Local whisper.cpp'
+```
+
+A server on another machine on your network uses that machine's private address instead of
+`127.0.0.1`; bind it only to that private interface. A hosted provider uses its documented
+`…/v1/audio/transcriptions` URL, a key and, where it offers several, a model name. Recordings then
+leave your network under that provider's storage policy and charges.
 
 ### On iPhone
 
@@ -286,10 +314,10 @@ the latest words in view. Altitude enables the browser's automatic punctuation w
 exposes `unspokenPunctuation`; browsers without it retain their own formatting. This requires no
 extra installation or service. [Chrome documents support from version 151](https://developer.chrome.com/release-notes/151#web_speech_api_unspoken_punctuation);
 this is not a guarantee of punctuation on Safari or other browsers. Altitude does not insert periods
-at recognition-fragment boundaries or replace spoken words with punctuation. With `local`
-or an endpoint, the browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where
-available and uploads the recording when you stop; raw audio is deleted after every success or
-failure and is never part of task or chat state. Either way a recording becomes text through
+at recognition-fragment boundaries or replace spoken words with punctuation. With your
+speech service, the browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where
+available and uploads the recording when you stop; Altitude forwards it without keeping it, and
+audio is never part of task or chat state. Either way a recording becomes text through
 **Stop** (Ctrl/⌘+M), landing in the draft for editing, or the send arrow (Enter), landing and
 sending at once (queued while L3 is busy). **Cancel** (Esc) discards it. An empty transcript or a
 transcription failure sends nothing and preserves the draft.
