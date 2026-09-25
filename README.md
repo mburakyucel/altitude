@@ -2,7 +2,7 @@
 
 **You lead. Altitude orchestrates. Agents ship.**
 
-Be the principal engineer. Set the roadmap. Own the architecture. Make the calls.
+Be the principal engineer. Set the roadmap. Own the architecture. Make executive decisions.
 
 Altitude is a self-hosted workspace where one developer leads Claude Code or Codex agents as an
 engineering team. Your project orchestrator works through strategy with you and puts work in
