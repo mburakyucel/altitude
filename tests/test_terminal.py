@@ -285,10 +285,27 @@ class TestAgentRefusal(AltitudeCase):
     def test_a_process_altd_started_is_refused(self):  # an L3 turn runs as altd's child, in altd's own group
         self.assertTrue(self.layout("/user.slice/user@1000.service/app.slice/other.scope", holder_parent=self.altd))
 
-    def test_an_unidentified_loopback_client_is_refused_and_a_remote_one_allowed(self):
+    def test_an_unidentified_local_client_is_refused_and_a_remote_one_allowed(self):
         fake_proc(self.proc, {self.altd: (1, "/altitude.service", [])}, [])
+        (self.proc / "net" / "tcp6").write_text("  sl  local_address rem_address\n")
+        # Loopback binds for real; the offline guard forbids binding anything else, which no host here owns.
+        this_host = terminal._this_host
+        self.patch(terminal, "_this_host", side_effect=lambda ip: this_host(ip) if ip.is_loopback else False)
         self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
-        self.assertFalse(terminal.agent_connection(("192.168.1.20", 51000), ("192.168.1.5", 8443)))
+        self.assertTrue(terminal.agent_connection(("::ffff:127.0.0.1", 51000), ("::ffff:127.0.0.1", 8443)))
+        self.assertTrue(terminal.agent_connection(("127.8.9.10", 51000), ("127.0.0.1", 8443)))
+        self.assertFalse(terminal.agent_connection(("203.0.113.20", 51000), ("192.168.1.5", 8443)))
+
+    def test_a_client_on_the_other_address_family_is_still_identified(self):
+        # A review found an IPv6 client reaching an IPv4 address was missed in tcp and passed as remote.
+        mapped = lambda address: terminal._hex_address(f"::ffff:{address[0]}", address[1])[0]
+        for cgroup, refused in (("/app.slice/altitude-codex-a.service", True), ("/app.slice/app-chrome-1.scope", False)):
+            with self.subTest(cgroup=cgroup):
+                shutil.rmtree(self.proc, ignore_errors=True)
+                fake_proc(self.proc, {self.altd: (1, "/altitude.service", []), 4000: (1, cgroup, [31])},
+                          [(mapped(self.PEER), mapped(self.LOCAL), 31)], family="6")
+                (self.proc / "net" / "tcp").write_text("  sl  local_address rem_address\n")
+                self.assertEqual(terminal.agent_connection(self.PEER, self.LOCAL), refused)
 
     def test_a_holder_whose_descriptors_cannot_be_read_is_not_identified(self):
         # A review found an agent process that hides its descriptors (made undumpable) passed the check.

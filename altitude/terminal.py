@@ -17,6 +17,7 @@ import pwd
 import re
 import select
 import signal
+import socket
 import struct
 import subprocess
 import termios
@@ -306,20 +307,25 @@ def close(project: str, slug: str | None, reason: str = "closed", ident=None) ->
 
 def _stop_session(term: Terminal, sig: int) -> None:
     """Signal every process in the terminal's session: the shell, its foreground command and its jobs,
-    including those that ignore a hang-up. A process that started a session of its own has left it."""
+    including those that ignore a hang-up. A process that started a session of its own has left it.
+    Each process is held by a pidfd before its session is checked, so a pid reused by an unrelated
+    process in between is never signalled."""
     session = term.proc.pid
     for entry in PROC.iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-        except (OSError, IndexError):
+            handle = os.pidfd_open(int(entry.name))
+        except OSError:  # it has exited
             continue
-        if int(fields[3]) == session:
-            try:
-                os.kill(int(entry.name), sig)
-            except OSError:
-                pass
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[3]) == session:
+                signal.pidfd_send_signal(handle, sig)
+        except (OSError, IndexError, ValueError):
+            pass
+        finally:
+            os.close(handle)
 
 
 def forget(project: str, slug: str | None, ident) -> None:
@@ -379,15 +385,41 @@ def _hex_address(address: str, port: int) -> tuple[str, str]:
     return "".join(f"{word:08X}" for word in words) + f":{port:04X}", "6" if ip.version == 6 else ""
 
 
+def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """An address with an IPv4-mapped IPv6 form reduced to its IPv4 address."""
+    ip = ipaddress.ip_address(text.split("%", 1)[0])
+    return getattr(ip, "ipv4_mapped", None) or ip
+
+
+def _spellings(ip) -> list[str]:
+    """Every way this host's tables can spell an address: an IPv4 client of an IPv6 socket appears
+    IPv4-mapped in tcp6, and an IPv6 socket's client can reach an IPv4 address the same way."""
+    return [str(ip), f"::ffff:{ip}"] if ip.version == 4 else [str(ip)]
+
+
 def _socket_inode(peer: tuple, local: tuple) -> int | None:
     """The inode of the client end of this connection, when that end lives in this host's network namespace."""
-    want, family = _hex_address(peer[0], peer[1])
-    ours, _ = _hex_address(local[0], local[1])
-    for line in (PROC / "net" / f"tcp{family}").read_text().splitlines()[1:]:
-        cols = line.split()
-        if len(cols) > 9 and cols[1] == want and cols[2] == ours:
-            return int(cols[9])
+    for client in _spellings(_address(peer[0])):
+        want, family = _hex_address(client, peer[1])
+        for server_ in _spellings(_address(local[0])):
+            ours, server_family = _hex_address(server_, local[1])
+            if server_family != family:
+                continue
+            for line in (PROC / "net" / f"tcp{family}").read_text().splitlines()[1:]:
+                cols = line.split()
+                if len(cols) > 9 and cols[1] == want and cols[2] == ours:
+                    return int(cols[9])
     return None
+
+
+def _this_host(ip) -> bool:
+    """Whether the address belongs to this host: only a local address can be bound."""
+    with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((str(ip), 0))
+        except OSError:
+            return False
+    return True
 
 
 def _processes() -> tuple[set[int], set[int]]:
@@ -439,17 +471,18 @@ def _holds(pid: int, target: str) -> bool:
 def agent_connection(peer: tuple, local: tuple) -> bool:
     """Whether this connection comes from Altitude itself rather than the operator's browser.
 
-    A connection from another host is the operator's (Altitude has no login: reaching it is the access). On
-    this host the client socket must be found in a process outside Altitude, and in none of altd, anything
-    it started, or anything in an Altitude service unit. A client whose descriptors cannot be read is not
-    identified, so an agent process that hides its descriptors is refused.
+    A connection from another host is the operator's (Altitude has no login: reaching it is the access). A
+    client address that belongs to this host is local however it is spelled, and its socket must be found
+    in a process outside Altitude and in none of altd, anything it started, or anything in an Altitude
+    service unit. A client whose descriptors cannot be read is not identified, so an agent process that
+    hides its descriptors is refused.
     Limits: a process an agent starts outside these units, through the user service manager or a scheduler,
     is not recognised, and a worker whose engine runs without an OS sandbox can already change the
     operator's files directly. Reading this host's process table is Linux-specific."""
     try:
         inode = _socket_inode(peer, local)
         if inode is None:
-            return ipaddress.ip_address(peer[0]).is_loopback
+            return _this_host(_address(peer[0]))
         target = f"socket:[{inode}]"
         readable, owned = _processes()
         if any(_holds(pid, target) for pid in owned):

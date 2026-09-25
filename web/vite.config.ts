@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { terminalRequest } from "./src/data/terminalRequest";
 
 // Dev server proxies /api and /digest.wav to a locally running altd (self-signed TLS, hence
 // secure: false). `pnpm build` emits web/dist, which altd serves directly in production.
@@ -14,7 +15,7 @@ export default defineConfig({
     proxy: {
       // The terminal is not proxied: behind the proxy altd would see the proxy as the client, and could no
       // longer refuse a request from one of its own agents (docs/ARCHITECTURE.md#operator-terminal).
-      "/api": { target: API, secure: false, changeOrigin: true, bypass: (req) => (req.url?.startsWith("/api/terminal") ? false : undefined) },
+      "/api": { target: API, secure: false, changeOrigin: true, bypass: (req) => (terminalRequest(req.url) ? false : undefined) },
       "/digest.wav": { target: API, secure: false, changeOrigin: true },
     },
   },

@@ -948,6 +948,7 @@ when the page leaves; returning replays up to 256 KB. Leaving an ended terminal 
 | Running | The screen with the cursor focused; **Close terminal** / **Close**; the phone key row. |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
 | Reconnecting | A grey note: "Connection lost · reconnecting. The shell keeps running; missed output appears when you're back." It disappears when output resumes. |
+| Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
 | Close with a running command | "Close the terminal?" card naming the command that will be stopped, **Close** (primary) and **Cancel**. Close without a running command acts at once. |
 | Closed by the operator | Desktop and phone project views return to the project; the task view returns to Ready. |
 | Shell exited | "Terminal closed · exit code N", "The last output stays readable until you leave.", **Open a new terminal**; the screen keeps its output; Close and the key row disappear. |

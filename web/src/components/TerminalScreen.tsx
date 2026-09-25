@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { terminalSend, terminalStatus, terminalStream } from "../data/api";
+import { ApiError, terminalSend, terminalStatus, terminalStream } from "../data/api";
 import type { TerminalStatus } from "../data/api";
 
 const RECONNECT_MS = 2_000;
@@ -31,7 +31,8 @@ function bytes(base64: string): Uint8Array {
  * One running or ended terminal on screen. It replays the server's buffer from the start, follows the
  * output stream, and after a lost connection resumes from the last offset it drew; a replaced terminal
  * or an altd restart ends it through `onEnd`. Typed input is sent in order, one request at a time, and
- * every request names terminal `id`, so nothing reaches a terminal that replaced it.
+ * every request names terminal `id`, so nothing reaches a terminal that replaced it. Input that fails may
+ * have arrived in part, so typing stops, with an alert, until the operator has checked the screen.
  */
 export default function TerminalScreen({ project, task, id, keys, onEnd, onReconnecting }: {
   project: string;
@@ -46,6 +47,8 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
   const focus = useRef<() => void>(() => undefined);
   const ctrlRef = useRef(false);
   const [ctrl, setCtrl] = useState(false);
+  const stopped = useRef(false);
+  const [inputError, setInputError] = useState<string | null>(null);
   const report = useRef({ onEnd, onReconnecting });
   report.current = { onEnd, onReconnecting };
 
@@ -110,13 +113,19 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
       pending = "";
       try {
         await terminalSend(project, "input", { task, id, data });
-      } catch {
-        // A closed terminal reports its end on the stream; a lost connection shows Reconnecting.
+      } catch (error) {
+        // A closed or replaced terminal reports its end on the stream.
+        if (!done && !(error instanceof ApiError && error.status === 410)) {
+          stopped.current = true;
+          pending = "";
+          setInputError(error instanceof ApiError ? error.message : "Altitude could not be reached.");
+        }
       }
       sending = false;
       void flush();
     };
     send.current = (data: string) => {
+      if (stopped.current) return;
       if (ctrlRef.current) {
         data = control(data);
         ctrlRef.current = false;
@@ -152,6 +161,10 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
   }, [project, task, id]);
 
   return <>
+    {inputError ? <div className="terminal-warning terminal-stopped" role="alert">
+      <p>{`Typing stopped: ${inputError} Part of what you typed may not have arrived; check the screen.`}</p>
+      <button type="button" className="btn" onClick={() => { stopped.current = false; setInputError(null); focus.current(); }}>Resume typing</button>
+    </div> : null}
     <div className="terminal-screen" ref={host} />
     {keys ? <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {[KEYS[0]!, KEYS[1]!].map((key) => <button key={key.name} type="button" aria-label={key.name}

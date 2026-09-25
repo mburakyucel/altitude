@@ -5,7 +5,7 @@ import { walkthrough } from "./walkthrough";
 /**
  * The operator's terminal (SPEC.md §3.10) against real shells on real pseudo-terminals. Every state on the
  * approved board is walked at both widths: off, the Settings switch, ready, running, a running command's
- * close confirmation, reconnecting, shell exited, task finished, restart pending, refused, could not
+ * close confirmation, reconnecting, typing stopped after failed input, shell exited, task finished, restart pending, refused, could not
  * start and Altitude restarted. Only the agent check and the restart notice are fixtures.
  */
 test.use({ serviceScript: "terminal-service.py" });
@@ -90,6 +90,20 @@ test("a task terminal opens in its worktree and follows the task's lifecycle", a
   await expect(lost).toBeHidden({ timeout: 10_000 });
   await run(page, "echo back-$((2+2))");
   await expect(output).toContainText("back-4");
+
+  // Input that fails may have arrived in part: typing stops until the operator has checked the screen.
+  await page.route("**/api/terminal/atlas/input", (route) => route.fulfill({ status: 409, json: { error: "The terminal is not reading input. Press Ctrl+C or close it." } }), { times: 1 });
+  await run(page, "echo lost-$((5+5))");
+  const stopped = panel.getByRole("alert").filter({ hasText: "Typing stopped" });
+  await walk.state("06b-typing-stopped", {
+    visible: [stopped, stopped.getByText(/not reading input/), stopped.getByRole("button", { name: "Resume typing" })],
+    hidden: [lost],
+  });
+  await expect(output).not.toContainText("lost-10");
+  await stopped.getByRole("button", { name: "Resume typing" }).click();
+  await expect(stopped).toBeHidden();
+  await run(page, "echo resumed-$((5+6))");
+  await expect(output).toContainText("resumed-11");
 
   await run(page, "exit 3");
   const exited = panel.getByText("Terminal closed · exit code 3");

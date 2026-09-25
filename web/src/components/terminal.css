@@ -9,6 +9,8 @@
 .terminal-folder { margin-top: -6px; overflow: hidden; direction: rtl; text-align: left; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
 .terminal-close { min-height: 36px; padding: 0 10px; flex: none; }
 .terminal-warning { padding: 8px 12px; border: 1px solid var(--chip-claimed-border); border-radius: var(--radius-control); background: var(--chip-claimed-bg); color: var(--chip-claimed-text); font-size: var(--text-meta); }
+.terminal-stopped { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.terminal-stopped .btn { min-height: 36px; flex: none; }
 .terminal-note { padding: 10px 12px; border-radius: var(--radius-control); background: var(--bubble); color: var(--text-secondary); font-size: var(--text-meta); }
 .terminal-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
 .terminal-card h3 { font-weight: 600; }
