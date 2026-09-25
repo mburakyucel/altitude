@@ -30,7 +30,7 @@ class InstallScript(unittest.TestCase):
             import json, pathlib, sys
             pathlib.Path({str(self.tmp / 'installer-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
             print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443",
-                              "trust": {{"ca_cert": "/home/fictional/.altitude/tls/ca.crt", "ca_sha256": {FINGERPRINT!r}}}}}))
+                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_sha256": {FINGERPRINT!r}}}}}))
             """))
         digest = {name: hashlib.sha256((self.release / name).read_bytes()).hexdigest()
                   for name in ("altitude-v0.1.0.tar.gz", "install.py")}
@@ -80,6 +80,8 @@ class InstallScript(unittest.TestCase):
         self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
         self.assertIn("Address: https://localhost:8443", result.stdout)
         self.assertIn("Its fingerprint: AA:BB:CC", result.stdout)
+        self.assertIn("Certificate authority: ~/.altitude/tls/ca.crt", result.stdout)
+        self.assertNotIn(str(self.tmp / "home"), result.stdout)
         self.assertIn('1. Put alt on your PATH', result.stdout)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', result.stdout)
         self.assertIn("2. Run: alt doctor", result.stdout)
@@ -115,6 +117,12 @@ class InstallScript(unittest.TestCase):
         version = ".".join(map(str, sys.version_info[:3]))
         self.assertIn("Altitude cannot be installed on this Mac yet. Nothing was installed or changed.", result.stderr)
         self.assertIn(f"Detected: macOS 15.5 on arm64; Python {version} at {self.bin}/python3", result.stderr)
+        home_python = self.tmp / "home/.pyenv/bin"
+        home_python.mkdir(parents=True)
+        (home_python / "python3").symlink_to(sys.executable)
+        result = self.run_script(FIXTURE_SYSTEM="Darwin", FIXTURE_MACHINE="arm64", PATH=f"{home_python}:{self.bin}")
+        self.assertIn(f"Python {version} at ~/.pyenv/bin/python3", result.stderr)
+        self.assertNotIn(str(self.tmp / "home"), result.stderr)
         self.assertIn("native macOS runtime", result.stderr)
         self.assertIn(f"Follow macOS support: {REPOSITORY}/issues/225", result.stderr)
         self.assertEqual(self.downloads(), [])
@@ -178,24 +186,32 @@ class ReleaseWorkflow(unittest.TestCase):
         self.gate = textwrap.dedent(step.split("run: |\n")[1])
         commands = self.tmp / "commands"
         commands.mkdir()
-        (commands / "gh").write_text(f'#!/bin/sh\necho "$@" > {self.tmp}/gh-args\necho "$FIXTURE_RUNS"\n')
+        # gh answers as its --jq filter would: matching run ids, then that run's successful check job ids.
+        (commands / "gh").write_text(f'#!/bin/sh\necho "$@" >> {self.tmp}/gh-args\n'
+                                     'case "$2" in */jobs) printf "%s" "$FIXTURE_JOBS" ;; *) printf "%s" "$FIXTURE_RUNS" ;; esac\n')
         (commands / "gh").chmod(0o755)
         self.path = f"{commands}{os.pathsep}{os.environ['PATH']}"
 
-    def verify(self, commit, runs="1", version="v0.1.0"):
+    def verify(self, commit, runs="41\n", jobs="7\n", version="v0.1.0"):
         git("tag", "-f", version, commit, cwd=self.repo)
         env = {**os.environ, "PATH": self.path, "GITHUB_SHA": commit, "VERSION": version,
-               "GITHUB_REPOSITORY": "example/altitude", "FIXTURE_RUNS": runs}
+               "GITHUB_REPOSITORY": "example/altitude", "FIXTURE_RUNS": runs, "FIXTURE_JOBS": jobs}
         return subprocess.run(["bash", "-eo", "pipefail", "-c", self.gate], cwd=self.repo, env=env,
                               capture_output=True, text=True)
 
     def test_publishes_only_a_checked_commit_on_main(self):
         result = self.verify(self.main)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"head_sha={self.main}&event=push&status=success", (self.tmp / "gh-args").read_text())
-        unchecked = self.verify(self.main, runs="0")
-        self.assertNotEqual(unchecked.returncode, 0)
-        self.assertIn("has no successful check run on main", unchecked.stdout)
+        calls = (self.tmp / "gh-args").read_text()
+        self.assertIn(f"head_sha={self.main}&event=push&branch=main&status=success", calls)
+        self.assertIn('select(.head_sha == $ENV.GITHUB_SHA)', calls)
+        self.assertIn("repos/example/altitude/actions/runs/41/jobs", calls)
+        self.assertIn('select(.name == "check" and .conclusion == "success")', calls)
+        for runs, jobs in (("", "7\n"), ("41\n", "")):
+            with self.subTest(runs=runs, jobs=jobs):
+                unchecked = self.verify(self.main, runs=runs, jobs=jobs)
+                self.assertNotEqual(unchecked.returncode, 0)
+                self.assertIn("has no successful check job on main", unchecked.stdout)
         unmerged = self.verify(self.side)
         self.assertNotEqual(unmerged.returncode, 0)
         self.assertIn("does not point at a commit on main", unmerged.stdout)

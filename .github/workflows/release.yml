@@ -41,9 +41,16 @@ jobs:
           test "$(git rev-parse "refs/tags/$VERSION^{commit}")" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
             { echo "::error::$VERSION does not point at a commit on main"; exit 1; }
-          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/self-hosted-checks.yml/runs?head_sha=$GITHUB_SHA&event=push&status=success" --jq '.total_count')
-          test "$passed" -gt 0 ||
-            { echo "::error::$GITHUB_SHA has no successful check run on main"; exit 1; }
+          # A run whose `check` job was skipped still concludes successfully; require the job itself.
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/self-hosted-checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success" \
+            --jq '.workflow_runs[] | select(.head_sha == $ENV.GITHUB_SHA) | .id')
+          for run in $runs; do
+            checked=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+              --jq '.jobs[] | select(.name == "check" and .conclusion == "success") | .id')
+            [ -z "$checked" ] || exit 0
+          done
+          echo "::error::$GITHUB_SHA has no successful check job on main"
+          exit 1
 
       - name: Build the release files
         run: |

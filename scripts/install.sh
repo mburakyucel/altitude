@@ -53,6 +53,14 @@ older_python() {
     return 1
 }
 
+# Output can end up in a shared log or issue, so the home directory reads as ~.
+tilde() {
+    case "$1" in
+        "$HOME"/*) printf '~%s\n' "${1#"$HOME"}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
 sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -d ' ' -f 1
@@ -63,7 +71,7 @@ sha256() {
 
 mac_stop() {
     if [ -n "$python" ]; then
-        found="$(python_version "$python") at $python"
+        found="$(python_version "$python") at $(tilde "$python")"
     else
         found="3.12 or newer not found ($(older_python || echo 'no python3'))"
     fi
@@ -117,13 +125,15 @@ main() {
         stop "the installer stopped with the message above." "Your existing data and any previous installation are kept."
 
     "$python" - "$workdir/result.json" <<'EOF'
-import json, sys
+import json, os, sys
 result = json.load(open(sys.argv[1]))
+home = os.path.expanduser("~")
+tilde = lambda path: "~" + path[len(home):] if path.startswith(home + "/") else path
 trust = result.get("trust") or {}
 print(f"\nAltitude {result['version']} is installed and its service is {result['service']}.")
 print(f"  Address: {result['url']}")
 if trust.get("ca_sha256"):
-    print(f"  Certificate authority: {trust['ca_cert']}")
+    print(f"  Certificate authority: {tilde(trust['ca_cert'])}")
     print(f"  Its fingerprint: {trust['ca_sha256'].split('=', 1)[-1]}")
 print("\nNext:")
 EOF

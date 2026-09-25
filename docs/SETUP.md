@@ -50,9 +50,9 @@ To verify the script before running it, download it and check its build provenan
 CLI; the release workflow attests every release file:
 
 ```sh
-curl -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh
-gh attestation verify install.sh --repo mburakyucel/altitude
-sh install.sh
+curl -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh &&
+  gh attestation verify install.sh --repo mburakyucel/altitude &&
+  sh install.sh
 ```
 
 On macOS the command stops before downloading anything and reports the macOS version, chip and
