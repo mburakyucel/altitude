@@ -38,6 +38,13 @@ INSTALLER = {
     "options": [{"key": "apply", "label": "Install report root", "text": "Install the separate report root."}],
     "recommended_key": "apply", "why": "One report copy keeps the CI home private.",
 }
+HELD_FREEFORM = "PR #42 is ready. Anything to change in the checkout copy before it merges?"
+HELD_OPTIONS = {
+    "question": "Merge PR #42 with the checkout copy as shown?",
+    "options": [{"key": "merge", "label": "Merge checkout fix", "text": "Approved: merge PR #42."},
+                {"key": "changes", "label": "Request changes", "text": "Hold PR #42 for copy changes."}],
+    "recommended_key": "merge", "why": "The fix passed its checks and review.",
+}
 WITHDRAWAL = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful."
 
 
@@ -169,6 +176,23 @@ def main():
                             questions={"questions": [REVIEW, RETENTION]})
                 T.set_hold_merge("atlas", slug, "Operator review of the completed rollout")
                 return self._json({"slug": slug})
+            if self.path == "/fixture/held-pr":
+                # A freeform question that names the held PR discusses it; the one-tap review card stays.
+                slug = T.new("atlas", "Checkout fix", "Fictional held delivery for deterministic browser verification.")["slug"]
+                T.dispatch("atlas", slug, attempt=1, session_id=f"fixture-{slug}", agent_id=f"fixture-{slug}",
+                           worktree=str(add_worktree(repo, slug)), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
+                T.block("atlas", slug, HELD_FREEFORM, actor="l2", updates={"waiting_on": "burak"})
+                held = S.load_task("atlas", slug)
+                held.update(prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+                S.save_task("atlas", held)
+                T.set_hold_merge("atlas", slug, "Operator review of the checkout fix")
+                return self._json({"slug": slug})
+            if self.path == "/fixture/held-pr-options":
+                slug = self._body()["slug"]
+                T.resume("atlas", slug)
+                T.block("atlas", slug, HELD_OPTIONS["question"], actor="l2",
+                        updates={"waiting_on": "burak"}, questions={"questions": [HELD_OPTIONS]})
+                return self._json({})
             if self.path == "/fixture/freshness-ready":
                 body = self._body()
                 slug = body["slug"]

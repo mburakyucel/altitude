@@ -2038,15 +2038,16 @@ def approved_pr(project: str, task: dict) -> int | None:
 
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
-    An open operator question that names the PR is already that review, so it is asked once (#448), and a
-    recorded approval of the held PR is not asked for again (#451)."""
+    An open operator question with quick options that names the PR is already that review, so it is asked once
+    (#448); a freeform one only discusses it, so the one-tap Approve stays. A recorded approval of the held PR
+    is not asked for again (#451)."""
     number = (task.get("prs") or [None])[-1]
     names = _names_pr(number)
     if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
-            and not any(names.search(" ".join([q["detail"], *(f"{o['label']} {o['text']}" for o in question_choices(q))]))
-                        for q in operator_questions(task))
+            and not any((choices := question_choices(q)) and names.search(
+                " ".join([q["detail"], *(f"{o['label']} {o['text']}" for o in choices)])) for q in operator_questions(task))
             and not approved_pr(project, task)):
         return number
     return None

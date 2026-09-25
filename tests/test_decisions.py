@@ -167,22 +167,35 @@ class TestDecisions(AltitudeCase):
         T.report(self.project, slug, {"verdict": "ok", "delivery": S.load_task(self.project, slug)["delivery"]})
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
-    def test_a_written_merge_question_is_the_review_and_the_card_returns_without_it(self):
-        # One PR merge decision appears once: the owner's written question replaces the generated card,
-        # through a revision too; an unrelated question keeps the card, and withdrawing restores it.
+    def test_a_merge_question_with_options_is_the_review_and_the_card_returns_without_it(self):
+        # One PR merge decision appears once: the owner's question with quick options replaces the generated
+        # card, through a revision too; a freeform or unrelated question keeps the card's one-tap Approve,
+        # and withdrawing restores it.
         url = "https://example.com/atlas/pull/42"
+        approve = lambda text: {"questions": [{"question": text, "recommended_key": "approve", "options": [
+            {"key": "approve", "label": "Approve merge", "text": "Approved: merge PR #42."},
+            {"key": "changes", "label": "Request changes", "text": "Hold PR #42 for changes."}]}]}
         task = self.blocked("Checkout fix", f"Merge the checkout fix? {url}")
         slug, name = task["slug"], config.operator_label()
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"],
+                         "a freeform question naming the PR leaves the operator a one-tap Approve")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)),
+                         f"{name}'s turn · 1 question · review PR #42")
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "Merge the checkout fix?", actor="l2", updates={"waiting_on": "burak"},
+                questions=approve(f"Merge the checkout fix? {url}"))
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"])
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        question = S.load_task(self.project, slug)["questions"][-1]
         T.resume(self.project, slug)
-        T.block(self.project, slug, f"Merge the checkout fix now that the copy is clearer? {url}", actor="l2",
-                updates={"waiting_on": "burak"})
+        T.block(self.project, slug, "Merge the checkout fix now?", actor="l2", updates={"waiting_on": "burak"},
+                questions={"questions": [{**approve(f"Merge the checkout fix now that the copy is clearer? {url}")["questions"][0],
+                                          "id": question["id"]}]})
         [row] = T.decisions(self.project)
-        self.assertEqual((row["kind"], row["revision"]), ("asks", 2))
+        self.assertEqual((row["kind"], row["revision"]), ("asks", question["revision"] + 1))
         T.resume(self.project, slug)
         T.block(self.project, slug, "Build the export next? Merge PR #420 elsewhere first.", actor="l2",
                 updates={"waiting_on": "burak"})
