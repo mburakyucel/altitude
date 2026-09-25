@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Work's **Done this week** lists every task finished in the last seven days, newest first, instead
+  of at most twenty with the oldest on top.
+
 - Altitude has a mark: an A whose left side climbs in three steps to the summit, on the accent tile.
   It appears beside "Altitude" in the desktop rail and the phone header's global tabs, as the
   browser-tab icon, as the iPhone Home Screen icon and in the README.

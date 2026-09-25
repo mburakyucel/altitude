@@ -2667,6 +2667,7 @@ def issue_write(project: str, operation: str, body: str, *, actor: str, title: s
 
 def project_view(name: str) -> dict:
     proj = config.project(name)
+    week = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat()  # S.now()'s form
     origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
                             capture_output=True, text=True, timeout=10)
     live = {s["slug"]: s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("project") == name}
@@ -2679,9 +2680,10 @@ def project_view(name: str) -> dict:
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
-            # #296: the most recently finished tasks, not the last slugs alphabetically.
+            # Done this week, newest first (#296: by finish time, never by slug).
             "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
-                               if t["state"] in ("done", "rejected")), key=lambda t: t["updated"] or "")[-20:],
+                               if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
+                              key=lambda t: t["updated"], reverse=True),
             "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
