@@ -1,6 +1,29 @@
 import { vi } from "vitest";
 import { presetVoiceBackend } from "./voiceBackend";
 import type { VoiceBackend } from "../data/api";
+import type { Punctuator } from "../punctuation";
+
+/**
+ * The punctuation model for tests (vitest.setup.ts mocks `../punctuation` with it): words pass through
+ * unchanged unless a test installs `sentence` or its own `punctuate`, or replaces `load` to hold or
+ * refuse the model.
+ */
+export const punctuationFixture = {
+  load: (): Promise<Punctuator> => Promise.resolve({ punctuate: async (words) => punctuationFixture.punctuate(words) }),
+  punctuate: (words: readonly string[]): string[] => [...words],
+  reset() {
+    punctuationFixture.load = () => Promise.resolve({ punctuate: async (words) => punctuationFixture.punctuate(words) });
+    punctuationFixture.punctuate = (words) => [...words];
+  },
+};
+
+/** A stand-in model: each request is one sentence, capitalized and ending in a period. */
+export function sentence(words: readonly string[]): string[] {
+  return words.map((word, index) => {
+    const cased = index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word.toLowerCase();
+    return index === words.length - 1 ? `${cased.replace(/[.,?]$/, "")}.` : cased.replace(/[.,?]$/, "");
+  });
+}
 
 /** Browser voice primitives for route/component tests; emits one AAC/mp4 blob when stopped. */
 export class FakeMediaRecorder {

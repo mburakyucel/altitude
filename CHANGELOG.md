@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- English dictation gets sentence punctuation and capitals in any browser that runs WebAssembly
+  in a worker. A small model bundled with Altitude runs on the device's CPU, adds only punctuation and
+  capitals, and never changes your words. Each device downloads it (about 23 MB) from your Altitude
+  server the first time you dictate. Where it is still loading or cannot run, the words land as
+  recognized and the composer says so.
+
 - `alt task reply` accepts its task's slug before the text, as `alt task block` and the other
   owner verbs do, so `alt task reply "$ALTITUDE_TASK" - <<'EOF'` reads stdin; `--file -` reads
   stdin for every text-taking verb.
@@ -101,8 +107,6 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   the local speech service or an OpenAI-compatible transcription endpoint; the endpoint key comes
   from a file or stdin and stays in the private settings file. The desktop recording controls sit together at the right of the
   composer row with a crisp waveform; the phone row is unchanged (#317).
-  Browser dictation requests automatic punctuation where supported; other browsers retain their
-  own transcript formatting. No model download or extra service is needed.
 
 - While listening, the composer field follows the recognized words once they pass its height, so
   the latest words stay in view on phone and desktop (#317).
