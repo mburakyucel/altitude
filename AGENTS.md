@@ -29,8 +29,8 @@ file spells a provider name or assumes a given engine exists, Altitude runs with
 alone, and adding or removing an engine touches only the seam. The capability seam is optional
 services (a configured speech service, `ffmpeg`, a GPU): detected or configured, and degrading to an
 explicit unavailable state, as voice input does. New code obeys the rule; existing code migrates
-only when a PR already touches it, never as its own project. `tests/test_project_layers.py` ratchets the counts so mentions
-outside a seam can only fall.
+only when a PR already touches it, never as its own project. `tests/test_project_layers.py`
+ratchets the counts so mentions outside a seam can only fall.
 
 Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. A change
 that touches services, processes, confinement, paths, external tools or installation ships for both
