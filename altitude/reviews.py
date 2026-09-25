@@ -325,16 +325,9 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         if context_ids is None or not any(r["role"] == "l2" and r.get("text") for r in context["messages"]):
             raise T.TransitionError("Review context includes images. Supply an L2 textual account and select it with --context-message; image bytes are not reviewed.")
         context["limitations"] = ["Original image bytes are not reviewed. Selected L2 evidence supplies their textual account; report any missing visual evidence."]
-    text = json.dumps(context, ensure_ascii=False, indent=2)
-    if len(text.encode()) > 65536:
-        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included.")
-    folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
-    snapshot = folder / "snapshot"
-    snapshot.mkdir(parents=True, exist_ok=False)
-    source = snapshot / "source"
-    source.mkdir()
-    entries = []
+    entries, omitted = [], {}
     # Deleted/replaced base content also enters changes.patch, so bound both inputs before diffing.
+    # Files over 2 MiB stay out of source and patch; the capture names them instead (issue #533).
     for tree in ((identity["tree"],) if proposal else (identity["base"], identity["tree"])):
         total = count = 0
         for raw in _git(Path(task["worktree"]), "ls-tree", "-rlz", tree, binary=True).split(b"\0"):
@@ -345,12 +338,29 @@ def _capture(project, task, review, context_ids, proposal_id=None):
             path = PurePosixPath(name.decode())
             if path.is_absolute() or ".." in path.parts or mode not in ("100644", "100755") or kind != "blob":
                 raise T.TransitionError("Review snapshots require ordinary tracked files; links and special entries are unavailable.")
-            total += int(size)
             count += 1
-            if int(size) > 2 * 1024 * 1024 or total > 64 * 1024 * 1024 or count > 10000:
-                raise T.TransitionError("Review snapshot exceeds its bounds: 2 MiB per file, 64 MiB per tree, 10000 files.")
+            if int(size) > 2 * 1024 * 1024:
+                omitted[str(path)] = int(size)
+                continue
+            total += int(size)
+            if total > 64 * 1024 * 1024 or count > 10000:
+                raise T.TransitionError("Review snapshot exceeds its bounds: 64 MiB per tree, 10000 files.")
             if tree == identity["tree"]:
                 entries.append((path, oid))
+    # A path over the bound in either tree is omitted from both, so source and patch agree.
+    entries = [(path, oid) for path, oid in entries if str(path) not in omitted]
+    if omitted:
+        context["limitations"] = context.get("limitations", []) + [
+            "Paths over 2 MiB in the base or candidate are not captured in source or changes.patch: "
+            + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(omitted.items())) + "."]
+    text = json.dumps(context, ensure_ascii=False, indent=2)
+    if len(text.encode()) > 65536:
+        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included.")
+    folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
+    snapshot = folder / "snapshot"
+    snapshot.mkdir(parents=True, exist_ok=False)
+    source = snapshot / "source"
+    source.mkdir()
     # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
     content = io.BytesIO(_git(Path(task["worktree"]), "cat-file", "--batch", binary=True,
                              stdin="".join(oid + "\n" for _, oid in entries).encode()))
@@ -364,13 +374,16 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         dest = source.joinpath(*path.parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
-    patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv", identity["base"], identity["tree"], binary=True)
+    excluded = ("--", ".", *(f":(exclude,literal){path}" for path in sorted(omitted))) if omitted else ()
+    patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv",
+                                      identity["base"], identity["tree"], *excluded, binary=True)
     (snapshot / "changes.patch").write_bytes(patch)
     (snapshot / "context.json").write_text(text)
     (snapshot / "l1.md").write_text((config.PERSONAS / "l1.md").read_text())
     identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
                     captured_context_hash=_hash(context), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
+                    omitted=[{"path": path, "size": size} for path, size in sorted(omitted.items())],
                     input_hash=_hash({"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}))
     if proposal:
         identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}

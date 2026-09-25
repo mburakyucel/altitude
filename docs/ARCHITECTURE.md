@@ -409,8 +409,9 @@ Adapters lacking the captured-input contract are unavailable.
 
 Capture records committed head, fetched base, source tree, context identities and input
 hashes. Raw Git blobs preserve exact bytes without export attributes; untracked files, symlinks and
-submodules are excluded by refusal. Both base and candidate accept at most 10000 files, 2 MiB per file
-and 64 MiB per tree, so removed content is bounded before creating the diff. Context includes the brief,
+submodules are excluded by refusal. A path over 2 MiB in either base or candidate stays out of the source
+and diff, and the capture names it with its size. Both trees accept at most 10000 files and 64 MiB of
+remaining content, so removed content is bounded before creating the diff. Context includes the brief,
 request, original authority messages and corrections, decisions,
 and default-all or selected L2 evidence, bounded to 64 KiB. Proposal capture also binds the exact
 original L2 message and text against the committed head's source tree, even before code differs from
