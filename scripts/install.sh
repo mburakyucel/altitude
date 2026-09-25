@@ -104,6 +104,7 @@ main() {
     [ "$(id -u)" != 0 ] || stop "run this as the account that will use Altitude, not as root." \
         "Altitude installs into your home directory and needs no administrator rights."
     python=$(find_python) || python=
+    # The macOS runtime (#225) replaces this stop; install.py and platform.py own its LaunchAgent.
     [ "$system" != Darwin ] || mac_stop
     [ -n "$python" ] || stop "Python 3.12 or newer was not found ($(older_python || echo 'no python3'))." \
         "Install it first (Ubuntu 24.04 and newer include it: sudo apt install python3), then run this again."
@@ -113,7 +114,7 @@ main() {
         command -v "$tool" >/dev/null 2>&1 || stop "$tool is not installed." \
             "Install it with your package manager (for example: sudo apt install $tool), then run this again."
     done
-    systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
+    [ "$system" != Linux ] || systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
         "Altitude runs as a systemd user service. Run this from a login or SSH session where systemctl --user works."
 
     workdir=$(mktemp -d)
