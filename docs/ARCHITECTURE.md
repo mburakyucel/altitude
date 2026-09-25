@@ -215,7 +215,11 @@ including binding and runtime paths, against ambient user-manager values. Source
 New installation settings capture the discovered toolchain PATH, including a custom nvm default;
 updates retain the saved environment.
 `installation.py` owns archive validation, activation receipts, recovery and retention;
-`platform.py` owns the generated Linux x86_64 per-user daemon service. A pending installation
+`platform.py` is the platform seam: it owns the generated Linux x86_64 per-user daemon service, the
+transient jobs that run workers, reviews, machine commands and restarts, their status and stop, and the
+process and socket facts behind worker identity, terminal Stop and the terminal's agent check. The L3
+service-inspection shims and the source-checkout TLS setup remain Linux-specific outside it;
+`tests/test_project_layers.py` keeps that count from rising. A pending installation
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance remains pending.
 

@@ -10,7 +10,7 @@ import sys
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, engines, images, state as S, tasks as T
+from altitude import config, dispatch, engines, images, platform, state as S, tasks as T
 
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jGfoAAAAASUVORK5CYII=")
@@ -122,7 +122,7 @@ class TestNativeImages(ImageDeliveryCase):
                 persona.write_text("Task authority")
                 with self.subTest(engine=engine, resume=resume), \
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
-                     mock.patch.object(engines, "_unit_active", return_value=True), \
+                     mock.patch.object(platform, "job_active", return_value=True), \
                      mock.patch.object(engines, "_git_dirs", return_value=[]), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
                     common = dict(cwd=self.repo, persona=persona, model="original-model", settings=self.tmp / "settings.json",

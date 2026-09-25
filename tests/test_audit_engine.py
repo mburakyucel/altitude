@@ -5,7 +5,7 @@ import sys
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, l3
+from altitude import config, engines, l3, platform
 
 
 class TestConversationReview(AltitudeCase):
@@ -85,7 +85,7 @@ class TestConversationReview(AltitudeCase):
                 result = engines.conversation_review(self.project, "review", engine=engine, model="fixed")
                 self.assertIn("intercepted", result["error"])
                 command = popen.call_args.args[0]
-                self.assertEqual(command[0], engines.SYSTEMD_RUN_BIN)
+                self.assertEqual(command[0], platform.SYSTEMD_RUN)
                 for option in (f"--property=RuntimeMaxSec={engines.session_timeout(engine)}", "--property=KillMode=control-group",
                                "--property=TimeoutStopSec=5", "--property=SendSIGKILL=yes"):
                     self.assertIn(option, command)
@@ -101,7 +101,7 @@ class TestConversationReview(AltitudeCase):
             fixture.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n"
                                f"print({chr(10).join(map(json.dumps, events))!r})\n")
             fixture.chmod(0o700)
-            with self.subTest(reported=reported), mock.patch.object(engines, "_codex_service_command",
+            with self.subTest(reported=reported), mock.patch.object(platform, "job_command",
                                                                    side_effect=lambda unit, cmd, env, **kw: cmd):
                 result = engines.conversation_review(self.project, "review", engine="claude", model="fixed")
                 self.assertIsNone(result["error"])
@@ -124,7 +124,7 @@ class TestConversationReview(AltitudeCase):
                            f"print({chr(10).join(map(json.dumps, events))!r})\n")
         fixture.chmod(0o700)
         self.patch(config, "CLAUDE_BIN", str(fixture))
-        with mock.patch.object(engines, "_codex_service_command", side_effect=lambda unit, cmd, env, **kw: cmd):
+        with mock.patch.object(platform, "job_command", side_effect=lambda unit, cmd, env, **kw: cmd):
             review = engines.conversation_review(self.project, "review", engine="claude", model="fixed")
         self.assertEqual(json.loads(review["text"]), {"findings": []})
         ordinary = engines.claude_print("ordinary", cwd=self.repo)

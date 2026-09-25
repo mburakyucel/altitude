@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -2275,7 +2275,7 @@ def auto_restart() -> None:
         pend["failed"] = S.now()
         S.write_json(flag, pend)
         detail = (f"restart unit {pend.get('unit')} did not restart the service within "
-                  f"{RESTART_GRACE_SECONDS // 60} minutes; see journalctl --user -u {pend.get('unit')}")
+                  f"{RESTART_GRACE_SECONDS // 60} minutes; see {platform.job_logs_hint(str(pend.get('unit')))}")
         log(f"auto-restart: {detail}; new dispatches resume")
         incidents.system_fault("restart", detail)
         return
@@ -2317,15 +2317,14 @@ def restart_service() -> dict:
 
 
 def _request_restart_unit() -> dict:
-    """Run the operator restart script as a transient user unit: outside altd's cgroup, it survives the restart."""
+    """Run the operator restart script as a detached job: outside altd's own, it survives the restart."""
     unit = f"altitude-restart-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-    cmd = [engines.SYSTEMD_RUN_BIN, "--user", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
-           f"--setenv=PATH={os.environ.get('PATH', '')}", "--",
-           sys.executable, str(config.SOURCE / "scripts" / "restart_altitude.py")]
+    cmd = platform.detached_job_command(unit, [sys.executable, str(config.SOURCE / "scripts" / "restart_altitude.py")],
+                                        path=os.environ.get("PATH", ""))
     res = subprocess.run(cmd, cwd=str(config.REPO), capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
-        raise RuntimeError(f"systemd-run refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
-    log(f"guarded activation requested → unit {unit}; follow it with: journalctl --user -u {unit}")
+        raise RuntimeError(f"the service manager refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
+    log(f"guarded activation requested → unit {unit}; follow it with: {platform.job_logs_hint(unit)}")
     return {"ok": True, "unit": unit}
 
 
@@ -2750,7 +2749,7 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
-    if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance clears the restart-pending flag
+    if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()
         except git_policy.GitPolicyError as e:
@@ -2766,7 +2765,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
-        # No silent fallback to loopback: exit non-zero and let systemd retry when the tunnel is ready.
+        # No silent fallback to loopback: exit non-zero and let the service manager retry when the tunnel is ready.
         log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
         raise SystemExit(1)
     srv.daemon_threads = True

@@ -7,7 +7,7 @@ import json
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO, git
-from altitude import config, dispatch, engines, l3
+from altitude import config, dispatch, engines, l3, platform
 
 
 class _Input(io.BytesIO):
@@ -68,7 +68,7 @@ class TestRepositoryInstructions(AltitudeCase):
                                       settings=self.tmp / "settings.json", job_root=self.tmp / "jobs",
                                       extra_env={"ALTITUDE_TASK": "fixture"})
                         with mock.patch.object(engines, "claude_agents", return_value=[]), \
-                             mock.patch.object(engines, "_unit_active", return_value=True), \
+                             mock.patch.object(platform, "job_active", return_value=True), \
                              mock.patch.object(engines.subprocess, "Popen", side_effect=execute):
                             if resume:
                                 result = engines.resume_l2(engine, "fixture", "session", "Continue task.", **kwargs)

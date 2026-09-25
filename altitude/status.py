@@ -127,7 +127,7 @@ def task_report(project: str, slug: str) -> dict:
 
 
 def repo(project: str) -> dict:
-    """Local checkout, activation, fault counters, and one systemd observation."""
+    """Local checkout, activation, fault counters, and one service-manager observation."""
     errors: list[str] = []
     root = config.project_path(project)
     checkout = git_policy.inspect_repository(root).as_dict()

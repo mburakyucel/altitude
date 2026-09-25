@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, state as S
+from . import config, platform, state as S
 
 logger = logging.getLogger(__name__)
 _last_quota_refresh: float | None = None
@@ -129,10 +129,7 @@ L3_ALLOWED_TOOLS = ",".join((
 ))
 _codex_processes: dict[str, subprocess.Popen] = {}
 
-CODEX_SYSTEMD_PREFIX = "altitude-codex-"
-SYSTEMD_RUN_BIN = shutil.which("systemd-run") or "systemd-run"
-SYSTEMCTL_BIN = shutil.which("systemctl") or "systemctl"
-ENV_BIN = shutil.which("env") or "/usr/bin/env"
+CODEX_UNIT_PREFIX = "altitude-codex-"
 
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends.
@@ -528,7 +525,7 @@ def claude_stop(agent_id: str) -> str:
 
 
 def clean_env() -> dict:
-    """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
+    """Nested launches need CLAUDE* unset (verified); keep PATH sane for the service manager."""
     env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
@@ -541,86 +538,7 @@ def clean_env() -> dict:
 
 def service_status(unit: str = "altitude.service") -> dict:
     """Read the user service's state once; inspection failure stays in the record."""
-    record = {"unit": unit, "state": None, "substate": None, "pid": None,
-              "last_restart": None, "error": None}
-    evidence = {
-        "load_state": ("LoadState", r"loaded|error|not-found|bad-setting|masked|merged|stub"),
-        "invocation_id": ("InvocationID", r"[0-9a-f]{32}"),
-        "started_monotonic": ("ExecMainStartTimestampMonotonic", r"[1-9][0-9]*"),
-        "exited_monotonic": ("ExecMainExitTimestampMonotonic", r"[1-9][0-9]{0,19}"),
-        "result": ("Result", r"success|resources|protocol|timeout|exit-code|signal|core-dump|watchdog|"
-                              r"start-limit-hit|oom-kill|exec-condition|skip-condition"),
-        "exec_main_code": ("ExecMainCode", r"[123]"),
-        "exec_main_status": ("ExecMainStatus", r"[0-9]{1,3}"),
-        "memory_current": ("MemoryCurrent", r"[0-9]{1,20}"),
-        "memory_peak": ("MemoryPeak", r"[0-9]{1,20}"),
-        "memory_high": ("MemoryHigh", r"[0-9]{1,20}|infinity"),
-        "memory_max": ("MemoryMax", r"[0-9]{1,20}|infinity"),
-    }
-    record.update(dict.fromkeys(evidence))
-    properties = ["ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp",
-                  *(native for native, _ in evidence.values())]
-    source_service = unit in {"altitude", "altitude.service"}
-    if source_service:
-        properties += ["Environment",
-                       "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "DropInPaths", "NeedDaemonReload"]
-        record.update(dict.fromkeys(("need_daemon_reload",
-                                     "owned_tls_drop_in_loaded", "owned_tls_drop_in_present",
-                                     "loaded_tls_environment", "indirect_environment")))
-    try:
-        result = subprocess.run(
-            [SYSTEMCTL_BIN, "--user", "show", unit, *[f"--property={key}" for key in properties]],
-            capture_output=True, text=True, timeout=15, env=codex_env(retain_user_bus=True))
-        if result.returncode:
-            raise RuntimeError
-        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        record.update({"state": values.get("ActiveState"), "substate": values.get("SubState"),
-                       "pid": int(values.get("MainPID") or 0) or None,
-                       "last_restart": values.get("ActiveEnterTimestamp") or None})
-        for key, (native, pattern) in evidence.items():
-            value = values.get(native, "")
-            if (key == "load_state" or values.get("LoadState") == "loaded") and re.fullmatch(pattern, value):
-                record[key] = value
-        if not record["exec_main_code"]:
-            record["exec_main_status"] = None  # Native defaults are not an observed clean exit (#384).
-        if record["load_state"] != "loaded":
-            record["error"] = "Unit not loaded or load state unavailable; termination/resource evidence is unknown."
-        if source_service:
-            record["need_daemon_reload"] = {"yes": True, "no": False}.get(values.get("NeedDaemonReload"))
-            owned = Path.home() / ".config/systemd/user/altitude.service.d/90-altitude-source-tls.conf"
-            try:
-                owned.lstat()
-                record["owned_tls_drop_in_present"] = True
-            except FileNotFoundError:
-                record["owned_tls_drop_in_present"] = False
-            if values.get("LoadState") != "loaded":
-                raise ValueError
-            # Escaped native strings are unknown rather than interpreted with shell escape semantics.
-            drop_ins = values["DropInPaths"]
-            if "\\" in drop_ins:
-                raise ValueError
-            record["owned_tls_drop_in_loaded"] = str(owned) in shlex.split(drop_ins)
-            # Native show emits no EnvironmentFiles line for an empty array, even with --all.
-            record["indirect_environment"] = any([values.get("EnvironmentFiles", ""),
-                                                  values["PassEnvironment"], values["UnsetEnvironment"]])
-            environment = values["Environment"]
-            if "\\" in environment:
-                raise ValueError
-            selected = {}
-            for entry in shlex.split(environment):
-                key, separator, value = entry.partition("=")
-                if not separator or any(ord(c) < 32 or ord(c) == 127 for c in entry):
-                    raise ValueError
-                if key in {"ALTITUDE_TLS", "ALTITUDE_TLS_DIR"}:
-                    if key in selected or len(value) > 4096:
-                        raise ValueError
-                    selected[key] = value
-            record["loaded_tls_environment"] = selected
-            if record["need_daemon_reload"] is None:
-                raise ValueError
-    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError):
-        record["error"] = "Service inspection incomplete; unavailable fields remain null."
-    return record
+    return platform.service_status(unit, codex_env(retain_user_bus=True))
 
 
 def _tool(name: object, command: object = None) -> dict:
@@ -631,23 +549,12 @@ def _tool(name: object, command: object = None) -> dict:
 
 
 def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
-    """Altitude's clean environment plus the task identity, the same a Claude worker gets.
-
-    The user bus belongs to the outer ``systemd-run`` client only: a system service does not necessarily inherit the
-    interactive session's bus variables, so the launcher synthesizes their canonical per-user values, and the
-    command inside the transient unit starts without them.
-    """
+    """Altitude's clean environment plus the task identity, the same a Claude worker gets. `retain_user_bus`
+    selects the launcher's environment, which reaches the user service manager; the command inside the job
+    starts without it."""
     env = clean_env()
     env.update(extra_env or {})
-    env["TMPDIR"] = "/tmp"
-    runtime_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    if retain_user_bus:
-        env["XDG_RUNTIME_DIR"] = runtime_dir
-        env["DBUS_SESSION_BUS_ADDRESS"] = env.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir}/bus"
-    else:
-        env.pop("XDG_RUNTIME_DIR", None)
-        env.pop("DBUS_SESSION_BUS_ADDRESS", None)
-    return env
+    return platform.manager_env(env) if retain_user_bus else platform.job_env(env)
 
 
 def claude_settings() -> Path:
@@ -717,7 +624,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     if durable_timeout:
-        cmd = _codex_service_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout)
+        cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout)
         env = codex_env(env, retain_user_bus=True)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -844,56 +751,18 @@ def claude_agents() -> list[dict]:
 
 
 def _codex_unit(worker_id: str) -> str:
-    """A systemd-safe, collision-resistant transient service name."""
+    """A collision-resistant job name, safe for the service manager."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(worker_id))
-    return f"{CODEX_SYSTEMD_PREFIX}{safe}.service"
+    return f"{CODEX_UNIT_PREFIX}{safe}.service"
 
 
 def _claude_unit(name: str) -> str:
     return f"altitude-claude-{uuid.uuid5(uuid.NAMESPACE_URL, name).hex}.service"
 
 
-def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str], *, runtime_max: int | None = None) -> list[str]:
-    """Run a turn in a user-manager-created transient service with its own cgroup.
-
-    ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
-    creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
-    Unlike a process group, the service cgroup retains descendants that call ``setsid`` or double-fork. The inner
-    Codex sandbox supplies the PID namespace; keeping syscall filters off the outer service preserves nested bwrap.
-    """
-    # A transient service inherits the user manager's environment, not the launching client's. Clear it completely
-    # and reconstruct only the already-sanitized child environment so task identity survives without ambient manager
-    # credentials or control sockets crossing the boundary.
-    scrub = [ENV_BIN, "-i", *(f"{key}={child_env[key]}" for key in sorted(child_env))]
-    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--pipe", f"--unit={unit}", "--quiet", "--collect",
-            "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
-            "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
-            *([f"--property=RuntimeMaxSec={runtime_max}", "--property=TimeoutStopSec=5"] if runtime_max else []),
-            "--", *scrub, *command]
-
-
 def machine_unit(project: str, slug: str, sequence: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{project}-{slug}")
     return f"altitude-machine-{safe}-{sequence}.service"
-
-
-def _machine_service_command(unit: str, command: str, *, log: Path, status: Path, env: dict[str, str],
-                             timeout: int) -> list[str]:
-    """One operator-granted command as a transient user unit outside every worker sandbox.
-
-    The unit itself appends output to the task's machine log and records the exit status, so a command that
-    restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it; the user bus stays reachable
-    because the granted purpose is usually a service or toolchain change the worker's sandbox cannot make.
-    The environment carries the owner's task identity, so `alt` inside the unit acts as that L2, never as the
-    operator.
-    """
-    scrub = [ENV_BIN, "-i", *(f"{key}={env[key]}" for key in sorted(env))]
-    runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2"; exit "$status"'
-    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
-            "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
-            f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
-            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
-            "--", *scrub, "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
 
 
 def machine_command(command: str, *, cwd: Path, log: Path, unit: str, identity: dict,
@@ -911,7 +780,8 @@ def machine_command(command: str, *, cwd: Path, log: Path, unit: str, identity: 
     record = {"unit": unit, "command": command, "exit": None, "timed_out": False, "started": started.isoformat(),
               "finished": None, "error": None, "log": str(log)}
     try:
-        run = subprocess.run(_machine_service_command(unit, command, log=log, status=status, env=env, timeout=timeout),
+        run = subprocess.run(platform.logged_job_command(unit, command, log=log, status=status, env=env,
+                                                         timeout=timeout),
                              cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout + 30)
         launch_error = (run.stderr or run.stdout).strip()[:300]
     except (OSError, subprocess.SubprocessError) as exc:
@@ -1698,22 +1568,6 @@ def codex_l3_mcp(broker: str) -> None:
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}), flush=True)
 
 
-def _unit_active(unit: str) -> bool:
-    if not unit:
-        raise RuntimeError("Worker unit identity is unavailable")
-    p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30,
-                       env=codex_env(retain_user_bus=True))
-    state = (p.stdout or "").strip()
-    if p.returncode == 4 and state == "inactive":  # A collected transient unit is no longer running.
-        return False
-    if p.returncode in (0, 3):
-        if state in ("active", "activating", "deactivating", "reloading", "refreshing", "maintenance"):
-            return True
-        if state in ("inactive", "failed"):
-            return False
-    raise RuntimeError("Worker unit status is unavailable")
-
-
 def _worker_events(path: Path, engine: str) -> list[dict]:
     events = _codex_events(path)
     if engine == "codex":
@@ -1744,7 +1598,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             S.write_json(paths["record"], record)
     proc = _codex_processes.get(worker_id)
     process_alive = proc is not None and proc.poll() is None
-    alive = process_alive or _unit_active(str(record.get("unit") or ""))
+    alive = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
     if proc is not None and not process_alive:
         _codex_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
@@ -1852,7 +1706,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
-            proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(worker_env)), cwd=str(cwd),
+            proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(worker_env)), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
@@ -1905,12 +1759,11 @@ def _owned_unit(record: dict, worker_id: str) -> str:
 
 
 def codex_stop(worker_id: str, *, job_root: Path) -> str:
-    """Stop the worker's transient unit; `KillMode=control-group` takes every descendant with it."""
+    """Stop the worker's job, which takes every descendant with it."""
     paths = _codex_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
     unit = _owned_unit(record, worker_id)
-    subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120,
-                   env=codex_env(retain_user_bus=True))
+    platform.job_stop(unit, codex_env(retain_user_bus=True))
     proc = _codex_processes.get(worker_id)
     if proc is not None:
         try:
@@ -1918,7 +1771,7 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
         except (subprocess.TimeoutExpired, OSError):
             proc.kill()
             proc.wait(timeout=10)
-    if _unit_active(unit):
+    if platform.job_active(unit, codex_env(retain_user_bus=True)):
         raise RuntimeError(f"Codex worker {worker_id} is still running after stop")
     _codex_processes.pop(worker_id, None)
     record["stopped"] = record.get("stopped") or datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1947,7 +1800,7 @@ def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
         if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
             raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
         note = claude_stop(worker_id)
-        if _unit_active(_claude_unit(job["name"])):
+        if platform.job_active(_claude_unit(job["name"]), codex_env(retain_user_bus=True)):
             raise RuntimeError(f"Worker {worker_id} is still running after stop")
         return note
     return codex_stop(worker_id, job_root=job_root)
@@ -1973,7 +1826,7 @@ def worker_termination(task: dict, *, job_root: Path) -> bool | None:
             unit = _claude_unit(job["name"])
         else:
             return None
-        return not _unit_active(unit)
+        return not platform.job_active(unit, codex_env(retain_user_bus=True))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         return None
 
@@ -2014,7 +1867,7 @@ def worker(engine: str, task: dict, *, job_root: Path) -> dict | None:
         return None
     unit = _claude_unit(job["name"])
     transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
-    alive = _unit_active(unit) and transcript is not None
+    alive = platform.job_active(unit, codex_env(retain_user_bus=True)) and transcript is not None
     state = job.get("state") if job.get("state") in ("done", "failed", "stopped") else "working" if alive else "failed"
     detail, at = claude_job_detail(task["agent_id"])
     return {"id": task["agent_id"], "sessionId": task["session_id"], "unit": unit,
@@ -2055,7 +1908,7 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env),
+    proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
                             **({"runtime_max": timeout} if durable_timeout else {})), cwd=str(cwd),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
@@ -2082,7 +1935,7 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
                 pending_input = None
                 observe((exc.output or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
-        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
+        platform.job_stop(unit)
         proc.kill()
         proc.communicate()
         raise
@@ -2281,10 +2134,7 @@ def _review_launcher(worker: dict) -> bool | None:
     if worker.get("pid") is None:
         return None
     try:
-        fields = Path(f"/proc/{int(worker['pid'])}/stat").read_text().rsplit(")", 1)[1].split()
-        if not str(worker.get("started_ticks", "")).isdigit():
-            return None
-        return fields[19] == str(worker["started_ticks"]) and fields[0] != "Z"
+        return platform.process_running(int(worker["pid"]), str(worker.get("started_ticks", "")))
     except FileNotFoundError:
         return False
     except (OSError, ValueError, TypeError, KeyError, IndexError):
@@ -2295,7 +2145,7 @@ def review_active(worker: dict) -> bool | None:
     if not re.fullmatch(r"altitude-review-[0-9a-f]{32}\.service", str(worker.get("unit", ""))):
         return None
     try:
-        active = _unit_active(worker["unit"])
+        active = platform.job_active(worker["unit"], codex_env(retain_user_bus=True))
         launcher = _review_launcher(worker)
         if not active and launcher is None:
             # A prelaunch receipt survives a crash before PID binding. A missing/collected unit
@@ -2314,8 +2164,7 @@ def review_stop(worker: dict) -> bool:
     if not re.fullmatch(r"altitude-review-[0-9a-f]{32}\.service", str(worker.get("unit", ""))):
         return False
     try:
-        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", worker["unit"]], capture_output=True, text=True,
-                       timeout=15, env=codex_env(retain_user_bus=True))
+        platform.job_stop(worker["unit"], codex_env(retain_user_bus=True), timeout=15)
         return review_active(worker) is False
     except (OSError, subprocess.SubprocessError):
         return False
@@ -2352,7 +2201,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     unit = f"altitude-review-{uuid.uuid4().hex}.service"
     # #446: never spend a review invocation when its service cannot be observed/cancelled here.
     try:
-        _unit_active(unit)
+        platform.job_active(unit, codex_env(retain_user_bus=True))
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return {**out, "error": "Review service inspection is unavailable; no reviewer was launched.", "unavailable": True}
     command = _review_command(engine, snapshot, runtime, model)
@@ -2374,7 +2223,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     try:
         if on_start and on_start(worker) is False:
             return {**out, "error": "Review cancelled before launch."}
-        proc = subprocess.Popen(_codex_service_command(unit, command, _review_env()),
+        proc = subprocess.Popen(platform.job_command(unit, command, _review_env()),
                                 cwd=runtime, env=codex_env(retain_user_bus=True), text=True,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -2384,7 +2233,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
         raise
     try:
         try:
-            ticks = Path(f"/proc/{proc.pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+            ticks = platform.process_start(proc.pid)
         except (OSError, IndexError):
             ticks = None
         worker = {"unit": unit, "pid": proc.pid, "started_ticks": ticks}

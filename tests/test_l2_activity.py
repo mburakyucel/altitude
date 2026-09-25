@@ -6,7 +6,7 @@ import subprocess
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, engines, state as S, tasks as T, transcript
+from altitude import config, dispatch, engines, platform, state as S, tasks as T, transcript
 
 
 START = "2026-09-09T10:00:00+00:00"
@@ -260,7 +260,7 @@ class TestInputHandoff(AltitudeCase):
                 with self.subTest(engine=engine, failure=failure), \
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
                      mock.patch.object(engines, "_codex_session_model", return_value={}), \
-                     mock.patch.object(engines, "_unit_active", return_value=False), \
+                     mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
                     result = engines._start_worker(engine, "fixture", "Exact input", cwd=self.repo,
@@ -296,7 +296,7 @@ class TestInputHandoff(AltitudeCase):
                 with self.subTest(engine=engine, session=session), \
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
                      mock.patch.object(engines, "_codex_session_model", return_value={}), \
-                     mock.patch.object(engines, "_unit_active", return_value=False), \
+                     mock.patch.object(platform, "job_active", return_value=False), \
                      mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
                     result = engines._start_worker(engine, "fixture", "Exact resume input", cwd=self.repo,
@@ -337,9 +337,9 @@ class TestStopEvidence(AltitudeCase):
                     return_value=subprocess.CompletedProcess([], code, state, "")):
                 if expected is None:
                     with self.assertRaisesRegex(RuntimeError, "status is unavailable"):
-                        engines._unit_active("worker.service")
+                        platform.job_active("worker.service", {})
                 else:
-                    self.assertIs(engines._unit_active("worker.service"), expected)
+                    self.assertIs(platform.job_active("worker.service", {}), expected)
 
     def test_missing_corrupt_or_wrong_owned_unit_never_confirms_or_stops_another_unit(self):
         with mock.patch.object(engines.subprocess, "run") as run:
@@ -388,7 +388,7 @@ class TestStopEvidence(AltitudeCase):
                     self.assertIs(engines.worker_termination(task, job_root=self.root), expected)
                     self.assertEqual(run.call_args.args[0][2], "is-active")
             self.assertEqual(self.paths["record"].read_bytes(), before)
-            with mock.patch.object(engines, "_unit_active", return_value=True):
+            with mock.patch.object(platform, "job_active", return_value=True):
                 self.assertEqual(engines.worker(engine, task, job_root=self.root)["state"], "working")
             task["session_id"] = "different"
             self.assertIsNone(engines.worker_termination(task, job_root=self.root))
@@ -408,7 +408,7 @@ class TestStopEvidence(AltitudeCase):
         S.write_json(engines.JOBS_DIR / "legacy" / "state.json", {"name": "fixture/legacy", "state": "working"})
         for alive in (True, False):
             with mock.patch.object(engines, "claude_stop", return_value="stopped"), \
-                 mock.patch.object(engines, "_unit_active", return_value=alive):
+                 mock.patch.object(platform, "job_active", return_value=alive):
                 self.assertIs(engines.worker_termination(task, job_root=self.root), not alive)
                 if alive:
                     with self.assertRaisesRegex(RuntimeError, "still running"):
