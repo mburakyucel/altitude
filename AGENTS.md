@@ -32,6 +32,11 @@ state, as voice input does. New code obeys the rule; existing code migrates only
 touches it, never as its own project. `tests/test_project_layers.py` ratchets the counts so mentions
 outside a seam can only fall.
 
+Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. A change
+that touches services, processes, confinement, paths, external tools or installation ships for both
+behind that seam, or its PR names the macOS gap explicitly. Supported-platform claims in the docs
+follow recorded native evidence; see the [roadmap](docs/ROADMAP.md#native-macos-runtime).
+
 Both engines use one execution and authority contract. Adapt that common contract when an
 integration conflicts with an engine's native operating model; do not build a second engine-specific
 policy system. Engine-native customization stays in skills, hooks, and agent definitions.

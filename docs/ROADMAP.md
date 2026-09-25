@@ -9,7 +9,7 @@ delivery/acceptance links; selected work remains subject to proposal, security, 
 | Priority | Scope and owner/dependency |
 | --- | --- |
 | P0 selected | #349/#348 project Setup, Git guards and scoped repair stay with `make-project-setup-visible-and-repairabl`; its design/merge holds remain independent. |
-| P0, Linux increment delivered | #225 native runtime, #226 installation/update lifecycle and private-trial #219 onboarding: PR #356 delivers the Linux archive. Remaining work is documented below for L3's later intake; native Mac implementation and host evidence are deferred. |
+| P0, Linux increment delivered | #225 native runtime, #226 installation/update lifecycle and private-trial #219 onboarding: PR #356 delivers the Linux archive. Native macOS runtime is in progress with `macos-support-native-runtime-behind-the`; remaining work is documented below. |
 | P0 before access sharing | Reconcile #233's recorded history audit and changes after its cutoff; resolve material exposure findings privately. Audit/publication authority stays separate from runtime installation. |
 | P1 after core installation | #231 private backup/staged restore and #224 remaining continuity/reboot acceptance. Neither authorizes live-provider tests or production lifecycle operations. |
 | Reassess only if trial-blocking | #222/#334 confusion observed during the trial; no broad redesign prerequisite. Composer/drafts stay with `preserve-project-drafts-and-make-voice-p`. |
@@ -31,9 +31,8 @@ suite pass: 1,342 Python tests, 343 web tests, typecheck/build and 316 phone/des
 one optional host probe is skipped. Deployment is verified. These checks do not prove a fresh-machine
 installation, native Mac behavior or engine authentication.
 
-The operator's September 16, 2026 direction finishes the installation task after this handoff and
-defers physical Mac testing. The private-trial path remains Linux-only. L3 retains the following
-remaining acceptance under #225/#226/#219/#350; those issues stay open:
+The private-trial path is Linux-only until the macOS evidence below is recorded. The following
+remaining acceptance stays under #225/#226/#219/#350; those issues stay open:
 
 - **Native macOS runtime and installation:** implement the common engine/authority contract with
   native per-user service lifecycle, confinement and installed update/recovery behavior. macOS 15
@@ -53,11 +52,19 @@ remaining acceptance under #225/#226/#219/#350; those issues stay open:
   fingerprint and per-device steps. Tests use disposable identities and in-process handshakes; trust
   on real Linux Chrome/Firefox, Mac, iPhone and Android browsers remains unobserved until recorded.
 
-The operator offers a Mac for later testing, with timing still deferred; no immediate Mac use or
-paid runner is authorized. Native probes make no provider calls or model downloads. Live-provider
-testing retains its separate standing deferral. Project Setup/guards and composer/drafts retain
-their existing ownership; future integration consumes those interfaces. Public-release/history-audit
-work and P1 backup/continuity remain separately sequenced above.
+Live-provider testing retains its separate standing deferral. Project Setup/guards and
+composer/drafts retain their existing ownership; future integration consumes those interfaces.
+Public-release/history-audit work and P1 backup/continuity remain separately sequenced above.
+
+### Native macOS runtime
+
+The operator's September 25, 2026 direction makes macOS a priority target alongside Linux: every
+platform change ships for both behind `altitude/platform.py` or names its macOS gap (see
+[AGENTS.md](../AGENTS.md#seams)). Task `macos-support-native-runtime-behind-the` owns #225's audit,
+the launchd and confinement proposal held for operator review, and the runtime increments. The
+operator runs each increment's native validation on their own Apple silicon Mac; that
+evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
+authorized. Native probes make no provider calls or model downloads.
 
 ## Early-user onboarding and public release
 
