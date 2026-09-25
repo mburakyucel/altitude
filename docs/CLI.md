@@ -1507,7 +1507,11 @@ The owner applies the operator's approval from its own task chat while landing:
 alt land --merge --approval <message-id> --message <summary>
 ```
 
-The owner judges that the message approves the current scope. After checks pass and just before merge,
+The owner judges the message's scope from its words, conditions, later corrections and the actual
+integrated result. Approval covers the approved outcome, not a commit: a new head from routine integration
+(current main, mechanical conflict resolution) with unchanged approved content needs no new approval.
+Explicit exact-version or other unmet conditions, revocation, a renewed hold or a material departure
+from what was approved need the operator again. After checks pass and just before merge,
 landing checks under the project lock and the owner's publication fence that it is the operator's
 original task message, sent after the current hold generation, and that the PR is the task's open,
 ready, same-repository PR targeting main at the candidate head. Refusals keep the hold.

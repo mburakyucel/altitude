@@ -723,7 +723,9 @@ Under the project lock, altd verifies the latest hold event against task state a
 hold ID to its original recorded requirement. Approval must follow that requirement. Explicit hold
 changes create a fresh ID and matching event; interrupted writes and inconsistent evidence refuse.
 A follow-up restores the original ID and needs its own release. L3 can apply the same source when
-its scope covers that PR. Routine integration preserves authority within the approved outcome.
+its scope covers that PR. Approval covers the approved outcome, not a commit: a new head from routine
+integration with unchanged approved content keeps it, while current-candidate checks, review, provenance
+and PR identity are still verified for that head.
 
 Altd reads an open, non-draft, same-repository PR targeting main from the project's origin. The
 publication branch and supplied head must match; recorded active/adopted PR identity also binds the
@@ -1835,8 +1837,8 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, no open question links its PR and the current head is not already
-approved, and the composer
+at their recorded message anchor), a held review card when one waits, no open question links its PR and the PR is not already
+approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with

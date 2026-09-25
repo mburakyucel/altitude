@@ -150,8 +150,8 @@ class TestDecisions(AltitudeCase):
         S.save_task(self.project, held)
         rows = T.decisions(self.project)
         self.assertEqual([row["kind"] for row in rows], ["asks", "review"])
-        self.assertEqual({k: rows[1][k] for k in ("pr", "head", "question", "detail")},
-                         {"pr": 42, "head": "a" * 40, "question": "Review PR #42 before merge",
+        self.assertEqual({k: rows[1][k] for k in ("pr", "question", "detail")},
+                         {"pr": 42, "question": "Review PR #42 before merge",
                           "detail": "Operator review before merge"})
         for blocker in ({"fault": "worker:x"}, {"stop_id": "operator-stop"}):
             with self.subTest(blocker=blocker):
@@ -193,9 +193,10 @@ class TestDecisions(AltitudeCase):
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
-    def test_an_approved_head_waiting_on_a_dependency_is_not_asked_again(self):
-        # #451: approving an unchanged head once is enough while the owner waits on something else;
-        # a changed head, a later word about the PR or a new hold asks again, and faults keep their label.
+    def test_an_approved_pr_waiting_on_a_dependency_is_not_asked_again(self):
+        # #451: approving the PR once is enough while the owner waits on something else, including after
+        # routine integration gives it a new head; a later word about the PR or a new hold asks again,
+        # and faults keep their label.
         task = self.blocked("Export fix", "CI export access is missing.", waiting_on="l3")
         slug, name = task["slug"], config.operator_label()
         held = S.load_task(self.project, slug)
@@ -208,23 +209,23 @@ class TestDecisions(AltitudeCase):
             T.take_inbox(self.project, slug)
             T.block(self.project, slug, "CI export access is still missing.", actor="l2", updates={"waiting_on": "l3"})
         time.sleep(1.1)  # the task's hold starts at creation; records keep whole seconds
-        approve_and_park("Approved: merge PR #42 at aaaaaaa.")
+        approve_and_park("Approved: merge PR #42.")
         self.assertEqual(T.decisions(self.project), [])
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
         approve_and_park("Wait, only merge PR #42 after the export lands.")
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a later word about the PR re-asks")
         approve_and_park("Approved: merge PR #42 at aaaaaaa.")
-        self.assertEqual(T.decisions(self.project), [])
+        self.assertEqual(T.decisions(self.project), [], "an earlier card's approval still counts")
         moved = S.load_task(self.project, slug)
         moved["delivery"] = {"number": 42, "head": "b" * 40, "at": "2026-01-01T00:00:00+00:00"}
         S.save_task(self.project, moved)
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a changed head asks again")
-        approve_and_park("Approved: merge PR #42 at bbbbbbb.")
+        self.assertEqual(T.decisions(self.project), [], "routine integration keeps the approval")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
         time.sleep(1.1)  # records keep whole seconds
         T.set_hold_merge(self.project, slug, "Operator review after the export change", actor="l3")
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a new hold asks again")
         time.sleep(1.1)
-        approve_and_park("Approved: merge PR #42 at bbbbbbb.")
+        approve_and_park("Approved: merge PR #42.")
         S.save_task(self.project, {**S.load_task(self.project, slug), "fault": "worker:x"})
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "paused · fault worker:x")
 

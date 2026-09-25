@@ -488,13 +488,13 @@ describe("Task on desktop", () => {
 
   describe("review before merge", () => {
     const hold = "Wait for the operator to review the phone evidence.";
-    const review = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "review", pr: 204, head: "5f0c2e9a41b7d3c8e6f1a2b3c4d5e6f708192a3b", asked_by: "l2",
+    const review = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "review", pr: 204, asked_by: "l2",
       question: "Review PR #204 before merge", detail: hold, asked: ago(2), since: ago(2) };
     const reported = { ...stuck, state: "reported", blocked_reason: null, hold_merge: hold, delivery: { number: 204 } };
     const approved = () => jsonResponse({ message: { id: "approval", at: new Date().toISOString(), role: running.messages[0]?.role, text: "Approved: merge PR #204." } });
     const reviewTurn = () => within(screen.getByRole("region", { name: "Task conversation" })).getByText("Your turn · review before merge").closest(".conversation-question")! as HTMLElement;
 
-    it("approves the reviewed head with the operator's own message and confirms the receipt", async () => {
+    it("approves the PR with the operator's own message and confirms the receipt", async () => {
       const fetchMock = stub(reported, { repository: "https://github.com/example/altitude", overview: { ...overview, queue: [review] }, message: approved });
       const { user } = renderApp({ route });
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
@@ -508,12 +508,12 @@ describe("Task on desktop", () => {
       expect(within(turn).queryByRole("button", { name: "Approve merge" })).toBeNull();
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(1);
-      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204 at 5f0c2e9." });
+      expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204." });
     });
 
     it("keeps the review open with Not sent. Retry when the send fails", async () => {
       let fail = true;
-      const fetchMock = stub(reported, { overview: { ...overview, queue: [{ ...review, head: null }] },
+      const fetchMock = stub(reported, { overview: { ...overview, queue: [review] },
         message: () => fail ? jsonResponse({ error: "unavailable" }, 500) : approved() });
       const { user } = renderApp({ route });
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
@@ -528,7 +528,7 @@ describe("Task on desktop", () => {
       expect(within(turn).queryByRole("alert")).toBeNull();
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(2);
-      // Without a recorded head the approval names only the PR; Retry resends the same message.
+      // Retry resends the same message.
       for (const call of sent) expect(JSON.parse(String(call[1]?.body)).text).toBe("Approved: merge PR #204.");
     });
 

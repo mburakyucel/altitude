@@ -193,6 +193,82 @@ class TestMergeApprovalJourney(AltitudeCase):
                          (approval_id, "l2", held["hold_merge_id"], prepared["head"]))
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The final story.\n")
 
+    def approve_from_review_card(self, content):
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Publish the story", "Review the story before merging", content)
+        T.block(self.project, slug, "Waiting for the release checkout.", actor="l2", updates={"waiting_on": "l3"})
+        self.assertEqual([(r["kind"], r.get("pr")) for r in T.decisions(self.project)], [("review", 101)])
+        self.tick()
+        approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
+                                                    "text": "Approved: merge PR #101."})["message"]
+        self.wait_state(slug, "running")
+        T.take_inbox(self.project, slug)
+        return slug, worktree, gh, prepared, pull, approval["id"]
+
+    def integrate_main(self, worktree, gh, pull):
+        """Unrelated current-main work lands; the owner rebases the unchanged approved content onto it."""
+        (self.repo / "NOTES.md").write_text("Unrelated main work.\n")
+        git("add", "NOTES.md", cwd=self.repo)
+        git("commit", "-qm", "fixture: unrelated main work", cwd=self.repo)
+        git("push", "origin", "main", cwd=self.repo)
+        git("fetch", "origin", cwd=worktree)
+        git("rebase", "origin/main", cwd=worktree)
+        pull.pop("headRefOid")  # The GitHub fixture observes the actual remote head after each push.
+        S.write_json(gh / "pr.json", pull)
+        (gh / "merge_git.txt").write_text("advance the local remote\n")
+        return git("rev-parse", "HEAD", cwd=worktree).strip()
+
+    def test_ui_approval_covers_a_routine_rebase_with_fresh_checks(self):
+        slug, worktree, gh, prepared, pull, approval_id = self.approve_from_review_card("The approved story.\n")
+        rebased = self.integrate_main(worktree, gh, pull)
+        self.assertNotEqual(rebased, prepared["head"])
+        self.assertEqual(git("diff", prepared["head"], rebased, "--", "README.md", cwd=worktree), "")
+        self.tick()
+        published = land.land("test: publish the rebased story", cwd=worktree, wait=0)
+        self.assertEqual((published["head"], published["merged"]), (rebased, False))
+        self.assertEqual(S.load_task(self.project, slug)["delivery"]["head"], rebased)
+        self.tick()
+        T.block(self.project, slug, "Waiting for the release checkout.", actor="l2", updates={"waiting_on": "l3"})
+        self.assertEqual(T.decisions(self.project), [], "routine integration asks for no new approval")
+        self.assertTrue(T.wait_label(self.project, S.load_task(self.project, slug)).endswith("PR #101 approved"))
+        self.tick()
+        T.resume(self.project, slug)
+        T.take_inbox(self.project, slug)
+        held = S.load_task(self.project, slug)
+        (gh / "checks.json").write_text('[{"bucket": "fail"}]')
+        failed = land.land("test: fresh checks gate the rebased head", cwd=worktree, merge=True, wait=0,
+                           approval=approval_id)
+        self.assertFalse(failed["merged"])
+        self.assertEqual(S.load_task(self.project, slug)["hold_merge"], held["hold_merge"])
+        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
+        landed = land.land("test: land the rebased approved story", cwd=worktree, merge=True, wait=0,
+                           approval=approval_id)
+        self.assertTrue(landed["merged"])
+        receipt = S.load_task(self.project, slug)["merge_approval"]
+        self.assertEqual((receipt["approval"], receipt["actor"], receipt["head"]), (approval_id, "l2", rebased))
+        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The approved story.\n")
+
+    def test_a_renewed_hold_or_a_later_condition_still_needs_the_operator(self):
+        slug, worktree, gh, prepared, pull, approval_id = self.approve_from_review_card("The approved story.\n")
+        self.integrate_main(worktree, gh, pull)
+        self.tick()
+        T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Only merge PR #101 after the legal review.",
+                  wake_blocked=False)
+        T.take_inbox(self.project, slug)
+        self.tick()
+        T.block(self.project, slug, "Waiting for the legal review.", actor="l2", updates={"waiting_on": "l3"})
+        self.assertEqual([r["kind"] for r in T.decisions(self.project)], ["review"], "a later condition asks again")
+        self.tick()
+        T.resume(self.project, slug)
+        T.take_inbox(self.project, slug)
+        T.set_hold_merge(self.project, slug, "Security review of the story", actor="l3")
+        self.tick()
+        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
+        with self.assertRaisesRegex(land.LandError, "predates the current merge hold"):
+            land.land("test: a renewed hold needs a new approval", cwd=worktree, merge=True, wait=0,
+                      approval=approval_id)
+        self.assertEqual(S.load_task(self.project, slug)["hold_merge"], "Security review of the story")
+
     def test_a_fault_wait_sees_the_held_correction_it_needs_through_verified_recovery(self):
         # L3 8fae1943 and #419: B's later proposal must not hide its merge decision; A recovers in its session.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
