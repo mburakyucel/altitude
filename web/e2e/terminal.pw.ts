@@ -77,12 +77,16 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await expect(panel).toBeVisible();
 
   // Paste: the phone's Paste key reads the clipboard; on desktop the browser's paste reaches the shell.
-  await page.evaluate(() => navigator.clipboard.writeText("echo pasted-$((7+7))"));
+  // Both paste as the shell asks (bracketed), so pasted lines wait for Enter.
+  await page.evaluate(() => navigator.clipboard.writeText("echo pasted-$((7+7))\necho twice-$((1+1))"));
   if (phone) await keys.getByRole("button", { name: "Paste" }).click();
   else await page.keyboard.press("Control+V");
-  await expect(output).toContainText("echo pasted-$((7+7))");
+  await expect(output).toContainText("echo twice-$((1+1))");
+  await page.waitForTimeout(500);
+  await expect(output).not.toContainText("pasted-14");
   await page.keyboard.press("Enter");
   await expect(output).toContainText("pasted-14");
+  await expect(output).toContainText("twice-2");
   if (!phone) {
     // Ctrl+C with text selected copies it; the line being typed is not interrupted.
     await page.evaluate(() => navigator.clipboard.writeText(""));

@@ -906,11 +906,12 @@ reconnecting page resumes from its own offset. An ended terminal is dropped at o
 still read the end, and afterwards the status is `none`. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
-drive it. Terminal replies are HTTP/1.1 with a length and keep their connection, while every other
-altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
+drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
+while every other altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
 keystroke (an echo takes one network round trip), and altd sends small writes without Nagle's delay.
 The page sends input in order, one request at a time, coalescing keys typed meanwhile and splitting a
-long paste into 16 KiB pieces. Every request after `open` names the terminal `id`, and a stream stays with the terminal it
+long paste into 16 KiB pieces that never split a character; the phone Paste key pastes through
+xterm, so a shell's bracketed paste holds pasted lines until Enter. Every request after `open` names the terminal `id`, and a stream stays with the terminal it
 named, so a page still showing a replaced terminal cannot type into, resize, close or read its
 successor. Input waits up to two seconds for a program that has stopped reading it, and gives up at
 once when Close is asked for, so a full input queue never holds Close or the setting. Input that fails

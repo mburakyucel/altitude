@@ -57,6 +57,8 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
   const [closeError, setCloseError] = useState<string | null>(null);
   // Set once this view has asked to open or seen its terminal end: it never opens a second shell by itself.
   const attempted = useRef(false);
+  // The terminal this view has shown: any other answer means it ended.
+  const shown = useRef<string | null>(null);
   const closing = useRef(false);
   const left = useRef(false);
   const data = status.data;
@@ -74,9 +76,20 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     }
   };
 
-  // Showing the terminal is the request to open it.
+  // Showing the terminal is the request to open it. A status or open answer can also be the first to say
+  // that the shell on screen ended (while the connection was down) or was replaced elsewhere.
   useEffect(() => {
-    if (data?.state === "none" && data.enabled && !attempted.current) void open();
+    if (!data) return;
+    if (data.state === "running" && (shown.current === null || shown.current === data.id)) {
+      shown.current = data.id!;
+      attempted.current = true;
+    } else if (data.state === "exited") {
+      leave(data);
+    } else if (shown.current !== null) {
+      leave(data.state === "running" ? { ...data, state: "exited", reason: "closed" } : data);
+    } else if (data.enabled && !attempted.current) {
+      void open();
+    }
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const leave = (ended: TerminalStatus) => {
@@ -106,7 +119,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     }
   };
 
-  const running = data?.state === "running";
+  const running = data?.state === "running" && (shown.current === null || shown.current === data.id);
   const closeButton = running ? closeIcon
     ? <button type="button" className="icon-btn terminal-close-icon" aria-label="Close terminal" onClick={() => void close(false)}>
       <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>

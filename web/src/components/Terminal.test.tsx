@@ -17,7 +17,7 @@ const overview = { projects: [{ name: "demo", managed: true, counts: {} }], queu
 const none = (enabled = true): TerminalStatus => ({ state: "none", enabled });
 const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
 
-function fixture(status: TerminalStatus, answers: { open?: () => Response } = {}) {
+function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus } = {}) {
   let current = status;
   const posts: [string, unknown][] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -38,7 +38,7 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response } = {}
       }
       return json({ ok: true });
     }
-    if (url === "/api/terminal/demo") return json(current);
+    if (url === "/api/terminal/demo") return json(answers.status?.() ?? current);
     return json({ error: "not in this fixture" }, 404);
   }));
   return posts;
@@ -94,6 +94,29 @@ describe("Project terminal", () => {
       expect(posts.map(([url]) => url)).not.toContain("/api/terminal/demo/open");
       unmount();
     }
+  });
+
+  it("leaves when a later status or the open answer says the shell ended", async () => {
+    for (const [later, notice] of [
+      [none(), "The terminal closed while the connection was lost."],
+      [{ ...running(), id: "t2" }, "The terminal was closed elsewhere."],
+    ] as const) {
+      let answer: TerminalStatus = running();
+      const posts = fixture(running(), { status: () => answer });
+      const { router, queryClient, unmount } = renderApp({ route: "/projects/demo/terminal" });
+      expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
+      answer = later;
+      await act(() => queryClient.refetchQueries({ queryKey: ["terminal", "demo", null] }));
+      await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+      expect(await screen.findByText(notice)).toBeVisible();
+      expect(screen.queryByText("t2")).toBeNull();
+      expect(posts.map(([url]) => url)).not.toContain("/api/terminal/demo/open");
+      unmount();
+    }
+    fixture(none(), { open: () => json({ ...running(), state: "exited", reason: "exited", exit_code: 1 }) });
+    const { router } = renderApp({ route: "/projects/demo/terminal" });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+    expect(await screen.findByText("Terminal closed · exit code 1")).toBeVisible();
   });
 
   it("asks before closing a running command", async () => {

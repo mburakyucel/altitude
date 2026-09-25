@@ -30,6 +30,12 @@ function bytes(base64: string): Uint8Array {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
+/** The next input request's text: at most `INPUT_CHUNK` code units, never splitting a surrogate pair. */
+export function inputPiece(text: string): string {
+  const cut = /[\uD800-\uDBFF]/.test(text.charAt(INPUT_CHUNK - 1)) ? INPUT_CHUNK - 1 : INPUT_CHUNK;
+  return text.slice(0, cut);
+}
+
 /**
  * One running terminal on screen. It writes `intro` dimmed, replays the server's buffer from the start,
  * follows the output stream, and after a lost connection resumes from the last offset it drew; the
@@ -52,6 +58,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const host = useRef<HTMLDivElement>(null);
   const send = useRef<(data: string) => void>(() => undefined);
   const focus = useRef<() => void>(() => undefined);
+  const pasteText = useRef<(text: string) => void>(() => undefined);
   const ctrlRef = useRef(false);
   const [ctrl, setCtrl] = useState(false);
   const stopped = useRef(false);
@@ -123,8 +130,8 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     const flush = async () => {
       if (done || sending || !pending) return;
       sending = true;
-      const data = pending.slice(0, INPUT_CHUNK);
-      pending = pending.slice(INPUT_CHUNK);
+      const data = inputPiece(pending);
+      pending = pending.slice(data.length);
       try {
         await terminalSend(project, "input", { task, id, data });
       } catch (error) {
@@ -149,6 +156,8 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       void flush();
     };
     focus.current = () => term.focus();
+    // xterm frames a paste as the shell asked (bracketed paste), so pasted lines wait for Enter.
+    pasteText.current = (text) => term.paste(text);
     const input = term.onData((data) => send.current(data));
 
     const size = () => {
@@ -177,7 +186,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const paste = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) send.current(text);
+      if (text) pasteText.current(text);
     } catch {
       toast.show({ message: "This browser didn't allow reading the clipboard.", severity: "failure" });
     }
