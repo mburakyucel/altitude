@@ -1121,6 +1121,8 @@ def tick() -> None:
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
     # Off the timer thread: five unreachable devices must not delay dispatch, resumes or the digest.
     spawn("push", push.notify, log)
+    if config.RELEASE is not None:
+        spawn("update-check", installation.check_for_update)
     morning_digest()
 
 
@@ -1543,16 +1545,16 @@ class Handler(BaseHTTPRequestHandler):
             return "Requests must come from Altitude's own page."
         return None
 
-    def _terminal_denied(self, *, json_body: bool) -> str | None:
-        """Why a terminal request is refused: a cross-site page (the terminal is command execution, so a
-        page elsewhere must not be able to type into it) or one of Altitude's own agents."""
+    def _terminal_denied(self, *, json_body: bool, subject: str = "Terminal") -> str | None:
+        """Why a terminal or update request is refused: a cross-site page (both run commands, so a page
+        elsewhere must not be able to start them) or one of Altitude's own agents."""
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
-            return "Terminal requests must come from Altitude's own page."
-        # One connection keeps one client socket, so its first terminal request decides for the rest.
+            return f"{subject} requests must come from Altitude's own page."
+        # One connection keeps one client socket, so its first terminal or update request decides for the rest.
         if self._agent is None:
             self._agent = terminal.agent_connection(self.client_address, self.connection.getsockname())
         if self._agent:
-            return "Terminal requests from Altitude's own agents are refused."
+            return f"{subject} requests from Altitude's own agents are refused."
         return None
 
     def _terminal_get(self, parts: list[str], q: dict) -> None:
@@ -1601,6 +1603,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 return
             self.wfile.flush()
+
+    def _update_post(self, parts: list[str], body: dict) -> None:
+        """The app's Update button and the update-check switch, behind the terminal's request checks."""
+        denied = self._terminal_denied(json_body=True, subject="Update")
+        if denied:
+            return self._json({"error": denied}, 403)
+        try:
+            if parts == ["api", "update-check"]:
+                if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
+                    return self._json({"error": "Choose on or off."}, 400)
+                view = _save_machine("update_check", body["enabled"],
+                                     "Update check on" if body["enabled"] else "Update check off")
+                return self._json({**view, "update": installation.update_status()})
+            if parts != ["api", "update"] or body.keys() - {"version"} or not isinstance(body.get("version"), str):
+                return self._json({"error": "Name the version to install."}, 400)
+            return self._json({"update": installation.request_update(body["version"])})
+        except (ValueError, T.TransitionError) as exc:
+            return self._json({"error": str(exc)}, 409)
+        except RuntimeError as exc:
+            return self._json({"error": str(exc)}, 503)
 
     def _terminal_post(self, parts: list[str], body: dict) -> None:
         denied = self._terminal_denied(json_body=True)
@@ -1848,6 +1870,8 @@ class Handler(BaseHTTPRequestHandler):
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
                 return self._terminal_post(parts, o)
+            if api in ("update", "update-check"):
+                return self._update_post(parts, o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2300,7 +2324,8 @@ def overview() -> dict:
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
-            "operator": config.operator_name(), "restart": restart_status(), "now": S.now()}
+            "operator": config.operator_name(), "restart": restart_status(),
+            "update": installation.update_status(), "now": S.now()}
 
 
 def home_relative(path: Path) -> str:
@@ -2362,9 +2387,11 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name, incident publication and the terminal switch, as First run and Settings show them."""
+    """The operator's name, incident publication, the terminal and update-check switches, as First run and
+    Settings show them."""
     return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
-            "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled()}
+            "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
+            "update_check": config.machine_settings().get("update_check") is not False}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:

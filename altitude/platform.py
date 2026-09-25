@@ -65,6 +65,13 @@ def control(action: str) -> str:
     return run("systemctl", "--user", action, SERVICE)
 
 
+def detach(name: str, argv: list[str], environment: dict[str, str]) -> str:
+    """Run one command as its own short-lived user unit, so it outlives a restart of the Altitude service."""
+    require_supported()
+    return run("systemd-run", "--user", "--collect", "--quiet", f"--unit={name}",
+               *(f"--setenv={key}={value}" for key, value in environment.items()), *argv)
+
+
 def logs() -> str:
     return run("journalctl", "--user", "-u", SERVICE, "--no-pager", "-n", "100")
 
