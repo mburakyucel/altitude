@@ -1524,8 +1524,9 @@ class Handler(BaseHTTPRequestHandler):
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
         at all (the `alt` CLI) sends neither header."""
         origin = self.headers.get("Origin")
+        scheme = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
         return (self.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none")
-                or bool(origin) and urlparse(origin).netloc != self.headers.get("Host"))
+                or bool(origin) and origin != f"{scheme}://{self.headers.get('Host')}")
 
     def _refused(self) -> str | None:
         """Why a request is refused before routing. Over plain HTTP a DNS-rebinding page names its own host in

@@ -41,7 +41,8 @@ class TestRequestBoundary(AltitudeCase):
         before = config.machine_settings().get("operator_name")
         for headers in ({"Origin": "https://elsewhere.example"}, {"Origin": "null"},
                         {"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
-                        {"Origin": "http://127.0.0.1:1", "Sec-Fetch-Site": "same-site"}):
+                        {"Origin": "http://127.0.0.1:1", "Sec-Fetch-Site": "same-site"},
+                        {"Origin": f"https://{self.host}"}):
             with self.subTest(headers=headers):
                 status, reply = self.rename("Mallory", headers)
                 self.assertEqual((status, reply), (403, {"error": "Requests must come from Altitude's own page."}))

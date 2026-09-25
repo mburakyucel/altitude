@@ -19,8 +19,8 @@ export default defineConfig({
         // altd accepts an action only from its own page: the dev page's requests carry altd's origin, and
         // a request from any other page keeps its own, which altd refuses.
         configure: (proxy) => proxy.on("proxyReq", (out, req) => {
-          const origin = req.headers.origin;
-          if (origin && URL.canParse(origin) && new URL(origin).host === req.headers.host) out.setHeader("origin", new URL(API).origin);
+          const page = `${"encrypted" in req.socket ? "https" : "http"}://${req.headers.host}`;
+          if (req.headers.origin === page) out.setHeader("origin", new URL(API).origin);
         }) },
       "/digest.wav": { target: API, secure: false, changeOrigin: true },
     },

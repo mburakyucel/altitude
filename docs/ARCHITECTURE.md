@@ -1867,7 +1867,8 @@ levels up. `/api/project` reports that URL only when the boards exist, and the p
 overflow menu turns it into Design boards, opening in a new tab. Any project with boards gets one; the
 route knows nothing about this repository's own. Every file is served with
 `Content-Security-Policy: sandbox allow-scripts`: a board's scripts run in an opaque origin, so
-project content cannot act with Altitude's authority.
+project content cannot act with Altitude's authority. From that origin the viewer cannot probe for a
+listed board that is missing, so the board's frame shows the server's plain 404.
 
 Pending task designs use captured screenshots and text, bound to the existing question revision.
 The current L2 supplies an explicit selection through `alt task block --design-file`, optionally

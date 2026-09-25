@@ -79,3 +79,5 @@ itself.
 
 A listed file that is not there renders as a red "File not found" tile naming the file, so a stale
 entry shows itself the moment the viewer opens rather than leaving a blank space.
+Altitude serves the viewer in a sandbox with an opaque origin, where it cannot probe; there a missing
+board's frame shows the server's plain "not found" instead.
