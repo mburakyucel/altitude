@@ -31,7 +31,7 @@ On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one comman
 latest published release as the account that will use Altitude:
 
 ```sh
-curl -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
@@ -50,7 +50,7 @@ To verify the script before running it, download it and check its build provenan
 CLI; the release workflow attests every release file:
 
 ```sh
-curl -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh &&
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh &&
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```

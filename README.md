@@ -66,7 +66,7 @@ coding account's allowance and normal charges.
 1. Install the latest release as the account that will use Altitude:
 
    ```sh
-   curl -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
    ```
 
    The script checks the machine, runs nothing it downloads unless it matches the release's

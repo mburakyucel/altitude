@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install Altitude @VERSION@ for the current user.
 #
-#   curl -fsSL @REPOSITORY@/releases/latest/download/install.sh | sh
+#   curl --proto '=https' --tlsv1.2 -fsSL @REPOSITORY@/releases/latest/download/install.sh | sh
 #
 # scripts/build_release.py fills in the version and the SHA-256 of every file this script downloads,
 # so nothing it fetches runs unless it matches the release it was built with. Nothing runs as root.

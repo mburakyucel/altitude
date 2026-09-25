@@ -6,7 +6,7 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 ## Unreleased
 
 - One command installs the latest published release on Linux:
-  `curl -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`.
+  `curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`.
   The script checks the machine and names the fix for anything missing, downloads the release's
   archive and installer, runs them only when they match the checksums built into the script, and
   prints the address, certificate fingerprint and next steps. On macOS it stops before downloading
