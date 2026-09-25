@@ -177,6 +177,8 @@ class TestTaskConversation(ChatCase):
             self.assertIn(question["detail"], notification["text"])
             self.assertEqual(question["audience"], "operator")
         self.assertIn("grants no operator authority", notification["text"])
+        self.assertIn("re-asks a settled decision, keep it open unless settled and repair that friction",
+                      notification["text"])
         self.assertEqual(len(T.decisions(self.project)), 2)
         source = T.message(self.project, self.slug, "l3", "The recorded lease includes tests/. The security proposal still needs the operator.")
         self.assertEqual(len(T.decisions(self.project)), 2, "notification and reply alone close nothing")

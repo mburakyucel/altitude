@@ -487,7 +487,9 @@ daemon resume, or `alt task escalate` turns it into a Needs you card for the ope
 places operator questions there immediately and also notifies L3. A block that publishes or revises questions
 queues one notification with open members, revisions and required authority; re-parking unchanged members
 stays quiet. Notification lets L3 coordinate scope or record-backed portions without approving
-operator-required proposal, security or product decisions.
+operator-required proposal, security or product decisions. A member that exists only because an
+Altitude rule or mechanism re-asks a settled decision stays open until settled, and L3 also owns
+repairing that friction through an existing owner or one task.
 For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
 
 A reported task with an open PR retains its owner conversation. The ordinary composer and coordinator
