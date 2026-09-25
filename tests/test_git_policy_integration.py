@@ -43,6 +43,16 @@ class TestDispatchWorktreePolicy(AltitudeCase):
         self.assertEqual(git("rev-parse", "HEAD", cwd=worktree), head)
         self.assertEqual(git("show", "-s", "--format=%B", "HEAD", cwd=worktree).strip(), message)
 
+    def test_dispatch_returns_a_clean_worktree_from_a_side_branch(self):
+        T.new("demo", "Side task", "Verify branch restore")
+        worktree = dispatch._task_worktree(self.repo, "demo", "side-task", self.origin_sha)
+        git("switch", "-c", "local-increment-3", cwd=worktree)
+
+        self.assertEqual(dispatch._task_worktree(self.repo, "demo", "side-task", self.origin_sha), worktree)
+        self.assertEqual(git("branch", "--show-current", cwd=worktree).strip(), "worktree-side-task")
+        self.assertEqual([e.get("left") for e in S.read_events("demo", "side-task")
+                          if e["kind"] == "task-branch-restored"], ["local-increment-3"])
+
     def test_orphan_task_branch_is_not_reattached_after_validation_races(self):
         staging = self.tmp / "orphan-staging"
         git("worktree", "add", "-q", "-b", "worktree-orphan-task", str(staging), self.origin_sha, cwd=self.repo)
@@ -97,15 +107,17 @@ class TestDaemonResumeProvenance(AltitudeCase):
     def test_real_daemon_provenance_failure_blocks_and_reports_without_losing_the_message(self):
         message = T.message(self.project, self.slug, "l3", "The restriction is fixed.", by="l3")
         git("switch", "-c", "wrong-owner", cwd=self.worktree)
+        (self.worktree / "draft.txt").write_text("unsaved\n")
 
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
              mock.patch.object(engines, "resume_l2") as launch, \
              mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(T.TransitionError, "wrong-owner"):
+            with self.assertRaisesRegex(T.TransitionError, "wrong-owner.*uncommitted changes.*git switch worktree-"):
                 dispatch.resume(self.project, self.slug)
 
         launch.assert_not_called()
+        self.assertEqual(git("branch", "--show-current", cwd=self.worktree).strip(), "wrong-owner")
         fault.assert_called_once()
         self.assertEqual(fault.call_args.args[0], "task-git-provenance")
         task = S.load_task(self.project, self.slug)
@@ -114,6 +126,85 @@ class TestDaemonResumeProvenance(AltitudeCase):
         self.assertTrue(task["resume_failed"])
         self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)], [message["id"]])
         self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_a_clean_worktree_on_a_side_branch_returns_to_its_task_branch_and_resumes(self):
+        T.message(self.project, self.slug, "l3", "Carry on.", by="l3")
+        git("switch", "-c", "local-increment", cwd=self.worktree)
+        (self.worktree / "side.txt").write_text("side\n")
+        git("add", "side.txt", cwd=self.worktree)
+        git("commit", "-q", "-m", "Side increment", cwd=self.worktree)
+        side = git("rev-parse", "local-increment", cwd=self.worktree).strip()
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(engines, "resume_l2", return_value={"returncode": 0, "agent": {
+                 "id": "agent-new", "sessionId": "thread-old", "state": "working"}}) as launch, \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            dispatch.resume(self.project, self.slug)
+
+        launch.assert_called_once()
+        fault.assert_not_called()
+        self.assertEqual(git("branch", "--show-current", cwd=self.worktree).strip(), f"worktree-{self.slug}")
+        self.assertEqual(git("rev-parse", "local-increment", cwd=self.worktree).strip(), side)
+        restored = [e for e in S.read_events(self.project, self.slug) if e["kind"] == "task-branch-restored"]
+        self.assertEqual([(e["left"], e["branch"]) for e in restored], [("local-increment", f"worktree-{self.slug}")])
+
+    def test_a_live_worker_stops_before_its_branch_is_restored(self):
+        T.message(self.project, self.slug, "l3", "Carry on.", by="l3")
+        git("switch", "-c", "local-increment", cwd=self.worktree)
+        branches = []
+        stop = lambda *_args, **_kwargs: branches.append(git("branch", "--show-current", cwd=self.worktree).strip())
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(engines, "worker_live", return_value=True), \
+             mock.patch.object(engines, "stop_l2_worker", side_effect=stop), \
+             mock.patch.object(engines, "resume_l2") as launch:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "still live after stop"):
+                dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        self.assertEqual(branches, ["local-increment"])
+        self.assertEqual(git("branch", "--show-current", cwd=self.worktree).strip(), "local-increment")
+
+    def test_restoring_never_overwrites_an_ignored_file_the_task_branch_tracks(self):
+        T.message(self.project, self.slug, "l3", "Carry on.", by="l3")
+        (self.worktree / "notes.txt").write_text("task\n")
+        git("add", "notes.txt", cwd=self.worktree)
+        git("commit", "-q", "-m", "Task notes", cwd=self.worktree)
+        git("switch", "-q", "-c", "side", "HEAD~1", cwd=self.worktree)
+        (self.worktree / ".gitignore").write_text("notes.txt\n")
+        git("add", ".gitignore", cwd=self.worktree)
+        git("commit", "-q", "-m", "Ignore notes", cwd=self.worktree)
+        (self.worktree / "notes.txt").write_text("precious\n")
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(engines, "resume_l2") as launch, \
+             mock.patch("altitude.incidents.system_fault"):
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "switching failed"):
+                dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        self.assertEqual((self.worktree / "notes.txt").read_text(), "precious\n")
+        self.assertEqual(git("branch", "--show-current", cwd=self.worktree).strip(), "side")
+
+    def test_a_missing_task_branch_faults_with_instructions(self):
+        T.message(self.project, self.slug, "l3", "Carry on.", by="l3")
+        git("switch", "-c", "renamed", cwd=self.worktree)
+        git("branch", "-D", f"worktree-{self.slug}", cwd=self.worktree)
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(engines, "resume_l2") as launch, \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            with self.assertRaisesRegex(T.TransitionError, "renamed.*branch is missing; in the worktree, recreate"):
+                dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        self.assertEqual(fault.call_args.args[0], "task-git-provenance")
+        self.assertEqual(git("branch", "--show-current", cwd=self.worktree).strip(), "renamed")
+        self.assertNotIn("task-branch-restored", [e["kind"] for e in S.read_events(self.project, self.slug)])
 
     def test_a_message_arriving_during_a_failed_resume_keeps_a_fresh_daemon_request(self):
         first = T.message(self.project, self.slug, "l3", "First answer.", by="l3")

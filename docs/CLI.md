@@ -449,6 +449,11 @@ it is not passive host observation. L3 reconciles the owner's findings; an incon
 the owner's next step. Automatic fault retries, sandbox bypass, service control, live-provider tests
 and check bypass gain no authority from diagnosis. Full delivery checks and all holds still apply.
 
+A `task-git-provenance` fault for a task worktree on the wrong branch occurs only when altd cannot
+switch it back itself: the worktree has uncommitted changes, is on a detached HEAD or its task branch is
+missing. The fault message names the Git step. L3 sends that step to a recovery task, never to the
+operator, and resumes the owner after verifying the worktree is on `worktree-<slug>`.
+
 ### Incident issues
 
 Every incident is one GitHub issue in the Altitude repository. Filing an incident creates it:
