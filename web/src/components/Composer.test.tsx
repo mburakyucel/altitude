@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
-import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser } from "./voiceTest";
+import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser, punctuationFixture, sentence } from "./voiceTest";
 import { presetVoiceBackend, updateVoiceSettings } from "./voiceBackend";
 
 /*
@@ -799,6 +799,66 @@ describe("Composer", () => {
     // Landed text is an ordinary draft: editing and sending work as with typed text.
     await user.type(field, "!");
     expect(field).toHaveValue("Fix the timer and the tests on both sizes!");
+  });
+
+  it("browser recognition: punctuated words land after Stop; without the model they land as heard and the hint says so", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    punctuationFixture.punctuate = sentence;
+    const { user, field } = mount({});
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[0]!.hear(["merge the pr today"]));
+    await waitFor(() => expect(field).toHaveValue("Merge the pr today."));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(field).toHaveValue("Merge the pr today.");
+    expect(screen.queryByText(/without punctuation/)).toBeNull();
+
+    await user.clear(field);
+    punctuationFixture.load = () => Promise.reject(new Error("no WebAssembly"));
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[1]!.hear(["merge the pr today"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(field).toHaveValue("merge the pr today");
+    expect(screen.getByRole("status")).toHaveTextContent("Added without punctuation: this browser could not run it.");
+    // The next capture clears it.
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    expect(screen.queryByText(/without punctuation/)).toBeNull();
+  });
+
+  it("browser recognition: Send while listening waits for the last phrase's punctuation and sends it", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    let answer: (() => void) | undefined;
+    punctuationFixture.load = () => Promise.resolve({
+      punctuate: (words) => new Promise<string[]>((resolve) => { answer = () => resolve(sentence(words)); }),
+    });
+    const onSubmit = vi.fn();
+    const { user } = mount({ initial: "Done with the timer.", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[0]!.hear(["merge the pr today"]));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => expect(answer).toBeDefined());
+    act(() => answer!());
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Done with the timer. Merge the pr today.", expect.any(Function)));
+  });
+
+  it("browser recognition: words from before the model has loaded land as heard, and the hint says it was loading", async () => {
+    installVoiceBrowser({ backend: "browser" });
+    punctuationFixture.load = () => new Promise(() => undefined);
+    const { user, field } = mount({});
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    act(() => FakeSpeechRecognition.instances[0]!.hear(["merge the pr today"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"), { timeout: 5000 });
+    expect(field).toHaveValue("merge the pr today");
+    expect(screen.getByRole("status")).toHaveTextContent("Added without punctuation: still loading. Next time it will be ready.");
   });
 
   it("browser recognition: the field follows the latest words once they overflow its height, and stops following after Stop", async () => {

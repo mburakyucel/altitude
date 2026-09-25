@@ -2,6 +2,10 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 import { presetVoiceBackend } from "./components/voiceBackend";
+import { punctuationFixture } from "./components/voiceTest";
+
+// The bundled punctuation model runs only in a real browser (web/e2e); unit tests use a fixture.
+vi.mock("./punctuation", () => ({ loadPunctuator: () => punctuationFixture.load() }));
 
 /** jsdom has no EventSource: the shell's change stream stays silent unless a test drives its own. */
 class SilentEventSource extends EventTarget {
@@ -18,6 +22,7 @@ beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);
   // Composers read the installation's voice backend once; tests name it instead (upload path by default).
   presetVoiceBackend("endpoint");
+  punctuationFixture.reset();
 });
 
 afterEach(() => {

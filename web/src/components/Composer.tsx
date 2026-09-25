@@ -152,12 +152,12 @@ function recordingMimeType(): string {
 
 /**
  * Discard a recognition capture without waiting for its last phrase. Its recognizer lets go of the
- * microphone later, so the stream is released when it ends, and the next capture waits for that
+ * microphone later; the capture releases the stream then, and the next capture waits for that
  * (`RecognitionCapture.idle`) instead of starting on top of it.
  */
 function discardRecognition(capture: RecognitionCapture) {
   capture.onupdate = null;
-  capture.onstop = () => capture.stream.getTracks().forEach((track) => track.stop());
+  capture.onstop = null;
   capture.cancel();
 }
 
@@ -320,6 +320,8 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
+  /** Browser dictation landed without punctuation: the bundled model could not run in this browser. */
+  const [unpunctuated, setUnpunctuated] = useState<"loading" | "failed" | null>(null);
   const [sendFailure, setSendFailure] = useState<SendFailure>(null);
   const [recoveryUnavailable, setRecoveryUnavailable] = useState(false);
   const failure = useRef(sendFailure);
@@ -492,7 +494,7 @@ export default function Composer({
       }
       if (!preserveDraft) { failure.current = null; setSendFailure(null); }
       setRecoveryUnavailable(false); setRefusalReason("");
-      setVoiceFailure(""); images.setError("");
+      setVoiceFailure(""); setUnpunctuated(null); images.setError("");
       if (withImages) { admitting.current = true; setAdmission("sending"); }
       if (!preserveDraft) { draft.current = ""; onChange(""); }
       let accepted = false;
@@ -595,6 +597,7 @@ export default function Composer({
         setPhase("idle");
         if (finished.failure === "denied") setDenied(true);
         else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
+        if (text.trim()) setUnpunctuated(finished.unpunctuated);
         if (text.trim()) {
           const next = combineDraft(draft.current, text);
           editDraft(next);
@@ -696,6 +699,7 @@ export default function Composer({
     captureSelection.current = voice?.selection ?? "";
     focusAfterCancel.current = null;
     setVoiceFailure("");
+    setUnpunctuated(null);
     setDenied(false);
     setElapsed(0);
     cancelled.current = false;
@@ -722,7 +726,7 @@ export default function Composer({
       const used = opened;
       let active: Capture;
       if (backend === "browser") {
-        const recognition = new RecognitionCapture(opened);
+        const recognition = new RecognitionCapture(opened, { before: draft.current });
         recognition.onupdate = (text) => { if (recorder.current === recognition && !cancelled.current) setLive(combineDraft(draft.current, text)); };
         recognition.onstop = () => void finish(recognition, used);
         active = recognition;
@@ -908,6 +912,11 @@ export default function Composer({
     hintTone = "danger";
     hintRole = "alert";
     hintText = "Microphone blocked in the browser. Typing works.";
+  } else if (unpunctuated) {
+    hintRole = "status";
+    hintText = unpunctuated === "loading"
+      ? "Added without punctuation: still loading. Next time it will be ready."
+      : "Added without punctuation: this browser could not run it.";
   } else if (unavailable === "insecure") {
     hintText = "Voice needs HTTPS";
   } else if (unavailable === "unrecognized") {

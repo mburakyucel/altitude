@@ -15,7 +15,7 @@ const labels: Record<VoiceBackend, string> = {
   browser: "Browser recognition", endpoint: "Your speech service",
 };
 const explanations: Record<VoiceBackend, string> = {
-  browser: "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies.",
+  browser: "No setup in supported browsers. Words appear as you speak; English gets punctuation and capitals on this device. Your browser may send audio to its speech service; that service’s privacy policy applies.",
   endpoint: "After you stop, Altitude sends the recording to a speech-to-text service you run or choose, using the standard OpenAI transcription API. It can run on this computer, on another machine on your network, or be a hosted provider. Audio goes only to that address; its storage policy and any charges apply.",
 };
 const queryKey = ["voice-settings"];
