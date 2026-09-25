@@ -54,6 +54,15 @@ class TerminalCase(AltitudeCase):
             self.assertLess(time.monotonic(), deadline, "timed out")
             time.sleep(.02)
 
+    def gone(self, term):
+        """Wait for `term` to end: it is dropped at once, so its page's stream is what reads how it ended."""
+        self.wait(lambda: term.ended and terminal._terminals.get((term.project, term.slug)) is not term)
+        self.assertEqual(terminal.status(term.project, term.slug)["state"], "none")
+        return term
+
+    def current(self, slug=None):
+        return terminal._terminals[(self.project, slug)]
+
     def open(self, slug=None) -> str:
         """Open the terminal here and return its id."""
         return terminal.open_terminal(self.project, slug)["id"]
@@ -90,28 +99,26 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("echo secret-$((6*7)); pwd\n")
         self.assertIn(str(self.repo), self.output(until=str(self.repo) + "\r\n"))
         self.assertIn("secret-42", self.output(until="secret-42"))
+        term = self.current()
         self.type("exit 3\n")
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
-        ended = terminal.status(self.project, None)
-        self.assertEqual((ended["exit_code"], ended["reason"]), (3, "exited"))
+        self.gone(term)
+        self.assertEqual((term.exit_code, term.reason), (3, "exited"))
         rows = [row for row in S.read_project_log(self.project) if row["kind"] == "terminal"]
         self.assertEqual([row["action"] for row in rows], ["opened", "closed"])
         self.assertEqual(rows[1]["exit_code"], 3)
         self.assertNotIn("secret", json.dumps(rows))
         with self.assertRaises(terminal.TerminalError) as caught:
-            self.type("ls\n")
-        self.assertEqual(caught.exception.status, 410)
-        terminal.forget(self.project, None, opened["id"])
-        self.assertEqual(terminal.status(self.project, None)["state"], "none")
+            terminal.write(self.project, None, opened["id"], "ls\n")
+        self.assertEqual(caught.exception.status, 404)
 
     def test_task_terminal_runs_in_the_worktree_reports_the_busy_command_and_closes_it(self):
         self.turn(True)
         self.assertEqual(terminal.open_terminal(self.project, self.slug)["folder"], str(self.worktree))
         self.type("sleep 300\n", self.slug)
         self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        term = self.current(self.slug)
         terminal.close(self.project, self.slug)
-        self.wait(lambda: terminal.status(self.project, self.slug)["state"] == "exited")
-        self.assertEqual(terminal.status(self.project, self.slug)["reason"], "closed")
+        self.assertEqual(self.gone(term).reason, "closed")
         rows = [row for row in S.read_events(self.project, self.slug) if row["kind"] == "terminal"]
         self.assertEqual([(row["action"], row["folder"]) for row in rows],
                          [("opened", str(self.worktree)), ("closed", str(self.worktree))])
@@ -119,12 +126,12 @@ class TestTerminalLifecycle(TerminalCase):
     def test_finished_task_closes_its_terminal_and_refuses_a_new_one(self):
         self.turn(True)
         terminal.open_terminal(self.project, self.slug)
+        term = self.current(self.slug)
         task = S.load_task(self.project, self.slug)
         task.update(state="done", agent_id=None)
         S.save_task(self.project, task)
         terminal.sweep()
-        self.wait(lambda: terminal.status(self.project, self.slug)["state"] == "exited")
-        self.assertEqual(terminal.status(self.project, self.slug)["reason"], "task-finished")
+        self.assertEqual(self.gone(term).reason, "task-finished")
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.open_terminal(self.project, self.slug)
         self.assertEqual(str(caught.exception), "This task has no worktree to open a terminal in.")
@@ -155,6 +162,21 @@ class TestTerminalLifecycle(TerminalCase):
         self.type("stty size\n")
         self.output(until="30 100")
 
+    def test_a_resize_as_the_shell_exits_reports_it_closed(self):
+        # The walkthrough crashed altd's handler: a resize passed the running check just before the descriptor closed.
+        self.turn(True)
+        ident = self.open()
+        term = self.current()
+        with term.io:
+            fd, term.fd = term.fd, -1
+        try:
+            with self.assertRaises(terminal.TerminalError) as caught:
+                terminal.resize(self.project, None, ident, 80, 24)
+            self.assertEqual(caught.exception.status, 410)
+        finally:
+            with term.io:
+                term.fd = fd
+
     def session(self, shell_pid):
         """The processes still in a terminal's session."""
         found = []
@@ -172,12 +194,12 @@ class TestTerminalLifecycle(TerminalCase):
         self.turn(True)
         self.patch(terminal, "CLOSE_GRACE_SECONDS", .3)
         self.open()
-        shell = terminal._terminals[(self.project, None)].proc.pid
+        term = self.current()
+        shell = term.proc.pid
         self.type("trap '' HUP; nohup sleep 301 >/dev/null 2>&1 & nohup sleep 302 >/dev/null 2>&1\n")
         self.wait(lambda: terminal.status(self.project, None)["busy"] == "sleep" and len(self.session(shell)) >= 3)
         terminal.close(self.project, None)
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
-        self.assertEqual(terminal.status(self.project, None)["reason"], "closed")
+        self.assertEqual(self.gone(term).reason, "closed")
         self.wait(lambda: not self.session(shell))
 
     def test_the_shell_exiting_ends_the_terminal_and_the_process_that_left_its_session(self):
@@ -186,9 +208,9 @@ class TestTerminalLifecycle(TerminalCase):
         self.open()
         marker = "300.417"
         self.addCleanup(self._kill_marked, marker)
+        term = self.current()
         self.type(f"setsid sleep {marker} & sleep .2; exit 4\n")
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
-        self.assertEqual(terminal.status(self.project, None)["exit_code"], 4)
+        self.assertEqual(self.gone(term).exit_code, 4)
         self.wait(lambda: not self._marked(marker))
 
     def test_close_stops_a_process_that_left_its_session(self):
@@ -232,16 +254,18 @@ class TestTerminalLifecycle(TerminalCase):
                 terminal.write(self.project, None, ident, "x" * terminal.INPUT_LIMIT)
         self.assertEqual(str(caught.exception), "The terminal is not reading input. Press Ctrl+C or close it.")
         started = time.monotonic()
+        term = self.current()
         terminal.close(self.project, None)
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
+        self.gone(term)
         self.assertLess(time.monotonic() - started, 5)
 
     def test_requests_for_a_replaced_terminal_are_refused(self):
         # A review found a stale page's input, Close or stream could reach the terminal that replaced its own.
         self.turn(True)
         old = self.open()
+        term = self.current()
         self.type("exit\n")
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
+        self.gone(term)
         new = self.open()
         self.assertNotEqual(old, new)
         for call in (lambda: terminal.write(self.project, None, old, "ls\n"),
@@ -251,15 +275,15 @@ class TestTerminalLifecycle(TerminalCase):
                 call()
             self.assertEqual((caught.exception.status, str(caught.exception)), (410, "This terminal was replaced."))
         terminal.close(self.project, None, ident=old)
-        terminal.forget(self.project, None, old)
         self.assertEqual(terminal.status(self.project, None)["state"], "running")
         self.assertEqual(terminal.status(self.project, None)["id"], new)
 
     def test_turning_it_off_closes_open_terminals(self):
         self.turn(True)
         self.open()
+        term = self.current()
         terminal.close_all()
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
+        self.assertEqual(self.gone(term).reason, "closed")
 
     def test_an_open_racing_the_switch_going_off_starts_no_shell(self):
         # A review found an open that had passed the switch could register its shell after turning off closed all.
@@ -412,8 +436,9 @@ class TestTerminalHttp(TerminalCase):
         self.assertTrue(self.request("POST", "/api/terminal-access", {"enabled": True})["terminal"])
         self.request("POST", "/api/terminal-access", {"enabled": "yes"}, status=400)
         self.request("POST", f"/api/terminal/{self.project}/open", {})
+        term = self.current()
         self.assertFalse(self.request("POST", "/api/terminal-access", {"enabled": False})["terminal"])
-        self.wait(lambda: terminal.status(self.project, None)["state"] == "exited")
+        self.gone(term)
 
     def test_cross_site_pages_and_agents_are_refused(self):
         self.turn(True)
@@ -461,10 +486,34 @@ class TestTerminalHttp(TerminalCase):
         self.assertIn(b"20 90", output)
         end = json.loads(next(e for e in events if e.startswith("event: end")).split("data: ", 1)[1])
         self.assertEqual((end["state"], end["exit_code"], end["reason"]), ("exited", 5, "exited"))
-        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=410)
-        self.request("POST", f"{base}/forget", at)
+        # The ended terminal is gone: nothing more reaches it and its page learns no more than "none".
+        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=404)
         self.assertEqual(self.request("GET", f"{base}?task={self.slug}")["state"], "none")
         self.request("GET", f"{base}/stream?task={self.slug}&id={opened['id']}&offset=0", status=404)
+        self.request("POST", f"{base}/forget", at, status=404)
+
+    def test_typing_reuses_one_connection_and_other_replies_close_theirs(self):
+        # Every keystroke paid a new TCP and TLS handshake: about three round trips before its echo instead of one.
+        self.turn(True)
+        base = f"/api/terminal/{self.project}"
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        self.addCleanup(connection.close)
+        post = lambda path, body: connection.request("POST", path, json.dumps(body), {"Content-Type": "application/json"})
+        post(f"{base}/open", {})
+        response = connection.getresponse()
+        opened = json.loads(response.read())
+        self.assertEqual(response.version, 11)
+        sock = connection.sock
+        for key in "echo kept\n":
+            post(f"{base}/input", {"id": opened["id"], "data": key})
+            self.assertEqual(json.loads(connection.getresponse().read()), {"ok": True})
+            self.assertIs(connection.sock, sock)
+        self.assertEqual(self.agent.call_count, 1)  # asked once for the connection
+        self.output(until="\rkept\r\n")
+        connection.request("GET", "/api/machine")
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual((response.version, response.will_close), (10, True))
 
     def test_unknown_places_are_refused(self):
         self.turn(True)

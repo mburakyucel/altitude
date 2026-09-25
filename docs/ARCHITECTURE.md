@@ -900,13 +900,18 @@ shell, so the page can confirm before stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 /api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
-bytes, the next offset and whether older output was dropped, and `end` carries the final status. A
-reconnecting page resumes from its own offset. `GET /api/terminal/<project>?task=` returns the
-status: state (`none`, `running` or `exited`), terminal id, the altd `boot` id, the setting, folder,
-exit code, end reason and the foreground command. A page that last saw another boot shows that a
-restart ended its terminal. `POST /api/terminal/<project>/{open,input,resize,close,forget}` with
-`{task?, id, data?, cols?, rows?}` drive it; `forget` drops an ended terminal's replay once its page
-leaves. Every request after `open` names the terminal `id`, and a stream stays with the terminal it
+bytes, the next offset and whether older output was dropped, and `end` carries the final status
+(`exited`, exit code and end reason: `exited`, `closed`, `task-finished` or `project-removed`). A
+reconnecting page resumes from its own offset. An ended terminal is dropped at once: its open streams
+still read the end, and afterwards the status is `none`. `GET /api/terminal/<project>?task=` returns
+the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
+`POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
+drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
+while every other altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
+keystroke (an echo takes one network round trip), and altd sends small writes without Nagle's delay.
+The page sends input in order, one request at a time, coalescing keys typed meanwhile and splitting a
+long paste into 16 KiB pieces that never split a character; the phone Paste key pastes through
+xterm, so a shell's bracketed paste holds pasted lines until Enter. Every request after `open` names the terminal `id`, and a stream stays with the terminal it
 named, so a page still showing a replaced terminal cannot type into, resize, close or read its
 successor. Input waits up to two seconds for a program that has stopped reading it, and gives up at
 once when Close is asked for, so a full input queue never holds Close or the setting. Input that fails
@@ -919,7 +924,8 @@ itself. `Sec-Fetch-Site`, when present, must be `same-origin` or `none`. An `Ori
 request's `Host`, and POST bodies must be `application/json`. Without TLS the `Host` must also be an
 address or `localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which
 HTTPS refuses at the certificate. This stops another site open in the operator's browser from typing
-into a shell. Then `terminal.agent_connection` finds the client end of the TCP connection in
+into a shell. Then `terminal.agent_connection`, asked once per connection since a connection keeps its
+client socket, finds the client end of the TCP connection in
 `/proc/net/tcp{,6}`, in both address families since an IPv6 socket can reach an IPv4 address. A
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds

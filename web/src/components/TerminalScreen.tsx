@@ -4,9 +4,12 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { ApiError, terminalSend, terminalStatus, terminalStream } from "../data/api";
 import type { TerminalStatus } from "../data/api";
+import { useToast } from "../data/Toast";
 
 const RECONNECT_MS = 2_000;
 const RESIZE_MS = 100;
+/** The most one input request carries (altd refuses more than 64 KiB): a long paste goes in pieces, in order. */
+const INPUT_CHUNK = 16_384;
 
 const KEYS: { label: string; name: string; data: string }[] = [
   { label: "Esc", name: "Escape", data: "\x1b" },
@@ -27,24 +30,35 @@ function bytes(base64: string): Uint8Array {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }
 
+/** The next input request's text: at most `INPUT_CHUNK` code units, never splitting a surrogate pair. */
+export function inputPiece(text: string): string {
+  const cut = /[\uD800-\uDBFF]/.test(text.charAt(INPUT_CHUNK - 1)) ? INPUT_CHUNK - 1 : INPUT_CHUNK;
+  return text.slice(0, cut);
+}
+
 /**
- * One running or ended terminal on screen. It replays the server's buffer from the start, follows the
- * output stream, and after a lost connection resumes from the last offset it drew; a replaced terminal
- * or an altd restart ends it through `onEnd`. Typed input is sent in order, one request at a time, and
- * every request names terminal `id`, so nothing reaches a terminal that replaced it. Input that fails may
- * have arrived in part, so typing stops, with an alert, until the operator has checked the screen.
+ * One running terminal on screen. It writes `intro` dimmed, replays the server's buffer from the start,
+ * follows the output stream, and after a lost connection resumes from the last offset it drew; the
+ * shell's end, a replaced terminal or an altd restart ends it through `onEnd`. Typed input is sent in
+ * order, one request at a time over a kept connection, and every request names terminal `id`, so nothing
+ * reaches a terminal that replaced it. Input that fails may have arrived in part, so typing stops, with an
+ * alert, until the operator has checked the screen.
  */
-export default function TerminalScreen({ project, task, id, keys, onEnd, onReconnecting }: {
+export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, onEnd, onReconnecting }: {
   project: string;
   task?: string;
   id: string;
   keys: boolean;
+  intro: string;
+  reconnecting: boolean;
   onEnd: (status: TerminalStatus) => void;
   onReconnecting: (lost: boolean) => void;
 }) {
+  const toast = useToast();
   const host = useRef<HTMLDivElement>(null);
   const send = useRef<(data: string) => void>(() => undefined);
   const focus = useRef<() => void>(() => undefined);
+  const pasteText = useRef<(text: string) => void>(() => undefined);
   const ctrlRef = useRef(false);
   const [ctrl, setCtrl] = useState(false);
   const stopped = useRef(false);
@@ -63,6 +77,13 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host.current!);
+    term.write(`\x1b[2m${intro}\x1b[0m\r\n`);
+    // The browser keeps Ctrl+V (paste) and, with text selected, Ctrl+C (copy); without a selection Ctrl+C interrupts.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) return true;
+      const key = event.key.toLowerCase();
+      return !(key === "v" || (key === "c" && term.hasSelection()));
+    });
     let offset = 0;
     let source: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
@@ -109,13 +130,13 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
     const flush = async () => {
       if (done || sending || !pending) return;
       sending = true;
-      const data = pending;
-      pending = "";
+      const data = inputPiece(pending);
+      pending = pending.slice(data.length);
       try {
         await terminalSend(project, "input", { task, id, data });
       } catch (error) {
-        // A closed or replaced terminal reports its end on the stream.
-        if (!done && !(error instanceof ApiError && error.status === 410)) {
+        // An ended (404) or replaced (410) terminal reports its end on the stream.
+        if (!done && !(error instanceof ApiError && (error.status === 404 || error.status === 410))) {
           stopped.current = true;
           pending = "";
           setInputError(error instanceof ApiError ? error.message : "Altitude could not be reached.");
@@ -135,6 +156,8 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
       void flush();
     };
     focus.current = () => term.focus();
+    // xterm frames a paste as the shell asked (bracketed paste), so pasted lines wait for Enter.
+    pasteText.current = (text) => term.paste(text);
     const input = term.onData((data) => send.current(data));
 
     const size = () => {
@@ -158,14 +181,27 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
       input.dispose();
       term.dispose();
     };
-  }, [project, task, id]);
+  }, [project, task, id]); // eslint-disable-line react-hooks/exhaustive-deps -- the intro is drawn once
+
+  const paste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) pasteText.current(text);
+    } catch {
+      toast.show({ message: "This browser didn't allow reading the clipboard.", severity: "failure" });
+    }
+    focus.current();
+  };
 
   return <>
-    {inputError ? <div className="terminal-warning terminal-stopped" role="alert">
+    {inputError ? <div className="terminal-stopped" role="alert">
       <p>{`Typing stopped: ${inputError} Part of what you typed may not have arrived; check the screen.`}</p>
       <button type="button" className="btn" onClick={() => { stopped.current = false; setInputError(null); focus.current(); }}>Resume typing</button>
     </div> : null}
-    <div className="terminal-screen" ref={host} />
+    <div className="terminal-frame">
+      <div className="terminal-screen" ref={host} />
+      {reconnecting ? <p className="terminal-reconnecting" role="status">Reconnecting…</p> : null}
+    </div>
     {keys ? <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {[KEYS[0]!, KEYS[1]!].map((key) => <button key={key.name} type="button" aria-label={key.name}
         onPointerDown={(event) => event.preventDefault()} onClick={() => { send.current(key.data); focus.current(); }}>{key.label}</button>)}
@@ -173,6 +209,9 @@ export default function TerminalScreen({ project, task, id, keys, onEnd, onRecon
         onClick={() => { ctrlRef.current = !ctrlRef.current; setCtrl(ctrlRef.current); focus.current(); }}>Ctrl</button>
       {KEYS.slice(2).map((key) => <button key={key.name} type="button" aria-label={key.name}
         onPointerDown={(event) => event.preventDefault()} onClick={() => { send.current(key.data); focus.current(); }}>{key.label}</button>)}
+      <button type="button" aria-label="Paste" onPointerDown={(event) => event.preventDefault()} onClick={() => void paste()}>
+        <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M7 4h6v2H7zM6 5H5a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1h-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>
+      </button>
     </div> : null}
   </>;
 }

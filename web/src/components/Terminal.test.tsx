@@ -14,10 +14,10 @@ vi.mock("./TerminalScreen", () => ({
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const overview = { projects: [{ name: "demo", managed: true, counts: {} }], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } };
-const none = (enabled = true, boot = "boot-1"): TerminalStatus => ({ state: "none", boot, enabled });
-const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", boot: "boot-1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
+const none = (enabled = true): TerminalStatus => ({ state: "none", enabled });
+const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
 
-function fixture(status: TerminalStatus, answers: { open?: () => Response } = {}) {
+function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus } = {}) {
   let current = status;
   const posts: [string, unknown][] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -38,7 +38,7 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response } = {}
       }
       return json({ ok: true });
     }
-    if (url === "/api/terminal/demo") return json(current);
+    if (url === "/api/terminal/demo") return json(answers.status?.() ?? current);
     return json({ error: "not in this fixture" }, 404);
   }));
   return posts;
@@ -46,73 +46,96 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response } = {}
 
 describe("Project terminal", () => {
   it("says the terminal is off and links to Settings", async () => {
-    fixture(none(false));
+    const posts = fixture(none(false));
     renderApp({ route: "/projects/demo/terminal" });
     expect(await screen.findByText("Terminal is off")).toBeVisible();
     expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
-    expect(screen.queryByRole("button", { name: "Close terminal" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Terminal" })).queryByRole("button", { name: "Close" })).toBeNull();
+    expect(posts).toEqual([]);
   });
 
-  it("opens in the project folder, warns about main and closes back to the project", async () => {
+  it("opens when shown and closes back to the project without a notice", async () => {
     const posts = fixture(none());
     const { user, router } = renderApp({ route: "/projects/demo/terminal" });
-    expect(await screen.findByText("Open a terminal in the project folder")).toBeVisible();
-    expect(screen.getByText(/lands PRs from this folder's clean main/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Open terminal" }));
     expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
-    expect(screen.getByText("/home/fixture/demo")).toBeVisible();
     expect(posts).toContainEqual(["/api/terminal/demo/open", {}]);
-    await user.click(screen.getByRole("button", { name: "Close terminal" }));
+    expect(screen.queryByText(/clean main/)).toBeNull();
+    await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
     expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/close");
+    expect(screen.queryByText(/terminal closed|Terminal closed/)).toBeNull();
   });
 
-  it("returns to Ready when its shell was closed elsewhere", async () => {
-    const posts = fixture(running());
-    renderApp({ route: "/projects/demo/terminal" });
-    await screen.findByTestId("terminal-screen");
-    act(() => screenEnd.current!({ ...running(), state: "exited", reason: "closed", exit_code: 129 }));
-    expect(await screen.findByText("Open a terminal in the project folder")).toBeVisible();
-    expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/forget");
+  it("leaves silently after a clean exit and names a failing exit code", async () => {
+    for (const [code, notice] of [[0, null], [2, "Terminal closed · exit code 2"]] as const) {
+      fixture(running());
+      const { router, unmount } = renderApp({ route: "/projects/demo/terminal" });
+      await screen.findByTestId("terminal-screen");
+      act(() => screenEnd.current!({ ...running(), state: "exited", reason: "exited", exit_code: code }));
+      await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+      if (notice) expect(await screen.findByText(notice)).toBeVisible();
+      else expect(screen.queryByText(/Terminal closed/)).toBeNull();
+      unmount();
+    }
+  });
+
+  it("says when the terminal ended elsewhere or out of reach", async () => {
+    for (const [ended, notice] of [
+      [{ ...running(), state: "exited", reason: "closed", exit_code: 129 }, "The terminal was closed elsewhere."],
+      [{ ...running(), state: "exited", reason: "project-removed", exit_code: 129 }, "The project is no longer managed, so its terminal closed."],
+      [none(), "The terminal closed while the connection was lost."],
+    ] as const) {
+      const posts = fixture(running());
+      const { router, unmount } = renderApp({ route: "/projects/demo/terminal" });
+      await screen.findByTestId("terminal-screen");
+      act(() => screenEnd.current!(ended));
+      await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+      expect(await screen.findByText(notice)).toBeVisible();
+      expect(posts.map(([url]) => url)).not.toContain("/api/terminal/demo/open");
+      unmount();
+    }
+  });
+
+  it("leaves when a later status or the open answer says the shell ended", async () => {
+    for (const [later, notice] of [
+      [none(), "The terminal closed while the connection was lost."],
+      [{ ...running(), id: "t2" }, "The terminal was closed elsewhere."],
+    ] as const) {
+      let answer: TerminalStatus = running();
+      const posts = fixture(running(), { status: () => answer });
+      const { router, queryClient, unmount } = renderApp({ route: "/projects/demo/terminal" });
+      expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
+      answer = later;
+      await act(() => queryClient.refetchQueries({ queryKey: ["terminal", "demo", null] }));
+      await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+      expect(await screen.findByText(notice)).toBeVisible();
+      expect(screen.queryByText("t2")).toBeNull();
+      expect(posts.map(([url]) => url)).not.toContain("/api/terminal/demo/open");
+      unmount();
+    }
+    fixture(none(), { open: () => json({ ...running(), state: "exited", reason: "exited", exit_code: 1 }) });
+    const { router } = renderApp({ route: "/projects/demo/terminal" });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));
+    expect(await screen.findByText("Terminal closed · exit code 1")).toBeVisible();
   });
 
   it("asks before closing a running command", async () => {
     const posts = fixture(running("pnpm"));
     const { user } = renderApp({ route: "/projects/demo/terminal" });
-    await user.click(await screen.findByRole("button", { name: "Close terminal" }));
+    await user.click(await within(await screen.findByRole("region", { name: "Terminal" })).findByRole("button", { name: "Close" }));
     expect(await screen.findByText("pnpm is still running and will be stopped.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Close the terminal?")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Close terminal" }));
+    await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Close" }));
     const confirm = (await screen.findByText("Close the terminal?")).parentElement!;
     await user.click(within(confirm).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/close"));
-  });
-
-  it("keeps the last output after the shell exits and opens a new one", async () => {
-    const posts = fixture(running());
-    const { user } = renderApp({ route: "/projects/demo/terminal" });
-    await screen.findByTestId("terminal-screen");
-    act(() => screenEnd.current!({ ...running(), state: "exited", reason: "exited", exit_code: 0 }));
-    expect(await screen.findByText("Terminal closed · exit code 0")).toBeVisible();
-    expect(screen.getByTestId("terminal-screen")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Open a new terminal" }));
-    await waitFor(() => expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/open"));
-  });
-
-  it("says a restart ended the terminal this page had open", async () => {
-    sessionStorage.setItem("altitude.terminal.boot:demo:", "boot-0");
-    fixture(none(true, "boot-1"));
-    renderApp({ route: "/projects/demo/terminal" });
-    expect(await screen.findByText(/Altitude restarted, which ends open terminals/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open a new terminal" })).toBeVisible();
   });
 
   it("explains a terminal that could not start and retries", async () => {
     let attempts = 0;
     const posts = fixture(none(), { open: () => (++attempts === 1 ? json({ error: "The folder is missing." }, 409) : json(running())) });
     const { user } = renderApp({ route: "/projects/demo/terminal" });
-    await user.click(await screen.findByRole("button", { name: "Open terminal" }));
     expect(await screen.findByText("Couldn't open a terminal")).toBeVisible();
     expect(screen.getByText("The folder is missing.")).toBeVisible();
     await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Retry" }));

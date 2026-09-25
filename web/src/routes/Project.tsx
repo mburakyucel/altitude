@@ -438,7 +438,7 @@ export default function ProjectPage() {
 
   if (phone && terminalRoute) {
     return <div className="terminal-page">
-      <Terminal key={name} project={name} keys closeLabel="Close" onClosed={leaveTerminal} head={(close) => <header className="phone-header">
+      <Terminal key={name} project={name} keys onLeave={leaveTerminal} head={(close) => <header className="phone-header">
         <button type="button" className="icon-btn" aria-label="Back" onClick={leaveTerminal}>
           <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
             <path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -453,7 +453,7 @@ export default function ProjectPage() {
   }
 
   const panel = terminalRoute
-    ? <Terminal key={name} project={name} keys={false} onClosed={() => navigate(home, { replace: true })}
+    ? <Terminal key={name} project={name} keys={false} onLeave={() => void navigate(home, { replace: true })}
       head={(close) => <header className="live-head"><h2 className="live-title">Terminal</h2>{close}</header>} />
     : <WorkPanel name={name} project={project} />;
   const conversation = <Conversation key={name} name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;

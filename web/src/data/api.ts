@@ -683,15 +683,14 @@ export async function saveTerminalAccess(enabled: boolean): Promise<Machine> {
 // ---- the operator's terminal -----------------------------------------------------------
 
 /**
- * One terminal per task worktree or project folder (server `terminal.view`). `boot` names the altd
- * process holding it, so a page that saw another boot knows a restart ended its terminal. `offset` is
- * the absolute output position the replay reaches; `id` tells one terminal from its replacement; `busy` names a foreground command Close would stop.
+ * One terminal per task worktree or project folder (server `terminal.view`): `none` or `running`, and
+ * `exited` only in a stream's end event. `offset` is the absolute output position the replay reaches;
+ * `id` tells one terminal from its replacement; `busy` names a foreground command Close would stop.
  */
 export const TerminalStatusSchema = z
   .object({
     state: z.string(),
     id: z.string().nullish(),
-    boot: z.string(),
     enabled: z.boolean(),
     folder: z.string().nullish(),
     offset: z.number().nullish(),
@@ -710,15 +709,16 @@ export async function terminalStatus(project: string, task?: string): Promise<Te
 }
 
 export function useTerminalStatus(project: string, task?: string) {
-  return useQuery({ queryKey: ["terminal", project, task ?? null], queryFn: () => terminalStatus(project, task), refetchOnWindowFocus: false });
+  // A refusal is the server's answer: it shows at once, with Retry.
+  return useQuery({ queryKey: ["terminal", project, task ?? null], queryFn: () => terminalStatus(project, task), refetchOnWindowFocus: false, retry: false });
 }
 
 export async function terminalOpen(project: string, task?: string): Promise<TerminalStatus> {
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize, close and forget for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
-export function terminalSend(project: string, action: "input" | "resize" | "close" | "forget", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
+/** Input, resize and close for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
+export function terminalSend(project: string, action: "input" | "resize" | "close", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
 

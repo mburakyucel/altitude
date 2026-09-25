@@ -939,33 +939,39 @@ session. The project header's **Terminal** shows the project folder's terminal i
 (overlay below the inline width) and presses again to hide it; on phone it opens full screen with
 Back, a "Terminal · <project> · project folder" title and **Close**.
 
-Anatomy, top to bottom: a header (desktop: the switch or "Terminal" title with **Close terminal** at
-its right; phone task tab: **Close** at the right of the folder line); "Task worktree · runs as you on
-this computer" or "Project folder · …"; the folder path on one line, losing its start when long;
-an amber note — task: "This is the L2's worktree. Files you change here become part of its work and
-its PR."; project: "Altitude lands PRs from this folder's clean main. Make code changes in a task, not
-here."; any notice; the dark screen filling the rest; on phone a key row of Esc, Tab, a sticky Ctrl
-(pressed state) and the four arrows, each an equal-width 44px target. The terminal keeps running
-when the page leaves; returning replays up to 256 KB. Leaving an ended terminal drops its replay.
+Anatomy, top to bottom: the view's own header and nothing else above the screen — desktop task: the
+switch with a bordered **Close** at its right; desktop project: "Terminal" and **Close**; phone task:
+the tab row, whose active Terminal tab carries a × (**Close terminal**); phone project: Back, the
+title and **Close**. Then any notice and the dark screen filling the rest (edge to edge on phone),
+whose first line, dimmed, says "Runs as you in <folder>"; on phone a key row of Esc, Tab, a sticky
+Ctrl (pressed state), the four arrows and **Paste** (reads the clipboard), each an equal-width 44px
+target. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
+terminal keeps running when the page leaves; returning replays up to 256 KB. When the shell ends,
+however it ends, the view returns to where the operator was — Live session on a task, the project for
+the project terminal — and keeps no output; the next visit opens a fresh shell.
+
+On desktop, Ctrl+V (Cmd+V) pastes and Ctrl+C with text selected copies (Cmd+C on a Mac); without a
+selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the panel is an overlay.
 
 | State | What appears and what actions do |
 | --- | --- |
-| Off | "Terminal is off", what it does, **Open Settings** (returns here with Back). |
-| Ready | "Open a terminal in this task's worktree" or "… in the project folder", that it runs as the operator and nothing typed reaches the agents; primary **Open terminal**. |
+| Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
-| Running | The screen with the cursor focused; **Close terminal** / **Close**; the phone key row. |
+| Running | The screen with the cursor focused; **Close** / ×; the phone key row. |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
-| Reconnecting | A grey note: "Connection lost · reconnecting. The shell keeps running; missed output appears when you're back." It disappears when output resumes. |
+| Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size; it disappears when output resumes and missed output appears. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
 | Close with a running command | "Close the terminal?" card naming the command that will be stopped, **Close** (primary) and **Cancel**. Close without a running command acts at once. |
-| Closed by the operator | Desktop and phone project views return to the project; the task view returns to Ready. |
-| Shell exited | "Terminal closed · exit code N", "The last output stays readable until you leave.", **Open a new terminal**; the screen keeps its output; Close and the key row disappear. |
-| Task finished | "Terminal closed" — "This task finished and its worktree was removed, so its terminal ended." No action. |
-| Altitude restarted | "Terminal closed" — "Altitude restarted, which ends open terminals. Open a new one to continue." **Open a new terminal**. |
-| Could not start or refused | "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**. |
+| Closed by the operator, or clean exit | The view returns; no notice. |
+| Exit with a failure code | The view returns; toast "Terminal closed · exit code N". |
+| Closed elsewhere (another tab or device, or the setting turned off) | The view returns; toast "The terminal was closed elsewhere." |
+| Task finished / project unmanaged | The view returns; toast "The task finished, so its terminal closed." / "The project is no longer managed, so its terminal closed." The task's Terminal tab disappears. |
+| Ended while disconnected (an Altitude restart) | The view returns; toast "The terminal closed while the connection was lost." |
+| Could not read, start or refused | "Couldn't read the terminal" or "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**, shown at once. |
 
-Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 walks every state above against real
-shells, with the agent check and the restart notice as fixtures.
+Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as
+an overlay) walks every state above against real shells, plus tab completion, copy and paste, with
+the agent check and the restart notice as fixtures.
 
 ### 3.11 Project switcher (phone)
 

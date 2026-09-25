@@ -1319,6 +1319,12 @@ TLS_HANDSHAKE_SECONDS = 10
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "altd/0.1"
+    # Small writes (a terminal's echo, a stream's event) leave at once instead of waiting for the last ACK.
+    disable_nagle_algorithm = True
+    #: Terminal replies keep their connection for the next keystroke; every other reply closes it.
+    _keep_open = False
+    #: Whether this connection's client is one of Altitude's own agents, once a terminal request has asked.
+    _agent: bool | None = None
 
     _seen_clients: set = set()
 
@@ -1357,6 +1363,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, default=str).encode()
+        if self._keep_open:  # an HTTP/1.1 reply with its length keeps the connection in every browser
+            self.protocol_version = "HTTP/1.1"
         try:
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1365,10 +1373,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(body)
+            if self._keep_open:
+                self.close_connection = False
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as exc:
             # Error replies run inside exception handlers, outside the route's disconnect catcher.
             self.close_connection = True
             log(f"{self.command} {self.path}: client went away ({type(exc).__name__}: {exc})")
+        finally:
+            if self._keep_open:  # the connection's next request is read and answered as HTTP/1.0 again
+                del self.protocol_version
+                self._keep_open = False
 
     def _file(self, path: Path, ctype: str | None = None) -> None:
         if not path.exists():
@@ -1611,7 +1625,10 @@ class Handler(BaseHTTPRequestHandler):
                 ipaddress.ip_address(host)
             except ValueError:
                 return "Over plain HTTP, open the terminal at Altitude's address or localhost."
-        if terminal.agent_connection(self.client_address, self.connection.getsockname()):
+        # One connection keeps one client socket, so its first terminal request decides for the rest.
+        if self._agent is None:
+            self._agent = terminal.agent_connection(self.client_address, self.connection.getsockname())
+        if self._agent:
             return "Terminal requests from Altitude's own agents are refused."
         return None
 
@@ -1666,6 +1683,9 @@ class Handler(BaseHTTPRequestHandler):
         denied = self._terminal_denied(json_body=True)
         if denied:
             return self._json({"error": denied}, 403)
+        # Typing sends one request per keystroke or burst: a fresh TCP and TLS handshake for each would put two
+        # more round trips before every echo.
+        self._keep_open = True
         if parts == ["api", "terminal-access"]:
             if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
                 return self._json({"error": "Choose on or off."}, 400)
@@ -1676,7 +1696,7 @@ class Handler(BaseHTTPRequestHandler):
             if not body["enabled"]:
                 terminal.close_all()
             return self._json(view)
-        if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close", "forget"):
+        if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close"):
             return self._json({"error": "unknown api"}, 404)
         project, action, slug, ident = unquote(parts[2]), parts[3], body.get("task"), body.get("id")
         if slug is not None and not isinstance(slug, str):
@@ -1690,10 +1710,8 @@ class Handler(BaseHTTPRequestHandler):
                 terminal.write(project, slug, ident, body.get("data"))
             elif action == "resize":
                 terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
-            elif action == "close":
-                terminal.close(project, slug, ident=ident)
             else:
-                terminal.forget(project, slug, ident)
+                terminal.close(project, slug, ident=ident)
             return self._json({"ok": True})
         except terminal.TerminalError as exc:
             return self._json({"error": str(exc)}, exc.status)
