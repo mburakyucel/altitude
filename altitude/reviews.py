@@ -26,14 +26,16 @@ def _owner(task, actor, expected_attempt=None, *, required=False):
 
 
 def _eligible(task, subject="changes"):
-    if (task.get("fault") or task.get("stop_id") or task.get("planned_wait")
-            or subject == "changes" and T.open_questions(task)):
+    if task.get("fault") or task.get("stop_id") or task.get("planned_wait"):
         return "Continue or settle the task before requesting review."
+    # The held PR's merge question stays open through its review; any other answer can still change the code.
+    if subject == "changes" and any(q["status"] == "open" and not T.asks_merge(task, q) for q in task.get("questions", [])):
+        return "Settle the open question before requesting changes review; only the held PR's merge question can stay open."
     if task.get("state") == "reported":
         report = S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json")
         if not T.reported_continuable(task, report):
             return "This task has no open delivery to review."
-    elif task.get("state") != "running" and not (subject == "proposal" and task.get("state") == "blocked" and T.open_questions(task)):
+    elif task.get("state") != "running" and not (task.get("state") == "blocked" and T.open_questions(task)):
         return "Review is available when the task owner is running."
     if not task.get("worktree") or not task.get("l2_engine"):
         return "The owner's worktree and engine must be known before review."
