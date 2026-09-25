@@ -66,29 +66,44 @@ class TestL2Steering(AltitudeCase):
         self.assertEqual(stopped["steering"]["state"], "stopped")
         return stopped
 
-    def test_poll_crossing_archive_is_not_a_failed_request(self):
-        task = T.new(self.project, "Archive while polling", "Keep the archived conversation readable.")
-        slug = task["slug"]
-        live_status = S.status_path(self.project, slug)
-        status_path = S.status_path
+    def archive_during_live_status_read(self, slug):
+        """Reject and archive the task after a reader resolved its live folder but before it reads status."""
+        live_status = S.tasks_dir(self.project) / slug / "status.json"
+        read_json = S.read_json
         archived = []
 
-        def resolve(project, requested_slug):
-            path = status_path(project, requested_slug)
+        def read(path, *args, **kwargs):
             if path == live_status and not archived:
                 archived.append(True)
-                T.reject(project, requested_slug, "The operator ended this task.")
-            return path
+                T.reject(self.project, slug, "The operator ended this task.")
+            return read_json(path, *args, **kwargs)
 
-        with mock.patch.object(S, "status_path", side_effect=resolve), mock.patch.object(server, "log") as log:
-            missing = self.request(f"/api/task/{self.project}/{slug}", status=404)
-            self.assertEqual(missing, {"error": "Task is not available."})
+        return mock.patch.object(S, "read_json", side_effect=read), archived
+
+    def test_poll_crossing_archive_reads_the_archived_task(self):
+        task = T.new(self.project, "Archive while polling", "Keep the archived conversation readable.")
+        crossing, archived = self.archive_during_live_status_read(task["slug"])
+        with crossing, mock.patch.object(server, "log") as log:
+            settled = self.view(task)
             self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
         self.assertEqual(archived, [True])
-        settled = self.view(task)
         self.assertEqual(settled["state"], "rejected")
         self.assertEqual(settled["files"]["request"].strip(), "Keep the archived conversation readable.")
         self.assertTrue(any(event.get("reason") == "The operator ended this task." for event in settled["events"]))
+
+    def test_action_response_crossing_archive_returns_the_archived_state(self):
+        task = T.new(self.project, "Archive while responding", "Report the archived state.")
+        crossing, archived = self.archive_during_live_status_read(task["slug"])
+        # The action's own daemon runner finishes the archive while the response reads the task.
+        with mock.patch.object(server, "request_daemon_task_operation", return_value={"queued": True}) as operation, \
+                crossing, mock.patch.object(server, "log") as log:
+            result = self.action(task, "reject", reason="The fixture exercise is complete.")
+            self.assertFalse(any("Traceback" in str(call) for call in log.call_args_list))
+        operation.assert_called_once_with(self.project, task["slug"], "reject", "The fixture exercise is complete.",
+                                          actor=config.OPERATOR_ACTOR)
+        self.assertEqual(archived, [True])
+        self.assertEqual(result, {"ok": True, "state": "rejected"})
+        self.assertTrue(S.task_dir(self.project, task["slug"]).is_relative_to(S.archive_dir(self.project)))
 
     def test_text_submission_identity_reaches_receipt_conversation_and_inbox(self):
         task = T.new(self.project, "Message identity", "Keep each accepted send visible once.")
