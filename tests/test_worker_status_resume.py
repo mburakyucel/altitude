@@ -3,7 +3,7 @@ import subprocess
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import config, dispatch, engines, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 class TestWorkerStatusResume(AltitudeCase):
@@ -45,7 +45,7 @@ class TestWorkerStatusResume(AltitudeCase):
         late = []
 
         def systemctl(cmd, **kwargs):
-            if cmd[0] != engines.SYSTEMCTL_BIN:
+            if cmd[0] != platform.SYSTEMCTL:
                 return real_run(cmd, **kwargs)
             if cmd[2] == "stop":
                 stops.append(cmd[-1])

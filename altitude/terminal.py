@@ -28,7 +28,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, state as S
+from . import config, platform, state as S
 
 REPLAY_BYTES = 256 * 1024
 READ_BYTES = 65536
@@ -39,8 +39,6 @@ WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
 #: The environment variable every process a terminal starts inherits, so its end finds those that left its session.
 MARK = "ALTITUDE_TERMINAL"
-#: Where process and socket facts are read; tests point these at fixture trees.
-PROC = Path("/proc")
 #: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
 #: machine commands, restarts).
 ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
@@ -246,10 +244,7 @@ def _busy(term: Terminal) -> str | None:
             return None
     if group in (term.proc.pid, -1):
         return None
-    try:
-        return (PROC / str(group) / "comm").read_text().strip() or "A command"
-    except OSError:
-        return "A command"
+    return platform.process_name(group) or "A command"
 
 
 def write(project: str, slug: str | None, ident, data: str) -> None:
@@ -314,24 +309,8 @@ def close(project: str, slug: str | None, reason: str = "closed", ident=None) ->
 def _stop_session(term: Terminal, sig: int) -> None:
     """Signal every process the terminal started: those in its session (the shell, its foreground command
     and its jobs, including those that ignore a hang-up) and those that left it (`setsid`, daemons) but
-    still carry its mark. Each process is held by a pidfd before it is checked, so a pid reused by an
-    unrelated process in between is never signalled."""
-    session, mark = term.proc.pid, f"{MARK}={term.id}".encode()
-    for entry in PROC.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            handle = os.pidfd_open(int(entry.name))
-        except OSError:  # it has exited
-            continue
-        try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            if int(fields[3]) == session or mark in (entry / "environ").read_bytes().split(b"\0"):
-                signal.pidfd_send_signal(handle, sig)
-        except (OSError, IndexError, ValueError):
-            pass
-        finally:
-            os.close(handle)
+    still carry its mark."""
+    platform.signal_session(term.proc.pid, f"{MARK}={term.id}".encode(), sig)
 
 
 def sweep() -> None:
@@ -377,14 +356,6 @@ def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bo
 # --- Refusing Altitude's own agents -------------------------------------------------------------------
 
 
-def _hex_address(address: str, port: int) -> tuple[str, str]:
-    """An address as /proc/net/tcp{,6} spells it: host-order 32-bit words in hex, then the port."""
-    ip = ipaddress.ip_address(address)
-    packed = ip.packed
-    words = struct.unpack(f"{len(packed) // 4}I", packed)
-    return "".join(f"{word:08X}" for word in words) + f":{port:04X}", "6" if ip.version == 6 else ""
-
-
 def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     """An address with an IPv4-mapped IPv6 form reduced to its IPv4 address."""
     ip = ipaddress.ip_address(text.split("%", 1)[0])
@@ -397,21 +368,6 @@ def _spellings(ip) -> list[str]:
     return [str(ip), f"::ffff:{ip}"] if ip.version == 4 else [str(ip)]
 
 
-def _socket_inode(peer: tuple, local: tuple) -> int | None:
-    """The inode of the client end of this connection, when that end lives in this host's network namespace."""
-    for client in _spellings(_address(peer[0])):
-        want, family = _hex_address(client, peer[1])
-        for server_ in _spellings(_address(local[0])):
-            ours, server_family = _hex_address(server_, local[1])
-            if server_family != family:
-                continue
-            for line in (PROC / "net" / f"tcp{family}").read_text().splitlines()[1:]:
-                cols = line.split()
-                if len(cols) > 9 and cols[1] == want and cols[2] == ours:
-                    return int(cols[9])
-    return None
-
-
 def _this_host(ip) -> bool:
     """Whether the address belongs to this host: only a local address can be bound."""
     with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -422,25 +378,12 @@ def _this_host(ip) -> bool:
     return True
 
 
-def _processes() -> tuple[set[int], set[int]]:
-    """(every process whose parent and unit could be read, the Altitude ones among them): altd, its
-    descendants (L3 turns, terminal shells) and every process in an Altitude service unit."""
-    parents: dict[int, int] = {}
-    owned: set[int] = set()
-    for entry in PROC.iterdir():
-        if not entry.name.isdigit():
-            continue
-        pid = int(entry.name)
-        try:
-            stat = (entry / "stat").read_text()
-            cgroup = (entry / "cgroup").read_text()
-        except OSError:  # the process exited while being read: it cannot vouch for a connection
-            continue
-        parents[pid] = int(stat.rsplit(")", 1)[1].split()[1])
-        if any(ALTITUDE_UNIT.fullmatch(part) for line in cgroup.splitlines() for part in line.split("/")):
-            owned.add(pid)
+def _owned(table: dict[int, tuple[int, list[str]]]) -> set[int]:
+    """The Altitude processes: altd, its descendants (L3 turns, terminal shells) and every process in an
+    Altitude service unit."""
+    owned = {pid for pid, (_, groups) in table.items() if any(ALTITUDE_UNIT.fullmatch(part) for part in groups)}
     children: dict[int, list[int]] = {}
-    for pid, parent in parents.items():
+    for pid, (parent, _) in table.items():
         children.setdefault(parent, []).append(pid)
     frontier = [os.getpid()]
     descendants = {os.getpid()}
@@ -449,23 +392,7 @@ def _processes() -> tuple[set[int], set[int]]:
             if child not in descendants:
                 descendants.add(child)
                 frontier.append(child)
-    owned |= descendants
-    return set(parents), owned
-
-
-def _holds(pid: int, target: str) -> bool:
-    """Whether the process visibly holds the socket. Unreadable descriptors (another user's process, or
-    one made undumpable) prove nothing either way."""
-    try:
-        for fd in (PROC / str(pid) / "fd").iterdir():
-            try:
-                if os.readlink(fd) == target:
-                    return True
-            except OSError:
-                continue
-    except OSError:
-        return False
-    return False
+    return owned | descendants
 
 
 def agent_connection(peer: tuple, local: tuple) -> bool:
@@ -478,15 +405,15 @@ def agent_connection(peer: tuple, local: tuple) -> bool:
     hides its descriptors is refused.
     Limits: a process an agent starts outside these units, through the user service manager or a scheduler,
     is not recognised, and a worker whose engine runs without an OS sandbox can already change the
-    operator's files directly. Reading this host's process table is Linux-specific."""
+    operator's files directly. The process and socket facts come from the platform seam."""
     try:
-        inode = _socket_inode(peer, local)
-        if inode is None:
+        target = platform.client_socket(_spellings(_address(peer[0])), peer[1], _spellings(_address(local[0])), local[1])
+        if target is None:
             return _this_host(_address(peer[0]))
-        target = f"socket:[{inode}]"
-        readable, owned = _processes()
-        if any(_holds(pid, target) for pid in owned):
+        table = platform.process_table()
+        owned = _owned(table)
+        if any(platform.holds(pid, target) for pid in owned):
             return True
-        return not any(_holds(pid, target) for pid in readable - owned)
+        return not any(platform.holds(pid, target) for pid in set(table) - owned)
     except (OSError, ValueError):
         return True

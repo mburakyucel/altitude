@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, engines, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 class TestModels(AltitudeCase):
@@ -61,7 +61,7 @@ class TestSessionModel(AltitudeCase):
         S.write_json(paths["record"], {"started_at": self.started, "codex_home": str(self.home)})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thread-1"}\n')
         self.rollout.write_text(self.context())
-        with mock.patch.object(engines, "_unit_active", return_value=True):
+        with mock.patch.object(platform, "job_active", return_value=True):
             self.assertEqual(dispatch.poll(self.project), [])
             self.rollout.unlink()
             row = engines.codex_worker("worker-1", job_root=paths["record"].parent)
@@ -93,7 +93,7 @@ print(json.dumps({"type":"turn.completed", "usage":{"input_tokens":7}}), flush=T
             observations.append(metadata)
             self.rollout.with_suffix(".observed").touch()
 
-        with mock.patch.object(engines, "_codex_service_command",
+        with mock.patch.object(platform, "job_command",
                                return_value=[sys.executable, "-c", script, str(self.rollout)]):
             result = engines.codex_exec("one prompt", cwd=self.tmp, timeout=5,
                                        extra_env={"CODEX_HOME": str(self.home)},

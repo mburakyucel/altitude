@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import engines, server
+from altitude import engines, platform, server
 
 
 class TestServiceEvidence(AltitudeCase):
@@ -32,7 +32,7 @@ class TestServiceEvidence(AltitudeCase):
         with mock.patch.object(engines.subprocess, "run", return_value=completed) as run:
             record = engines.service_status(unit)
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0][:4], [engines.SYSTEMCTL_BIN, "--user", "show", unit])
+        self.assertEqual(run.call_args.args[0][:4], [platform.SYSTEMCTL, "--user", "show", unit])
         return record
 
     def test_worker_termination_distinguishes_exit_signal_and_native_oom_result(self):
@@ -253,7 +253,7 @@ class TestServiceEvidence(AltitudeCase):
             record = request({"kind": "service", "unit": "altitude.service", "properties": ["Environment"],
                               "args": ["restart", "foreign.service"], "path": "/SECRET"})
             command = run.call_args.args[0]
-            self.assertEqual(command[:4], [engines.SYSTEMCTL_BIN, "--user", "show", "altitude.service"])
+            self.assertEqual(command[:4], [platform.SYSTEMCTL, "--user", "show", "altitude.service"])
             self.assertNotIn("restart", command)
             self.assertEqual(record["loaded_tls_environment"]["ALTITUDE_TLS_DIR"], "/fictional/TLS identity=one")
             self.assertNotIn("TOKEN", json.dumps(record))
@@ -274,7 +274,7 @@ class TestServiceEvidence(AltitudeCase):
             self.assertEqual(worker["exec_main_status"], "9")
             self.assertEqual(worker["memory_peak"], "4194304")
             self.assertNotIn("SECRET", json.dumps(worker))
-            self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "show",
+            self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "show",
                 "altitude-worker-fixture.service", *["--property=" + name for name in (
                     "ActiveState", "SubState", "MainPID", "ActiveEnterTimestamp", "LoadState",
                     "InvocationID", "ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic",

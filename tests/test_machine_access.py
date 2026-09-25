@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from tests.support import AltitudeCase, make_repo
-from altitude import config, dispatch, engines, server, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 SHIM = r'''#!/usr/bin/env python3
 """systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
@@ -37,7 +37,7 @@ class TestMachineAccess(AltitudeCase):
         shim.parent.mkdir(exist_ok=True)
         shim.write_text(SHIM)
         shim.chmod(0o755)
-        self.patch(engines, "SYSTEMD_RUN_BIN", str(shim))
+        self.patch(platform, "SYSTEMD_RUN", str(shim))
         self.at = "2026-09-16T06:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
         self.patch(T, "_conversation_time", side_effect=lambda: self.at)
@@ -196,7 +196,7 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual([(r["n"], r["exit"], r["error"]) for r in rows], [(n, 0, None) for n in (1, 2, 3)])
 
     def test_a_unit_without_an_exit_status_is_never_a_success(self):
-        self.patch(engines, "SYSTEMD_RUN_BIN", str(self.tmp / "bin" / "missing"))
+        self.patch(platform, "SYSTEMD_RUN", str(self.tmp / "bin" / "missing"))
         result = engines.machine_command("true", cwd=self.worktree, log=self.tmp / "machine.log", unit=self.unit(1),
                                          identity=dispatch.l2_env(self.project, self.slug, 1))
         self.assertEqual((result["exit"], result["timed_out"]), (None, False))
@@ -277,7 +277,7 @@ class TestMachineAccess(AltitudeCase):
 
     def test_transient_unit_keeps_the_bus_the_limit_the_owner_identity_and_its_own_record(self):
         env = engines.codex_env(dispatch.l2_env(self.project, self.slug, 1), retain_user_bus=True)
-        argv = engines._machine_service_command("altitude-machine-x-1.service", "systemctl --user daemon-reload",
+        argv = platform.logged_job_command("altitude-machine-x-1.service", "systemctl --user daemon-reload",
                                                 log=self.tmp / "machine.log", status=self.tmp / "unit.exit",
                                                 env=env, timeout=config.MACHINE_COMMAND_TIMEOUT)
         self.assertEqual(argv[:3], [str(self.tmp / "bin" / "systemd-run"), "--user", "--wait"])
@@ -287,7 +287,7 @@ class TestMachineAccess(AltitudeCase):
                          f"--property=StandardError=append:{self.tmp / 'machine.log'}"):
             self.assertIn(expected, argv)
         scrub = argv[argv.index("--") + 1:]
-        self.assertEqual(scrub[:2], [engines.ENV_BIN, "-i"])
+        self.assertEqual(scrub[:2], [platform.ENV_BIN, "-i"])
         self.assertIn(f"DBUS_SESSION_BUS_ADDRESS={env['DBUS_SESSION_BUS_ADDRESS']}", scrub)
         self.assertIn(f"XDG_RUNTIME_DIR={env['XDG_RUNTIME_DIR']}", scrub)
         self.assertIn("ALTITUDE_ACTOR=l2", scrub)

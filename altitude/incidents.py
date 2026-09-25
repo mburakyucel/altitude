@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import config, engines, state as S, tasks as T
+from . import config, engines, platform, state as S, tasks as T
 
 STATUSES = ("open", "watch", "closed")
 ISSUE_LABEL = "incident"
@@ -154,7 +154,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
-                           evidence=f"monitor/faults.json key {key}; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
+                           evidence=f"monitor/faults.json key {key}; {platform.job_logs_hint('altitude')}", cause="not yet analysed — a system fault, not a task fault",
                            tags=["system-fault", kind], actor="altd")
         rec["incident"] = inc["id"]
         faults[key] = rec

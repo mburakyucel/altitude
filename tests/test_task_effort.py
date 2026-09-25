@@ -8,7 +8,7 @@ from tests.support import ALT, AltitudeCase
 from tests.test_codex_door import FakeProcess
 from tests.test_engine_raw_capture import FakeProcess as PrintProcess
 from tests.test_engines import _Process as ClaudeWorker
-from altitude import config, dispatch, engines, incidents, route, state as S, status, tasks as T
+from altitude import config, dispatch, engines, incidents, platform, route, state as S, status, tasks as T
 
 
 def set_effort(project, value):
@@ -169,7 +169,7 @@ class TestTaskEffort(AltitudeCase):
             return proc
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch, \
              mock.patch.object(engines, "_git_dirs", return_value=[]), \
-             mock.patch.object(engines, "_unit_active", return_value=False):
+             mock.patch.object(platform, "job_active", return_value=False):
             dispatch.run(self.project, task["slug"])
             finished = dispatch.poll(self.project)
         self.assertEqual(len(native_launches), 1)
@@ -196,7 +196,7 @@ class TestTaskEffort(AltitudeCase):
 class TestEffortCommand(AltitudeCase):
     def test_claude_worker_fresh_and_resume_honor_effort_without_inherited_override(self):
         self.quiet_engines()
-        self.patch(engines, "_unit_active", return_value=False)
+        self.patch(platform, "job_active", return_value=False)
         self.patch(engines, "_codex_processes", {})
         self.setenv("CLAUDE_CODE_EFFORT_LEVEL", "low")
         for resume in (False, True):
@@ -248,7 +248,7 @@ class TestEffortCommand(AltitudeCase):
                         return FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation")
                     with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
                          mock.patch.object(engines, "_git_dirs", return_value=[]), \
-                         mock.patch.object(engines, "_unit_active", return_value=False):
+                         mock.patch.object(platform, "job_active", return_value=False):
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
                                       job_root=self.tmp / "jobs")
