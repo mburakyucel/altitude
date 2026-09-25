@@ -63,11 +63,17 @@ is the initial target; clean-machine and provider acceptance remain pending. You
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
-1. Obtain a trusted preview installer, archive and checksum from the maintainer. There is no public
-   release yet.
-2. Follow the [installation steps](docs/SETUP.md#install-the-application) and run `alt doctor`.
-   The archive includes the CLI, daemon and web app; installation enables a per-user service and
-   saves its tool PATH.
+1. Install the latest release as the account that will use Altitude:
+
+   ```sh
+   curl -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+   ```
+
+   The script checks the machine, runs nothing it downloads unless it matches the release's
+   checksums and prints the next steps. The [installation steps](docs/SETUP.md#install-the-application)
+   show how to verify it first. On macOS it stops before installing: the native runtime is not delivered yet.
+2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
+   web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device), open the printed
    HTTPS URL and use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
@@ -80,8 +86,8 @@ unattended installation is not yet validated.
 ```text
 Help me install Altitude using https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md
 and the instructions shipped with the selected version. Check prerequisites and my normal
-engine/tool PATH first. Use only installer, archive and checksum sources I approve; verify
-the checksum and stop if anything is unavailable. Ask before privileged commands or changes
+engine/tool PATH first. Install only from the project's published GitHub release, as that guide
+describes, and stop if a download or checksum check fails. Ask before privileged commands or changes
 to existing configuration, services or shell profiles. Keep localhost HTTPS and security and
 authority safeguards. Leave authentication and certificate trust to me in my own terminal or
 browser; never read or copy credentials or private keys. Stop and explain refused or failed
