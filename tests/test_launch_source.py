@@ -80,6 +80,17 @@ class LaunchSource(AltitudeCase):
         reply = subprocess.run([str(source / "bin/alt"), "task", "reply", "Trusted CLI works."],
                                cwd=launch["cwd"], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(reply.returncode, 0, reply.stderr)
+        # Stdin forms owners use: `-`, no argument, the task slug first as in the sibling verbs, and `--file -`.
+        for number, argv in enumerate((["-"], [], [task["slug"], "-"], [task["slug"]], ["--file", "-"])):
+            text = f"Costs $1.20 and 'quotes' stay literal.\nForm {number}.\n"
+            reply = subprocess.run([str(source / "bin/alt"), "task", "reply", *argv], input=text,
+                                   cwd=launch["cwd"], env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(reply.returncode, 0, (argv, reply.stderr))
+            self.assertEqual(T.task_messages(self.project, task["slug"])[-1]["text"], text.strip())
+        extra = subprocess.run([str(source / "bin/alt"), "task", "reply", "other-task", "-"], input="Stray.\n",
+                               cwd=launch["cwd"], env=env, capture_output=True, text=True, timeout=30)
+        self.assertIn("optionally after this task's slug", extra.stderr)
+        self.assertEqual(len(T.task_messages(self.project, task["slug"])), 6)
         work = launch["cwd"] / "owned.txt"
         work.write_text("Task-owned work\n")
         git("add", "owned.txt", cwd=launch["cwd"])
