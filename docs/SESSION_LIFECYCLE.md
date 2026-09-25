@@ -1244,6 +1244,23 @@ worker records travel with it. Task state changes and stop/resume records are th
 parser error or incomplete final JSONL record is displayed as viewer evidence and retried on the next poll; it
 never changes task or worker state.
 
+## Operator terminal
+
+The operator's terminal sits beside a task's sessions without joining them. When the operator opens
+it, altd starts a shell in the task's worktree. No agent session starts, and the worker's
+lifecycle does not change. The L2 is not told and nothing is added to its conversation or inbox.
+Stop, Continue, Resume and review act only on the worker. Files the operator changes in the worktree
+are ordinary worktree changes that the L2 sees and delivers with its PR. The task records only
+`terminal` events for opened and closed.
+
+A terminal outlives page visits, reconnects and view switches. It ends when the operator closes it,
+when its shell exits (its end stops everything still running in it), when the operator turns the machine setting off, or when altd stops. It also
+ends at the next tick after its task becomes done or rejected, before that task's worktree is
+cleaned up. An altd restart after a merged change to Altitude ends every open terminal; the restart
+banner and an open terminal's notice say so in advance. Terminals never hold that quiet point. A
+project terminal follows the project's registration in the same way. Agent requests to open or use
+a terminal are refused as described in [terminal access](ARCHITECTURE.md#operator-terminal).
+
 ## Task token accounting
 
 Task details and the report retain cumulative **observed tokens** across recorded owner sessions,

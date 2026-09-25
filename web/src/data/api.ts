@@ -457,6 +457,8 @@ export const TaskViewSchema = z
     title: z.string().nullish(),
     resume_after: z.string().nullish(),
     planned_wait: PlannedWaitSchema.nullish(),
+    /** The task's worktree while it has one: where its terminal opens. */
+    worktree: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
     review: TaskReviewSchema.nullish(),
@@ -654,6 +656,7 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 
 const MachineSchema = z.object({
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
+  terminal: z.boolean().default(false),
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
@@ -670,6 +673,59 @@ export async function saveOperatorName(name: string): Promise<Machine> {
 /** Publish system incidents to a GitHub repository, or keep them on this computer with null. */
 export async function saveIncidentReports(repository: string | null): Promise<Machine> {
   return MachineSchema.parse(await post("/api/incident-reports", { repository }));
+}
+
+/** Turn the operator's terminal on or off for this computer; off also closes every open terminal. */
+export async function saveTerminalAccess(enabled: boolean): Promise<Machine> {
+  return MachineSchema.parse(await post("/api/terminal-access", { enabled }));
+}
+
+// ---- the operator's terminal -----------------------------------------------------------
+
+/**
+ * One terminal per task worktree or project folder (server `terminal.view`). `boot` names the altd
+ * process holding it, so a page that saw another boot knows a restart ended its terminal. `offset` is
+ * the absolute output position the replay reaches; `id` tells one terminal from its replacement; `busy` names a foreground command Close would stop.
+ */
+export const TerminalStatusSchema = z
+  .object({
+    state: z.string(),
+    id: z.string().nullish(),
+    boot: z.string(),
+    enabled: z.boolean(),
+    folder: z.string().nullish(),
+    offset: z.number().nullish(),
+    exit_code: z.number().nullish(),
+    reason: z.string().nullish(),
+    busy: z.string().nullish(),
+  })
+  .passthrough();
+export type TerminalStatus = z.infer<typeof TerminalStatusSchema>;
+
+const terminalPath = (project: string) => `/api/terminal/${project}`;
+const terminalQuery = (task?: string) => (task ? `?task=${encodeURIComponent(task)}` : "");
+
+export async function terminalStatus(project: string, task?: string): Promise<TerminalStatus> {
+  return TerminalStatusSchema.parse(await api(`${terminalPath(project)}${terminalQuery(task)}`));
+}
+
+export function useTerminalStatus(project: string, task?: string) {
+  return useQuery({ queryKey: ["terminal", project, task ?? null], queryFn: () => terminalStatus(project, task), refetchOnWindowFocus: false });
+}
+
+export async function terminalOpen(project: string, task?: string): Promise<TerminalStatus> {
+  return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
+}
+
+/** Input, resize, close and forget for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
+export function terminalSend(project: string, action: "input" | "resize" | "close" | "forget", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
+  return post(`${terminalPath(project)}/${action}`, body);
+}
+
+/** Terminal `id`'s output from `offset`: `output` events carry base64 bytes and the next offset, `end` the final status. */
+export function terminalStream(project: string, task: string | undefined, id: string, offset: number): EventSource {
+  const query = new URLSearchParams({ ...(task ? { task } : {}), id, offset: String(offset) });
+  return new EventSource(`${terminalPath(project)}/stream?${query}`);
 }
 
 const PrerequisitesSchema = z.object({

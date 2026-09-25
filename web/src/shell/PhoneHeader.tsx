@@ -74,6 +74,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
   const projectMatch = useMatch("/projects/:name/*");
   const taskMatch = useMatch("/projects/:name/tasks/:slug/*");
   const taskViewMatch = useMatch("/projects/:name/tasks/:slug/live?");
+  const terminalViewMatch = useMatch("/projects/:name/tasks/:slug/terminal");
   const decisionMatch = useMatch("/projects/:name/decisions/:slug");
   const pushed = Boolean(taskMatch || decisionMatch);
   const from = location.state && typeof location.state === "object" ? (location.state as { from?: unknown }).from : null;
@@ -95,7 +96,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
   </span>;
 
   const back = () => {
-    if (taskViewMatch) taskBack();
+    if (taskViewMatch || terminalViewMatch) taskBack();
     else if (location.key !== "default") navigate(-1);
     else if (decisionMatch && from === "needs") navigate("/");
     else navigate(`/projects/${name}?tab=work`);

@@ -61,12 +61,16 @@ export const routes: RouteObject[] = [
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
       { path: "/projects/:name/file", element: <TaskFile /> },
+      // The project folder's terminal: the desktop panel beside the conversation, full screen on phone.
+      { path: "/projects/:name/terminal", element: <ProjectPage /> },
       // Saved decision URLs replace themselves with the owning conversation and durable question anchor.
       { path: "/projects/:name/decisions/:slug", element: <DecisionPage /> },
       // One page for both: the desktop shows the conversation beside the live session, the phone
       // tabs between them and `/live` selects the second tab (SPEC.md §2.1, §3.10).
       { path: "/projects/:name/tasks/:slug", element: <Task /> },
       { path: "/projects/:name/tasks/:slug/live", element: <Task /> },
+      // The task worktree's terminal: the phone's third tab, the desktop panel's Terminal view.
+      { path: "/projects/:name/tasks/:slug/terminal", element: <Task /> },
       // The task's report view: what the expanded system card links as Full report and Digest (§3.4).
       { path: "/projects/:name/tasks/:slug/report", element: <TaskReport /> },
       { path: "/projects/:name/tasks/:slug/design/:questionId/:revision", element: <TaskDesign /> },

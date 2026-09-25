@@ -224,6 +224,8 @@ export interface LiveSessionProps {
   steering?: Steering;
   readOnly?: boolean;
   active?: boolean;
+  /** Replaces the panel title beside the activity pulse, as the desktop Live session | Terminal switch does. */
+  heading?: ReactNode;
 }
 
 /**
@@ -233,7 +235,7 @@ export interface LiveSessionProps {
  * timestamps, Raw events behind a toggle. States: waiting (queued), connecting, streaming, ended,
  * unavailable. The server derives the files from the task record; the page sends no paths.
  */
-export default function LiveSession({ project, task, engineLabel, waiting, steering, readOnly, active = true }: LiveSessionProps) {
+export default function LiveSession({ project, task, engineLabel, waiting, steering, readOnly, active = true, heading }: LiveSessionProps) {
   const [raw, setRaw] = useState(false);
   const [paused, setPaused] = useState(false);
   const body = useRef<HTMLDivElement>(null);
@@ -311,10 +313,10 @@ export default function LiveSession({ project, task, engineLabel, waiting, steer
   return (
     <section className="live-panel" aria-label="Live session">
       <header className="live-head">
-        <h2 className="live-title">
+        {heading ? <div className="live-title"><LivePulse tone={tone} activity={task.activity} />{heading}</div> : <h2 className="live-title">
           <LivePulse tone={tone} activity={task.activity} />
           Live session
-        </h2>
+        </h2>}
         {hasSession || steering ? (
           <div className="live-tools">
             {steering ? <SteeringControls steering={steering} disabled={readOnly} /> : null}

@@ -93,6 +93,12 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       // The report view: its own heading, and the crumb back to the task (SPEC §3.4 links).
       await expect(main.getByRole("heading", { name: "Report", exact: true })).toBeVisible();
       await expect(main.getByRole("link", { name: task.title || task.slug, exact: false })).toBeVisible();
+    } else if (route.endsWith("/terminal")) {
+      // The terminal is off until Settings turns it on: the panel says so and links there (SPEC §3.10).
+      if (task) await expect(page.getByRole("heading", { level: 1, name: task.title || task.slug, exact: true })).toBeVisible();
+      const panel = main.getByRole("region", { name: "Terminal", exact: true });
+      await expect(panel.getByText("Terminal is off", { exact: true })).toBeVisible();
+      await expect(panel.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
     } else if (task) {
       // The phone header carries the title outside main; the desktop header inside it (SPEC §3.10).
       await expect(page.getByRole("heading", { level: 1, name: task.title || task.slug, exact: true })).toBeVisible();
@@ -170,7 +176,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       const fixed = page.locator(info.project.name === "phone" ? ".phone-header, .tab-bar, .convo-dock" : ".rail, .project-header, .task-header, .convo-dock");
       const boxes = () => fixed.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
       const before = await boxes();
-      const owners = main.locator(".page:visible, .convo-scroll:visible, .work-panel:visible, .live-body:visible");
+      const owners = main.locator(".page:visible, .convo-scroll:visible, .work-panel:visible, .live-body:visible, .terminal-body:visible");
       if (info.project.name === "phone") await expect(owners).toHaveCount(1);
       for (const owner of await owners.all()) {
         await owner.evaluate((node) => { node.scrollTop = 0; });

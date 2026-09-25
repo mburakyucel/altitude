@@ -80,6 +80,8 @@ requirements, including accessible control names, minimum targets, and contrast 
 | `/projects/:name/decisions/:slug` | redirect to the owning task conversation and current question anchor | redirect |
 | `/projects/:name/tasks/:slug` | the task page: L2 conversation, live session | unchanged |
 | `/projects/:name/tasks/:slug/live` | the same page with the live session in front (phone tab) | unchanged |
+| `/projects/:name/tasks/:slug/terminal` | the same page with the task's terminal in front (phone tab, desktop panel view) | new |
+| `/projects/:name/terminal` | the project with its folder's terminal in the right panel; full screen on phone | new |
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
 | `/monitor` | Monitor | unchanged |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
@@ -157,8 +159,10 @@ hard-codes one, and one configured engine means one row.
 
 ### 3.2 Project header
 
-Desktop anatomy: project name (18px, 600); status line; actions: work-panel toggle (tinted when the panel is
-open, hidden at ≥ 1280 where the panel is inline), permanent **Setup** status (§3.12), overflow menu.
+Desktop anatomy: project name (18px, 600); status line; actions: permanent **Setup** status (§3.12),
+**Terminal** (pressed while the project terminal shows, §3.10), work-panel toggle (tinted when the panel is
+open, hidden at ≥ 1280 where the panel is inline), overflow menu. On phone **Terminal** is an icon
+button before the three dots.
 Vertical padding is 6px; text and control sizes retain their normal dimensions.
 
 Status line, composed left to right and separated by "·": "L3 answered N min ago on <engine>"
@@ -917,6 +921,44 @@ and capacity wait; continued session with preserved work; blocked question; fini
 short viewport; voice listening/cancel/dictation/denial/unavailable; input and overlay Escape ownership.
 Each named state has a screenshot under `web/ui-artifacts/results/l2-progress*`.
 
+#### Terminal
+
+The operator's own shell, for occasional commands; the conversations stay the main flow and agents
+never see it. A task with a worktree offers it as the phone's third tab, **Terminal**, after
+Conversation and Live session; swiping stays between those two. On desktop the task panel's header
+becomes a **Live session | Terminal** switch, and the panel toggle and overlay behave as for Live
+session. The project header's **Terminal** shows the project folder's terminal in the right panel
+(overlay below the inline width) and presses again to hide it; on phone it opens full screen with
+Back, a "Terminal · <project> · project folder" title and **Close**.
+
+Anatomy, top to bottom: a header (desktop: the switch or "Terminal" title with **Close terminal** at
+its right; phone task tab: **Close** at the right of the folder line); "Task worktree · runs as you on
+this computer" or "Project folder · …"; the folder path on one line, losing its start when long;
+an amber note — task: "This is the L2's worktree. Files you change here become part of its work and
+its PR."; project: "Altitude lands PRs from this folder's clean main. Make code changes in a task, not
+here."; any notice; the dark screen filling the rest; on phone a key row of Esc, Tab, a sticky Ctrl
+(pressed state) and the four arrows, each an equal-width 44px target. The terminal keeps running
+when the page leaves; returning replays up to 256 KB. Leaving an ended terminal drops its replay.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Off | "Terminal is off", what it does, **Open Settings** (returns here with Back). |
+| Ready | "Open a terminal in this task's worktree" or "… in the project folder", that it runs as the operator and nothing typed reaches the agents; primary **Open terminal**. |
+| Starting | Skeleton lines and "Starting the terminal…". |
+| Running | The screen with the cursor focused; **Close terminal** / **Close**; the phone key row. |
+| Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
+| Reconnecting | A grey note: "Connection lost · reconnecting. The shell keeps running; missed output appears when you're back." It disappears when output resumes. |
+| Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
+| Close with a running command | "Close the terminal?" card naming the command that will be stopped, **Close** (primary) and **Cancel**. Close without a running command acts at once. |
+| Closed by the operator | Desktop and phone project views return to the project; the task view returns to Ready. |
+| Shell exited | "Terminal closed · exit code N", "The last output stays readable until you leave.", **Open a new terminal**; the screen keeps its output; Close and the key row disappear. |
+| Task finished | "Terminal closed" — "This task finished and its worktree was removed, so its terminal ended." No action. |
+| Altitude restarted | "Terminal closed" — "Altitude restarted, which ends open terminals. Open a new one to continue." **Open a new terminal**. |
+| Could not start or refused | "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**. |
+
+Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 walks every state above against real
+shells, with the agent check and the restart notice as fixtures.
+
 ### 3.11 Project switcher (phone)
 
 A sheet from the header name: managed projects with dot and count, unmanaged folders, **Add a
@@ -1111,6 +1153,10 @@ new folder; a failure shows the server explanation and Retry. First run reads th
 <repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
 First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
 again** only) and shows Saved. after a save.
+A **Terminal** switch row (off after install) says "Anyone who can open Altitude can run commands as
+you on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
+change, disables itself while saving and shows the server's reason under the copy on failure; turning
+it off closes every open terminal.
 The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays

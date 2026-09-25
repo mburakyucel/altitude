@@ -30,6 +30,8 @@ export default function AppShell() {
   const projectPage = useMatch("/projects/:name");
   const taskPage = useMatch("/projects/:name/tasks/:slug");
   const taskLive = useMatch("/projects/:name/tasks/:slug/live");
+  const taskTerminal = useMatch("/projects/:name/tasks/:slug/terminal");
+  const projectTerminal = useMatch("/projects/:name/terminal");
 
   // The phone keyboard shrinks the visual viewport independently of 100dvh on iOS.
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function AppShell() {
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />
-          {((!projectPage && !taskPage && !taskLive) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
+          {((!projectPage && !taskPage && !taskLive && !taskTerminal && !projectTerminal) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
         </>
       ) : (
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />

@@ -12,6 +12,8 @@ are not shipped in the archive.
 | react-router | Copyright (c) React Training LLC 2015-2019, Copyright (c) Remix Software Inc. 2020-2021 |
 | cookie-es | Copyright (c) Pooya Parsa, Copyright (c) 2012-2014 Roman Shtylman |
 | zod | Copyright (c) 2025 Colin McDonnell |
+| @xterm/xterm | Copyright (c) 2017-2019, The xterm.js authors, Copyright (c) 2014-2016, SourceLair Private Company, Copyright (c) 2012-2013, Christopher Jeffrey |
+| @xterm/addon-fit | Copyright (c) 2019, The xterm.js authors |
 
 ## MIT License
 

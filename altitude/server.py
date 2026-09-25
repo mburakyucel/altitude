@@ -1,7 +1,9 @@
 """altd — the Altitude web/API server and task timers."""
 from __future__ import annotations
 import argparse
+import base64
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
@@ -26,7 +28,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, tls, transcript, verify
+from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1200,6 +1202,7 @@ def tick() -> None:
         log(f"[quota] refresh failed: {e}")
     drain_hook_faults()
     dispatch.run_settings()
+    terminal.sweep()
     for project in list(_l3_verb_brokers):
         if not config.is_managed(project):
             remove_l3_verb_broker(project)
@@ -1592,6 +1595,109 @@ class Handler(BaseHTTPRequestHandler):
         log(f"voice transcription: {len(text)} characters from {length} uploaded bytes")
         return self._json({"text": text})
 
+    def _terminal_denied(self, *, json_body: bool) -> str | None:
+        """Why a terminal request is refused: a cross-site page (the terminal is command execution, so a
+        page elsewhere must not be able to type into it) or one of Altitude's own agents."""
+        origin = self.headers.get("Origin")
+        if (self.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none")
+                or origin and urlparse(origin).netloc != self.headers.get("Host")
+                or json_body and self.headers.get_content_type() != "application/json"):
+            return "Terminal requests must come from Altitude's own page."
+        # Over plain HTTP a DNS-rebinding page names its own host in both Origin and Host; HTTPS refuses it
+        # at the certificate. Without TLS the terminal answers only an address or localhost.
+        host = urlparse(f"//{self.headers.get('Host') or ''}").hostname or ""
+        if not isinstance(self.connection, ssl.SSLSocket) and host != "localhost":
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                return "Over plain HTTP, open the terminal at Altitude's address or localhost."
+        if terminal.agent_connection(self.client_address, self.connection.getsockname()):
+            return "Terminal requests from Altitude's own agents are refused."
+        return None
+
+    def _terminal_get(self, parts: list[str], q: dict) -> None:
+        denied = self._terminal_denied(json_body=False)
+        if denied:
+            return self._json({"error": denied}, 403)
+        project, slug = unquote(parts[2]), (q.get("task") or [None])[0]
+        if len(parts) == 3:
+            return self._json(terminal.status(project, slug))
+        if len(parts) == 4 and parts[3] == "stream":
+            return self._terminal_stream(project, slug, (q.get("id") or [None])[0], int((q.get("offset") or ["0"])[0]))
+        return self._json({"error": "unknown api"}, 404)
+
+    def _terminal_stream(self, project: str, slug: str | None, ident: str | None, offset: int) -> None:
+        """Server-sent output of terminal `ident` from `offset`: `output` events carry base64 bytes and the
+        next offset; `end` carries how it ended. The page reconnects with its own offset after a lost
+        connection."""
+        try:
+            term = terminal.stream(project, slug, ident)
+        except terminal.TerminalError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        quiet = 0.0
+        while True:
+            if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1):
+                return
+            data, offset, missed, ended = terminal.read(term, offset, TERMINAL_WAIT_SECONDS)
+            if data or missed:
+                payload = json.dumps({"offset": offset, "data": base64.b64encode(data).decode(), "missed": missed})
+                self.wfile.write(f"event: output\ndata: {payload}\n\n".encode())
+                quiet = 0.0
+            elif not ended:
+                quiet += TERMINAL_WAIT_SECONDS
+                if quiet < CHANGE_KEEPALIVE_SECONDS:
+                    continue
+                self.wfile.write(b": keepalive\n\n")
+                quiet = 0.0
+            if ended:
+                self.wfile.write(f"event: end\ndata: {json.dumps(terminal.view(term))}\n\n".encode())
+                self.wfile.flush()
+                return
+            self.wfile.flush()
+
+    def _terminal_post(self, parts: list[str], body: dict) -> None:
+        denied = self._terminal_denied(json_body=True)
+        if denied:
+            return self._json({"error": denied}, 403)
+        if parts == ["api", "terminal-access"]:
+            if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
+                return self._json({"error": "Choose on or off."}, 400)
+            try:
+                view = _save_machine("terminal", body["enabled"], "Terminal on" if body["enabled"] else "Terminal off")
+            except (ValueError, T.TransitionError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            if not body["enabled"]:
+                terminal.close_all()
+            return self._json(view)
+        if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close", "forget"):
+            return self._json({"error": "unknown api"}, 404)
+        project, action, slug, ident = unquote(parts[2]), parts[3], body.get("task"), body.get("id")
+        if slug is not None and not isinstance(slug, str):
+            return self._json({"error": "Name the task as text."}, 400)
+        if action != "open" and not isinstance(ident, str):
+            return self._json({"error": "Name the terminal."}, 400)
+        try:
+            if action == "open":
+                return self._json(terminal.open_terminal(project, slug))
+            if action == "input":
+                terminal.write(project, slug, ident, body.get("data"))
+            elif action == "resize":
+                terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
+            elif action == "close":
+                terminal.close(project, slug, ident=ident)
+            else:
+                terminal.forget(project, slug, ident)
+            return self._json({"ok": True})
+        except terminal.TerminalError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+
     def _stream_open(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -1694,6 +1800,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, exc.status)
             if api == "changes":
                 return self._changes()
+            if api == "terminal" and len(parts) > 2:
+                return self._terminal_get(parts, q)
             if api == "alerts":
                 try:  # without a key the page keeps alerting while it is open, and says so
                     return self._json({"key": push.public_key()})
@@ -1790,6 +1898,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            if api in ("terminal", "terminal-access"):
+                return self._terminal_post(parts, o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2203,6 +2313,8 @@ def _request_restart_unit() -> dict:
 
 CHANGE_SECONDS = 1.0
 CHANGE_KEEPALIVE_SECONDS = 15.0
+# How long a terminal stream waits for output before checking that its page is still connected.
+TERMINAL_WAIT_SECONDS = 1.0
 CHANGE_RETRY_MS = 3000
 
 
@@ -2303,9 +2415,9 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name and incident publication, as First run and Settings show them."""
+    """The operator's name, incident publication and the terminal switch, as First run and Settings show them."""
     return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
-            "altitude_repository": config.ALTITUDE_REPOSITORY}
+            "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled()}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:
@@ -2666,6 +2778,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     finally:
         srv.server_close()
         stop_l3_verb_brokers()
+        terminal.close_all()
 
 
 def tls_init(ip: str | None = None) -> dict:

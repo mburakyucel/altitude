@@ -31,6 +31,8 @@ In scope:
 
 - Escaping worker confinement: writing outside a task's worktree and task folder, reaching another
   task's session or state, or affecting the operator's services.
+- Reaching the operator's terminal from a worker or from another site open in the operator's
+  browser, or recovering what was typed or shown in it.
 - Bypassing delivery authority: merging around a hold, review or required check, forging an
   operator approval or acting with a role's authority without its credential.
 - Reaching the web server or its API from outside the documented localhost or configured private

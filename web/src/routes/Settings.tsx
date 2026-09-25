@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, readVoiceSettings, saveProjectsFolder, saveVoiceSettings, useMachine, useOverview } from "../data/api";
+import { ApiError, readVoiceSettings, saveProjectsFolder, saveTerminalAccess, saveVoiceSettings, useMachine, useOverview } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -137,6 +137,31 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   </>;
 }
 
+/** The operator's terminal, off after install: one switch for this computer. */
+function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
+  const client = useQueryClient();
+  const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
+  const change = async (on: boolean) => {
+    setSave({ status: "saving" });
+    try {
+      client.setQueryData(["machine"], await saveTerminalAccess(on));
+      await client.invalidateQueries({ queryKey: ["terminal"] });
+      setSave({ status: "idle" });
+    } catch (error) {
+      setSave({ status: "failed", error: error as Error });
+    }
+  };
+  return <div className="settings-row settings-switch-row">
+    <label htmlFor="terminal-switch">
+      <strong>Terminal</strong>{" "}
+      <small>Anyone who can open Altitude can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
+      {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
+    </label>
+    <input id="terminal-switch" type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
+      disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+  </div>;
+}
+
 const titles = {
   voice: "Voice input", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports",
@@ -206,6 +231,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           <Link className="settings-row" to="/settings/incident-reports" state={state}>
             <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
+          <TerminalSwitch enabled={machine.data?.terminal} />
         </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>
           <span><strong>Projects folder</strong>{" "}<small>{roots.join(" and ") || "Loading…"} · First run offers the folders directly inside it</small></span><span aria-hidden>›</span>
