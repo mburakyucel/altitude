@@ -20,10 +20,11 @@ import sys
 import tarfile
 import tempfile
 import time
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 VERSION = re.compile(r"v0\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?\Z")
+ARCHIVE_LIMIT = 256 * 1024 * 1024
 REQUIRED = ("bin/alt", "altitude/__init__.py", "altitude/config.py", "altitude/server.py", "web/dist/index.html",
             "personas/l2.md", "personas/l3.md", "schemas/report.json")
 
@@ -69,7 +70,7 @@ def metadata(root: Path) -> dict:
 def extract(archive: Path, checksum: str, destination: Path) -> dict:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
         raise ValueError("Supply the release's exact SHA-256 checksum")
-    if archive.stat().st_size > 256 * 1024 * 1024:
+    if archive.stat().st_size > ARCHIVE_LIMIT:
         raise ValueError("Application archive exceeds 256 MiB")
     if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum.lower():
         raise ValueError("Archive checksum mismatch; the installed application is unchanged")
@@ -82,10 +83,68 @@ def extract(archive: Path, checksum: str, destination: Path) -> dict:
                     or member.name in names or member.mode & 0o7000):
                 raise ValueError("Archive contains an unsafe, duplicate or non-file entry")
             names.add(member.name)
-        if sum(member.size for member in members) > 256 * 1024 * 1024:
+        if sum(member.size for member in members) > ARCHIVE_LIMIT:
             raise ValueError("Application archive exceeds 256 MiB")
         bundle.extractall(destination, filter="data")
     return metadata(destination)
+
+
+def version_key(version: str) -> tuple:
+    """Release order: minor, patch, then any rc before the final release."""
+    match = re.fullmatch(r"v0\.([0-9]+)\.([0-9]+)(?:-rc\.([0-9]+))?", version)
+    if not match:
+        raise ValueError(f"Not a release version: {version}")
+    return int(match[1]), int(match[2]), int(match[3]) if match[3] else float("inf")
+
+
+def _get(url: str, limit: int) -> bytes:
+    """One HTTPS GET with no identifying headers beyond a generic User-Agent."""
+    request = Request(url, headers={"User-Agent": "altitude", "Accept": "application/vnd.github+json"})
+    with urlopen(request, timeout=60) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Release download exceeds its size limit")
+    return data
+
+
+def release_repository() -> str:
+    """owner/name of the GitHub repository this installed release was built from."""
+    from . import config
+    match = re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", (config.RELEASE or {}).get("repository", ""))
+    if not match:
+        raise RuntimeError("This installation does not name its GitHub release repository; update with --archive and --sha256")
+    return match[1]
+
+
+def latest_release(repository: str) -> dict:
+    """The newest stable published release: its version and release notes page."""
+    data = json.loads(_get(f"https://api.github.com/repos/{repository}/releases/latest", 1024 * 1024))
+    version = data.get("tag_name") if isinstance(data, dict) else None
+    if not isinstance(version, str) or not VERSION.fullmatch(version) or data.get("prerelease") or data.get("draft"):
+        raise ValueError("The latest published release has no valid version")
+    return {"version": version, "notes": f"https://github.com/{repository}/releases/tag/{version}"}
+
+
+def update(version: str | None = None) -> dict:
+    """Install the named or latest published release through the same verification and activation."""
+    from . import config
+    repository = release_repository()
+    current = config.RELEASE["version"]
+    if version is None:
+        version = latest_release(repository)["version"]
+        if version_key(version) <= version_key(current):
+            return {"version": current, "updated": False, "detail": f"Altitude {current} is up to date"}
+    elif not VERSION.fullmatch(version):
+        raise ValueError("Use a published v0.MINOR.PATCH or v0.MINOR.PATCH-rc.N version")
+    elif version == current:
+        return {"version": current, "updated": False, "detail": f"Altitude {current} is already installed"}
+    base = f"https://github.com/{repository}/releases/download/{version}/altitude-{version}.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="altitude-update-") as folder:
+        archive = Path(folder) / f"altitude-{version}.tar.gz"
+        archive.write_bytes(_get(base, ARCHIVE_LIMIT))
+        checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
+        return {**install(archive, checksum[0] if checksum else "", _prefix()), "updated": True,
+                "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
 def _settings() -> Path:

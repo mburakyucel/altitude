@@ -282,6 +282,7 @@ class InstalledRuntime(AltitudeCase):
         commands = [
             ["install", "--archive", str(self.tmp / "does-not-exist.tar"), "--sha256", "0" * 64],
             ["update", "--archive", str(self.tmp / "does-not-exist.tar"), "--sha256", "0" * 64],
+            ["update"], ["update", "--version", "v0.1.1"],
             ["uninstall"], ["recover"], ["service", "start"], ["service", "stop"],
             ["service", "prepare-tls", "--directory", str(self.tmp / "tls"), "--apply"],
         ]

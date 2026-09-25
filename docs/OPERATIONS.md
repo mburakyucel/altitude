@@ -125,16 +125,25 @@ agents or a source deployment:
 alt doctor
 alt service status
 alt service logs
-alt update --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>'
+alt update
 ```
 
-Use the exact privately supplied version/checksum, not the placeholder above. Installation checks
-the archive and manifest before selecting an immutable version. Activation waits for dispatch,
+`alt update` asks GitHub for the newest stable release of the repository the installed release
+was built from (one anonymous request to `api.github.com`) and does nothing when the installed
+version is current or newer. Otherwise it downloads that release's archive and its `.sha256`
+from the release, then installs it exactly as an archive update does. `alt update --version
+v0.1.1` installs a named published release, including a `-rc.N` candidate, without the lookup.
+`alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
+you already have, with no network access. Installation checks the archive and manifest before
+selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
 independent task workers are not stopped with the daemon. Projects continue using ordinary checked
-PR delivery; a managed source clone does not update the installed application.
+PR delivery; a managed source clone does not update the installed application. Project Git guards
+point at installation-owned `hooks` launchers that run the `current` version, and every dispatch
+and resume repairs and rechecks them, so registered projects dispatch on the updated version
+without reinstalling guards.
 Lifecycle commands reject shell overrides that disagree with the owned service's saved runtime,
 binding, TLS or project-root settings. Remove the named overrides before retrying.
 
