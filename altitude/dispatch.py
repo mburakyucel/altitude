@@ -387,7 +387,7 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository")
+MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal")
 
 
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
@@ -410,6 +410,8 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_operator_name(value)
         elif setting == "incident_repository":
             config.validate_incident_repository(value)
+        elif setting == "terminal" and not isinstance(value, bool):
+            raise ValueError("the terminal setting is on or off")
         elif setting in config.DEFAULT_SETTINGS:
             config.validate_project_default(setting, value)
     except ValueError as exc:

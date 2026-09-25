@@ -26,6 +26,7 @@ import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import LiveSession from "./LiveSession";
+import Terminal from "../components/Terminal";
 import { useTaskSwipe } from "../components/useTaskSwipe";
 import "./task-details.css";
 
@@ -592,6 +593,7 @@ function TaskPage({
   task,
   overview,
   liveRoute,
+  terminalRoute,
   readOnly,
   checking,
   refresh,
@@ -602,6 +604,8 @@ function TaskPage({
   task: TaskView;
   overview: UseQueryResult<Overview>;
   liveRoute: boolean;
+  /** `/terminal`: the phone's Terminal tab, the desktop panel's Terminal view. */
+  terminalRoute: boolean;
   readOnly: boolean;
   checking: boolean;
   refresh: () => Promise<unknown>;
@@ -629,10 +633,12 @@ function TaskPage({
   const resumeError = facts.canResume && actions.error && !actions.confirm
     ? <p className="task-line text-danger" role="alert">Could not resume. Try again.</p> : null;
   // Inline at the panel width, open by default; below it an overlay the operator opens (SPEC.md §2.2 rule).
-  const [panelOpen, setPanelOpen] = useState(liveRoute || (panelInline && !new URLSearchParams(location.search).has("question")));
+  const [panelOpen, setPanelOpen] = useState(liveRoute || terminalRoute || (panelInline && !new URLSearchParams(location.search).has("question")));
   useEffect(() => {
-    if (liveRoute) setPanelOpen(true);
-  }, [liveRoute]);
+    if (liveRoute || terminalRoute) setPanelOpen(true);
+  }, [liveRoute, terminalRoute]);
+  // A terminal opens in the task's worktree, so only a task that has one offers it; an open view stays.
+  const terminalOffered = terminalRoute || (Boolean(task.worktree) && task.state !== "done" && task.state !== "rejected");
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
@@ -674,13 +680,20 @@ function TaskPage({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [phone, readOnly, denied, voiceOwnsEscape, actions.confirm, steering]);
-  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape, liveRoute, (live) => {
+  // The swipe moves between Conversation and Live session; the Terminal tab is reached by its tab.
+  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape && !terminalRoute, liveRoute, (live) => {
     void navigate(`${base}${live ? "/live" : ""}${location.search}`, { replace: true, state: location.state });
   });
   const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
 
   // A drag that reveals Live session starts its transcript, so the incoming view loads while it slides in.
-  const panel = <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} /></ProseScope>;
+  const panelSwitch = terminalOffered ? <nav className="panel-switch" aria-label="Panel view">
+    <Link to={`${base}/live${location.search}`} replace state={location.state} aria-current={terminalRoute ? undefined : "page"}>Live session</Link>
+    <Link to={`${base}/terminal${location.search}`} replace state={location.state} aria-current={terminalRoute ? "page" : undefined}>Terminal</Link>
+  </nav> : undefined;
+  const terminal = <Terminal project={project} task={task.slug} keys={phone}
+    head={phone ? undefined : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
+  const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
   const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseScope>;
 
   if (phone) {
@@ -701,14 +714,17 @@ function TaskPage({
           <NavLink className="task-tab" to={`${base}/live${location.search}`} replace state={location.state}>
             Live session
           </NavLink>
+          {terminalOffered ? <NavLink className="task-tab" to={`${base}/terminal${location.search}`} replace state={location.state}>
+            Terminal
+          </NavLink> : null}
         </nav>
-        <div className="task-views">
+        {terminalRoute ? <div className="task-views">{terminal}</div> : <div className="task-views">
           {/* Both views stay laid out; the idle one is invisible until a drag reveals it (SPEC.md §3.10). */}
           <div className="task-track" ref={swipe.track} data-live={liveRoute || undefined}>
             <div className="task-view" style={liveRoute && !swipe.dragging ? idle : undefined}>{conversation}</div>
             <div className="task-view" style={!liveRoute && !swipe.dragging ? idle : undefined}>{panel}</div>
           </div>
-        </div>
+        </div>}
         {details}
       </div>
       </>
@@ -733,7 +749,7 @@ function TaskPage({
             <button
               type="button"
               className="icon-btn"
-              aria-label="Live session"
+              aria-label={terminalRoute ? "Terminal" : "Live session"}
               aria-pressed={panelOpen}
               onClick={() => setPanelOpen((open) => !open)}
             >
@@ -753,7 +769,7 @@ function TaskPage({
           panelInline ? (
             panel
           ) : (
-            <Overlay label="Live session" side="right" onClose={closePanel}>
+            <Overlay label={terminalRoute ? "Terminal" : "Live session"} side="right" onClose={closePanel}>
               {panel}
             </Overlay>
           )
@@ -791,14 +807,15 @@ function TaskSkeleton({ phone }: { phone: boolean }) {
 /**
  * The task page (SPEC.md §3.10): the operator's conversation with the L2 beside the worker's live
  * session, direct Stop and confirmed Reject; on the phone a compact header and two tabs, the
- * composer pinned above the tab bar on the Conversation tab. `/live` selects the Live session tab and
- * opens the desktop panel.
+ * composer pinned above the tab bar on the Conversation tab, and a Terminal tab while the task has a
+ * worktree. `/live` and `/terminal` select their tab on phone and their view of the desktop panel.
  */
 export default function Task() {
   const params = useParams();
   const project = params["name"] ?? "";
   const slug = params["slug"] ?? "";
   const liveRoute = Boolean(useMatch("/projects/:name/tasks/:slug/live"));
+  const terminalRoute = Boolean(useMatch("/projects/:name/tasks/:slug/terminal"));
   const task = useTask(project, slug);
   const overview = useOverview();
   const { phone } = useViewport();
@@ -818,6 +835,6 @@ export default function Task() {
         </p>
       </div>
     );
-  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => task.refetch({ throwOnError: true })} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
+  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} terminalRoute={terminalRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => task.refetch({ throwOnError: true })} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
   return <>{header}{content}</>;
 }

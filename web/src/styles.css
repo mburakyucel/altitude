@@ -413,7 +413,7 @@
   overflow: hidden;
   overscroll-behavior: none;
 }
-.page, .rail, .work-panel, .convo-scroll, .live-body, .overlay-panel,
+.page, .rail, .work-panel, .convo-scroll, .live-body, .terminal-body, .overlay-panel,
 .session-code, .session-out, .sys-card-pre, pre {
   overscroll-behavior: contain;
 }
@@ -2379,7 +2379,8 @@
 .task-tabs {
   display: grid;
   flex: none;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
   border-bottom: 1px solid var(--border);
 }
 .task-tab {

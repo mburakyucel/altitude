@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
@@ -15,6 +15,7 @@ import { decisionsFor, managedProjects } from "../shell/projects";
 import { ProjectSetup } from "./Setup";
 import Conversation from "./Conversation";
 import FirstRun from "./FirstRun";
+import Terminal from "../components/Terminal";
 
 /** The payload's loose corners (live, l3, config) arrive as `unknown`. */
 function dict(value: unknown): Record<string, unknown> {
@@ -307,6 +308,8 @@ function ProjectHeader({
   panelToggle,
   panelOpen,
   onTogglePanel,
+  terminalOpen,
+  onToggleTerminal,
   overview,
 }: {
   name: string;
@@ -318,6 +321,8 @@ function ProjectHeader({
   panelToggle: boolean;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
   overview: UseQueryResult<Overview>;
 }) {
   const start = useL3Start(name);
@@ -339,7 +344,14 @@ function ProjectHeader({
 
   if (!showName) return <>
     <PhoneHeader overview={overview} status={`${compactStatus}${engine ? ` · ${engine}` : ""}`}>
-      {startButton}<ProjectSetup key={`setup:${name}`} name={name} />{menu}
+      {startButton}<ProjectSetup key={`setup:${name}`} name={name} />
+      <button type="button" className="icon-btn" aria-label="Terminal" onClick={onToggleTerminal}>
+        <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
+          <rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M6 8l2.5 2L6 12M10 12.5h4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {menu}
     </PhoneHeader>
     {project.isError ? <p className="convo-error text-danger" role="alert">{project.error.message} <button type="button" className="link" onClick={() => void project.refetch()}>Retry</button></p> : null}
     {start.isError ? <p className="convo-error text-danger" role="alert">{start.error.message}</p> : null}
@@ -356,6 +368,7 @@ function ProjectHeader({
       </div>
       {startButton}
       <ProjectSetup key={`setup:${name}`} name={name} />
+      <button type="button" className="btn" aria-pressed={terminalOpen} onClick={onToggleTerminal}>Terminal</button>
       {panelToggle ? (
         <button
           type="button"
@@ -379,8 +392,9 @@ function ProjectHeader({
 
 /**
  * The project page (SPEC.md §2.1): the §3.2 header, the conversation (§3.3), and the work panel
- * inline, as an overlay, or as the phone's Work tab. With nothing managed, every project route shows
- * First run instead.
+ * inline, as an overlay, or as the phone's Work tab. `/terminal` shows the project folder's terminal in
+ * place of the work panel, full screen on phone. With nothing managed, every project route shows First
+ * run instead.
  */
 export default function ProjectPage() {
   const { name = "" } = useParams();
@@ -394,6 +408,15 @@ export default function ProjectPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const decisions = decisionsFor(overview.data, name);
+  const navigate = useNavigate();
+  const location = useLocation();
+  // `/terminal`: the project folder's terminal, in the desktop panel or full screen on phone.
+  const terminalRoute = Boolean(useMatch("/projects/:name/terminal"));
+  const home = `/projects/${name}`;
+  const leaveTerminal = useCallback(() => {
+    if (location.key !== "default") navigate(-1);
+    else navigate(home, { replace: true });
+  }, [home, location.key, navigate]);
 
   if (overview.isPending && project.isPending) {
     return (
@@ -416,7 +439,26 @@ export default function ProjectPage() {
     );
   }
 
-  const panel = <WorkPanel name={name} project={project} />;
+  if (phone && terminalRoute) {
+    return <div className="terminal-page">
+      <Terminal key={name} project={name} keys closeLabel="Close" onClosed={leaveTerminal} head={(close) => <header className="phone-header">
+        <button type="button" className="icon-btn" aria-label="Back" onClick={leaveTerminal}>
+          <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
+            <path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <h1 className="phone-title"><span className="phone-heading">
+          <span className="truncate">Terminal</span><span className="phone-status">{name} · project folder</span>
+        </span></h1>
+        {close}
+      </header>} />
+    </div>;
+  }
+
+  const panel = terminalRoute
+    ? <Terminal key={name} project={name} keys={false} onClosed={() => navigate(home, { replace: true })}
+      head={(close) => <header className="live-head"><h2 className="live-title">Terminal</h2>{close}</header>} />
+    : <WorkPanel name={name} project={project} />;
   const conversation = <Conversation key={name} name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
   return (
     <div className="project-page">
@@ -431,6 +473,8 @@ export default function ProjectPage() {
         panelToggle={!phone && !panelInline}
         panelOpen={panelOpen}
         onTogglePanel={() => setPanelOpen((open) => !open)}
+        terminalOpen={terminalRoute}
+        onToggleTerminal={() => (terminalRoute ? navigate(home, { replace: true }) : navigate(`${home}/terminal`))}
       />
       {phone ? (
         tab === "work" ? (
@@ -443,6 +487,10 @@ export default function ProjectPage() {
           {conversation}
           {panelInline ? (
             panel
+          ) : terminalRoute ? (
+            <Overlay label="Terminal" side="right" onClose={() => navigate(home, { replace: true })}>
+              {panel}
+            </Overlay>
           ) : panelOpen ? (
             <Overlay label="Work" side="right" onClose={closePanel}>
               {panel}

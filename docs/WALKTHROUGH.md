@@ -66,6 +66,14 @@ On phone, use **Conversation** and **Live session** to switch panes.
 [Open the phone session capture](images/session-phone.png). The capture script also sends a
 fixture-only follow-up, checks that its bubble appears, and verifies that the composer clears.
 
+For the occasional command you want to run yourself, turn on **Settings → This machine →
+Terminal**. The task's panel then switches between **Live session** and **Terminal** (a third tab
+on phone) and opens a shell as you in its worktree, outside the owner's sandbox. The project
+header's **Terminal** opens one in the project folder. Each terminal survives navigation and lost
+connections, and ends when you close it, the task finishes, the setting goes off or Altitude
+restarts. Only its opening and closing are recorded. [Operator terminal](ARCHITECTURE.md#operator-terminal)
+describes its lifetime and how Altitude refuses its own agents.
+
 ## Let L3 answer what the project already knows
 
 The backfill owner asks whether a retried batch may rewrite a document. L3 answers from the
