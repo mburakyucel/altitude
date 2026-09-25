@@ -123,7 +123,8 @@ clear unrelated credentials. Uninstalling Altitude does not remove trust from yo
 
 Needs you offers an alert for each new decision. Turn it on once per device and grant the browser's
 notification permission there; trusted HTTPS is a prerequisite, so finish the step above first. An
-iPhone shows the switch only for Altitude added to the Home Screen and opened from there.
+iPhone shows the switch only for Altitude added to the Home Screen (Safari's Share → Add to Home
+Screen, which uses the Altitude mark as its icon) and opened from there.
 
 Turning the switch on also subscribes that device to its browser's push service, so a decision
 reaches a closed phone. Altitude signs each push with a key it generates in `~/.altitude/push/` and

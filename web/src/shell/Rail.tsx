@@ -3,6 +3,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import type { EngineReadout, Overview } from "../data/api";
 import { RESERVE_PERCENT, age } from "../data/observed";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
+import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./theme";
 import { attentionCount } from "../data/decisions";
 
@@ -45,7 +46,7 @@ export function Rail({
 
   return (
     <aside className="rail">
-      <div className="rail-brand">Altitude</div>
+      <div className="rail-brand"><BrandMark size={24} />Altitude</div>
       <nav className="rail-nav" aria-label="Rail">
         <NavLink to="/" end className="rail-item">
           Needs you

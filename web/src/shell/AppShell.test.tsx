@@ -90,6 +90,11 @@ describe("Rail", () => {
     renderApp({ route: "/" });
 
     const rail = await screen.findByRole("navigation", { name: "Rail" });
+    // The brand is the decorative mark and the product name, not a control.
+    const brand = document.querySelector(".rail-brand")!;
+    expect(brand).toHaveTextContent(/^Altitude$/);
+    expect(brand.querySelector("svg.brand-mark")).toHaveAttribute("aria-hidden");
+    expect(brand.closest("a, button")).toBeNull();
     const needs = within(rail).getByRole("link", { name: /^Needs you/ });
     expect(needs).toHaveAttribute("aria-current", "page");
     expect(await within(needs).findByText("1")).toHaveClass("badge");
@@ -200,7 +205,9 @@ describe("Phone", () => {
     setViewport(390);
     renderApp({ route: "/" });
 
-    expect(await screen.findByRole("heading", { name: "Altitude", level: 1 })).toBeInTheDocument();
+    const heading = await screen.findByRole("heading", { name: "Altitude", level: 1 });
+    // The mark is decoration beside the product name; project titles carry no mark.
+    expect(heading.querySelector("svg.brand-mark")).toHaveAttribute("aria-hidden");
     expect(screen.queryByRole("navigation", { name: "Rail" })).toBeNull();
     const bar = screen.getByRole("navigation", { name: "Primary" });
     expect(within(bar).getByRole("link", { name: /^Needs you/ })).toHaveAttribute("aria-current", "page");
@@ -218,6 +225,7 @@ describe("Phone", () => {
 
     const title = await screen.findByRole("button", { name: "altitude" });
     expect(title).toHaveAttribute("aria-haspopup", "dialog");
+    expect(document.querySelector(".phone-header .brand-mark")).toBeNull();
     await user.click(title);
     const sheet = await screen.findByRole("dialog", { name: "Switch project" });
     const tutor = within(sheet).getByRole("link", { name: /^tutor/ });

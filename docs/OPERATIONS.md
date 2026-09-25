@@ -267,7 +267,8 @@ Open your configured Altitude HTTPS URL through your private network. Safari exp
 secure context, so the phone must trust the local CA used by Altitude's certificate. Follow the
 [per-device trust steps](SETUP.md#trust-https-on-each-device); `/ca.crt` is available over already
 trusted HTTPS, not a first-trust bootstrap. The microphone button remains a typing-only hint on plain
-HTTP or an unsupported browser.
+HTTP or an unsupported browser. Safari's Share → Add to Home Screen gives Altitude a Home Screen
+icon with its mark; decision alerts on iPhone need Altitude opened from there.
 
 For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-network endpoint.
 On the next start Altitude reissues its server certificate for that address under the same CA, so
