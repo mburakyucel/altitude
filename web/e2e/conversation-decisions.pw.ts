@@ -1014,3 +1014,29 @@ test("a multi-paragraph question renders paragraphs and a copyable command block
   });
   expect((await readTask(request, slug)).question?.status).toBe("open");
 });
+
+test("a freeform question naming a held PR keeps the one-tap review; a question with options replaces it", async ({ page, request }, info) => {
+  const created = await request.post("/fixture/held-pr");
+  expect(created.ok()).toBe(true);
+  const { slug } = await created.json() as { slug: string };
+  const walk = walkthrough(page, info);
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const question = "PR #42 is ready. Anything to change in the checkout copy before it merges?";
+  const approve = conversation.getByRole("button", { name: "Approve merge", exact: true });
+  await walk.open("/");
+  await walk.state("held-01-needs-you-freeform-question-and-review", {
+    visible: [page.getByText(question, { exact: true }).first(), page.getByRole("button", { name: "Approve merge", exact: true }).first()], hidden: [],
+  });
+  await walk.open(taskPath(slug));
+  await walk.state("held-02-chat-freeform-question-and-review", {
+    visible: [conversation.getByText(question, { exact: true }), conversation.getByText("Your turn · review before merge", { exact: true }), approve],
+    hidden: [],
+  });
+  expect((await request.post("/fixture/held-pr-options", { data: { slug } })).ok()).toBe(true);
+  await page.reload();
+  await walk.state("held-03-question-with-options-is-the-review", {
+    visible: [conversation.getByRole("button", { name: "Merge checkout fix", exact: true })],
+    hidden: [conversation.getByText("Your turn · review before merge", { exact: true }), approve],
+  });
+  expect((await readTask(request, slug)).hold_merge).toBe("Operator review of the checkout fix");
+});

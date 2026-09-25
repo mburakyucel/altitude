@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A held PR's **Approve merge** card stays beside an open question that names the PR unless that
+  question offers its own options, so the operator always has a one-tap approval.
+
 - A task whose clean worktree was left on another branch resumes on its task branch instead of
   pausing with a `task-git-provenance` fault; the task's events name the branch it left, which keeps
   its commits. Uncommitted changes, a detached HEAD or a missing task branch still pause the task,
