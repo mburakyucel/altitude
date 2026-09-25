@@ -800,7 +800,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>]
-alt task reply <text>|- [--file <path>]
+alt task reply [<slug>] <text>|- [--file <path>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
@@ -812,9 +812,11 @@ alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
 
-`-` (or no text) reads the message from stdin, so a quoted heredoc such as `alt task reply - <<'EOF'`
-keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted argument suffices for
-one line. Without `--questions-file`, a block's reason is its question: a different reason revises the
+`-`, `--file -` or no text reads the message from stdin, so a quoted heredoc such as
+`alt task reply - <<'EOF'` keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted
+argument suffices for one line. A reply always goes to the current task; like the sibling verbs it may
+lead with that task's slug (`alt task reply "$ALTITUDE_TASK" -`), and any other extra argument is
+refused. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
