@@ -1339,6 +1339,10 @@ IDs to select L2 proposal/test evidence; original operator/L3 messages and later
 included. Default capture includes all L2 messages. The 64 KiB context limit fails explicitly.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
+The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
+special entries fail the capture. A path over 2 MiB in either tree stays out of the source and patch; the
+captured context and the review record's `omitted` list name each by path and size. Snapshots whose
+remaining files exceed 64 MiB per tree or 10000 files fail explicitly.
 The receipt retains selected message IDs, source/candidate identities and captured-input hashes;
 proposal evidence also binds the original proposal message and its exact captured text.
 

@@ -256,17 +256,53 @@ class TestReviews(AltitudeCase):
         self.assertEqual(reviews.active_count(), 0)
         self.engine.assert_not_called()
 
-    def test_oversized_deleted_base_file_is_refused_before_diff_materialization(self):
-        self.commit("large.txt", "x\n" * (1024 * 1024 + 1))
+    def test_oversized_files_are_named_and_omitted_while_the_rest_is_reviewed(self):
+        large = "x\n" * (1024 * 1024 + 1)
+        self.commit("asset.bin", large)
+        self.commit("retired.txt", large)
+        self.commit("shrunk.txt", large)
         git("push", "origin", "HEAD:main", cwd=self.worktree)
-        git("rm", "large.txt", cwd=self.worktree)
-        git("commit", "-q", "-m", "Remove large base file", cwd=self.worktree)
+        # The change leaves asset.bin untouched, deletes one large base file and adds another beside ordinary code.
+        git("rm", "-q", "retired.txt", cwd=self.worktree)
+        (self.worktree / "model.ort").write_text(large + "y")
+        (self.worktree / "value.py").write_text("VALUE = 2\n")
+        (self.worktree / "shrunk.txt").write_text("small\n")
+        git("add", "model.ort", "value.py", "shrunk.txt", cwd=self.worktree)
+        git("commit", "-q", "-m", "Swap the large asset", cwd=self.worktree)
+        seen = {}
+
+        def capture(prompt, **kwargs):
+            snapshot = kwargs["snapshot"]
+            seen["files"] = sorted(str(path.relative_to(snapshot / "source")) for path in (snapshot / "source").rglob("*") if path.is_file())
+            seen["patch"] = (snapshot / "changes.patch").read_text()
+            seen["context"] = json.loads((snapshot / "context.json").read_text())
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = capture
         with mock.patch.object(reviews, "_git", wraps=reviews._git) as commands:
             result = self.run_review()
-        self.assertEqual(result["state"], "failed")
-        self.assertIn("bounds", result["error"])
-        self.assertFalse(any(call.args[1] in ("diff", "cat-file") for call in commands.call_args_list))
-        self.engine.assert_not_called()
+        self.assertEqual(result["state"], "completed")
+        omitted = [{"path": "asset.bin", "size": len(large)}, {"path": "model.ort", "size": len(large) + 1},
+                   {"path": "retired.txt", "size": len(large)}, {"path": "shrunk.txt", "size": len(large)}]
+        self.assertEqual(result["snapshot"]["omitted"], omitted)
+        self.assertNotIn("asset.bin", seen["files"])
+        self.assertNotIn("model.ort", seen["files"])
+        self.assertNotIn("shrunk.txt", seen["files"])
+        self.assertNotIn("shrunk.txt", seen["patch"])
+        self.assertIn("value.py", seen["files"])
+        self.assertIn("+VALUE = 2", seen["patch"])
+        self.assertNotIn("model.ort", seen["patch"])
+        self.assertNotIn("retired.txt", seen["patch"])
+        for row in omitted:
+            self.assertIn(f"{row['path']} ({row['size']} bytes)", " ".join(seen["context"]["limitations"]))
+        batch = next(call for call in commands.call_args_list if "--batch" in call.args)
+        self.assertNotIn(git("rev-parse", "HEAD:model.ort", cwd=self.worktree).strip(), batch.kwargs["stdin"].decode())
+        self.assess(result)
+        reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_ordinary_change_records_no_omitted_files(self):
+        result = self.run_review()
+        self.assertEqual(result["snapshot"]["omitted"], [])
+        self.assertNotIn("over 2 MiB", " ".join(result["snapshot"]["limitations"]))
 
     def test_images_require_selected_owner_account_and_preserve_limitation(self):
         task = S.load_task(self.project, self.slug)
@@ -425,15 +461,6 @@ class TestReviews(AltitudeCase):
         result = self.run_review()
         self.assertIn(owner["id"], result["snapshot"]["context_ids"])
         self.assertEqual(result["coverage"], "current")
-
-    def test_oversize_tracked_file_is_refused_before_blob_content_read(self):
-        self.commit("oversize.txt", "x" * ((2 << 20) + 1))
-        with mock.patch.object(reviews, "_git", wraps=reviews._git) as git_calls:
-            result = self.run_review()
-        self.assertEqual(result["state"], "failed")
-        self.assertIn("bounds", result["error"].lower())
-        self.assertFalse(any("--batch" in call.args for call in git_calls.call_args_list))
-        self.engine.assert_not_called()
 
     def test_total_snapshot_and_file_count_bounds_precede_blob_content_reads(self):
         # Sparse index entries represent real tracked files without duplicating large fixture bytes.
