@@ -146,7 +146,7 @@ test("answering on a phone keeps the page scale: fields stay at 16px, drafts and
   expect(await scale()).toBe(1);
 });
 
-test("a held PR waits for review before merge in the chat; approval hands it back", async ({ page }, info) => {
+test("a held PR waits for review before merge in the chat; approval hands it back and survives integration", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const v = view(page, info);
   const review = v.conversation.locator("[data-review-pr='42']");
@@ -163,14 +163,26 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
   });
   const sent = page.waitForResponse((row) => new URL(row.url()).pathname === "/api/l2/message" && row.request().method() === "POST");
   await approve.click();
-  expect((await sent).request().postDataJSON().text).toBe("Approved: merge PR #42 at 5f0c2e9.");
+  expect((await sent).request().postDataJSON().text).toBe("Approved: merge PR #42.");
   await walk.state("08-approval-sent", {
-    visible: [v.bubble("Approved: merge PR #42 at 5f0c2e9."), v.main.getByText("L2 replying to you").first(), v.conversation.getByText("Sent · the L2 has your reply."), v.badge(2)],
+    visible: [v.bubble("Approved: merge PR #42."), v.main.getByText("L2 replying to you").first(), v.conversation.getByText("Sent · the L2 has your reply."), v.badge(2)],
     hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true })],
   });
   await walk.open("/");
   await walk.state("08b-review-leaves-needs-you", {
     visible: [page.getByRole("heading", { name: "Needs you", exact: true }), v.article("Index rollout"), v.badge(2)],
+    hidden: [v.article("Release notes")],
+  });
+  // Routine integration gives the PR a new head; the approval still covers it, so nothing asks again.
+  expect((await request.post("/fixture/integrate")).ok()).toBe(true);
+  await walk.open("/projects/atlas/tasks/release-notes");
+  await walk.state("08c-integrated-head-stays-approved", {
+    visible: [v.main.getByText("Waiting on L3 · PR #42 approved").first(), v.bubble("Approved: merge PR #42.")],
+    hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true }), v.main.getByText("Your turn · review PR #42")],
+  });
+  await walk.open("/");
+  await walk.state("08d-integrated-head-stays-out-of-needs-you", {
+    visible: [v.article("Index rollout"), v.badge(2)],
     hidden: [v.article("Release notes")],
   });
 });

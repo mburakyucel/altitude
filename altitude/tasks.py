@@ -2013,22 +2013,21 @@ def _names_pr(number: int) -> re.Pattern:
 
 
 def approved_pr(project: str, task: dict) -> int | None:
-    """#451: the operator's review-card approval of the current held head stands until the head or hold changes
-    or a later operator message about the PR; the owner still applies it with `alt land --merge --approval`."""
+    """#451: the operator's review-card approval of the held PR stands through routine integration until the
+    hold changes or a later operator message about the PR; the owner judges scope and applies it with
+    `alt land --merge --approval`, asking again only when the change materially conflicts with it."""
     number = (task.get("prs") or [None])[-1]
-    delivery = task.get("delivery") or {}
-    head = delivery.get("head") if number and delivery.get("number") == number else None
-    if not (head and task.get("hold_merge")):
+    if not (number and task.get("hold_merge")):
         return None
     holds = [e["at"] for e in S.read_events(project, task["slug"]) if e.get("kind") in ("new", "hold-merge")]
-    # Records keep whole seconds; an approval must come in a later second than the head and the hold.
+    # Records keep whole seconds; an approval must come in a later second than the hold.
     second = lambda at: datetime.fromisoformat(at.replace("Z", "+00:00")).replace(microsecond=0)
-    since = max(second(at) for at in [delivery.get("at") or "1970-01-01T00:00:00+00:00", *holds[-1:]])
+    since = second(holds[-1] if holds else "1970-01-01T00:00:00+00:00")
     approved, names = False, _names_pr(number)
     for row in task_messages(project, task["slug"]):
         if row.get("role") != OPERATOR_MESSAGE_ROLE or row.get("removed_at") or second(row["at"]) <= since:
             continue
-        if row.get("text", "").strip() == f"Approved: merge PR #{number} at {head[:7]}.":
+        if row.get("text", "").strip() == f"Approved: merge PR #{number}.":
             approved = True
         elif names.search(row.get("text", "")):
             approved = False  # a later word about the PR may condition or revoke it
@@ -2038,7 +2037,7 @@ def approved_pr(project: str, task: dict) -> int | None:
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
     An open operator question that names the PR is already that review, so it is asked once (#448), and a
-    recorded approval of the current head is not asked for again (#451)."""
+    recorded approval of the held PR is not asked for again (#451)."""
     number = (task.get("prs") or [None])[-1]
     names = _names_pr(number)
     if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
@@ -2113,7 +2112,6 @@ def review_row(project: str, task: dict) -> dict | None:
     delivery = task.get("delivery") or {}
     at = delivery.get("at") or task.get("updated")
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
-            "head": delivery.get("head") if delivery.get("number") == number else None,
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
             "recommendation": None, "asked": at, "since": at}
 

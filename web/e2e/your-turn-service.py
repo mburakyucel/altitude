@@ -14,6 +14,7 @@ RETENTION = {
     "recommended_key": "seven", "why": "One week covers the rollout.",
 }
 HEAD = "5f0c2e94b1d7a8c3e6f2019d4b7a5c8e1f3d6b20"   # fictional delivery head
+INTEGRATED = "8a41c07d2e9b5f3a6c1d0e8b7f4a2c9d5e3b1a06"   # the same content integrated onto current main
 
 
 def main():
@@ -75,6 +76,23 @@ def main():
                     T.resume("atlas", question)
                 T.block("atlas", question, T._groups(task)[-1]["reason"], actor="l2", expected_attempt=1)
                 return self._json(T.question_group_view("atlas", S.load_task("atlas", question)))
+            if self.path == "/fixture/integrate":
+                # After approval the owner integrates current main (a new head, same content) and waits on L3.
+                with server._bg_guard:
+                    resumed = server._bg.get(f"resume:atlas:{review}")
+                if resumed:
+                    resumed.join(10)
+                    assert not resumed.is_alive(), "The fixture resume did not finish"
+                task = S.load_task("atlas", review)
+                if task["state"] in ("blocked", "reported"):
+                    T.resume("atlas", review)
+                T.take_inbox("atlas", review)
+                task = S.load_task("atlas", review)
+                task["delivery"] = {**task["delivery"], "head": INTEGRATED, "at": S.now()}
+                S.save_task("atlas", task)
+                T.block("atlas", review, "Waiting for the release checkout to recover.", actor="l2",
+                        updates={"waiting_on": "l3"})
+                return self._json({"head": INTEGRATED})
             return super().do_POST()
 
     serve(Handler)

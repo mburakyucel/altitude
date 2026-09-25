@@ -202,7 +202,6 @@ export const DecisionSchema = z
     response: z.object({ text: z.string(), at: z.string(), message_id: z.string() }).nullish(),
     asked_again: z.boolean().nullish(),
     pr: z.number().nullish(),
-    head: z.string().nullish(),
   })
   .passthrough();
 
