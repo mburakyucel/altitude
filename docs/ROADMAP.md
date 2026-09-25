@@ -47,6 +47,11 @@ remaining acceptance under #225/#226/#219/#350; those issues stay open:
   one-engine readiness, project Setup/guards, first conversation, isolated task, Stop/resume and
   checked PR delivery. Cover failed update/rollback and uninstall retention on each claimed platform;
   keep untested rows and actionable failures explicit in the onboarding/compatibility documentation.
+- **Trusted first connection:** trusting Altitude's own CA once per device is the supported path to a
+  warning-free connection. Generated CAs are limited to private addresses and names, startup reissues
+  the server certificate for a changed bind address, and the installer and `alt doctor` print the CA
+  fingerprint and per-device steps. Tests use disposable identities and in-process handshakes; trust
+  on real Linux Chrome/Firefox, Mac, iPhone and Android browsers remains unobserved until recorded.
 
 The operator offers a Mac for later testing, with timing still deferred; no immediate Mac use or
 paid runner is authorized. Native probes make no provider calls or model downloads. Live-provider

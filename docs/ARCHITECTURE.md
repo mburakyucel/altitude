@@ -231,13 +231,17 @@ name changed fields and preserve both apply and recovery errors without exposing
 
 Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA and
 server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,
-with private directories and keys. Startup validates identity and hostname; the existing daily
-timer renews managed server certificates within thirty days of expiry, retaining the CA/key.
+with private directories and keys. A generated CA carries critical name constraints permitting only
+loopback, private-network ranges, private names and the subtree of a DNS name configured at creation,
+so device trust extends to no other public site. Existing unconstrained or external CAs keep their scope. Startup validates identity and reissues a managed server certificate
+whose host no longer matches the bind address; the existing daily timer renews managed server
+certificates within thirty days of expiry, retaining the CA/key.
 Invalid TLS refuses startup or reports renewal failure without switching to HTTP. Each connection
 completes its handshake on its own request thread within ten seconds, so a stalled client drops
 only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
-until the user imports the public CA and verifies it. Remote binding and trust remain explicit;
+until the user imports the public CA and verifies it; `alt doctor` and the installer report the CA
+path, SHA-256 fingerprint, URL and per-platform trust steps. Remote binding and trust remain explicit;
 HTTPS supplies no application login. See [setup](SETUP.md#trust-https-on-each-device).
 
 ### Project setup

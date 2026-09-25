@@ -5,6 +5,14 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A newly generated certificate authority vouches only for loopback, private-network addresses,
+  private names (`.local`, `.internal`, `home.arpa`) and a DNS name configured when it is created,
+  so trusting it on a device cannot expose public websites. Existing certificate authorities and
+  external certificates keep their scope. Changing `ALTITUDE_HOST` reissues the server certificate
+  at the next start under the same authority, so trusted devices need no new step. The installer
+  and `alt doctor` print the URL, `ca.crt` path, SHA-256 fingerprint and short trust steps for
+  Linux browsers, Mac, iPhone/iPad and Android; doctor's `certificate_trust` is now an object.
+
 - First run, shown while no project is managed, walks four skippable steps on phone and desktop:
   your name (filled in from `ALTITUDE_OPERATOR` or Git's `user.name`), what the agents need (the
   doctor checks with the terminal command to run and **Check again**; the browser never takes a

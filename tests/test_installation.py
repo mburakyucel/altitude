@@ -218,6 +218,9 @@ class Installation(unittest.TestCase):
         reported = json.loads(checked.stdout)
         fixture = next(row for row in reported["engines"] if row["name"] == config.ENGINE_LABELS["codex"])
         self.assertIsNone(fixture["available"], "discovered engine stays installed; account access remains unknown")
+        trust = reported["certificate_trust"]  # the fixture identity is not a real key pair
+        self.assertEqual(trust["state"], "unavailable")
+        self.assertIn("key mode 600", trust["detail"])
         self.assertNotIn("provider invocation forbidden", checked.stderr)
 
     def test_installed_lifecycle_rejects_conflicting_shell_runtime_before_native_effects(self):
