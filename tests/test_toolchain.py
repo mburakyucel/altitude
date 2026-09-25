@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
-from altitude import config, engines
+from altitude import config, engines, platform
 from tests.test_restart_command import load_script
 
 
@@ -125,7 +125,7 @@ class TestToolchain(AltitudeCase):
         nvm_fixture(self)
         self.patch(engines, "_codex_processes", {})
         self.patch(engines, "claude_agents", return_value=[])
-        self.patch(engines, "_unit_active", return_value=False)
+        self.patch(platform, "job_active", return_value=False)
         for engine in ("claude", "codex"):
             for resume in (False, True):
                 with self.subTest(engine=engine, resume=resume):
@@ -149,7 +149,7 @@ class TestToolchain(AltitudeCase):
                         return ["/usr/bin/env", "-i", *(f"{k}={v}" for k, v in child_env.items()),
                                 sys.executable, "-c", script]
 
-                    with mock.patch.object(engines, "_codex_service_command", side_effect=service_command):
+                    with mock.patch.object(platform, "job_command", side_effect=service_command):
                         result = engines._start_worker(
                             engine, "fixture", "continue", cwd=self.repo, job_root=self.tmp / "jobs",
                             resume="session" if resume else None,

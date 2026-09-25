@@ -1,6 +1,6 @@
 """The seams and the rule layers, enforced as ratchets.
 
-Three grep-level counts that may fall and never rise:
+Four grep-level counts that may fall and never rise:
 
 1. Provider names outside the engine seam. Engine-specific code belongs in `altitude/engines.py`,
    `altitude/route.py`, and `altitude/config.py`. The incident class this prevents is engine
@@ -10,7 +10,10 @@ Three grep-level counts that may fall and never rise:
 2. The operator's name outside a configured value. Altitude serves one operator, but the name is
    configuration; text that spells it cannot be read by anyone else and cannot be reconfigured. The
    incident class is the operator being welded into personas, code, UI, and docs.
-3. Persona boundary. `personas/` is the global layer — how anyone works under Altitude on any
+3. Host mechanisms outside the platform seam. Service managers, process tables and their tools
+   belong in `altitude/platform.py`. The incident class is Linux assumptions spreading through the
+   system until running on macOS means editing every caller instead of one module.
+4. Persona boundary. `personas/` is the global layer — how anyone works under Altitude on any
    project — so it must not carry this repository's own rules, which live in `AGENTS.md`.
    The incident class is a project rule leaking into every project.
 
@@ -28,6 +31,8 @@ PROVIDER = re.compile(r"codex|claude", re.IGNORECASE)
 #: The GitHub account name contains the operator's name; a repository URL is not a mention.
 OPERATOR = re.compile(r"(?<![a-z])burak", re.IGNORECASE)
 
+HOST = re.compile(r"systemd|systemctl|journalctl|launchd|launchctl|/proc\b|pidfd|sysctl|libproc")
+
 #: Engine-specific code is expected here and nowhere else.
 ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
 #: The configured operator name and the persisted authority identity live here and nowhere else.
@@ -41,6 +46,15 @@ PROVIDER_BASELINE = {
     "altitude/quota_codex.py": 15,
     "altitude/server.py": 3,
     "altitude/tasks.py": 3,
+}
+
+#: Host mechanisms per file in `altitude/*.py` and `bin/alt`, outside the platform seam.
+PLATFORM_SEAM = ("altitude/platform.py",)
+HOST_BASELINE = {
+    "altitude/dispatch.py": 1,
+    "altitude/engines.py": 3,
+    "altitude/l3.py": 12,
+    "altitude/source_tls.py": 5,
 }
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
@@ -82,6 +96,11 @@ def _provider_files():
     return [p for p in files if p.relative_to(REPO).as_posix() not in ENGINE_SEAM]
 
 
+def _host_files():
+    files = [*sorted((REPO / "altitude").glob("*.py")), REPO / "bin" / "alt"]
+    return [p for p in files if p.relative_to(REPO).as_posix() not in PLATFORM_SEAM]
+
+
 def _operator_files():
     files = {REPO / "bin" / "alt", REPO / "README.md", REPO / "AGENTS.md", REPO / "CLAUDE.md"}
     for root in ("personas", "altitude", "web/src", "docs"):
@@ -105,6 +124,14 @@ class TestSeamRatchets(unittest.TestCase):
             PROVIDER_BASELINE,
             "a provider",
             f"engine-specific code belongs in {', '.join(ENGINE_SEAM)}",
+        )
+
+    def test_host_mechanisms_stay_in_the_platform_seam(self):
+        self._ratchet(
+            _counts(_host_files(), HOST),
+            HOST_BASELINE,
+            "a host mechanism",
+            f"service, process and tool specifics belong in {', '.join(PLATFORM_SEAM)}",
         )
 
     def test_operator_name_stays_configuration(self):

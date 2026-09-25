@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
-from altitude import config, dispatch, engines, l3, state as S, tasks as T
+from altitude import config, dispatch, engines, l3, platform, state as S, tasks as T
 
 
 class _BytesInput(io.BytesIO):
@@ -76,7 +76,7 @@ class PersonaLoading(AltitudeCase):
             (self.personas / f"{role}.md").write_text((config.PERSONAS / f"{role}.md").read_text())
         self.patch(config, "PERSONAS", self.personas)
         self.patch(engines, "_codex_processes", {})
-        self.patch(engines, "_unit_active", return_value=False)
+        self.patch(platform, "job_active", return_value=False)
         self.patch(engines, "window_hold", return_value=None)
         self.processes = []
         real_popen = subprocess.Popen
