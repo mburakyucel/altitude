@@ -587,6 +587,7 @@ class PublishedReleaseCase(InstallationCase):
         patcher = mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"})
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.download = installation._get
         patcher = mock.patch.object(installation, "_get", side_effect=self.get)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -609,6 +610,14 @@ class PublishedReleaseCase(InstallationCase):
 
 class PublishedUpdate(PublishedReleaseCase):
     """`alt update` without an archive."""
+
+    def test_download_redirected_to_plain_http_is_refused(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.geturl.return_value = "http://example.com/altitude-v0.1.1.tar.gz"
+        with mock.patch.object(installation, "urlopen", return_value=response):
+            with self.assertRaisesRegex(ValueError, "redirected away from HTTPS"):
+                self.download(f"{self.RELEASES}/download/v0.1.1/altitude-v0.1.1.tar.gz", 1024)
+        response.__enter__.return_value.read.assert_not_called()
 
     def test_latest_release_is_downloaded_verified_and_activated(self):
         download = self.publish("v0.1.1", latest={"tag_name": "v0.1.1", "prerelease": False, "draft": False})
@@ -639,6 +648,9 @@ class PublishedUpdate(PublishedReleaseCase):
         self.requests.clear()
         with self.assertRaisesRegex(ValueError, "published v0.MINOR.PATCH"):
             installation.update("latest; rm -rf ~")
+        for older in ("v0.0.9", "v0.1.0-rc.1"):
+            with self.subTest(older=older), self.assertRaisesRegex(ValueError, "older than the installed v0.1.0"):
+                installation.update(older)
         self.assertEqual(self.requests, [])
 
     def test_mismatched_published_checksum_keeps_the_installed_version(self):
@@ -717,3 +729,4 @@ class UpdatedProjectGuards(PublishedReleaseCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("task branch", refused.stderr)
         self.assertIn("current/hooks/pre-commit", (self.prefix / "hooks/pre-commit").read_text())
+        self.assertEqual((self.prefix / "current/hooks/pre-commit").resolve(), self.prefix / "versions/v0.1.1/hooks/pre-commit")

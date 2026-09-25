@@ -132,7 +132,8 @@ alt update
 was built from (one anonymous request to `api.github.com`) and does nothing when the installed
 version is current or newer. Otherwise it downloads that release's archive and its `.sha256`
 from the release, then installs it exactly as an archive update does. `alt update --version
-v0.1.1` installs a named published release, including a `-rc.N` candidate, without the lookup.
+v0.1.1` installs a named newer published release, including a `-rc.N` candidate, without the
+lookup; it refuses an older version, which `alt recover` restores. Every download stays on HTTPS.
 `alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
 you already have, with no network access. Installation checks the archive and manifest before
 selecting an immutable version. Activation waits for dispatch,

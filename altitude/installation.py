@@ -101,6 +101,8 @@ def _get(url: str, limit: int) -> bytes:
     """One HTTPS GET with no identifying headers beyond a generic User-Agent."""
     request = Request(url, headers={"User-Agent": "altitude", "Accept": "application/vnd.github+json"})
     with urlopen(request, timeout=60) as response:
+        if not response.geturl().startswith("https://"):
+            raise ValueError("A release download was redirected away from HTTPS")
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("Release download exceeds its size limit")
@@ -138,6 +140,8 @@ def update(version: str | None = None) -> dict:
         raise ValueError("Use a published v0.MINOR.PATCH or v0.MINOR.PATCH-rc.N version")
     elif version == current:
         return {"version": current, "updated": False, "detail": f"Altitude {current} is already installed"}
+    elif version_key(version) < version_key(current):
+        raise ValueError(f"{version} is older than the installed {current}; alt recover restores the previous version")
     base = f"https://github.com/{repository}/releases/download/{version}/altitude-{version}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="altitude-update-") as folder:
         archive = Path(folder) / f"altitude-{version}.tar.gz"
