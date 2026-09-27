@@ -11,6 +11,7 @@ def main():
     gates = {name: threading.Event() for name in ("alpha", "beta")}
     disconnect = threading.Event()
     queued_gate = threading.Event()
+    stream_gate = threading.Event()
     calls = []
     guard = threading.Lock()
 
@@ -22,7 +23,7 @@ def main():
             calls.append({"project": project, "text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
-        delayed = text in ("Alpha running request", "Beta running request", "Alpha accepted failure", "Alpha disconnected request")
+        delayed = text in ("Alpha running request", "Beta running request", "Alpha accepted failure", "Alpha disconnected request", "Alpha stalled request")
         if delayed and attempt == 1:
             if options.get("on_text") and text != "Alpha accepted failure":
                 options["on_text"](f"{project.title()} partial reply.")
@@ -52,6 +53,9 @@ def main():
 
     class Handler(server.Handler):
         def _stream_send(self, obj):
+            if obj.get("done") and any(row.get("text") == "Alpha stalled request" for row in l3.chat_history("alpha", 60)):
+                if not stream_gate.wait(45):
+                    raise TimeoutError("The browser did not release the stalled response")
             super()._stream_send(obj)
             if obj.get("turn") and l3.chat_history("alpha", 1)[0]["text"] == "Alpha disconnected request":
                 # Flush the real durable turn receipt before interrupting its chunked response.
@@ -68,6 +72,9 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/release-stream":
+                stream_gate.set()
+                return self._json({"ok": True})
             if self.path == "/fixture/release-queued":
                 queued_gate.set()
                 return self._json({"ok": True})
@@ -82,7 +89,7 @@ def main():
                 return self._json({"ok": True})
             return super().do_POST()
 
-    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), disconnect, queued_gate]])
+    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), disconnect, queued_gate, stream_gate]])
 
 
 if __name__ == "__main__":
