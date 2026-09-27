@@ -121,6 +121,45 @@ class TestImageConversations(AltitudeCase):
             self.assertTrue(l3.deliver_queued(self.project)["completed"])
         self.assertEqual(len([row for row in l3.chat_history(self.project, None) if row["role"] == "user"]), 1)
 
+    def test_finished_image_claim_never_returns_to_waiting_queue(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                body = self.body()
+                _, receipt, _ = self.request("/api/chat", body)
+                message = receipt["queued"]
+                finish = l3._finish_image_queue
+                observed = []
+
+                def observe(project):
+                    if any(row.get("image_turn_id") for row in l3._queue_rows(l3.queue_path(project))):
+                        observed.append(project)
+                        self.assertIsNone(l3.active(project))
+                        status, snapshot, _ = self.request(f"/api/chat/{project}")
+                        self.assertEqual(status, 200)
+                        saved = [row for row in snapshot["history"] if row.get("request_id") == message["id"]]
+                        self.assertEqual(len(saved), 1)
+                        self.assertEqual(saved[0]["images"], message["images"])
+                        self.assertEqual(snapshot["queued"], [])
+                        self.assertEqual(l3.queued(project), [])
+                        self.assertFalse(l3.drop_queued(project, message["id"]))
+                        # Retained claims still own the immutable receipt until finalization.
+                        self.assertEqual(self.request("/api/chat", body)[1]["queued"]["id"], message["id"])
+                        self.assertEqual(self.request("/api/chat", {**body, "text": "Changed"})[0], 409)
+                    return finish(project)
+
+                try:
+                    with ExitStack() as stack:
+                        stack.enter_context(mock.patch.object(l3, "_finish_image_queue", side_effect=observe))
+                        if failed:
+                            stack.enter_context(mock.patch.object(l3, "turn", side_effect=RuntimeError("Fixture turn failed")))
+                        result = l3.deliver_queued(self.project)
+                    self.assertEqual(observed, [self.project])
+                    self.assertEqual(result["completed"], not failed)
+                    self.assertEqual(l3._queue_rows(l3.queue_path(self.project)), [])
+                    self.assertEqual(l3.chat_history(self.project, None)[-1]["role"], "error" if failed else "assistant")
+                finally:
+                    finish(self.project)
+
     def test_stopped_task_image_correction_keeps_stop_identity_and_saved_receipt(self):
         task = S.load_task(self.project, self.slug)
         task.update(state="blocked", stop_id="stopped-owner")

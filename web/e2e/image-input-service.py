@@ -14,6 +14,19 @@ def main():
         gate.set()
     calls = []
     mode = {"value": "normal"}
+    completion = threading.Event()
+    completion.set()
+    completing = threading.Event()
+    finish_image_queue = l3._finish_image_queue
+
+    def finish(project):
+        if any(row.get("image_turn_id") for row in l3._queue_rows(l3.queue_path(project))):
+            completing.set()
+            if not completion.wait(40):
+                raise RuntimeError("Fictional image completion was not released.")
+        return finish_image_queue(project)
+
+    l3._finish_image_queue = finish
     engines.image_capability = lambda _engine: {"available": mode["value"] != "unavailable",
                                                "why": "Image input unavailable in this fixture."}
 
@@ -57,6 +70,8 @@ def main():
 
     class Handler(server.Handler):
         def do_GET(self):
+            if self.path == "/fixture/completing":
+                return self._json({"completing": completing.is_set()})
             if self.path == "/fixture/calls":
                 return self._json({"calls": list(calls)})
             if self.path.startswith("/api/images/") and len(self.path.split("?")[0].split("/")) == 5:
@@ -66,6 +81,12 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/pause-completion":
+                completion.clear()
+                return self._json({"ok": True})
+            if self.path == "/fixture/release-completion":
+                completion.set()
+                return self._json({"ok": True})
             if self.path.startswith(("/fixture/release/", "/fixture/pause/")):
                 action, project = self.path.split("/")[-2:]
                 (gates[project].set if action == "release" else gates[project].clear)()
@@ -94,7 +115,7 @@ def main():
                 return self._json({"error": "This image was refused by the fixture."}, 422)
             return super().do_POST()
 
-    serve(Handler, release=lambda: [gate.set() for gate in gates.values()])
+    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), completion]])
 
 
 if __name__ == "__main__":

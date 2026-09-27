@@ -1188,6 +1188,8 @@ replace text or images. Project queue/history and task `status.json.image_messag
 the latter atomically projects the conversation and pending delivery, like question acceptance.
 An image queue receipt arriving after its `request_id` appears in cached history does not append
 another queued copy. History retains the accepted message while the receipt releases the composer.
+Retained image claims are recovery records, not waiting messages: the queue projection excludes them
+even after the active turn clears and before completion removes the claim.
 The existing maintenance tick removes files unreferenced for 24 hours. Committed images follow
 conversation retention, including archive, worktree cleanup and project detach/reattach.
 Fresh L2 attempts carry delivered image-message captions and deduplicated canonical references from
