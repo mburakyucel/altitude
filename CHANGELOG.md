@@ -219,3 +219,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   and reports what it found. Pushing an approved `v0.*` tag publishes the release: a workflow
   checks the commit's main `check` run and its dated changelog section, then builds, attests and
   uploads the archive, `install.py`, `install.sh` and `SHA256SUMS`.
+
+- `alt update` with no arguments updates an installed Altitude to the newest stable published
+  release: it looks the release up on GitHub, downloads the archive and its checksum, and applies
+  them through the same verification, quiet-point activation and rollback as an archive update. It
+  does nothing when the installed version is current. `--version` installs a named newer release;
+  `--archive` with `--sha256` still installs a local archive. Registered projects keep current Git
+  guards and dispatch on the updated version.
