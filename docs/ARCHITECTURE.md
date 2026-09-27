@@ -592,6 +592,12 @@ so messages and Stop stay available. Admission waits at most one hour, reports
 the seconds waited, and refreshes ownership and holds before publication. Current main is merged
 into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
+For a completed review whose assessment is stale, the current L2's merging invocation retains the
+turn while the owner explicitly reassesses the pinned candidate through the existing review command.
+CI and assessment share the `--wait` deadline. Polls hold the task review lock only for current-candidate
+reads, serializing fetches with assessment; sleeps release it. Missing or unfinished review, candidate
+movement or ownership loss refuses. No review identity or disposition is automatically transferred.
+The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
 There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
 the turn. External Git/GitHub writers, older landing code, self-hosted runner executions and

@@ -18,6 +18,15 @@ _inflight: set[tuple[str, str, str]] = set()
 _inflight_lock = threading.Lock()
 
 
+class AssessmentRequired(T.TransitionError):
+    """A completed review needs owner judgment of the pinned landing candidate."""
+
+    def __init__(self, review_id):
+        self.review_id = review_id
+        super().__init__("Code, base, proposal or context changed after review assessment. "
+                         "Assess the current candidate before merging.")
+
+
 def _owner(task, actor, expected_attempt=None, *, required=False):
     if actor not in ("l2", T.OPERATOR_MESSAGE_ROLE) or required and actor != "l2":
         raise T.TransitionError("Only the task owner or operator can manage its review.")
@@ -578,15 +587,16 @@ def withdraw(project, slug, review_id, *, actor, reason="", expected_attempt=Non
 
 def require_merge(project, slug, pair):
     task = S.load_task(project, slug)
-    for review in _current_reviews(task):
-        if review["state"] == "withdrawn":
-            continue
+    current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
+    for review in current:
         if review["state"] != "completed" or not review.get("reconciled"):
             raise T.TransitionError("Adversarial review must finish and receive the owner's dispositions before merging.")
+    for review in current:
         identity, _ = _identity(project, task, proposal_id=review["reconciled"].get("proposal_id"))
-        if (not _same(review["reconciled"], identity) or identity["base"] != pair["base_sha"]
-                or identity["head"] != pair["head_sha"]):
-            raise T.TransitionError("Code, base, proposal or context changed after review assessment. Assess the current candidate before merging.")
+        if identity["base"] != pair["base_sha"] or identity["head"] != pair["head_sha"]:
+            raise T.TransitionError("Review candidate differs from the pinned landing base or head; re-run alt land.")
+        if not _same(review["reconciled"], identity):
+            raise AssessmentRequired(review["id"])
 
 
 def cancel_attached(project, slug, reason):

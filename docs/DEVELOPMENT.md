@@ -409,6 +409,12 @@ CI records its event base, head, candidate SHA and tree, verifying that the head
 and that the tested merge tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
 publication, CI waiting and merge across Altitude owners, including nonmerging invocations.
+For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
+the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
+landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
+required checks, timeout, termination, ownership loss and material-edit refusal. Original review
+receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
+background tool sessions or provider compatibility.
 Runner executions outside the command do not share its turn. Any base or head movement during landing
 refuses the merge. A later invocation can reuse the successful head when main is already an
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce

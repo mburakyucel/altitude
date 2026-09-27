@@ -11,9 +11,10 @@ import shutil
 import signal
 import time
 from pathlib import Path
+from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import land, state as S, tasks as T
+from altitude import config, engines, land, reviews, route, state as S, tasks as T
 
 
 RUNNER = r'''#!/usr/bin/env python3
@@ -37,20 +38,21 @@ sys.exit(int((d / 'exit-code').read_text()) if (d / 'exit-code').exists() else 0
 def run_owner(project, slug, worktree, fixture, output, options):
     os.setsid()
     os.environ.update(ALTITUDE_PROJECT=project, ALTITUDE_TASK=slug,
-                      ALTITUDE_ACTOR='l2', ALTITUDE_ATTEMPT='1', FAKE_GH_DIR=str(fixture))
+                      ALTITUDE_ACTOR=options.pop('actor', 'l2'), ALTITUDE_ATTEMPT='1', FAKE_GH_DIR=str(fixture))
     # Capture progress without substituting any application or storage behavior.
     def note(message):
         with (output / 'notes').open('a') as stream:
             stream.write(message + '\n')
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
+    land.CHECK_POLL_SECONDS = .05
     if options.pop('required_check', False):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
         (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
     invoke = land.land.__wrapped__ if options.pop('without_lock', False) else land.land
     try:
-        result = invoke('Independent fix ' + slug, cwd=worktree, wait=0,
+        result = invoke('Independent fix ' + slug, cwd=worktree, wait=options.pop('wait', 0),
                         test_cmd='fixture-candidate-check', **options)
         payload = {'result': result}
     except Exception as exc:
@@ -209,6 +211,174 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.waiting(second)
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
         return first, second
+
+    def reviewed(self, slug, *, assess=True):
+        worktree, _ = self.owners[slug]
+        git('commit', '-qm', 'Review checkpoint', cwd=worktree)
+        task = S.load_task(self.project, slug)
+        task.update(l2_engine=config.ENGINES[0], agent_id='fixture-' + slug)
+        S.save_task(self.project, task)
+        (S.task_dir(self.project, slug) / 'request.md').write_text('Preserve independent task changes.')
+        choice = {'engine': config.ENGINES[1], 'model': 'fixture', 'label': 'Fixture reviewer',
+                  'allowance_known': True}
+        def provider(prompt, **kwargs):
+            self.assertTrue(kwargs['on_start']({'unit': 'fixture-review', 'pid': 12345, 'started_ticks': '1'}))
+            return {'termination_confirmed': True, 'text': 'No findings', 'findings': [], 'limitations': []}
+        with mock.patch.object(route, 'pick_review', return_value=choice), \
+                mock.patch.object(engines, 'review', side_effect=provider) as engine:
+            request = reviews.request(self.project, slug, actor='l2', expected_attempt=1,
+                                      request_id='review-' + slug)
+            reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1)
+            engine.assert_called_once()
+        if assess:
+            self.assess(slug)
+
+    def assess(self, slug):
+        return reviews.assess(self.project, slug, 'review-' + slug, actor='l2', expected_attempt=1,
+                              dispositions=[], reason='Inspected the complete candidate and all current task context.')
+
+    def assessment_wait(self, call):
+        process, output = call
+        self.await_condition(lambda: (output / 'notes').exists()
+                             and 'waiting for owner assessment' in (output / 'notes').read_text(),
+                             'explicit owner reassessment wait')
+        self.assertTrue(process.is_alive())
+
+    def test_reviewed_waiter_reassesses_integrated_head_without_losing_turn(self):
+        self.ship_check_workflow()
+        self.reviewed('second')
+        old_review = S.load_task(self.project, 'second')['reviews'][0]
+        first = self.start('first', required_check=True)
+        self.checked('first')
+        second = self.start('second', required_check=True, wait=20)
+        self.waiting(second)
+        self.release('first')
+        self.merged('first', self.finish(first))
+        self.release('second')
+        self.assessment_wait(second)
+        worktree, fixture = self.owners['second']
+        integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
+        self.assertNotEqual(integrated, old_review['reconciled']['head'])
+        self.assertEqual(git('diff', '--name-only', 'origin/main', 'HEAD', cwd=worktree).strip(), 'second.txt')
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
+        self.assertEqual(S.load_task(self.project, 'second')['reviews'][0]['reconciled'], old_review['reconciled'])
+        self.owner('third', 103)
+        third = self.start('third', required_check=True)
+        self.waiting(third)
+        self.assertFalse((self.owners['third'][1] / 'log.jsonl').exists())
+        # Real message handling and assess run concurrently with the process holding the turn.
+        T.message(self.project, 'second', 'l3', 'Continue with the integrated candidate.')
+        self.assess('second')
+        result = self.merged('second', self.finish(second))
+        self.assertEqual(result['head'], integrated)
+        self.assertEqual(result['checks'], 'pass')
+        evidence = json.loads((fixture / 'last_check_evidence.json').read_text())['pullRequest']
+        self.assertEqual(evidence['headRefOid'], integrated)
+        self.assertEqual(evidence['baseRef']['target']['oid'],
+                         json.loads((self.owners['first'][1] / 'pr.json').read_text())['mergeCommit']['oid'])
+        self.release('third')
+        self.merged('third', self.finish(third))
+        saved = S.load_task(self.project, 'second')['reviews'][0]
+        self.assertEqual(saved['snapshot'], old_review['snapshot'])
+        self.assertEqual(saved['merged_head'], integrated)
+
+    def stale_review(self):
+        self.reviewed('first')
+        T.message(self.project, 'first', 'l3', 'Check the current candidate before proceeding.')
+        self.release('first')
+
+    def test_assessment_timeout_releases_turn_and_keeps_published_candidate(self):
+        self.stale_review()
+        first = self.start('first', wait=.2)
+        payload = self.finish(first)
+        self.assertIn('assessment wait timed out', payload['error'])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        head = S.load_task(self.project, 'first')['delivery']['head']
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), head)
+        self.assess('first')
+        result = self.merged('first', self.finish(self.start('first')))
+        self.assertEqual(result['head'], head)
+        self.release('second')
+        self.merged('second', self.finish(self.start('second')))
+
+    def test_killed_assessment_wait_releases_turn_to_competing_owner(self):
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        second = self.start('second')
+        self.waiting(second)
+        os.killpg(first[0].pid, signal.SIGKILL)
+        first[0].join(5)
+        self.assertEqual(first[0].exitcode, -signal.SIGKILL)
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(second))
+
+    def test_replaced_owner_during_assessment_releases_turn(self):
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        task = S.load_task(self.project, 'first')
+        task['attempt'] = 2
+        S.save_task(self.project, task)
+        self.assertIn('no longer current', self.finish(first)['error'])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(self.start('second')))
+
+    def test_material_edit_during_assessment_refuses_pinned_candidate(self):
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        worktree, _ = self.owners['first']
+        (worktree / 'material.txt').write_text('New behavior requires a new candidate.\n')
+        git('add', 'material.txt', cwd=worktree)
+        git('commit', '-qm', 'Material change', cwd=worktree)
+        # Even a deliberate assessment of this different head cannot authorize the pinned head.
+        self.assess('first')
+        self.assertRegex(self.finish(first)['error'], 'differs from the pinned|Commit the selected task changes')
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(self.start('second')))
+
+    def test_operator_landing_refuses_stale_assessment_without_waiting(self):
+        self.stale_review()
+        first = self.start('first', wait=20, actor=config.OPERATOR_ACTOR)
+        self.assertIn('changed after review assessment', self.finish(first)['error'])
+        self.assertNotIn('waiting for owner assessment', (first[1] / 'notes').read_text())
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
+    def test_unassessed_review_refuses_without_waiting_or_merging(self):
+        self.reviewed('first', assess=False)
+        first = self.start('first', wait=20)
+        self.assertIn("receive the owner's dispositions", self.finish(first)['error'])
+        self.assertNotIn('waiting for owner assessment', (first[1] / 'notes').read_text())
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
+    def test_external_main_change_during_assessment_refuses_and_releases_turn(self):
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        (self.repo / 'external.txt').write_text('External main update\n')
+        git('add', 'external.txt', cwd=self.repo)
+        git('commit', '-qm', 'External main update', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        self.assertRegex(self.finish(first)['error'], 'differs from the pinned|base or head moved')
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(self.start('second')))
+
+    def test_failed_required_check_ends_assessment_wait_without_merging(self):
+        self.ship_check_workflow()
+        self.stale_review()
+        first = self.start('first', required_check=True, wait=20)
+        self.assessment_wait(first)
+        (self.owners['first'][1] / 'checks.json').write_text('[{"bucket":"fail"}]')
+        result = self.finish(first)['result']
+        self.assertEqual((result['checks'], result['merged']), ('fail', False))
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(self.start('second', required_check=True)))
 
     def test_independent_owners_validate_fresh_candidates_and_merge_once(self):
         second_worktree = self.owners['second'][0]
