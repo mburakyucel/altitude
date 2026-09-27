@@ -192,6 +192,84 @@ test("accepted L2 input stays sent through a failed refresh and preserves the ne
   expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
 });
 
+test("late L2 receipt preserves polled removal, message order and the next draft across Live switches", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const slug = "prepare-index-migration";
+  const text = "Withdraw this instruction before the next checkpoint.";
+  const later = "Keep this later instruction in its original position.";
+  const draft = "An unsent draft after both instructions.";
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const removed = conversation.getByText("Removed · not sent to the session", { exact: true });
+  const bubbles = conversation.locator(".bubble").filter({ hasText: /Message removed|Withdraw this instruction|Keep this later instruction/ });
+  let releaseReceipt!: () => void;
+  const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+  let saved!: () => void;
+  const savedGate = new Promise<void>((resolve) => { saved = resolve; });
+  let receipt!: { id: string; delivery: { state: string } };
+  let submissions = 0;
+  await page.route("**/api/l2/message", async (route) => {
+    submissions++;
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    receipt = (await response.json()).message;
+    saved();
+    await receiptGate;
+    await route.fulfill({ response });
+  });
+  let holdReads = false;
+  let releaseReads!: () => void;
+  const readGate = new Promise<void>((resolve) => { releaseReads = resolve; });
+  let readHeld!: () => void;
+  const heldRead = new Promise<void>((resolve) => { readHeld = resolve; });
+  await page.route(`**/api/task/atlas/${slug}`, async (route) => {
+    if (holdReads) { readHeld(); await readGate; }
+    await route.continue();
+  });
+  try {
+    await walk.open(`/projects/atlas/tasks/${slug}`);
+    await field.fill(text);
+    await conversation.getByRole("button", { name: "Send", exact: true }).click();
+    await savedGate;
+    expect(receipt.delivery.state).toBe("queued");
+    // Removal and the later send use the real API/storage while the browser still awaits its receipt.
+    expect((await request.post("/api/l2/remove", { data: { project: "atlas", slug, id: receipt.id } })).ok()).toBe(true);
+    expect((await request.post("/api/l2/message", { data: { project: "atlas", slug, text: later } })).ok()).toBe(true);
+    await expect(bubbles).toHaveText(["Message removed", later]);
+    await expect(removed).toBeVisible();
+    await field.fill(draft);
+    for (let index = 0; index < 2; index++) {
+      if (info.project.name === "phone") {
+        const tabs = page.getByRole("navigation", { name: "Task views" });
+        await tabs.getByRole("link", { name: "Live session", exact: true }).click();
+        await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+      } else {
+        const toggle = page.getByRole("button", { name: "Live session", exact: true });
+        await toggle.click();
+        await toggle.click();
+      }
+    }
+    await walk.state("01-canonical-removal-before-late-receipt", { visible: [removed, field], hidden: [conversation.getByText(text, { exact: true })] });
+    await expect(field).toHaveValue(draft);
+    // Keep the receipt's subsequent refresh pending so it cannot hide a stale cache mutation.
+    holdReads = true;
+    const response = page.waitForResponse((response) => response.url().endsWith("/api/l2/message") && response.request().method() === "POST");
+    releaseReceipt();
+    await response;
+    await heldRead;
+    await expect(bubbles).toHaveText(["Message removed", later]);
+    await expect(field).toHaveValue(draft);
+    await walk.state("02-late-receipt-keeps-removal-order-and-draft", { visible: [removed, field], hidden: [conversation.getByText(text, { exact: true }), conversation.locator(".msg-row[data-pending]")] });
+    expect(submissions).toBe(1);
+    const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
+    expect(task.messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+    expect(task.messages.find((row: { id: string }) => row.id === receipt.id).delivery.state).toBe("removed");
+    const workers = await (await request.get("/fixture/workers")).json();
+    expect(workers.pending[slug].map((row: { text: string }) => row.text)).toEqual([later]);
+    expect(workers.calls).toHaveLength(0);
+  } finally { releaseReceipt(); releaseReads(); }
+});
+
 for (const lostReceipt of [false, true]) test(`L2 immediate Live and task navigation retains ${lostReceipt ? "unconfirmed recovery" : "accepted input"} through reload`, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "prepare-index-migration";

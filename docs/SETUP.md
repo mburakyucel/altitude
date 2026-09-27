@@ -3,6 +3,13 @@
 Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The release
 archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
 Native macOS, Windows and genuine clean-machine/provider acceptance are not established.
+
+The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
+exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
+and fixture engines. Its first hosted execution remains pending until results are recorded.
+The same harness runs on a disposable developer VM; it is not an installation command for your
+own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention,
+without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
 ## Prerequisites

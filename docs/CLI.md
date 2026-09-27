@@ -1065,6 +1065,10 @@ judges its meaning and uses `resolve` for an actual decision. Submitted members 
 count. To explicitly ask a responded member again, include its ID in `--questions-file`; publication
 creates a new revision and restores its answer field even when wording is unchanged. Ordinary
 unchanged re-parking retains the response. Independent unanswered members remain available.
+An open operator question linking or naming the held PR replaces its generated review card,
+including a freeform question and one with a submitted response awaiting owner interpretation.
+After resolution the fallback returns if merge approval is still needed. This display rule neither
+classifies the answer as approval nor changes the quick-option requirement for a changes review.
 One typed reply can answer several members. Its saved question references name what the operator
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
 Only questions still awaiting an operator response remain in Needs you. Quick selections can also be sent

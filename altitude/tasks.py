@@ -2036,24 +2036,29 @@ def approved_pr(project: str, task: dict) -> int | None:
     return number if approved else None
 
 
-def asks_merge(task: dict, question: dict) -> bool:
-    """An operator question with quick options that names the held PR asks for its merge approval (#448)."""
+def _references_held_pr(task: dict, question: dict) -> bool:
+    """The owning PR question supplies the response surface, including a freeform field."""
     number = (task.get("prs") or [None])[-1]
     return bool(number and task.get("hold_merge") and question["audience"] == "operator"
-                and (choices := question_choices(question)) and _names_pr(number).search(
-                    " ".join([question["detail"], *(f"{o['label']} {o['text']}" for o in choices)])))
+                and _names_pr(number).search(" ".join([question["detail"], *(
+                    f"{o['label']} {o['text']}" for o in question_choices(question))])))
+
+
+def asks_merge(task: dict, question: dict) -> bool:
+    """Changes review requires the held PR's explicit quick-choice question (#537)."""
+    return bool(question_choices(question) and _references_held_pr(task, question))
 
 
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
-    An open operator question with quick options that names the PR is already that review, so it is asked once
-    (#448); a freeform one only discusses it, so the one-tap Approve stays. A recorded approval of the held PR
-    is not asked for again (#451)."""
+    An open operator question naming the PR supplies its single response surface, with quick choices
+    or a freeform field. Its submitted response stays there until the owner resolves the question.
+    The question does not supply merge authority; recorded approval keeps its separate rules (#451)."""
     number = (task.get("prs") or [None])[-1]
     if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
-            and not any(asks_merge(task, q) for q in operator_questions(task))
+            and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")
             and not approved_pr(project, task)):
         return number
     return None

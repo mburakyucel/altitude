@@ -159,7 +159,7 @@ class TestDecisions(AltitudeCase):
                 self.assertNotIn("review", [row["kind"] for row in T.decisions(self.project)])
                 S.save_task(self.project, {k: v for k, v in S.load_task(self.project, slug).items() if k not in blocker})
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question · review PR #42")
-        T.message(self.project, slug, "burak", "Approved: merge PR #42.")
+        T.message(self.project, slug, "burak", "I will review PR #42 shortly.")
         self.assertEqual(T.decisions(self.project), [])
         T.resume(self.project, slug)
         self.assertEqual(T.decisions(self.project), [], "a running owner is working, not waiting for review")
@@ -167,10 +167,10 @@ class TestDecisions(AltitudeCase):
         T.report(self.project, slug, {"verdict": "ok", "delivery": S.load_task(self.project, slug)["delivery"]})
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
-    def test_a_merge_question_with_options_is_the_review_and_the_card_returns_without_it(self):
+    def test_a_pr_question_is_the_single_surface_and_the_card_returns_without_it(self):
         # One PR merge decision appears once: the owner's question with quick options replaces the generated
-        # card, through a revision too; a freeform or unrelated question keeps the card's one-tap Approve,
-        # and withdrawing restores it.
+        # card, through a revision too. Freeform questions also supply one response surface;
+        # unrelated questions and withdrawal leave the fallback available.
         url = "https://example.com/atlas/pull/42"
         approve = lambda text: {"questions": [{"question": text, "recommended_key": "approve", "options": [
             {"key": "approve", "label": "Approve merge", "text": "Approved: merge PR #42."},
@@ -180,10 +180,10 @@ class TestDecisions(AltitudeCase):
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"],
-                         "a freeform question naming the PR leaves the operator a one-tap Approve")
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks"],
+                         "a freeform question and an Approve card must not compete for the same PR")
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)),
-                         f"{name}'s turn · 1 question · review PR #42")
+                         f"{name}'s turn · 1 question")
         T.resume(self.project, slug)
         T.block(self.project, slug, "Merge the checkout fix?", actor="l2", updates={"waiting_on": "burak"},
                 questions=approve(f"Merge the checkout fix? {url}"))
@@ -205,6 +205,43 @@ class TestDecisions(AltitudeCase):
         T.resolve_question(self.project, slug, question["id"], question["revision"], None, disposition="withdrawn",
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+
+    def test_submitted_pr_question_keeps_one_surface_until_owner_resolution(self):
+        # The freeform answer is delivered, not classified as merge permission. An independent
+        # question stays usable; resolving discussion restores the held review when still needed.
+        task = self.blocked("Checkout review", "Choose the checkout rollout details.")
+        slug = task["slug"]
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review before merge", prs=[42],
+                    delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+        S.save_task(self.project, held)
+        original = held["questions"][-1]
+        T.resume(self.project, slug)
+        T.block(self.project, slug, "Choose the checkout rollout details.", actor="l2", questions={"questions": [
+            {"id": original["id"], "question": "Who announces PR #42 to the release team?"},
+            {"question": "Which backup region should we use?"}]})
+        task = S.load_task(self.project, slug)
+        question, independent = T.question_group_view(self.project, task)["questions"]
+        self.assertEqual([row.get("id") for row in T.decisions(self.project)], [question["id"], independent["id"]])
+        self.assertFalse(T.asks_merge(task, question), "freeform input does not authorize a changes-review exception")
+        response = T.accept_question(self.project, slug, question["id"], question["revision"], text="The release team.")
+        T.resume(self.project, slug)
+        T.take_inbox(self.project, slug)
+        T.block(self.project, slug, "Choose the checkout rollout details.", actor="l2")
+        self.assertEqual([row["id"] for row in T.decisions(self.project)], [independent["id"]])
+        with mock.patch.object(server.monitor, "sessions", return_value=[]):
+            view = server.task_view(self.project, slug)
+        self.assertEqual(view["question_group"]["questions"][0]["response"], response["response"])
+        self.assertIsNone(T.review_row(self.project, S.load_task(self.project, slug)))
+        T.resolve_question(self.project, slug, question["id"], question["revision"], response["response"]["message_id"],
+                           disposition="answered", reason="The release team announces it; merge approval is still needed.",
+                           expected_attempt=1)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"])
+        current = S.load_task(self.project, slug)
+        self.assertEqual(current["hold_merge"], held["hold_merge"])
+        self.assertIsNone(current.get("merge_approval"))
+        self.assertIsNone(T.approved_pr(self.project, current), "a PR mention never turns an unrelated answer into approval")
+        T.accept_question(self.project, slug, independent["id"], independent["revision"], text="West.")
 
     def test_an_approved_pr_waiting_on_a_dependency_is_not_asked_again(self):
         # #451: approving the PR once is enough while the owner waits on something else, including after

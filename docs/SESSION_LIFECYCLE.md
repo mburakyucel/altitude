@@ -519,7 +519,7 @@ send and reload. `reported-continuation.pw.ts` walks continuation and refusal; t
 and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
 A task's versioned dilemma remains open independently of that wake and its worker state. Sending
 it anything hands the turn back: its questions leave Needs you until the owner parks again, when
-still-open ones return as **asked again** and a held review-ready PR shows its own review item unless an open question with options links it or the operator
+still-open ones return as **asked again** and a held review-ready PR shows its own review item unless an open operator question links it or the operator
 already approved the PR since the hold; a new head from routine integration keeps that approval, and a later message naming the PR asks again. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
@@ -697,7 +697,11 @@ delivery unconfirmed, the composer preserves both submitted and newly typed text
 to check the conversation, and offers no send Retry, including when another overlapping send is refused.
 It never infers acceptance by matching text.
 Task polling replaces a pending preview as soon as its submission ID appears in saved messages,
-including before the POST response arrives. Separate sends with identical text remain separate
+including before the POST response arrives. A late POST receipt preserves the saved row's order and
+delivery state. Project queue receipts refresh the source snapshot, including after navigation;
+they never recreate a queued row that has run or been removed. A matching canonical assistant/error
+row replaces a stalled response stream. Failed refreshes retain acceptance and offer only read Retry.
+Separate sends with identical text remain separate
 messages; failed or unconfirmed responses retain the existing draft recovery.
 Submitted-text recovery belongs to the original project/task beyond a composer mount. Browser-tab
 storage retains each outstanding submission and the recovered draft; a live receipt retires only

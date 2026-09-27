@@ -1262,6 +1262,10 @@ the operator's running service or launches a real worker. Live-provider validati
 under the operator's [testing policy](../AGENTS.md#checks);
 the [coverage matrix](DEVELOPMENT.md#coverage-and-limits) identifies unproven external behavior.
 
+The separate [manual installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
+uses real packaged application services in a disposable Ubuntu account with fixture engines.
+Dispatches run on main with a separate source input; this acceptance lane adds no PR or release gate.
+
 The same browser specs run at 390×844 with mobile user agent and touch and at 1440×900. The
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
@@ -1500,7 +1504,14 @@ The page owns its draft and submit function. A valid turn, terminal turn ID, que
 saved task message establishes acceptance; HTTP stream headers alone do not. After acceptance,
 a broken response stream resolves to the existing history refresh without restoring the draft or
 inventing an assistant failure. Each local stream callback belongs to its own send, so an older
-stream cannot alter a later queue request. A failed refresh is a read error, whose Retry only reads.
+stream cannot alter a later queue request. A canonical assistant or error row for that turn replaces
+its local stream even while the response remains open. A queue receipt establishes acceptance;
+the source conversation refreshes its canonical snapshot even after navigation, rather than adding
+the receipt back to the queue. The current send's accepted local preview remains until a successful
+read or an identity-matched queue/history row owns its display. Local cache edits do not count as
+reads. Navigation or a subsequent send replaces that local preview; accepted messages reconstruct
+from the server on the next successful read. Failed reads show the conversation read error, whose
+Retry only reads, including after navigation. They do not restore accepted text for sending again.
 Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
 receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
@@ -1508,7 +1519,8 @@ after the submitted text on a new line. Combined failed drafts remain unconfirme
 receipt. No text matching or automatic resend infers delivery.
 Task sends carry a UUID `request_id`, retained as the saved message ID. The conversation renders
 the pending preview only while that ID is absent from polled messages, so the saved row owns its
-display even before the POST completes. Text recovery still follows the send response.
+display even before the POST completes. A late receipt preserves that row's canonical position and
+delivery state, including explicit removal. Text recovery still follows the send response.
 The composer keeps only submitted-text recovery in browser-tab `sessionStorage`, keyed by stable
 project or project/task identity. Live request callbacks outlast component unmount and restore a
 failure only to their original conversation. A receipt removes its request's recovery copy before
@@ -1730,6 +1742,12 @@ when ready, even unchanged. Relevant revisions and checks precede a completed-wo
 independent work need not finish. Answers settle only their stated scope and preserve required work.
 Guidance waits for the owner's checkpoint; it considers an earlier answer with later guidance before acting.
 No message classifier or automatic invalidation supplies that judgment.
+An open operator question naming or linking the held PR supplies its single response surface,
+including a freeform question. The generated review card stays hidden until the owner resolves
+that question, including while its submitted response waits for interpretation. This presentation
+rule supplies no merge authority: an unrelated answer mentioning the PR never counts as approval,
+and the held-review fallback returns after resolution when still needed. Independent questions and
+ordinary chat remain available. The changes-review exception still requires quick options.
 Existing stopped/fault cards link to their ordinary task controls; an operational
 pause with no open question offers Resume through the existing daemon operation.
 If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and
@@ -1958,7 +1976,7 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, no open question with options links its PR and the PR is not already
+at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
