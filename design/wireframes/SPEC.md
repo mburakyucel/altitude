@@ -1185,8 +1185,8 @@ once in the row ("It will need a new code to open Altitude again.", or "This bro
 the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
-A **Terminal** switch row (off after install) says "Anyone who can open Altitude can run commands as
-you on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
+A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
+on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
 The overview also shows read-only address and HTTPS details.

@@ -983,9 +983,12 @@ does not proxy any path altd could route to the terminal (`terminalRequest` read
 altd does, and also its decoded, dot-resolved form; a path with `;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
 using the terminal to leave its sandbox and bypass the machine-grant flow. The check has known
 limits. A process an agent starts outside those units, through the user service manager or a
-scheduler, is not recognized. Claude L2 workers have no OS sandbox, so they can already change the
-operator's files directly. Reading the process table is Linux-specific. Altitude has no login, so
-anyone who can open it can use the terminal once it is on. That is the same trust as its other
+scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
+proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
+looks like the operator's browser, so the operator keeps the terminal off while one serves Altitude.
+Claude L2 workers have no OS sandbox, so they can already change the
+operator's files directly. Reading the process table is Linux-specific. Every paired browser can use the terminal once it is
+on. That is the same trust as its other
 operator controls, and the Settings copy says so. Altitude stores nothing typed; the operator's own
 shell keeps its history as it does in any terminal.
 

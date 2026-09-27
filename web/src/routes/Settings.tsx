@@ -170,7 +170,7 @@ function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
   return <div className="settings-row settings-switch-row">
     <label htmlFor="terminal-switch">
       <strong>Terminal</strong>{" "}
-      <small>Anyone who can open Altitude can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
+      <small>Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
       {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
     </label>
     <input id="terminal-switch" type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}

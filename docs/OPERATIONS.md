@@ -345,7 +345,10 @@ On the next start Altitude reissues its server certificate for that address unde
 trusted devices need no new step. A generated CA refuses public addresses and names.
 `ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
 Install the CA on the phone and enable its trust in Certificate Trust Settings. Arrange the
-private tunnel and any firewall rule for your chosen interface/port separately. The shipped
+private tunnel and any firewall rule for your chosen interface/port separately, and bind Altitude to
+that interface directly. A forwarder on this machine in front of Altitude (an SSH tunnel, a reverse
+proxy, a container's published port) hides which process connects, so the terminal cannot tell an
+agent behind it from your browser; keep the terminal off while one serves Altitude. The shipped
 service template's tunnel address and checkout path are not defaults to copy to another machine.
 Generated server certificates renew automatically while the original CA remains valid; an expired
 or replaced CA needs explicit new trust on every device. External certificate pairs are not renewed

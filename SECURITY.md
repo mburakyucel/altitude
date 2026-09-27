@@ -55,3 +55,7 @@ Out of scope:
 - Exposure created by deliberately binding the server to an address the setup documentation
   warns against, or by disabling documented sandbox or certificate checks.
 - Resource exhaustion by the operator's own agents on the operator's own machine.
+- Reaching the terminal through a forwarder the operator runs on this machine in front of Altitude
+  (an SSH tunnel, a reverse proxy, a container's published port) while the terminal is on: the
+  terminal sees the forwarder, not the process behind it. The operations guide says to keep the
+  terminal off in that setup.
