@@ -81,10 +81,10 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   await page.reload();
   await expect(notice.getByText("Installing Altitude v0.2.0…")).toBeVisible();
 
-  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "Activation failed; previous installation restored: fixture probe failed." } };
+  state.update = { ...available, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } };
   await page.reload();
   await walk.state("06-failed", {
-    visible: [notice.getByText(/The update to v0.2.0 did not finish\. Activation failed; previous installation restored: fixture probe failed\. Altitude v0.1.0 keeps running\./),
+    visible: [notice.getByText(/The update to v0.2.0 did not finish\. Run alt update in a terminal to see why\. Altitude v0.1.0 keeps running\./),
       notice.getByRole("button", { name: "Try again" }), dismiss],
     hidden: [update],
   });

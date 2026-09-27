@@ -137,6 +137,8 @@ def latest_release(repository: str) -> dict:
 UPDATE_CHECK_SECONDS = 12 * 3600
 UPDATE_RETRY_SECONDS = 3600
 UPDATE_STALE_SECONDS = 1800
+# The page shows only this next step; the cause stays in the terminal or the update unit's log.
+UPDATE_FAILED = "Run alt update in a terminal to see why."
 
 
 def _update_record() -> tuple[Path, dict]:
@@ -145,9 +147,17 @@ def _update_record() -> tuple[Path, dict]:
     return path, S.read_json(path, {})
 
 
-def _save_update_record(record: dict) -> None:
+@contextmanager
+def _changing_update_record():
+    """The daemon, the app's request and the detached update each change update.json under one lock."""
     from . import state as S
-    S.write_json(_update_record()[0], record)
+    path, _ = _update_record()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / "update.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        record = S.read_json(path, {})
+        yield record
+        S.write_json(path, record)
 
 
 def check_for_update(now: float | None = None) -> None:
@@ -160,11 +170,11 @@ def check_for_update(now: float | None = None) -> None:
     if now < record.get("next", 0):
         return
     try:
-        latest = latest_release(release_repository())
+        found = {"latest": latest_release(release_repository()), "checked": now, "next": now + UPDATE_CHECK_SECONDS}
     except (OSError, ValueError, RuntimeError):
-        _save_update_record({**record, "next": now + UPDATE_RETRY_SECONDS})
-        return
-    _save_update_record({**record, "latest": latest, "checked": now, "next": now + UPDATE_CHECK_SECONDS})
+        found = {"next": now + UPDATE_RETRY_SECONDS}
+    with _changing_update_record() as record:
+        record.update(found)
 
 
 def update_status() -> dict | None:
@@ -179,7 +189,7 @@ def update_status() -> dict | None:
     newer = bool(latest) and VERSION.fullmatch(latest.get("version", "")) and version_key(latest["version"]) > version_key(current)
     attempt = record.get("attempt") if (record.get("attempt") or {}).get("version") != current else None
     if attempt and attempt["state"] == "running" and time.time() - attempt["started"] > UPDATE_STALE_SECONDS:
-        attempt = {**attempt, "state": "failed", "error": "The update did not finish. Run alt update in a terminal to see why."}
+        attempt = {**attempt, "state": "failed", "error": UPDATE_FAILED}
     return {"current": current, "available": latest if newer else None, "check": check, "command": "alt update",
             "checked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["checked"])) if record.get("checked") else None,
             "attempt": attempt}
@@ -204,28 +214,41 @@ def update_notice() -> str | None:
 def request_update(version: str) -> dict:
     """The app's Update button: the exact newer release it showed, run as `alt update --version` in its own unit."""
     from . import platform
-    status = update_status()
-    if not status or not status["available"] or status["available"]["version"] != version:
-        raise ValueError("Only the newer release Altitude is showing can be installed from the app")
-    if (status["attempt"] or {}).get("state") == "running" and status["attempt"]["version"] == version:
-        return status
-    saved = json.loads(_settings().read_text())
-    platform.detach(f"altitude-update-{version}",
-                    [saved["python"], "-B", str(_prefix() / "current/bin/alt"), "update", "--version", version],
-                    {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1"})
-    _, record = _update_record()
-    _save_update_record({**record, "attempt": {"version": version, "state": "running", "started": time.time()}})
+    # One locked step checks and records the attempt, so a second click cannot start a second update, and the
+    # attempt exists before the detached update starts, so that update's own failure always finds it.
+    with _changing_update_record() as record:
+        status = update_status()
+        if not status or not status["available"] or status["available"]["version"] != version:
+            raise ValueError("Only the newer release Altitude is showing can be installed from the app")
+        if (status["attempt"] or {}).get("state") == "running" and status["attempt"]["version"] == version:
+            return status
+        record["attempt"] = {"version": version, "state": "running", "started": time.time()}
+    try:
+        saved = json.loads(_settings().read_text())
+        platform.detach(f"altitude-update-{version}",
+                        [saved["python"], "-B", str(_prefix() / "current/bin/alt"), "update", "--version", version],
+                        {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1"})
+    except (OSError, ValueError, RuntimeError) as exc:
+        _fail_attempt(version)
+        raise RuntimeError("Altitude could not start the update. Run alt update in a terminal to see why.") from exc
     return update_status()
+
+
+def _fail_attempt(version: str) -> None:
+    """Mark this version's running attempt failed; the details stay in the terminal or the update unit's log."""
+    with _changing_update_record() as record:
+        attempt = record.get("attempt") or {}
+        if attempt.get("state") == "running" and attempt.get("version") == version:
+            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_FAILED}
 
 
 def update(version: str | None = None) -> dict:
     """Install the named or latest published release through the same verification and activation."""
     try:
         return _update(version)
-    except (OSError, ValueError, RuntimeError) as exc:
-        _, record = _update_record()
-        if (record.get("attempt") or {}).get("state") == "running":
-            _save_update_record({**record, "attempt": {**record["attempt"], "state": "failed", "error": str(exc)[:300]}})
+    except (OSError, ValueError, RuntimeError):
+        if version:
+            _fail_attempt(version)
         raise
 
 

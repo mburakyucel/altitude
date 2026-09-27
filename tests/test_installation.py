@@ -572,6 +572,12 @@ class Platform(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
 
+    def test_detached_update_keeps_dollar_expressions_in_paths_literal(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), mock.patch.object(platform, "run", return_value="") as run:
+            platform.detach("altitude-update-v0.2.0", ["/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"], {"PATH": "/usr/bin"})
+        self.assertIn("--expand-environment=no", run.call_args.args)
+        self.assertEqual(run.call_args.args[-3:], ("/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"))
+
     def test_execstart_disables_environment_expansion_in_literal_paths(self):
         unit = platform.definition(Path("/tmp/${UNDEFINED}/application"), Path("/usr/bin/python3"),
                                    Path("/tmp/install.json"), {"PATH": "/usr/bin:/bin"})
@@ -876,11 +882,37 @@ class NewVersionNotice(NoticeCase):
             installation.update("v0.2.0")
         status = installation.update_status()
         self.assertEqual((status["current"], status["attempt"]["state"]), ("v0.1.0", "failed"))
-        self.assertIn("not published", status["attempt"]["error"])
+        # The page gets a fixed sentence; the cause stays in the terminal or the update unit's log.
+        self.assertEqual(status["attempt"]["error"], "Run alt update in a terminal to see why.")
         installation.request_update("v0.2.0")
         self.assertEqual(len(self.detached), 2)
         with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
-            self.assertIn("did not finish", installation.update_status()["attempt"]["error"])
+            self.assertEqual(installation.update_status()["attempt"], {**installation._update_record()[1]["attempt"],
+                             "state": "failed", "error": "Run alt update in a terminal to see why."})
+
+    def test_an_update_that_cannot_start_is_failed_without_its_private_cause(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
+            with self.assertRaisesRegex(RuntimeError, "^Altitude could not start the update"):
+                installation.request_update("v0.2.0")
+        attempt = installation.update_status()["attempt"]
+        self.assertEqual(attempt["state"], "failed")
+        self.assertNotIn(str(self.home), json.dumps(installation.update_status()))
+
+    def test_a_check_finishing_during_an_update_keeps_its_attempt(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        lookup = installation.latest_release
+
+        def slow_lookup(repository):
+            installation.request_update("v0.2.0")  # the Update button while the daemon's lookup is in flight
+            return lookup(repository)
+
+        with mock.patch.object(installation, "latest_release", side_effect=slow_lookup), \
+                mock.patch.object(installation.time, "time", return_value=time.time() + 13 * 3600):
+            installation.check_for_update()
+        self.assertEqual(installation.update_status()["attempt"]["state"], "running")
 
     def test_a_finished_update_clears_the_notice(self):
         self.publish("v0.1.1", latest={"tag_name": "v0.1.1"})
