@@ -138,6 +138,133 @@ function liveReply() {
 describe.each([390, 1440])("project switching at %ipx", (width) => {
   const field = (name: string) => screen.getByRole("textbox", { name: `Message L3 about ${name}-project` });
 
+  it("canonical completion replaces a stalled stream and ignores its late chunks", async () => {
+    const reply = liveReply();
+    const { chats } = projectChats(() => reply.response);
+    setViewport(width);
+    const { user, queryClient } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Inspect sample");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await act(async () => {
+        reply.frame({ turn: { id: "stalled", started_at: ago(0), trigger: "chat" } });
+        reply.frame({ t: "Partial answer" });
+      });
+      await screen.findByText("Partial answer");
+      await user.type(field("alpha"), "Next draft");
+      chats["alpha-project"]!.history.push(
+        { role: "user", text: "Inspect sample", trigger: "chat", turn_id: "stalled" },
+        { role: "assistant", text: "Canonical complete answer", trigger: "chat", turn_id: "stalled" },
+      );
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "alpha-project"] }); });
+      expect(await screen.findByText("Canonical complete answer")).toBeInTheDocument();
+      expect(screen.queryByText("Partial answer")).toBeNull();
+      await act(async () => reply.frame({ t: " obsolete fragment" }));
+      expect(screen.queryByText(/obsolete fragment/)).toBeNull();
+      expect(field("alpha")).toHaveValue("Next draft");
+    } finally { await act(async () => reply.close()); }
+  });
+
+  it("a queue receipt keeps an accepted preview through a failed refresh and read Retry never resends", async () => {
+    let failReads = false;
+    const { chats, fetchMock } = projectChats(() => {
+      failReads = true;
+      return jsonResponse({ queued: { id: "accepted-queue", text: "Accepted sample", at: ago(0), trigger: "chat" } });
+    });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => failReads && String(input).startsWith("/api/chat/alpha-project")
+      ? Promise.resolve(jsonResponse({ error: "Read unavailable" }, 503)) : original(input, init));
+    setViewport(width);
+    const { user, queryClient } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.type(field("alpha"), "Accepted sample");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Could not load the conversation.", { exact: false });
+    await user.type(field("alpha"), "Newer draft");
+    expect(screen.getByText("Accepted sample")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Queued messages" })).toBeNull();
+    expect(screen.queryByText(/Could not confirm delivery/)).toBeNull();
+    expect(sessionStorage.getItem("altitude.submitted:project/alpha-project")).toBeNull();
+    // Engine selection/rollback can update the cache without learning anything about delivery.
+    await act(async () => {
+      queryClient.setQueryData<ChatView>(["chat", "alpha-project"], (cached) => cached && { ...cached, engine: "alpha" });
+      await queryClient.invalidateQueries({ queryKey: ["chat", "alpha-project"] });
+    });
+    expect(screen.getByText("Accepted sample")).toBeInTheDocument();
+    // The real queue may have been removed by another view; an empty fresh snapshot owns that fact.
+    chats["alpha-project"]!.queued = [];
+    failReads = false;
+    await user.click(screen.getByRole("button", { name: /^Retry$/ }));
+    await waitFor(() => expect(screen.queryByText("Accepted sample")).toBeNull());
+    expect(field("alpha")).toHaveValue("Newer draft");
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("overlapping accepted sends reconstruct after navigation and failed reads without restoring drafts", async () => {
+    let failReads = false;
+    const { chats, fetchMock } = projectChats(({ project, text }) => {
+      const row = { id: `receipt-${text}`, text, trigger: "chat", at: ago(0) };
+      chats[project]!.queued = [...(chats[project]!.queued ?? []), row];
+      failReads = true;
+      return jsonResponse({ queued: row });
+    });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => failReads && String(input).startsWith("/api/chat/alpha-project")
+      ? Promise.resolve(jsonResponse({ error: "Read unavailable" }, 503)) : original(input, init));
+    setViewport(width);
+    const { user, router } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    for (const text of ["First accepted", "Second accepted"]) {
+      await user.type(field("alpha"), text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("Could not load the conversation.", { exact: false });
+      await waitFor(() => expect(sessionStorage.getItem("altitude.submitted:project/alpha-project")).toBeNull());
+    }
+    await user.type(field("alpha"), "Newer source draft");
+    await act(() => router.navigate("/projects/beta-project"));
+    await user.type(field("beta"), "Independent draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(() => router.navigate("/projects/alpha-project"));
+    await screen.findByText("Could not load the conversation.", { exact: false });
+    expect(field("alpha")).toHaveValue("Newer source draft");
+    expect(screen.queryByText(/Could not confirm delivery/)).toBeNull();
+    failReads = false;
+    await user.click(screen.getByRole("button", { name: /^Retry$/ }));
+    const queue = await screen.findByRole("list", { name: "Queued messages" });
+    expect(within(queue).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "First acceptedQueued · runs nextRemove", "Second acceptedQueued · 2 in lineRemove",
+    ]);
+    expect(field("alpha")).toHaveValue("Newer source draft");
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(2);
+  });
+
+  it("an accepted image replay stops saying Sending while its history refresh fails", async () => {
+    let failReads = false;
+    const { chats, fetchMock } = projectChats(() => {
+      failReads = true;
+      return jsonResponse({ accepted: true, queued: { id: "image-replay", text: "Image sample", at: ago(0), trigger: "chat" } });
+    });
+    chats["alpha-project"]!.history.push(
+      { role: "user", text: "Image sample", turn_id: "failed-image", trigger: "chat", images: [
+        { id: "sample-image", name: "sample.png", mime_type: "image/png", size: 10, width: 1, height: 1, source_message_id: "original-image" },
+      ] },
+      { role: "error", text: "Fixture answer failed", turn_id: "failed-image", trigger: "chat" },
+    );
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => failReads && String(input).startsWith("/api/chat/alpha-project")
+      ? Promise.resolve(jsonResponse({ error: "Read unavailable" }, 503)) : original(input, init));
+    setViewport(width);
+    const { user } = renderApp({ route: "/projects/alpha-project" });
+    const failed = await screen.findByText(/^L3 could not answer this turn\./);
+    await user.click(within(failed).getByRole("button", { name: "Retry" }));
+    await screen.findByText("Could not load the conversation.", { exact: false });
+    expect(screen.queryByText("Sending images…")).toBeNull();
+    expect(screen.queryByText("Could not confirm send.", { exact: false })).toBeNull();
+    expect(field("alpha")).toHaveValue("");
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+  });
+
   it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
     let receipt!: (response: Response) => void;
     let stale!: (response: Response) => void;

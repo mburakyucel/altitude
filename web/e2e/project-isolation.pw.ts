@@ -97,6 +97,106 @@ async function switchProject(page: Page, info: TestInfo, name: string) {
   await expect(views(page).field(name)).toBeVisible();
 }
 
+test("late queue receipts cannot resurrect consumed or explicitly removed text", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  await walk.open(`${service}/projects/alpha`);
+  await v.field("alpha").fill("Alpha running request");
+  await v.send.click();
+  await expect(v.text("Alpha partial reply.")).toBeVisible();
+  const receipts = deferred();
+  const heldReads = deferred();
+  let admitted = 0;
+  let returned = 0;
+  let holdReads = false;
+  await page.route((url) => url.pathname === "/api/chat/alpha", async (route) => {
+    if (holdReads) await heldReads.promise;
+    await route.continue();
+  });
+  await page.route((url) => url.pathname === "/api/chat", async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    admitted++;
+    await receipts.promise;
+    await route.fulfill({ response });
+    returned++;
+  });
+  const texts = ["Consume this sample", "Remove this sample"];
+  try {
+    for (const [index, text] of texts.entries()) {
+      await v.field("alpha").fill(text);
+      await v.queue.click();
+      await expect.poll(() => admitted).toBe(index + 1);
+    }
+    await switchProject(page, info, "beta");
+    await v.field("beta").fill("Beta independent draft");
+    const state = await (await request.get(`${service}/api/chat/alpha`)).json();
+    const removed = state.queued.find((row: { text: string }) => row.text === texts[1]);
+    expect((await request.post(`${service}/api/chat/remove`, { data: { project: "alpha", id: removed.id } })).ok()).toBe(true);
+    expect((await request.post(`${service}/fixture/release/alpha`)).ok()).toBe(true);
+    await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).busy).toBe(false);
+    await switchProject(page, info, "alpha");
+    await expect(v.text(`${texts[0]} answered.`)).toBeVisible();
+    await expect(v.queued).toBeHidden();
+    await v.field("alpha").fill("Newer source draft");
+    holdReads = true;
+    receipts.release();
+    await expect.poll(() => returned).toBe(2);
+    // Wait for both original submission receipts to retire recovery, not an arbitrary delay.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("altitude.submitted:project/alpha"))).toBeNull();
+    await expect(v.queued).toBeHidden();
+    await expect(v.field("alpha")).toHaveValue("Newer source draft");
+    await walk.state("01-late-receipts-preserve-canonical-history", {
+      visible: [v.text(`${texts[0]} answered.`)], hidden: [v.queued, v.text(texts[1]!)],
+    });
+    heldReads.release();
+    await switchProject(page, info, "beta");
+    await expect(v.field("beta")).toHaveValue("Beta independent draft");
+    const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;
+    expect(calls.map((row: { text: string }) => row.text)).toEqual(["Alpha running request", texts[0]]);
+  } finally { receipts.release(); heldReads.release(); }
+});
+
+test("foreground polling replaces a stalled stream with canonical completion", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  await walk.open(`${service}/projects/alpha`);
+  try {
+    await v.field("alpha").fill("Alpha stalled request");
+    await v.send.click();
+    await expect(v.text("Alpha partial reply.")).toBeVisible();
+    await v.field("alpha").fill("Newer draft while the response stalls");
+    // Headless Chromium needs explicit lifecycle signals to exercise a background/foreground read.
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+    });
+    expect((await request.post(`${service}/fixture/release/alpha`)).ok()).toBe(true);
+    await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).history.some((row: { text: string }) => row.text === "Alpha stalled request answered.")).toBe(true);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+      window.dispatchEvent(new Event("focus"));
+    });
+    await walk.state("01-foreground-canonical-answer-with-stream-still-open", {
+      visible: [v.text("Alpha stalled request answered.")],
+      hidden: [v.text("Alpha partial reply."), v.convo.locator("[data-local]"), v.retry],
+    });
+    await expect(v.field("alpha")).toHaveValue("Newer draft while the response stalls");
+    await switchProject(page, info, "beta");
+    await v.field("beta").fill("Independent destination text");
+    expect((await request.post(`${service}/fixture/release-stream`)).ok()).toBe(true);
+    await switchProject(page, info, "alpha");
+    await expect(v.field("alpha")).toHaveValue("Newer draft while the response stalls");
+    await walk.state("02-returned-canonical-answer-and-newer-draft", {
+      visible: [v.text("Alpha stalled request answered.")], hidden: [v.text("Alpha partial reply."), v.retry],
+    });
+    expect((await (await request.get(`${service}/fixture/calls`)).json()).calls).toHaveLength(1);
+  } finally { await request.post(`${service}/fixture/release-stream`); }
+});
+
 test("project drafts survive selection and route remount with independent copy, paste and clearing", async ({ page, context, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);

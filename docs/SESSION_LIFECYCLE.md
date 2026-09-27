@@ -697,7 +697,11 @@ delivery unconfirmed, the composer preserves both submitted and newly typed text
 to check the conversation, and offers no send Retry, including when another overlapping send is refused.
 It never infers acceptance by matching text.
 Task polling replaces a pending preview as soon as its submission ID appears in saved messages,
-including before the POST response arrives. Separate sends with identical text remain separate
+including before the POST response arrives. A late POST receipt preserves the saved row's order and
+delivery state. Project queue receipts refresh the source snapshot, including after navigation;
+they never recreate a queued row that has run or been removed. A matching canonical assistant/error
+row replaces a stalled response stream. Failed refreshes retain acceptance and offer only read Retry.
+Separate sends with identical text remain separate
 messages; failed or unconfirmed responses retain the existing draft recovery.
 Submitted-text recovery belongs to the original project/task beyond a composer mount. Browser-tab
 storage retains each outstanding submission and the recovered draft; a live receipt retires only

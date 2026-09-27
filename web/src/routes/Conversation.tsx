@@ -129,8 +129,7 @@ interface Local {
   turnId: string | null;
   error: string | null;
   done: boolean;
-  /** When the stream finished, so a poll from after it can retire the local copy. */
-  finishedAt: number | null;
+  queueId?: string;
   images?: ImagePreview[];
   uncertain?: boolean;
   replay?: ImageSubmission;
@@ -203,11 +202,22 @@ export default function Conversation({
 
   // The server's rows for the streamed turn replace the local copy once a poll shows them.
   useEffect(() => {
-    if (!local?.done) return;
-    const stored = local.turnId ? turns.some((turn) => turn.id === local.turnId) : false;
-    const refreshed = local.finishedAt != null && chat.dataUpdatedAt > local.finishedAt;
-    if (stored || (refreshed && !local.turnId)) setLocal((current) => current?.request === local.request ? null : current);
-  }, [local, turns, chat.dataUpdatedAt]);
+    if (!local) return;
+    const stored = turns.find((turn) => turn.id === local.turnId);
+    const queued = local.queueId && view?.queued?.some((row) => row.id === local.queueId);
+    const submitted = local.queueId && view?.history.some((row) => row.request_id === local.queueId);
+    if (stored?.assistant || stored?.error || queued || submitted || (local.done && stored)) {
+      setLocal((current) => current?.request === local.request ? null : current);
+    }
+  }, [local, turns, view]);
+
+  // Only a successful server read can retire a receipt whose current queue/history state was
+  // unknown. Engine selection and mutation rollback also write this cache; those are not reads.
+  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[0] !== "chat" || event.query.queryKey[1] !== name || event.type !== "updated"
+      || event.action.type !== "success" || event.action.manual) return;
+    setLocal((current) => current?.done && !current.turnId ? null : current);
+  }), [name, queryClient]);
 
   // Stay at the bottom while the operator is there: new rows, a streamed reply growing, a card or
   // group opening, a title arriving for a line, the fonts landing. Scrolling up releases the follow.
@@ -229,7 +239,7 @@ export default function Conversation({
       following.current = true;
       const request = Symbol();
       const update = (change: (current: Local) => Local | null) => setLocal((current) => current?.request === request ? change(current) : current);
-      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedAt: null, images: images?.previews, replay: images?.image_ids ? images : undefined });
+      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
       let result: ChatSent;
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
@@ -247,18 +257,15 @@ export default function Conversation({
       }
       onAccepted?.();
       if (result.queued) {
-        const queued = result.queued;
         await queryClient.cancelQueries({ queryKey: ["chat", name] });
-        update(() => null);
-        queryClient.setQueryData<ChatView>(["chat", name], (cached) =>
-          cached && !cached.history.some((row) => row.request_id === queued.id)
-            ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
-        );
+        // A receipt proves acceptance, not that the row still waits: it may already have run or
+        // been removed. Only a fresh canonical snapshot can project its current state.
+        update((cur) => ({ ...cur, accepted: true, done: true, replay: undefined, queueId: result.queued!.id }));
       } else if (images) update(() => null);
       else {
-        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null, finishedAt: Date.now() }));
+        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }));
       }
-      void queryClient.invalidateQueries({ queryKey: ["chat", name] });
+      void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
       void queryClient.invalidateQueries({ queryKey: ["project", name] });
     },
     [name, queryClient],

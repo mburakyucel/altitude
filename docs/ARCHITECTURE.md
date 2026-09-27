@@ -1487,7 +1487,14 @@ The page owns its draft and submit function. A valid turn, terminal turn ID, que
 saved task message establishes acceptance; HTTP stream headers alone do not. After acceptance,
 a broken response stream resolves to the existing history refresh without restoring the draft or
 inventing an assistant failure. Each local stream callback belongs to its own send, so an older
-stream cannot alter a later queue request. A failed refresh is a read error, whose Retry only reads.
+stream cannot alter a later queue request. A canonical assistant or error row for that turn replaces
+its local stream even while the response remains open. A queue receipt establishes acceptance;
+the source conversation refreshes its canonical snapshot even after navigation, rather than adding
+the receipt back to the queue. The current send's accepted local preview remains until a successful
+read or an identity-matched queue/history row owns its display. Local cache edits do not count as
+reads. Navigation or a subsequent send replaces that local preview; accepted messages reconstruct
+from the server on the next successful read. Failed reads show the conversation read error, whose
+Retry only reads, including after navigation. They do not restore accepted text for sending again.
 Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
 receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
@@ -1495,7 +1502,8 @@ after the submitted text on a new line. Combined failed drafts remain unconfirme
 receipt. No text matching or automatic resend infers delivery.
 Task sends carry a UUID `request_id`, retained as the saved message ID. The conversation renders
 the pending preview only while that ID is absent from polled messages, so the saved row owns its
-display even before the POST completes. Text recovery still follows the send response.
+display even before the POST completes. A late receipt preserves that row's canonical position and
+delivery state, including explicit removal. Text recovery still follows the send response.
 The composer keeps only submitted-text recovery in browser-tab `sessionStorage`, keyed by stable
 project or project/task identity. Live request callbacks outlast component unmount and restore a
 failure only to their original conversation. A receipt removes its request's recovery copy before
