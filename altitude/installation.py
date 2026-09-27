@@ -5,6 +5,7 @@ This file is also the standalone installer distributed alongside the release arc
 from __future__ import annotations
 
 import argparse
+import contextlib
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -211,6 +212,10 @@ def update_notice() -> str | None:
             f"(notes: {config.RELEASE['repository']}/releases/tag/{version})")
 
 
+class UpdateRefused(ValueError):
+    """A request the page may explain: its message names no path or internal state."""
+
+
 def request_update(version: str) -> dict:
     """The app's Update button: the exact newer release it showed, run as `alt update --version` in its own unit."""
     from . import platform
@@ -219,7 +224,7 @@ def request_update(version: str) -> dict:
     with _changing_update_record() as record:
         status = update_status()
         if not status or not status["available"] or status["available"]["version"] != version:
-            raise ValueError("Only the newer release Altitude is showing can be installed from the app")
+            raise UpdateRefused("Only the newer release Altitude is showing can be installed from the app")
         if (status["attempt"] or {}).get("state") == "running" and status["attempt"]["version"] == version:
             return status
         record["attempt"] = {"version": version, "state": "running", "started": time.time()}
@@ -228,9 +233,10 @@ def request_update(version: str) -> dict:
         platform.detach(f"altitude-update-{version}",
                         [saved["python"], "-B", str(_prefix() / "current/bin/alt"), "update", "--version", version],
                         {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1"})
-    except (OSError, ValueError, RuntimeError) as exc:
-        _fail_attempt(version)
-        raise RuntimeError("Altitude could not start the update. Run alt update in a terminal to see why.") from exc
+    except (OSError, ValueError, RuntimeError):
+        with contextlib.suppress(OSError, ValueError):
+            _fail_attempt(version)
+        raise
     return update_status()
 
 

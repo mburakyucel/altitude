@@ -890,15 +890,13 @@ class NewVersionNotice(NoticeCase):
             self.assertEqual(installation.update_status()["attempt"], {**installation._update_record()[1]["attempt"],
                              "state": "failed", "error": "Run alt update in a terminal to see why."})
 
-    def test_an_update_that_cannot_start_is_failed_without_its_private_cause(self):
+    def test_an_update_that_cannot_start_is_marked_failed(self):
         self.latest("v0.2.0")
         installation.check_for_update()
-        with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
-            with self.assertRaisesRegex(RuntimeError, "^Altitude could not start the update"):
+        with mock.patch.object(platform, "detach", side_effect=RuntimeError("fixture: systemd-run failed")):
+            with self.assertRaises(RuntimeError):
                 installation.request_update("v0.2.0")
-        attempt = installation.update_status()["attempt"]
-        self.assertEqual(attempt["state"], "failed")
-        self.assertNotIn(str(self.home), json.dumps(installation.update_status()))
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
 
     def test_a_check_finishing_during_an_update_keeps_its_attempt(self):
         self.latest("v0.2.0")
@@ -964,6 +962,16 @@ class UpdateRequests(NoticeCase):
         self.post("/api/update-check", {"enabled": False}, status=403)
         self.assertEqual(self.detached, [])
         self.assertTrue(installation.update_status()["check"])
+
+    def test_launch_and_record_failures_reach_the_page_without_private_paths(self):
+        public = "Altitude could not complete the update request. Run alt update in a terminal to see why."
+        with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
+            self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        installation._update_record()[0].write_text("{not json")
+        for path, body in (("/api/update", {"version": "v0.2.0"}), ("/api/update-check", {"enabled": False})):
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, body, status=503)["error"], public)
 
     def test_the_page_starts_only_the_shown_version_and_switches_the_check(self):
         self.post("/api/update", {"version": "v0.3.0"}, status=409)

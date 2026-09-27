@@ -1613,16 +1613,20 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "update-check"]:
                 if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
                     return self._json({"error": "Choose on or off."}, 400)
-                view = _save_machine("update_check", body["enabled"],
-                                     "Update check on" if body["enabled"] else "Update check off")
+                try:
+                    view = _save_machine("update_check", body["enabled"],
+                                         "Update check on" if body["enabled"] else "Update check off")
+                except (ValueError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 409)
                 return self._json({**view, "update": installation.update_status()})
             if parts != ["api", "update"] or body.keys() - {"version"} or not isinstance(body.get("version"), str):
                 return self._json({"error": "Name the version to install."}, 400)
             return self._json({"update": installation.request_update(body["version"])})
-        except (ValueError, T.TransitionError) as exc:
+        except installation.UpdateRefused as exc:
             return self._json({"error": str(exc)}, 409)
-        except RuntimeError as exc:
-            return self._json({"error": str(exc)}, 503)
+        except Exception as exc:  # noqa: BLE001 — record, lock and launch failures name private paths; they stay in the log
+            log(f"update request failed: {exc!r}")
+            return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
 
     def _terminal_post(self, parts: list[str], body: dict) -> None:
         denied = self._terminal_denied(json_body=True)
