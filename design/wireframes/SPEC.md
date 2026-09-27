@@ -149,7 +149,15 @@ side climbs in three steps (L1, L2, L3) to the summit, drawn as a white line on 
 with a 7/32 corner radius, so it follows the theme. It is decoration beside the name, not a link.
 `web/src/shell/BrandMark.tsx` draws it in the app. `web/public/altitude-mark.svg` is the same drawing
 in the light accent, used as the browser-tab icon and in the README. `web/public/apple-touch-icon.png`
-renders it at 180px with square corners, because iOS rounds Home Screen icons itself.
+renders it at 180px with square corners, because iOS rounds Home Screen icons itself. The ICO
+fallback contains 16, 32 and 48px versions of the rounded SVG tile for browser/bookmark surfaces.
+`web/public/manifest.webmanifest` names Altitude, uses `/` as its identity, start URL and scope,
+and requests standalone display. Its ordinary 192/512px icons use the rounded tile; its separate
+512px maskable icon has an opaque accent background and the same glyph scaled to 80% about the
+center. All white strokes stay inside the centered 40%-radius safe circle so launcher masks can
+crop only background. Installed icons retain the light accent in either app theme. No offline
+mode is implied. `web/e2e/brand.pw.ts` walks both themes and previews ordinary, Apple and masked
+icons at phone/desktop widths; native launcher behavior is not simulated as device acceptance.
 
 Data: `GET /api/overview` (`projects[].managed`, `projects[].counts`, `projects[].l3`, `queue`,
 `quota`, and the second engine's windows). Engine names come from the engine seam; the rail never

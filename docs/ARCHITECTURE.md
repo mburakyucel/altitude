@@ -1283,6 +1283,13 @@ project instructions file, which both worker personas direct the task owner to r
 
 ### Conversations and navigation
 
+The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch
+icon and a web app manifest. The manifest defines the root identity/start URL/scope, standalone
+display and ordinary 192/512px plus maskable 512px icons. Public metadata and icons are served
+uncached by the existing static handler; the alert worker has no fetch handler or offline app
+cache. Native icon copies can outlive a page reload; [operations](OPERATIONS.md#refreshing-home-screen-and-bookmark-icons)
+describes refreshing shortcuts and installed apps.
+
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
 compact cards in one column, answered through `POST /api/decide`), the project page at

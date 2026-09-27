@@ -289,6 +289,24 @@ A server on another machine on your network uses that machine's private address 
 `…/v1/audio/transcriptions` URL, a key and, where it offers several, a model name. Recordings then
 leave your network under that provider's storage policy and charges.
 
+### Refreshing home-screen and bookmark icons
+
+Altitude serves its HTML, manifest and icons with `Cache-Control: no-store`; the decision-alert
+service worker does not intercept page or icon requests. Browsers and operating systems can still
+keep their own installed-app or bookmark icon copies. A page reload is not proof that those copies
+have changed, and Altitude does not promise an automatic native icon refresh.
+
+After the updated build is active, open and reload the trusted Altitude HTTPS URL in the browser.
+If an iOS Home Screen shortcut still has the old icon, remove that shortcut and add it again from
+Safari's Share menu. On Android, remove the old shortcut, or uninstall the installed web app, then
+add/install it again from Chrome. If a bookmark retains the old icon after revisiting the page,
+recreate that bookmark. Reopen the added app and check decision-alert permission/subscription on
+that device; reinstalling may reset it. Do not clear unrelated browser data or certificate trust.
+
+The delivered browser checks verify served files and icon geometry at phone and desktop sizes.
+Native iOS/Safari and Android/Chrome installation and refresh behavior require device observation;
+browser fixtures do not establish it.
+
 ### On iPhone
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a

@@ -150,6 +150,17 @@ pending until observed. Remove this CA in the same browser/OS certificate manage
 the installation; on iOS remove its profile under General → VPN & Device Management. Do not
 clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 
+### Home-screen app and bookmarks
+
+Open the trusted HTTPS URL and reload before adding Altitude. On iOS, use Safari's Share → Add to
+Home Screen; on Android, use Chrome's menu → Add to Home screen / Install app (wording varies).
+The Apple touch icon, browser/bookmark icons and manifest app icons use the approved Climb mark.
+The manifest opens the app at `/` in a standalone window where supported. Altitude still needs a
+connection to its server; installation adds no offline mode.
+
+For an existing shortcut or installed app showing an older icon, follow the
+[icon refresh steps](OPERATIONS.md#refreshing-home-screen-and-bookmark-icons).
+
 ### Alerts for new decisions
 
 Needs you offers an alert for each new decision. Turn it on once per device and grant the browser's
