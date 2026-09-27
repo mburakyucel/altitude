@@ -646,7 +646,7 @@ def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
 def start_l3(project: str) -> None:
     if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
-        if l3.queued(project):
+        if l3.queue_path(project).exists():
             request_l3_drain(project)
         return
     # The start reply belongs to the operator's conversation.

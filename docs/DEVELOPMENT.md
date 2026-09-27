@@ -61,6 +61,11 @@ execution. Local Git repositories, scripted child processes and loopback HTTP re
 A focused module can be run with `env -u ALTITUDE_ACTOR python3 -m unittest tests.test_isolation`;
 modules use the same bootstrap. The tests do not run the production daemon or its timer.
 
+Clean-close report cases join their real turn-boundary L3 queue drain before inspecting faults
+or releasing case patches and project registration. The command socket is a fixture because
+scripted L3 turns do not call daemon verbs. An event-controlled regression holds a drain failure
+until the join and checks its exact fault; background faults are neither filtered nor discarded.
+
 Incident IDs are project-local, so the public issue marker adds a project digest.
 `test_incident_issues.py` drives publication, retry, attachment and closure through the fake `gh`
 shim, whose `issues.json` holds every issue, body, comment and close reason for assertions.
@@ -117,6 +122,10 @@ Cleanup releases fixture gates and finishes HTTP requests and background work be
 broker sockets; unfinished work or logged background failures fail the walkthrough.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
+The image selection/viewer/reload journey holds completion after the active turn clears and before
+its retained claim is removed. Phone and desktop keep exactly one saved image and no queued copy.
+The HTTP regression also forces this boundary after a failed turn, retaining immutable receipts,
+non-removability and visible errors while recovery clears the claim.
 The task-read regressions archive a real task between the live status lookup and its read: the
 crossing poll and task action response return the archived record, a missing task returns ordinary
 404, and corrupt state still logs a failure.
