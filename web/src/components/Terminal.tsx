@@ -62,6 +62,12 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
   const shown = useRef<string | null>(null);
   const closing = useRef(false);
   const left = useRef(false);
+  // An open answered after this view went away belongs to no one: a later view reads the terminal itself.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const data = status.data;
   // A chat command to type at this terminal's prompt (SPEC.md §3.3): taken once, dropped when the view
   // leaves or cannot show a running shell.
@@ -81,6 +87,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     setOpenError(null);
     try {
       const opened = await terminalOpen(project, task);
+      if (!mounted.current) return;
       // A status read sent before the shell opened would answer "none" after it and replace this answer.
       await client.cancelQueries({ queryKey });
       client.setQueryData(queryKey, opened);

@@ -18,7 +18,7 @@ const overview = { projects: [{ name: "demo", managed: true, counts: {} }], queu
 const none = (enabled = true): TerminalStatus => ({ state: "none", enabled });
 const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
 
-function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus | Promise<TerminalStatus> } = {}) {
+function fixture(status: TerminalStatus, answers: { open?: () => Response | Promise<Response>; status?: () => TerminalStatus | Promise<TerminalStatus> } = {}) {
   let current = status;
   const posts: [string, unknown][] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -60,6 +60,28 @@ describe("Project terminal", () => {
     });
     expect(queryClient.getQueryData(["terminal", "demo", null])).toMatchObject({ id: "t1" });
     expect(screen.getByTestId("terminal-screen")).toHaveTextContent("t1");
+    expect(router.state.location.pathname).toBe("/projects/demo/terminal");
+  });
+
+  it("ignores an open answered after its view went away", async () => {
+    let answerOpen!: (response: Response) => void;
+    let status: TerminalStatus = none();
+    let opens = 0;
+    fixture(none(), {
+      open: () => (opens++ ? json(status) : new Promise((resolve) => { answerOpen = resolve; })),
+      status: () => status,
+    });
+    const { router } = renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByText("Starting the terminal…")).toBeVisible();
+    await act(() => router.navigate("/projects/demo"));
+    status = { ...running(), id: "t2" };
+    await act(() => router.navigate("/projects/demo/terminal"));
+    expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t2");
+    await act(async () => {
+      answerOpen(json(running()));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId("terminal-screen")).toHaveTextContent("t2");
     expect(router.state.location.pathname).toBe("/projects/demo/terminal");
   });
 
