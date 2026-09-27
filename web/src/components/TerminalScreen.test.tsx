@@ -91,6 +91,15 @@ describe("a chat command at the terminal", () => {
     expect(screen.getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("never turns a browser paste into a control character after Ctrl is latched", () => {
+    const { container } = render(<TerminalScreen project="demo" id="t1" keys intro="Runs as you" reconnecting={false} onEnd={vi.fn()} onReconnecting={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Control" }));
+    fireEvent.paste(container.querySelector(".terminal-screen")!);
+    act(() => term.data?.("m"));
+    expect(typed()).toEqual(["m"]);
+    expect(screen.getByRole("button", { name: "Control" })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("is refused when the shell shows nothing for five seconds", async () => {
     show("echo hi").request();
     await act(() => vi.advanceTimersByTimeAsync(5_000));
@@ -119,6 +128,18 @@ describe("a chat command at the terminal", () => {
     await act(() => vi.advanceTimersByTimeAsync(5_000));
     expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't check the terminal in time, so the command wasn't typed.");
     await act(async () => answer(running));
+    expect(typed()).toEqual([]);
+  });
+
+  it("is refused when the check answers after the deadline but before a throttled timer fires", async () => {
+    let answer!: (status: TerminalStatus) => void;
+    vi.mocked(terminalStatus).mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    show("echo hi").request();
+    act(() => emit());
+    await act(() => vi.advanceTimersByTimeAsync(400));
+    vi.setSystemTime(Date.now() + 5_000);
+    await act(async () => answer(running));
+    expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't check the terminal in time, so the command wasn't typed.");
     expect(typed()).toEqual([]);
   });
 

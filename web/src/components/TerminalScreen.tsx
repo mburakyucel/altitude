@@ -172,12 +172,16 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
     focus.current = () => term.focus();
     // xterm frames a paste as the shell asked (bracketed paste), so pasted lines wait for Enter.
-    // A latched Ctrl belongs to the next keystroke, never to pasted text.
-    pasteText.current = (text) => {
+    // A latched Ctrl belongs to the next keystroke, never to pasted text, whether pasted here or by the browser.
+    const unlatch = () => {
       ctrlRef.current = false;
       setCtrl(false);
+    };
+    pasteText.current = (text) => {
+      unlatch();
       term.paste(text);
     };
+    host.current!.addEventListener("paste", unlatch, true);
     const input = term.onData((data) => send.current(data));
 
     const size = () => {
@@ -197,6 +201,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       clearTimeout(retry);
       clearTimeout(resize);
       observer.disconnect();
+      host.current?.removeEventListener("paste", unlatch, true);
       source?.close();
       input.dispose();
       term.dispose();
@@ -239,6 +244,8 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         return;
       }
       if (over || current.id !== id || current.state !== "running") return;
+      // A throttled timer can fire late; the deadline itself is what counts.
+      if (Date.now() >= command.at + PROMPT_WAIT_MS) return refuse("Altitude couldn't check the terminal in time, so the command wasn't typed.");
       if (current.busy) return refuse(`${current.busy} is running, so the command wasn't typed.`);
       over = true;
       clearTimeout(expiry);
