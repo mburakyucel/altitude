@@ -61,6 +61,11 @@ execution. Local Git repositories, scripted child processes and loopback HTTP re
 A focused module can be run with `env -u ALTITUDE_ACTOR python3 -m unittest tests.test_isolation`;
 modules use the same bootstrap. The tests do not run the production daemon or its timer.
 
+Clean-close report cases join their real turn-boundary L3 queue drain before inspecting faults
+or releasing case patches and project registration. The command socket is a fixture because
+scripted L3 turns do not call daemon verbs. An event-controlled regression holds a drain failure
+until the join and checks its exact fault; background faults are neither filtered nor discarded.
+
 Incident IDs are project-local, so the public issue marker adds a project digest.
 `test_incident_issues.py` drives publication, retry, attachment and closure through the fake `gh`
 shim, whose `issues.json` holds every issue, body, comment and close reason for assertions.
