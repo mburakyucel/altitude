@@ -1249,6 +1249,10 @@ the operator's running service or launches a real worker. Live-provider validati
 under the operator's [testing policy](../AGENTS.md#checks);
 the [coverage matrix](DEVELOPMENT.md#coverage-and-limits) identifies unproven external behavior.
 
+The separate [manual installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
+uses real packaged application services in a disposable Ubuntu account with fixture engines.
+Dispatches run on main with a separate source input; this acceptance lane adds no PR or release gate.
+
 The same browser specs run at 390×844 with mobile user agent and touch and at 1440×900. The
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles

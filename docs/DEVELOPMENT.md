@@ -259,7 +259,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 
 | Journey | Programmatic evidence | Boundary / remaining limit |
 | --- | --- | --- |
-| Private archive lifecycle | `test_installation.py`: real archives/checksums, immutable versions, install/update/uninstall retention, failed/interrupted recovery, conflicting ownership, stopped service and unsafe archive refusal. | Native service calls use deterministic fixtures; clean-machine and actual service lifecycle acceptance remain pending. |
+| Private archive lifecycle | `test_installation.py`: real archives/checksums, immutable versions, install/update/uninstall retention, failed/interrupted recovery, conflicting ownership, stopped service and unsafe archive refusal. | Native service calls use deterministic fixtures; [manual installation acceptance](#installation-lifecycle-acceptance) exercises native service operations separately. An unrun workflow establishes no host evidence. |
 | Installed task inputs | `test_installed_runtime.py`: no-checkout configuration, real Git guards, dispatch/resume ownership and hold retention, missing-guard refusal, installed/source separation. | Engine execution is deterministic; no live provider or native Mac confinement evidence. |
 | Local HTTPS | `test_tls.py`, `test_https_server.py`: real OpenSSL identities and TLS handshakes, hostname/trust failure, permissions, renewal, key mismatch and unchanged external certificates. | Local CA validation does not prove OS/browser trust. Physical desktop/mobile browser and home-screen-app trust need separate evidence. |
 | Source TLS preparation | `test_source_tls.py`: real TLS identity and isolated files, check-only, owned override/reload verification, reset command-history metadata, actual identity/command drift, private failure diagnostics and recovery; `test_release_archive.py` verifies the standalone archive path before installation. Worker command tests preserve role denial. | Native unit/process evidence is simulated; the operator must verify actual source preservation before activation. No production services or trust stores are changed by tests. |
@@ -284,8 +284,9 @@ exports remain available to existing workers. Changes to code, personas, hooks, 
 and scripts require normal activation. Tests use disposable repositories and state for this path;
 ordinary dispatch and resume never clean, stash or reset deployment edits.
 Archive installations instead pin their immutable version's resources. Build archives through
-[the release builder](RELEASING.md#build-the-release-files); tests never install into the operator's
-home, modify OS trust or run user services. A phone viewport is not physical phone TLS acceptance.
+[the release builder](RELEASING.md#build-the-release-files); the deterministic suite never installs into
+the operator's home, modifies OS trust or runs user services. The separate manual installation harness
+uses a disposable account and real user service. A phone viewport is not physical phone TLS acceptance.
 
 Detached-project reads currently return HTTP 500 with an unknown-project error while the UI
 shows “Project not managed.” The removal scenario asserts those exact responses and permits
@@ -309,6 +310,72 @@ profiles over 4 MiB and non-sRGB gamma/chromaticity
 without an ICC profile require an exported sRGB copy. Decoder wall/CPU/memory/output bounds,
 orientation, alpha/color parity and intermediate cleanup have real conversion fixtures. The service
 and Python harnesses replace image capability checks and native execution at the engine seam.
+
+## Installation lifecycle acceptance
+
+`.github/workflows/installation-lifecycle.yml` is an independent, manually dispatched Ubuntu 24.04
+x86_64 workflow. It is outside `make check`, PR triggers and release gates; its failure or pending
+state does not hold other tasks. The required self-hosted PR `check` and all review requirements
+remain unchanged. Run it from **main**, selecting the source to package separately:
+
+```sh
+gh workflow run installation-lifecycle.yml --ref main -f source_ref=<commit-or-ref>
+gh run list --workflow installation-lifecycle.yml
+gh run view <run-id> --log
+gh run download <run-id> --dir /tmp/altitude-installation-evidence
+```
+
+`source_ref` defaults to `main` and resolves to an exact commit before building. The dispatch ref
+owns GitHub's check association; checking out `source_ref` does not move that association. Never
+dispatch directly on an open task branch: `alt land` rejects a `workflow_dispatch` check on its
+candidate even if that job is optional, skipped or successful. Dispatching on main keeps the run
+outside the task candidate. The early main-ref check reports misuse but cannot detach that check;
+after an accidental task-ref dispatch, push a new reviewed commit before landing.
+`tests/test_installation_ci.py` exercises real Git and landing with
+separate fixture GitHub run inventory and PR checks: failed, running and queued installation runs
+on main leave a successful required PR check mergeable; an absent or unsuccessful required check
+still blocks. This fixture does not establish live GitHub association behavior.
+
+The workflow builds actual archives with `scripts/build_release.py`, using synthetic versions
+`v0.0.0-rc.1` and `v0.0.0-rc.2` from the same source commit. These exercise version switching,
+not migration between released source revisions. The harness installs into a new disposable user's
+fresh home, starts its real per-user service, and checks HTTPS using the generated CA on a dynamic
+loopback port. It verifies health version/commit, native service PID and served web asset hashes,
+runs the packaged `alt doctor`, updates, and activates a deliberately failing `v0.0.0-rc.3`
+derivative whose startup exits. The derivative's manifest and archive checksums are recomputed,
+so the recovery case reaches real failed activation rather than stopping at checksum rejection.
+Recovery restores the healthy candidate. Uninstall retains configuration, TLS identity and
+fictional history/project files. Expected unauthenticated GitHub and fixture-engine findings are
+identified separately from installation failures; no live provider request or operator state is used.
+The harness comes from the workflow's main commit; the archive builder and application come from
+`source_ref`. Results name both commits and the source tree. Older incompatible installer interfaces
+can fail this current harness. Installation calls the archive's standalone `install.py`; the
+published `install.sh` download, checksum and Python-discovery path is not exercised.
+
+The job is bounded to 20 minutes and the lifecycle invocation to eight minutes. Cleanup traps retain
+allowlisted diagnostics and remove the throwaway account. Results identify source commit, synthetic
+versions, archive hashes and runner environment, with command/service diagnostics and failure output.
+The workflow retains evidence for seven days; TLS private keys and runtime archives are excluded.
+Inspect the failed stage and diagnostics before rerunning. Missing results, timeout, or an unavailable
+user manager are unverified acceptance, not a passing lifecycle. A nonzero cleanup exit also fails
+the job even when the lifecycle assertions passed. The first hosted execution remains
+pending until a run and its results are recorded; source tests alone do not establish it.
+
+On a disposable Ubuntu 24.04 VM with Python 3.12+, Git, OpenSSL, GitHub CLI and a working systemd
+user manager, use the same entry point with two release-builder output directories. Each contains
+`install.py`, its application archive and `.sha256` file. Use absolute paths readable by the harness:
+
+```sh
+sudo bash scripts/test_installation_lifecycle.sh --disposable-vm \
+  /absolute/baseline /absolute/candidate /absolute/results
+```
+
+This command creates and removes a local account and its service; use only a disposable VM, never
+an operator machine or deployment. Retain its results before discarding the VM. The hosted image
+does not prove a minimal OS install, reboot or login/logout behavior, browser/device CA trust,
+public-download bootstrap, native confinement or provider compatibility. There is no browser test
+in this harness. Native macOS installation remains with `macos-support-native-runtime-behind-the`;
+this Linux evidence is partial acceptance toward #226 and does not close it or establish public readiness.
 
 ## CI and candidate identity
 

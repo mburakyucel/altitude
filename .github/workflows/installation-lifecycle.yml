@@ -1,0 +1,92 @@
+name: Installation lifecycle
+
+# Dispatch on main; select the source under test with source_ref. Attaching a
+# manual run to a task branch can interfere with that branch's landing checks.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Commit or ref to package (dispatch this workflow on main)'
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  installation-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require main dispatch
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: test "$DISPATCH_REF" = refs/heads/main
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: harness
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Record runner and source identity
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/installation-results"
+          python3 - <<'PY'
+          import json, os, pathlib, platform, subprocess
+          def git(path, ref):
+              return subprocess.check_output(['git', '-C', path, 'rev-parse', ref], text=True).strip()
+          data = {key: os.environ.get(key) for key in ('ImageOS', 'ImageVersion', 'RUNNER_ARCH', 'SOURCE_REF', 'GITHUB_REF', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')}
+          data.update(source_commit=git('candidate', 'HEAD'), source_tree=git('candidate', 'HEAD^{tree}'),
+                      harness_commit=git('harness', 'HEAD'), kernel=platform.release(),
+                      os_release=pathlib.Path('/etc/os-release').read_text(), python=platform.python_version())
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'installation-results', 'identity.json').write_text(json.dumps(data, indent=2) + '\n')
+          PY
+
+      - name: Build identified application archives
+        working-directory: candidate
+        run: |
+          set -o pipefail
+          corepack enable
+          python3 scripts/build_release.py --version v0.0.0-rc.1 --output "$RUNNER_TEMP/baseline" 2>&1 | tee "$RUNNER_TEMP/installation-results/build-baseline.log"
+          python3 scripts/build_release.py --version v0.0.0-rc.2 --output "$RUNNER_TEMP/candidate" 2>&1 | tee "$RUNNER_TEMP/installation-results/build-candidate.log"
+
+      - name: Exercise native installation lifecycle on the disposable VM
+        run: |
+          set -o pipefail
+          sudo bash harness/scripts/test_installation_lifecycle.sh --disposable-vm \
+            "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/installation-results" \
+            2>&1 | tee "$RUNNER_TEMP/installation-results/harness.log"
+
+      - name: Summarize and retain diagnostics
+        if: always()
+        run: |
+          echo 'Installation lifecycle is advisory; the required PR check is unchanged.' >> "$GITHUB_STEP_SUMMARY"
+          if test -f "$RUNNER_TEMP/installation-results/result.json"; then
+            cat "$RUNNER_TEMP/installation-results/result.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Lifecycle did not finish. Inspect setup/build/harness logs; no acceptance is established.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "$RUNNER_TEMP/installation-results/cleanup.json"; then
+            cat "$RUNNER_TEMP/installation-results/cleanup.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: installation-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/installation-results
+          if-no-files-found: error
+          retention-days: 7
