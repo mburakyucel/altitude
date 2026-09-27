@@ -140,6 +140,8 @@ class TestLand(AltitudeCase):
         task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner")
         S.save_task("demo", task)
         (S.task_dir("demo", "fix-x") / "request.md").write_text("Preserve the public API.")
+        T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge the reviewed PR after checks.")
         choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
         def review_engine(prompt, **kwargs):
             self.assertTrue(kwargs["on_start"]({"unit": "fixture-review", "pid": 12345, "started_ticks": "1"}))
@@ -158,14 +160,17 @@ class TestLand(AltitudeCase):
             return result
         with mock.patch.object(land, "_pr_view", new=correct_during_validation):
             with self.assertRaisesRegex(land.LandError, "context changed"):
-                land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True)
+                land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True, approval=approval['id'])
         self.assertEqual(len(corrected), 1, "The correction arrives during the final validation, after candidate tests")
         self.assertTrue(any(call == ["make", "test"] for call in self.runner_log()))
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
+        refused = S.load_task('demo', 'fix-x')
+        self.assertEqual(refused['hold_merge'], 'Operator approval before merging')
+        self.assertIsNone(refused.get('merge_approval'))
         reviews.assess("demo", "fix-x", request["id"], actor="l2", expected_attempt=1,
                        dispositions=[], reason="Checked the operator's correction against the complete candidate.")
         (self.ghdir / "merge_git.txt").touch()
-        result = land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True)
+        result = land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True, approval=approval['id'])
         self.assertTrue(result["merged"])
         merged_task = S.load_task("demo", "fix-x")
         self.assertEqual(merged_task["review_merged_head"], result["head"])

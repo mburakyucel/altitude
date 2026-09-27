@@ -925,6 +925,48 @@ def _required_pr_check(root: Path, base_sha: str) -> bool:
     return _git(root, "cat-file", "-e", f"{base_sha}:{config.PR_CHECK_WORKFLOW}").returncode == 0
 
 
+def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority):
+    """Keep the repository turn while the owner assesses an integrated head and CI runs."""
+    from . import reviews
+    deadline, notified = time.monotonic() + max(wait, 0), None
+    actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
+    while True:
+        stale = None
+        if merge:
+            # Only local review reads share admission's lock; network reads and sleeps
+            # leave review requests available, including during nonmerging publication.
+            with reviews.merge_lock(project, slug):
+                _require_current_publisher(project, slug, S.load_task(project, slug), authority)
+                try:
+                    reviews.require_merge(project, slug, pair)
+                except reviews.AssessmentRequired as exc:
+                    if actor != "l2" or wait <= 0:
+                        raise LandError(str(exc)) from exc
+                    stale = exc
+                except T.TransitionError as exc:
+                    raise LandError(str(exc)) from exc
+        checks = _checks_value(root, pair["number"], pair)
+        notice = (stale.review_id, stale.context_hash) if stale else None
+        if stale and notice != notified:
+            _note(f"waiting for owner assessment of review {stale.review_id} on head {pair['head_sha']} "
+                  f"and base {pair['base_sha']}; keeping the repository turn with "
+                  f"{max(0, round(deadline - time.monotonic()))}s remaining in --wait. "
+                  "Keep this command running in a background/tool session; inspect the candidate, post any "
+                  f"explanation, then run alt task review assess --review-id {stale.review_id} --file <assessment.json> "
+                  "in a separate command and collect this landing's result. Cancel landing if code needs edits.")
+        notified = notice
+        if checks not in ("pending", "pass", "none-configured"):
+            return checks
+        if stale is None and checks != "pending":
+            return checks
+        if time.monotonic() >= deadline:
+            if stale:
+                raise LandError("owner assessment wait timed out; candidate remains published and unmerged — "
+                                "assess when ready and re-run alt land")
+            return checks
+        time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+
+
 def _repository_turn(function):
     """#433: siblings must not advance the base while a landing validates its candidate.
     I-20260923-062538: serialize required-check publication and waiting, merging or not.
@@ -1121,11 +1163,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
     hold_merge = task.get("hold_merge")
     pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-    checks = _checks_value(root, number, pair)
-    deadline = time.monotonic() + max(wait, 0)
-    while checks == "pending" and time.monotonic() < deadline:
-        time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
-        checks = _checks_value(root, number, pair)
+    checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait, authority=authority)
     _require_closing_issues(root, number, closes_issues)
     merged, local_tests = pr.get("state") == "MERGED", None
     def check_before_merge():
@@ -1146,22 +1184,20 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if current.get("adopted_pr") != adoption:
             raise LandError("task adoption changed before merge")
         _require_closing_issues(root, number, closes_issues)
-        if current.get("hold_merge"):
-            if not approval:
-                raise LandError(f"task carries a merge hold: {current['hold_merge']}")
-            try:
-                T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
-                                       reason="owner applied the operator's task-chat approval")
-            except T.TransitionError as exc:
-                raise LandError(str(exc)) from exc
+        if current.get("hold_merge") and not approval:
+            raise LandError(f"task carries a merge hold: {current['hold_merge']}")
+        return current, current_pr
     @contextlib.contextmanager
     def before_merge():
         from . import reviews
         with reviews.merge_lock(project, slug):
-            check_before_merge()
+            current, current_pr = check_before_merge()
             _assert_pair_current(root, pair)
             try:
                 reviews.require_merge(project, slug, pair)
+                if current.get("hold_merge"):
+                    T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
+                                           reason="owner applied the operator's task-chat approval")
             except T.TransitionError as exc:
                 raise LandError(str(exc)) from exc
             yield
