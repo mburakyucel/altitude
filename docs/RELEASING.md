@@ -30,9 +30,11 @@ The web package's private build metadata is not a separate product version.
 
 ## Candidate and release gates
 
-This repository's temporary hosted-CI suspension uses the full local `make check` gate with
-candidate SHA/tree evidence. The [local delivery policy](DEVELOPMENT.md#ci-and-candidate-identity)
-preserves review and publication decisions; it does not establish hosted billing/artifact recovery.
+This repository's required self-hosted PR `check` runs the full `make check` gate with candidate
+SHA/tree evidence. The [delivery policy](DEVELOPMENT.md#ci-and-candidate-identity) preserves review
+and publication decisions. The separately dispatched
+[installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance) is optional
+acceptance evidence; its pending or failed runs on main do not gate PR delivery or release publication.
 
 1. Select an exact commit already on `origin/main`. Record its SHA, proposed version, previous
    release/known-good SHA and the PRs included since that point. Later main commits are outside
@@ -155,6 +157,15 @@ runtime target is Ubuntu 24.04 x86_64; on macOS, `install.sh` stops before downl
 until the native runtime and host validation exist. Deterministic fixtures do not establish
 physical Mac, fresh-machine, browser trust or live provider compatibility. No public support claim
 precedes that evidence.
+
+For reproducible Linux installation evidence, dispatch the
+[installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance) on main with
+the selected source SHA as `source_ref`. It builds two synthetic version labels from that same
+commit and exercises real installation, service activation, HTTPS, update, failed activation recovery
+and retained-data uninstall. This establishes no cross-release data migration or public-download
+bootstrap. Record its run URL, runner environment, artifact hashes and actual results separately
+from required candidate checks. The first hosted run remains pending until its evidence is recorded;
+workflow availability alone is not executed acceptance or a new release gate.
 
 ## Recovery
 
