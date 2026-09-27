@@ -4,22 +4,22 @@
  * view for its project and task takes it once, and a newer request replaces an untaken one.
  */
 
-let pending: { key: string; command: string } | null = null;
+let pending: { key: string; command: string; at: number } | null = null;
 const listeners = new Set<() => void>();
 
 const keyOf = (project: string, task?: string) => `${project}\n${task ?? ""}`;
 
 export function requestCommand(project: string, task: string | undefined, command: string) {
-  pending = { key: keyOf(project, task), command };
+  pending = { key: keyOf(project, task), command, at: Date.now() };
   for (const listener of listeners) listener();
 }
 
-/** The waiting command for this terminal, removed as it is returned. */
-export function takeCommand(project: string, task?: string): string | null {
+/** The waiting command for this terminal and when it was asked for, removed as it is returned. */
+export function takeCommand(project: string, task?: string): { text: string; at: number } | null {
   if (pending?.key !== keyOf(project, task)) return null;
-  const { command } = pending;
+  const { command, at } = pending;
   pending = null;
-  return command;
+  return { text: command, at };
 }
 
 export function subscribeCommands(listener: () => void): () => void {

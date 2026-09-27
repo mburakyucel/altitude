@@ -81,11 +81,11 @@ describe("terminal command requests", () => {
     expect(heard).toHaveBeenCalledTimes(2);
     expect(takeCommand("atlas")).toBeNull();
     expect(takeCommand("atlas", "task-b")).toBeNull();
-    expect(takeCommand("atlas", "task-a")).toBe("echo two");
+    expect(takeCommand("atlas", "task-a")).toMatchObject({ text: "echo two", at: expect.any(Number) });
     expect(takeCommand("atlas", "task-a")).toBeNull();
     requestCommand("atlas", undefined, "echo project");
     expect(takeCommand("atlas", "task-a")).toBeNull();
-    expect(takeCommand("atlas")).toBe("echo project");
+    expect(takeCommand("atlas")?.text).toBe("echo project");
     stop();
     requestCommand("atlas", undefined, "echo later");
     expect(heard).toHaveBeenCalledTimes(3);

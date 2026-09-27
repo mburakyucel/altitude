@@ -65,11 +65,11 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
   const data = status.data;
   // A chat command to type at this terminal's prompt (SPEC.md §3.3): taken once, dropped when the view
   // leaves or cannot show a running shell.
-  const [command, setCommand] = useState<{ text: string; seq: number } | null>(null);
+  const [command, setCommand] = useState<{ text: string; at: number; seq: number } | null>(null);
   useEffect(() => {
     const pick = () => {
-      const text = takeCommand(project, task);
-      if (text !== null) setCommand((last) => ({ text, seq: (last?.seq ?? 0) + 1 }));
+      const taken = takeCommand(project, task);
+      if (taken) setCommand((last) => ({ ...taken, seq: (last?.seq ?? 0) + 1 }));
     };
     pick();
     return subscribeCommands(pick);

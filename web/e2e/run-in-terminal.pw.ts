@@ -85,6 +85,8 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", a
   await printing.getByRole("button", { name: "Dismiss" }).click();
   await page.locator(".terminal-screen").click();
   await page.keyboard.press("Control+C");
+  await page.keyboard.type("clear");
+  await page.keyboard.press("Enter");
   await settled(page);
   await expect(output).not.toContainText("echo ran-");
   await page.keyboard.type("exit");

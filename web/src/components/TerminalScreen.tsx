@@ -13,7 +13,7 @@ const RESIZE_MS = 100;
 const INPUT_CHUNK = 16_384;
 /** A chat command waits until the screen has drawn output and then stayed quiet this long: the prompt. */
 const SETTLE_MS = 300;
-/** A chat command not typed this long after its request (no prompt yet, or output that never settles) is refused. */
+/** A chat command not typed this long after its tap (no prompt yet, output that never settles, a slow check) is refused. */
 const PROMPT_WAIT_MS = 5_000;
 
 const KEYS: { label: string; name: string; data: string }[] = [
@@ -59,7 +59,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   keys: boolean;
   intro: string;
   reconnecting: boolean;
-  command?: { text: string; seq: number } | null;
+  command?: { text: string; at: number; seq: number } | null;
   onEnd: (status: TerminalStatus) => void;
   onReconnecting: (lost: boolean) => void;
   /** The command was typed or refused: the view no longer holds it. */
@@ -77,10 +77,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const report = useRef({ onEnd, onReconnecting, onCommand });
   report.current = { onEnd, onReconnecting, onCommand };
   const output = useRef({ seen: false, at: 0 });
-  const live = useRef(true);
   const [held, setHeld] = useState<{ text: string; reason: string } | null>(null);
-  const request = useRef(command?.seq);
-  request.current = command?.seq;
 
   useEffect(() => {
     const term = new XTerm({
@@ -175,7 +172,12 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
     focus.current = () => term.focus();
     // xterm frames a paste as the shell asked (bracketed paste), so pasted lines wait for Enter.
-    pasteText.current = (text) => term.paste(text);
+    // A latched Ctrl belongs to the next keystroke, never to pasted text.
+    pasteText.current = (text) => {
+      ctrlRef.current = false;
+      setCtrl(false);
+      term.paste(text);
+    };
     const input = term.onData((data) => send.current(data));
 
     const size = () => {
@@ -190,9 +192,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     fit.fit();
     connect();
     term.focus();
-    live.current = true;
     return () => {
-      live.current = false;
       done = true;
       clearTimeout(retry);
       clearTimeout(resize);
@@ -203,42 +203,56 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
   }, [project, task, id]); // eslint-disable-line react-hooks/exhaustive-deps -- the intro is drawn once
 
-  // Type the chat command once the prompt has settled, after checking no program holds the foreground.
+  // Type the chat command once the prompt has settled, after checking no program holds the foreground,
+  // or refuse it: nothing is typed after PROMPT_WAIT_MS from the tap.
   useEffect(() => {
     if (!command) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let over = false;
+    let checking = false;
     const refuse = (reason: string) => {
+      over = true;
+      clearTimeout(timer);
+      clearTimeout(expiry);
       setHeld({ text: command.text, reason });
       report.current.onCommand?.();
     };
-    const started = Date.now();
+    const expiry = setTimeout(() => refuse(
+      checking ? "Altitude couldn't check the terminal in time, so the command wasn't typed."
+        : output.current.seen ? "The terminal kept printing, so the command wasn't typed."
+          : "The terminal hasn't shown a prompt, so the command wasn't typed.",
+    ), command.at + PROMPT_WAIT_MS - Date.now());
     const attempt = async () => {
       const seen = output.current;
       const now = Date.now();
       if (!seen.seen || now - seen.at < SETTLE_MS) {
-        if (now - started >= PROMPT_WAIT_MS) {
-          return refuse(seen.seen ? "The terminal kept printing, so the command wasn't typed." : "The terminal hasn't shown a prompt, so the command wasn't typed.");
-        }
         timer = setTimeout(() => void attempt(), seen.seen ? SETTLE_MS - (now - seen.at) : SETTLE_MS);
         return;
       }
       if (stopped.current) return refuse("Typing is stopped, so the command wasn't typed.");
+      checking = true;
       let current: TerminalStatus;
       try {
         current = await terminalStatus(project, task);
       } catch {
-        if (live.current && request.current === command.seq) refuse("Altitude couldn't check the terminal, so the command wasn't typed.");
+        if (!over) refuse("Altitude couldn't check the terminal, so the command wasn't typed.");
         return;
       }
-      if (!live.current || request.current !== command.seq || current.id !== id || current.state !== "running") return;
+      if (over || current.id !== id || current.state !== "running") return;
       if (current.busy) return refuse(`${current.busy} is running, so the command wasn't typed.`);
+      over = true;
+      clearTimeout(expiry);
       setHeld(null);
       pasteText.current(command.text);
       focus.current();
       report.current.onCommand?.();
     };
     void attempt();
-    return () => clearTimeout(timer);
+    return () => {
+      over = true;
+      clearTimeout(timer);
+      clearTimeout(expiry);
+    };
   }, [command?.seq, command?.text]); // eslint-disable-line react-hooks/exhaustive-deps -- one attempt per request
 
   const paste = async () => {
