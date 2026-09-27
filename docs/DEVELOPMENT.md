@@ -412,8 +412,12 @@ publication, CI waiting and merge across Altitude owners, including nonmerging i
 For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
 the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
 landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
-required checks, timeout, termination, ownership loss and material-edit refusal. Original review
-receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
+required checks, timeout, termination, ownership loss and material-edit refusal. Proposal followed by
+implementation review reports both stale assessments together; messages during admission, hosted CI
+or local validation require explicit assessment in the same landing invocation. Invalid dispositions
+leave the candidate unmerged and its operator hold intact, and final validation does not restart the
+assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
+Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
 Runner executions outside the command do not share its turn. Any base or head movement after candidate pinning
 refuses the merge. A later invocation can reuse the successful head when main is already an

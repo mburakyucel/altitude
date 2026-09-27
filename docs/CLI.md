@@ -1138,17 +1138,24 @@ not stashed. Required checks, review and original approval sources still govern 
 Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
-When integration makes a completed review assessment stale, a merging L2 invocation keeps its turn
-while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
+When integration or task context makes completed review assessments stale, a merging L2 invocation
+keeps its turn while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
 deadline; failed or unavailable checks end the wait. Keep landing alive in a native background/tool
 session and read its partial output. Inspect the printed head/base and current conversation, post any
-explanation, then run `alt task review assess --review-id <id> --file <assessment.json>` in a separate
-command. Assess every stale request, including proposals, and collect the original landing result.
+explanation for all affected reviews, then run `alt task review assess --review-id <id> --file <assessment.json>`
+in a separate command for each. The notice lists all stale review IDs and subjects together, with the
+assessment timestamp and assessed/current values of each changed head, base, tree, proposal or context
+hash. Context includes the request, brief, messages and decisions; inspect the current task conversation
+when its hash changes.
+Assess every stale request, including proposals, before posting further explanations, and collect the
+original landing result. A changes assessment does not retire a proposal assessment or its findings.
 No assessment or finding disposition is carried forward automatically. If code needs edits or another
 review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
 head/base, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
 immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
-Final review/context, CI, holds and approval checks still run; review refusal leaves the merge hold intact.
+Context changes detected during final merge validation use the same assessment wait and original
+deadline, without releasing the repository turn. Final review/context, CI, holds and approval checks
+run again after assessment; review refusal leaves the merge hold intact.
 
 The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
 in other repositories do not wait for it. The containerized

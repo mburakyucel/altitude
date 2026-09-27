@@ -21,11 +21,18 @@ _inflight_lock = threading.Lock()
 class AssessmentRequired(T.TransitionError):
     """A completed review needs owner judgment of the pinned landing candidate."""
 
-    def __init__(self, review_id, context_hash):
-        self.review_id = review_id
-        self.context_hash = context_hash
-        super().__init__("Code, base, proposal or context changed after review assessment. "
-                         "Assess the current candidate before merging.")
+    def __init__(self, stale_reviews, slug):
+        self.stale_reviews = stale_reviews
+        details = []
+        for review in stale_reviews:
+            changes = "; ".join(f"{field}: {values['assessed']} -> {values['current']}"
+                                for field, values in review["changes"].items())
+            details.append(f"review {review['id']} ({review['subject']}) changed after review assessment "
+                           f"at {review['assessed_at']}: {changes}. "
+                           f"Run alt task review assess --review-id {review['id']} --file <assessment.json>.")
+        super().__init__("\n".join(details) + f"\nInspect the candidate and alt task messages {slug}; "
+                         "post explanations for all affected reviews before assessing each one. "
+                         "Task context includes the request, brief, messages and decisions.")
 
 
 def _owner(task, actor, expected_attempt=None, *, required=False):
@@ -157,8 +164,10 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     return identity, context
 
 
-def _same(left, right):
-    return all(left.get(k) == right.get(k) for k in ("head", "base", "tree", "context_hash", "proposal_id", "proposal_hash"))
+def _changed_evidence(left, right):
+    return {key: {"assessed": left.get(key), "current": right.get(key)}
+            for key in ("head", "base", "tree", "context_hash", "proposal_id", "proposal_hash")
+            if left.get(key) != right.get(key)}
 
 
 def _current_reviews(task):
@@ -592,13 +601,18 @@ def require_merge(project, slug, pair):
     current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
     for review in current:
         if review["state"] != "completed" or not review.get("reconciled"):
-            raise T.TransitionError("Adversarial review must finish and receive the owner's dispositions before merging.")
+            raise T.TransitionError(f"Adversarial review {review['id']} ({review.get('subject', 'changes')}) "
+                                    "must finish and receive the owner's dispositions before merging.")
+    stale = []
     for review in current:
         identity, _ = _identity(project, task, proposal_id=review["reconciled"].get("proposal_id"))
         if identity["base"] != pair["base_sha"] or identity["head"] != pair["head_sha"]:
             raise T.TransitionError("Review candidate differs from the pinned landing base or head; re-run alt land.")
-        if not _same(review["reconciled"], identity):
-            raise AssessmentRequired(review["id"], identity["context_hash"])
+        if changes := _changed_evidence(review["reconciled"], identity):
+            stale.append({"id": review["id"], "subject": review.get("subject", "changes"),
+                          "assessed_at": review["reconciled"]["at"], "changes": changes})
+    if stale:
+        raise AssessmentRequired(stale, slug)
 
 
 def cancel_attached(project, slug, reason):
