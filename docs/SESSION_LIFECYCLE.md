@@ -414,8 +414,10 @@ before lookup receives the ordinary image-access denial, without an internal err
 
 Each image-bearing project message keeps its own turn and caption. Its queue claim remains on disk
 until human history and a terminal response are durable. After interruption, recovery preserves the
-original message and shows an explicit delivery error; it does not execute that turn twice. Removing
-a waiting image message records cancellation so a late admission retry cannot resurrect it. Saved
+original message and shows an explicit delivery error; it does not execute that turn twice. Claimed
+images stay out of the waiting queue throughout completion and recovery, independently of the active
+turn marker. Removing a waiting image message records cancellation so a late admission retry cannot
+resurrect it. Saved
 failed-turn Retry selects the same committed IDs with a new message identity. Missing bytes remain
 an error with the text readable. Existing task resume/block/recovery authority still governs L2 retries.
 Task images share individual message removal and Stop/Continue controls. Removed messages stay
@@ -695,7 +697,11 @@ delivery unconfirmed, the composer preserves both submitted and newly typed text
 to check the conversation, and offers no send Retry, including when another overlapping send is refused.
 It never infers acceptance by matching text.
 Task polling replaces a pending preview as soon as its submission ID appears in saved messages,
-including before the POST response arrives. Separate sends with identical text remain separate
+including before the POST response arrives. A late POST receipt preserves the saved row's order and
+delivery state. Project queue receipts refresh the source snapshot, including after navigation;
+they never recreate a queued row that has run or been removed. A matching canonical assistant/error
+row replaces a stalled response stream. Failed refreshes retain acceptance and offer only read Retry.
+Separate sends with identical text remain separate
 messages; failed or unconfirmed responses retain the existing draft recovery.
 Submitted-text recovery belongs to the original project/task beyond a composer mount. Browser-tab
 storage retains each outstanding submission and the recovered draft; a live receipt retires only
