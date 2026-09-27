@@ -8,16 +8,15 @@ import "./code-block.css";
 export const ProseTerminal = createContext<{ open: (command: string) => void } | { unavailable: string } | null>(null);
 
 /**
- * A `run` block's command: one line, trimmed, with no control, invisible formatting or line-separator
- * character, so what the message shows is exactly what reaches the terminal. Anything else is refused
- * with the reason shown under it.
+ * A `run` block's command: exactly one line, kept byte for byte, with no control, invisible formatting
+ * or line-separator character anywhere, so what the message shows is exactly what reaches the terminal.
+ * Anything else is refused with the reason shown under it.
  */
 export function runCommand(text: string): { command: string } | { refused: string } {
-  const command = text.trim();
-  if (!command) return { refused: "Not offered for the terminal: the command is empty." };
-  if (/[\r\n\u2028\u2029]/.test(command)) return { refused: "Not offered for the terminal: more than one line." };
-  if (/[\p{Cc}\p{Cf}]/u.test(command)) return { refused: "Not offered for the terminal: it contains a control or invisible character." };
-  return { command };
+  if (!text.trim()) return { refused: "Not offered for the terminal: the command is empty." };
+  if (/[\r\n\u2028\u2029]/.test(text)) return { refused: "Not offered for the terminal: more than one line." };
+  if (/[\p{Cc}\p{Cf}]/u.test(text)) return { refused: "Not offered for the terminal: it contains a control or invisible character." };
+  return { command: text };
 }
 
 const COPY_ICON = <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M7.5 7.5h8v8h-8zM4.5 12.5v-8h8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>;
@@ -56,15 +55,14 @@ export function CodeBlock({ text, info }: { text: string; info: string }) {
     return <div className="code-block"><pre className="session-code">{text}</pre><CopyButton text={text} /></div>;
   }
   const run = runCommand(text);
-  const shown = "command" in run ? run.command : text;
   const note = "refused" in run ? run.refused : terminal && "unavailable" in terminal ? terminal.unavailable : null;
   const open = "command" in run && terminal && "open" in terminal ? terminal.open : null;
   return <div className="command-block" role="group" aria-label="Command">
-    <pre className="session-code">{shown}</pre>
+    <pre className="session-code">{text}</pre>
     <div className="command-actions">
       {note ? <span className="command-note">{note}</span> : null}
-      <CopyButton text={shown} />
-      {open ? <button type="button" className="btn btn-primary" onClick={() => open(shown)}>{TERMINAL_ICON}Open in terminal</button> : null}
+      <CopyButton text={text} />
+      {open ? <button type="button" className="btn btn-primary" onClick={() => open(text)}>{TERMINAL_ICON}Open in terminal</button> : null}
     </div>
   </div>;
 }

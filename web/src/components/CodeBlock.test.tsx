@@ -8,13 +8,13 @@ import { requestCommand, subscribeCommands, takeCommand } from "../data/terminal
 const block = (body: string, info = "run") => `Run this:\n\n\`\`\`${info}\n${body}\n\`\`\`\n\nThen tell me.`;
 
 describe("run commands", () => {
-  it("accepts one trimmed line and refuses more lines, control and invisible characters", () => {
-    expect(runCommand("  sudo apt install ffmpeg  ")).toEqual({ command: "sudo apt install ffmpeg" });
+  it("keeps one line byte for byte and refuses more lines, control and invisible characters anywhere", () => {
+    expect(runCommand("  printf x\\ ")).toEqual({ command: "  printf x\\ " });
     expect(runCommand("echo 'ünïcode ✓' && ls -la")).toEqual({ command: "echo 'ünïcode ✓' && ls -la" });
     const lines = "Not offered for the terminal: more than one line.";
-    for (const text of ["cd /tmp\nls", "cd /tmp\rls", "a b", "a b"]) expect(runCommand(text)).toEqual({ refused: lines });
+    for (const text of ["cd /tmp\nls", "cd /tmp\rls", "a\u2028b", "a\u2029b", "ls\n", "\nls", "ls\u2028"]) expect(runCommand(text)).toEqual({ refused: lines });
     const hidden = "Not offered for the terminal: it contains a control or invisible character.";
-    for (const text of ["a\tb", "echo \x1b[31m", "rm​ -rf", "echo ‮gnp.exe", "a\x7fb", "a\u0085b", "a⁦b"]) {
+    for (const text of ["a\tb", "echo \x1b[31m", "rm​ -rf", "echo ‮gnp.exe", "a\x7fb", "a\u0085b", "a\u2066b", "\tls", "ls\t", "\ufeffls", "ls\u200b"]) {
       expect(runCommand(text)).toEqual({ refused: hidden });
     }
     expect(runCommand(" \n ")).toEqual({ refused: "Not offered for the terminal: the command is empty." });
@@ -24,10 +24,10 @@ describe("run commands", () => {
 describe("code blocks in prose", () => {
   it("opens a run block's exact shown command in the conversation's terminal", async () => {
     const open = vi.fn();
-    render(<ProseTerminal value={{ open }}><Prose text={block("  echo ran-$((20+22)) ")} /></ProseTerminal>);
+    render(<ProseTerminal value={{ open }}><Prose text={block("echo ran-$((20+22)) \\ ")} /></ProseTerminal>);
     const group = screen.getByRole("group", { name: "Command" });
     const shown = group.querySelector("pre")!.textContent;
-    expect(shown).toBe("echo ran-$((20+22))");
+    expect(shown).toBe("echo ran-$((20+22)) \\ ");
     await userEvent.click(screen.getByRole("button", { name: "Open in terminal" }));
     expect(open).toHaveBeenCalledWith(shown);
   });

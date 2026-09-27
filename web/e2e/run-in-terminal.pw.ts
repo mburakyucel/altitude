@@ -73,6 +73,20 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", a
   await expect(held).toBeHidden();
   await page.locator(".terminal-screen").click();
   await page.keyboard.press("Control+C");
+
+  // Output that never settles has no prompt to type at: refused after five seconds, typed later by nothing.
+  await page.keyboard.type("while :; do echo tick; sleep 0.1; done");
+  await page.keyboard.press("Enter");
+  await conversation();
+  await openIt.click();
+  const printing = panel.getByRole("status").filter({ hasText: "The terminal kept printing, so the command wasn't typed." });
+  await expect(printing).toBeVisible({ timeout: 10_000 });
+  await walk.state("05b-kept-printing", { visible: [printing, printing.getByRole("button", { name: "Copy command" })], hidden: [] });
+  await printing.getByRole("button", { name: "Dismiss" }).click();
+  await page.locator(".terminal-screen").click();
+  await page.keyboard.press("Control+C");
+  await settled(page);
+  await expect(output).not.toContainText("echo ran-");
   await page.keyboard.type("exit");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(new RegExp(`${TASK}/live$`));

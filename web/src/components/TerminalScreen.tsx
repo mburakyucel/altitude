@@ -13,7 +13,7 @@ const RESIZE_MS = 100;
 const INPUT_CHUNK = 16_384;
 /** A chat command waits until the screen has drawn output and then stayed quiet this long: the prompt. */
 const SETTLE_MS = 300;
-/** A shell that shows nothing this long after the screen appears gets no command. */
+/** A chat command not typed this long after its request (no prompt yet, or output that never settles) is refused. */
 const PROMPT_WAIT_MS = 5_000;
 
 const KEYS: { label: string; name: string; data: string }[] = [
@@ -76,7 +76,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const [inputError, setInputError] = useState<string | null>(null);
   const report = useRef({ onEnd, onReconnecting, onCommand });
   report.current = { onEnd, onReconnecting, onCommand };
-  const output = useRef({ seen: false, at: 0, shown: Date.now() });
+  const output = useRef({ seen: false, at: 0 });
   const live = useRef(true);
   const [held, setHeld] = useState<{ text: string; reason: string } | null>(null);
   const request = useRef(command?.seq);
@@ -211,18 +211,17 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       setHeld({ text: command.text, reason });
       report.current.onCommand?.();
     };
+    const started = Date.now();
     const attempt = async () => {
       const seen = output.current;
       const now = Date.now();
-      if (!seen.seen && now - seen.shown < PROMPT_WAIT_MS) {
-        timer = setTimeout(() => void attempt(), SETTLE_MS);
+      if (!seen.seen || now - seen.at < SETTLE_MS) {
+        if (now - started >= PROMPT_WAIT_MS) {
+          return refuse(seen.seen ? "The terminal kept printing, so the command wasn't typed." : "The terminal hasn't shown a prompt, so the command wasn't typed.");
+        }
+        timer = setTimeout(() => void attempt(), seen.seen ? SETTLE_MS - (now - seen.at) : SETTLE_MS);
         return;
       }
-      if (seen.seen && now - seen.at < SETTLE_MS) {
-        timer = setTimeout(() => void attempt(), SETTLE_MS - (now - seen.at));
-        return;
-      }
-      if (!seen.seen) return refuse("The terminal hasn't shown a prompt, so the command wasn't typed.");
       if (stopped.current) return refuse("Typing is stopped, so the command wasn't typed.");
       let current: TerminalStatus;
       try {
