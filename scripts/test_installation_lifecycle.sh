@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
 set -euo pipefail
-if [[ $# != 4 || $1 != --disposable-vm ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR' >&2
+if [[ $# != 5 || $1 != --disposable-vm ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT' >&2
     exit 2
 fi
+[[ $5 =~ ^[0-9a-f]{40}$ ]] || { echo 'Supply the full selected source commit.' >&2; exit 2; }
 if [[ $EUID != 0 || -n ${ALTITUDE_ACTOR:-} ]]; then
     echo 'Requires root on a disposable VM, outside an Altitude worker.' >&2
     exit 2
@@ -27,19 +28,31 @@ cleanup() {
     lifecycle_exit=$outcome
     trap - EXIT
     set +e
+    copy_exit=0
+    linger_exit=0
+    manager_exit=0
+    delete_exit=0
     if $created; then
         # Only this newly created account is in scope, even after failed install.
         journalctl "_UID=$test_uid" --no-pager -n 400 > "$results/journal.log" 2>&1
         if [[ -d $scratch/$account/results ]]; then
-            cp -a "$scratch/$account/results/." "$results/" || outcome=1
+            for evidence in "$scratch/$account/results/"*.json "$scratch/$account/results/"*.log; do
+                [[ -f $evidence ]] || continue
+                install -m 644 "$evidence" "$results/" || copy_exit=1
+            done
         fi
-        timeout 30 systemctl stop "user@$test_uid.service" >> "$results/cleanup.log" 2>&1 || outcome=1
-        timeout 15 loginctl disable-linger "$account" >> "$results/cleanup.log" 2>&1 || outcome=1
-        timeout 15 userdel --remove "$account" >> "$results/cleanup.log" 2>&1 || outcome=1
+        timeout 15 loginctl disable-linger "$account" >> "$results/cleanup.log" 2>&1
+        linger_exit=$?
+        timeout 30 systemctl stop "user@$test_uid.service" >> "$results/cleanup.log" 2>&1
+        manager_exit=$?
+        timeout 15 userdel --remove "$account" >> "$results/cleanup.log" 2>&1
+        delete_exit=$?
+        if (( copy_exit || linger_exit || manager_exit || delete_exit )); then outcome=1; fi
         if id "$account" >/dev/null 2>&1; then outcome=1; fi
     fi
     rm -rf -- "$scratch"
-    printf '{"lifecycle_exit": %s, "final_exit": %s}\n' "$lifecycle_exit" "$outcome" > "$results/cleanup.json"
+    printf '{"lifecycle_exit": %s, "copy_evidence_exit": %s, "disable_linger_exit": %s, "stop_manager_exit": %s, "delete_account_exit": %s, "final_exit": %s}\n' \
+        "$lifecycle_exit" "$copy_exit" "$linger_exit" "$manager_exit" "$delete_exit" "$outcome" > "$results/cleanup.json"
     echo "Harness and cleanup exit status: $outcome" | tee -a "$results/cleanup.log"
     exit "$outcome"
 }
@@ -61,4 +74,4 @@ timeout 30 systemctl start "user@$test_uid.service"
 timeout --signal=TERM --kill-after=10s 8m runuser -u "$account" -- env -i \
     HOME="$test_home" USER="$account" LOGNAME="$account" PATH=/usr/bin:/bin \
     XDG_RUNTIME_DIR="/run/user/$test_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$test_uid/bus" \
-    /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results"
+    /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results" "$5"

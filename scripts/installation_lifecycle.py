@@ -35,7 +35,11 @@ def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
     """A declared, checksum-valid startup failure, never a published artifact."""
     release = json.loads((package / "release.json").read_text())
     release["version"] = "v0.0.0-rc.3"
-    (package / "bin/alt").write_text("#!/usr/bin/env python3\nraise SystemExit('intentional lifecycle startup failure')\n")
+    (package / "bin/alt").write_text(
+        "#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n"
+        "(Path.home() / 'results/failed-startup.json').write_text(json.dumps("
+        "{'pid': os.getpid(), 'argv': sys.argv[1:], 'version': 'v0.0.0-rc.3'}))\n"
+        "raise SystemExit('intentional lifecycle startup failure')\n")
     release["files"]["bin/alt"] = digest(package / "bin/alt")
     write_json(package / "release.json", release)
     with tarfile.open(output, "w:gz") as bundle:
@@ -46,8 +50,9 @@ def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
 
 
 class Lifecycle:
-    def __init__(self, baseline: Path, candidate: Path, results: Path):
+    def __init__(self, baseline: Path, candidate: Path, results: Path, expected_commit: str):
         self.baseline, self.candidate, self.results = baseline, candidate, results
+        self.expected_commit = expected_commit
         self.home = Path.home()
         self.prefix = self.home / ".local/share/altitude"
         self.alt = self.home / ".local/bin/alt"
@@ -92,6 +97,7 @@ class Lifecycle:
         spec.loader.exec_module(installer)
         package = self.home / f"{name}-package"
         release = installer.extract(archive, checksum, package)
+        assert release["commit"] == self.expected_commit, "Archive commit differs from selected source"
         assert digest(folder / "install.py") == digest(package / "altitude/installation.py")
         write_json(self.results / f"{name}-manifest.json", release)
         self.result["artifacts"].append({"kind": name, "filename": archive.name,
@@ -146,7 +152,7 @@ class Lifecycle:
         old, old_sha, package, before = self.archive(self.baseline, "baseline")
         new, new_sha, new_package, after = self.archive(self.candidate, "candidate")
         assert before["version"] != after["version"] and after["version"] != "v0.0.0-rc.3"
-        self.run("user-manager", "systemctl", "--user", "show-environment")
+        self.run("user-manager", "systemctl", "--user", "show", "--property=Version")
         self.run("host-tools", "/usr/bin/python3", "--version")
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -186,11 +192,11 @@ class Lifecycle:
         write_json(self.results / "failure-manifest.json", broken)
         self.result["artifacts"].append({"kind": "failure-injection", "sha256": digest(bad),
             "version": broken["version"], "commit": broken["commit"],
-            "derived_from_sha256": new_sha, "change": "bin/alt exits with intentional startup failure; manifest rehashed"})
+            "derived_from_sha256": new_sha, "change": "bin/alt records its daemon invocation then exits; manifest rehashed"})
         failure = self.run("failed-update", self.alt, "update", "--archive", bad, "--sha256", digest(bad), success=False)
         assert "previous installation restored" in failure, failure
-        journal = self.run("recovery-journal", "journalctl", "--user", "-u", "altitude.service", "--no-pager", "-n", "200")
-        assert "intentional lifecycle startup failure" in journal, "Candidate daemon never reached injected failure"
+        marker = json.loads((self.results / "failed-startup.json").read_text())
+        assert marker["argv"] == ["serve"] and marker["version"] == broken["version"] and marker["pid"] > 0
         self.healthy("recovered", after)
         self.doctor("recovered", after)
         assert (self.prefix / "versions" / broken["version"]).is_dir()
@@ -220,4 +226,4 @@ class Lifecycle:
 
 
 if __name__ == "__main__":
-    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:])).execute()
+    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute()

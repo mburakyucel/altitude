@@ -67,7 +67,7 @@ jobs:
         run: |
           set -o pipefail
           sudo bash harness/scripts/test_installation_lifecycle.sh --disposable-vm \
-            "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/installation-results" \
+            "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/installation-results" "$(git -C candidate rev-parse HEAD)" \
             2>&1 | tee "$RUNNER_TEMP/installation-results/harness.log"
 
       - name: Summarize and retain diagnostics

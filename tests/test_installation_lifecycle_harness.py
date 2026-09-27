@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from unittest import mock
@@ -26,15 +27,36 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertEqual(verified["commit"], before["commit"])
         changed = [name for name in before["files"] if before["files"][name] != verified["files"][name]]
         self.assertEqual(changed, ["bin/alt"])
+        (self.tmp / "results").mkdir()
         result = subprocess.run([sys.executable, "-B", str(self.tmp / "verified/bin/alt"), "serve"],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10,
+                                env={**os.environ, "HOME": str(self.tmp)})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("intentional lifecycle startup failure", result.stderr)
+        marker = json.loads((self.tmp / "results/failed-startup.json").read_text())
+        self.assertEqual(marker["argv"], ["serve"])
+        self.assertEqual(marker["version"], broken["version"])
+        self.assertGreater(marker["pid"], 0)
+
+    def test_verified_archive_must_match_selected_source_commit(self):
+        archive, checksum = test_installation.Installation.archive(self, "v0.0.0-rc.2")
+        artifacts = self.tmp / "artifacts"
+        artifacts.mkdir()
+        filename = "altitude-v0.0.0-rc.2.tar.gz"
+        shutil.copyfile(archive, artifacts / filename)
+        (artifacts / (filename + ".sha256")).write_text(checksum)
+        shutil.copyfile(REPO / "altitude/installation.py", artifacts / "install.py")
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(artifacts, artifacts, results, "f" * 40)
+        harness.home = self.tmp
+        with self.assertRaisesRegex(AssertionError, "differs from selected source"):
+            harness.archive(artifacts, "mismatched")
 
     def test_non_disposable_account_refuses_before_any_application_or_service_command(self):
         results = self.tmp / "results"
         results.mkdir()
-        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results)
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, "a" * 40)
         with mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
                 mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
             user.return_value.pw_name = "ordinary-user"

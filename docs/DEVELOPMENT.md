@@ -335,6 +335,8 @@ after an accidental task-ref dispatch, push a new reviewed commit before landing
 separate fixture GitHub run inventory and PR checks: failed, running and queued installation runs
 on main leave a successful required PR check mergeable; an absent or unsuccessful required check
 still blocks. This fixture does not establish live GitHub association behavior.
+Task status selects push-triggered main runs; `tests/test_task_status.py` covers ignoring a failed
+manual run on the same merged commit. Release publication selects its existing required workflow.
 
 The workflow builds actual archives with `scripts/build_release.py`, using synthetic versions
 `v0.0.0-rc.1` and `v0.0.0-rc.2` from the same source commit. These exercise version switching,
@@ -344,9 +346,12 @@ loopback port. It verifies health version/commit, native service PID and served 
 runs the packaged `alt doctor`, updates, and activates a deliberately failing `v0.0.0-rc.3`
 derivative whose startup exits. The derivative's manifest and archive checksums are recomputed,
 so the recovery case reaches real failed activation rather than stopping at checksum rejection.
-Recovery restores the healthy candidate. Uninstall retains configuration, TLS identity and
-fictional history/project files. Expected unauthenticated GitHub and fixture-engine findings are
-identified separately from installation failures; no live provider request or operator state is used.
+The injected entry point records its daemon invocation before exiting, so recovery proof does not
+depend on user-journal permissions. Recovery restores the healthy candidate. Uninstall retains
+configuration, TLS identity and fictional history/project files. Doctor distinguishes expected
+unauthenticated GitHub findings and configured engine executables with unknown access from
+installation failures. Engine authentication/execution is not accepted by this test; any background
+engine probes reach only the fixture. No live provider request or operator state is used.
 The harness comes from the workflow's main commit; the archive builder and application come from
 `source_ref`. Results name both commits and the source tree. Older incompatible installer interfaces
 can fail this current harness. Installation calls the archive's standalone `install.py`; the
@@ -363,11 +368,12 @@ pending until a run and its results are recorded; source tests alone do not esta
 
 On a disposable Ubuntu 24.04 VM with Python 3.12+, Git, OpenSSL, GitHub CLI and a working systemd
 user manager, use the same entry point with two release-builder output directories. Each contains
-`install.py`, its application archive and `.sha256` file. Use absolute paths readable by the harness:
+`install.py`, its application archive and `.sha256` file. Both manifests must match the supplied
+full source commit. Use absolute paths readable by the harness:
 
 ```sh
 sudo bash scripts/test_installation_lifecycle.sh --disposable-vm \
-  /absolute/baseline /absolute/candidate /absolute/results
+  /absolute/baseline /absolute/candidate /absolute/results "$SOURCE_COMMIT"
 ```
 
 This command creates and removes a local account and its service; use only a disposable VM, never
