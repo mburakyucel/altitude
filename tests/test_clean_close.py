@@ -1,11 +1,30 @@
 """A mechanically clean report closes without spending an L3 report-landed turn."""
+import threading
 import unittest
+from unittest import mock
 
 from tests.support import AltitudeCase, fyi_rows
 from altitude import incidents, l3, server, state as S, tasks as T
 
 
 class TestCleanClose(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        # Scripted L3 turns do not use the external command socket.
+        self.patch(server, "ensure_l3_verb_broker")
+
+    def _report_turn(self, task: dict, verdict: dict) -> None:
+        try:
+            server.report_turn(self.project, task, verdict)
+        finally:
+            # #519: keep the project and fault/turn fixtures alive until the real
+            # turn-boundary drain finishes, including its background fault handler.
+            with server._bg_guard:
+                drain = server._bg.get(f"l3-queue:{self.project}")
+            if drain is not None:
+                drain.join(5)
+                self.assertFalse(drain.is_alive(), "report queue drain did not finish")
+
     def _report(self) -> dict:
         return {
             "landed": {
@@ -52,7 +71,7 @@ class TestCleanClose(AltitudeCase):
         logs: list = []
         self.patch(l3, "turn", new=lambda project, header, trigger: turns.append((project, header, trigger)) or {})
         self.patch(server, "log", new=logs.append)
-        server.report_turn(self.project, task, verdict)
+        self._report_turn(task, verdict)
         return turns, logs
 
     def _faults(self) -> list:
@@ -124,10 +143,49 @@ class TestCleanClose(AltitudeCase):
         })
         self.patch(server, "log", new=logs.append)
 
-        server.report_turn(self.project, task, verdict)
+        self._report_turn(task, verdict)
 
         self.assertIsNone(S.load_task(self.project, task["slug"])["l3_handled"])
         self.assertTrue(any("report turn unfinished" in line for line in logs))
+
+    def test_report_fixture_waits_for_background_fault_before_returning(self):
+        """A delayed queue fault belongs to this case, before its patches/project disappear."""
+        task, verdict = self._task_and_verdict(
+            "background-fault", change=lambda report, _verdict: report["fyi"].append("needs coordinator"))
+        faults = self._faults()
+        release = threading.Event()
+        original_join = threading.Thread.join
+        drains = []
+
+        def broker(project):
+            if threading.current_thread().name == f"l3-queue:{project}":
+                drains.append(threading.current_thread())
+                if not release.wait(5):
+                    raise AssertionError("fixture did not join its queue drain")
+                raise RuntimeError("fixture command socket unavailable")
+
+        def join(thread, timeout=None):
+            if thread.name == f"l3-queue:{self.project}":
+                release.set()
+            return original_join(thread, timeout)
+
+        try:
+            with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=broker), \
+                 mock.patch.object(threading.Thread, "join", new=join):
+                self._run(task, verdict)
+                self.assertEqual(len(faults), 1)
+                self.assertEqual(faults[0][0][0], "workflow:l3-queue")
+                self.assertIn("fixture command socket unavailable", faults[0][0][1])
+                self.assertEqual(faults[0][1], {"project": self.project, "task": None})
+        finally:
+            release.set()
+            with server._bg_guard:
+                drain = server._bg.get(f"l3-queue:{self.project}")
+            if drain is not None:
+                original_join(drain, 5)
+                self.assertFalse(drain.is_alive())
+        self.assertEqual(len(drains), 1)
+        self.assertFalse(drains[0].is_alive())
 
     def test_malformed_report_shapes_fail_closed_and_not_applicable_closes(self):
         cases = (
