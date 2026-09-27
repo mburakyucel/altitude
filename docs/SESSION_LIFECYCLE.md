@@ -414,8 +414,10 @@ before lookup receives the ordinary image-access denial, without an internal err
 
 Each image-bearing project message keeps its own turn and caption. Its queue claim remains on disk
 until human history and a terminal response are durable. After interruption, recovery preserves the
-original message and shows an explicit delivery error; it does not execute that turn twice. Removing
-a waiting image message records cancellation so a late admission retry cannot resurrect it. Saved
+original message and shows an explicit delivery error; it does not execute that turn twice. Claimed
+images stay out of the waiting queue throughout completion and recovery, independently of the active
+turn marker. Removing a waiting image message records cancellation so a late admission retry cannot
+resurrect it. Saved
 failed-turn Retry selects the same committed IDs with a new message identity. Missing bytes remain
 an error with the text readable. Existing task resume/block/recovery authority still governs L2 retries.
 Task images share individual message removal and Stop/Continue controls. Removed messages stay

@@ -459,9 +459,7 @@ def chat_state(project: str, limit: int = 60) -> dict:
     turn_lock = lock(project)
     with _lifecycle_guard(project):
         turn = _active.get(project)
-        with S.project_lock(project):
-            waiting = [row for row in _queue_rows(queue_path(project))
-                       if not row.get("image_turn_id") or row["image_turn_id"] != _active.get(project, {}).get("id")]
+        waiting = queued(project)
         return {"history": chat_history(project, limit), "queued": waiting,
                 "active": dict(turn) if turn else None, "busy": turn_lock.locked()}
 
@@ -536,8 +534,9 @@ def _write_queue(path: Path, rows: list[dict]) -> None:
 def queued(project: str) -> list[dict]:
     """The messages waiting for L3, oldest first. A queued message is dropped or run, never edited."""
     with S.project_lock(project):
+        # Image claims remain on disk for recovery, including after their active turn clears.
         return [row for row in _queue_rows(queue_path(project))
-                if not row.get("image_turn_id") or row["image_turn_id"] != _active.get(project, {}).get("id")]
+                if not row.get("image_turn_id")]
 
 
 def image_receipt(project: str, request_id: str, request_digest: str | None) -> dict | None:

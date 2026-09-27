@@ -3,7 +3,10 @@ import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "image-input-service.py" });
-test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "ignoreErrors" }); });
+test.afterEach(async ({ page, request }) => {
+  await request.post("/fixture/release-completion");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 
 type Scope = "project" | "task";
 const path = (scope: Scope, project = "alpha") => `/projects/${project}${scope === "task" ? "/tasks/image-task" : ""}`;
@@ -63,7 +66,7 @@ async function dimensionFile(page: Page, name: string, width: number, height: nu
 }
 
 for (const scope of ["project", "task"] as const) {
-  test(`${scope}: real selection, immutable admission, sent viewer and reload`, async ({ page }, info) => {
+  test(`${scope}: real selection, immutable admission, sent viewer and reload`, async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     await open(page, scope, info);
     const v = controls(page, scope);
@@ -101,6 +104,8 @@ for (const scope of ["project", "task"] as const) {
       const response = await route.fetch();
       await route.fulfill({ response });
     });
+    // Hold the real completion boundary after active clears but before its retained claim is removed.
+    if (scope === "project") await request.post("/fixture/pause-completion");
     await walk.state("04-sending-images", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
     await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled();
     release();
@@ -121,6 +126,16 @@ for (const scope of ["project", "task"] as const) {
     await walk.state("08-close-image", { visible: [v.preview], hidden: [page.getByRole("dialog")] });
     await page.reload();
     await walk.state("09-reload-saved-image", { visible: [v.preview], hidden: [v.strip] });
+    if (scope === "project") {
+      await expect.poll(async () => (await (await request.get("/fixture/completing")).json()).completing).toBe(true);
+      const snapshot = await (await request.get("/api/chat/alpha")).json();
+      expect(snapshot.active).toBeNull();
+      expect(snapshot.history.filter((row: { text: string }) => row.text === caption)).toHaveLength(1);
+      expect(snapshot.queued).toEqual([]);
+      await expect(v.preview).toHaveCount(1);
+      await expect(page.getByRole("list", { name: "Queued messages" })).toBeHidden();
+      await request.post("/fixture/release-completion");
+    }
   });
 
   test(`${scope}: refusal and lost response retry preserve one durable message`, async ({ page, request }, info) => {
