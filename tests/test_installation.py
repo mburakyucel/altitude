@@ -968,6 +968,8 @@ class UpdateRequests(NoticeCase):
         with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
             self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
         self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        with mock.patch("altitude.server._save_machine", side_effect=ValueError(f"Invalid JSON in {self.home}/settings.json")):
+            self.assertEqual(self.post("/api/update-check", {"enabled": False}, status=503)["error"], public)
         installation._update_record()[0].write_text("{not json")
         for path, body in (("/api/update", {"version": "v0.2.0"}), ("/api/update-check", {"enabled": False})):
             with self.subTest(path=path):

@@ -1613,11 +1613,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "update-check"]:
                 if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
                     return self._json({"error": "Choose on or off."}, 400)
-                try:
-                    view = _save_machine("update_check", body["enabled"],
-                                         "Update check on" if body["enabled"] else "Update check off")
-                except (ValueError, T.TransitionError) as exc:
-                    return self._json({"error": str(exc)}, 409)
+                view = _save_machine("update_check", body["enabled"],
+                                     "Update check on" if body["enabled"] else "Update check off")
                 return self._json({**view, "update": installation.update_status()})
             if parts != ["api", "update"] or body.keys() - {"version"} or not isinstance(body.get("version"), str):
                 return self._json({"error": "Name the version to install."}, 400)
