@@ -1490,8 +1490,11 @@ inventing an assistant failure. Each local stream callback belongs to its own se
 stream cannot alter a later queue request. A canonical assistant or error row for that turn replaces
 its local stream even while the response remains open. A queue receipt establishes acceptance;
 the source conversation refreshes its canonical snapshot even after navigation, rather than adding
-the receipt back to the queue. An accepted local preview remains until that read succeeds or its
-queue row is already visible. A failed refresh is a read error, whose Retry only reads.
+the receipt back to the queue. The current send's accepted local preview remains until a successful
+read or an identity-matched queue/history row owns its display. Local cache edits do not count as
+reads. Navigation or a subsequent send replaces that local preview; accepted messages reconstruct
+from the server on the next successful read. Failed reads show the conversation read error, whose
+Retry only reads, including after navigation. They do not restore accepted text for sending again.
 Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
 receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text

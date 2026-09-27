@@ -129,8 +129,6 @@ interface Local {
   turnId: string | null;
   error: string | null;
   done: boolean;
-  /** Successful snapshot generation when the response ended; a later read owns the display. */
-  finishedRead: number | null;
   queueId?: string;
   images?: ImagePreview[];
   uncertain?: boolean;
@@ -207,11 +205,19 @@ export default function Conversation({
     if (!local) return;
     const stored = turns.find((turn) => turn.id === local.turnId);
     const queued = local.queueId && view?.queued?.some((row) => row.id === local.queueId);
-    const refreshed = local.finishedRead != null && (queryClient.getQueryState(["chat", name])?.dataUpdateCount ?? 0) > local.finishedRead;
-    if (stored?.assistant || stored?.error || queued || (local.done && (stored || (refreshed && !local.turnId)))) {
+    const submitted = local.queueId && view?.history.some((row) => row.request_id === local.queueId);
+    if (stored?.assistant || stored?.error || queued || submitted || (local.done && stored)) {
       setLocal((current) => current?.request === local.request ? null : current);
     }
-  }, [local, turns, view, chat.dataUpdatedAt, chat.isFetching, name, queryClient]);
+  }, [local, turns, view]);
+
+  // Only a successful server read can retire a receipt whose current queue/history state was
+  // unknown. Engine selection and mutation rollback also write this cache; those are not reads.
+  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[0] !== "chat" || event.query.queryKey[1] !== name || event.type !== "updated"
+      || event.action.type !== "success" || event.action.manual) return;
+    setLocal((current) => current?.done && !current.turnId ? null : current);
+  }), [name, queryClient]);
 
   // Stay at the bottom while the operator is there: new rows, a streamed reply growing, a card or
   // group opening, a title arriving for a line, the fonts landing. Scrolling up releases the follow.
@@ -233,7 +239,7 @@ export default function Conversation({
       following.current = true;
       const request = Symbol();
       const update = (change: (current: Local) => Local | null) => setLocal((current) => current?.request === request ? change(current) : current);
-      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedRead: null, images: images?.previews, replay: images?.image_ids ? images : undefined });
+      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
       let result: ChatSent;
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
@@ -252,16 +258,12 @@ export default function Conversation({
       onAccepted?.();
       if (result.queued) {
         await queryClient.cancelQueries({ queryKey: ["chat", name] });
-        const finishedRead = queryClient.getQueryState(["chat", name])?.dataUpdateCount ?? 0;
         // A receipt proves acceptance, not that the row still waits: it may already have run or
         // been removed. Only a fresh canonical snapshot can project its current state.
-        update((cur) => ({ ...cur, accepted: true, done: true, queueId: result.queued!.id,
-          finishedRead }));
+        update((cur) => ({ ...cur, accepted: true, done: true, replay: undefined, queueId: result.queued!.id }));
       } else if (images) update(() => null);
       else {
-        const finishedRead = queryClient.getQueryState(["chat", name])?.dataUpdateCount ?? 0;
-        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null,
-          finishedRead }));
+        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }));
       }
       void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
       void queryClient.invalidateQueries({ queryKey: ["project", name] });
