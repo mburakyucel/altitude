@@ -30,11 +30,14 @@ class TestImageConversations(AltitudeCase):
                          l2_engine=self.engine)
         S.save_task(self.project, self.task)
         self.calls = []
+        self.fail_turn = False
 
         def answer(prompt, **kw):
             self.calls.append((prompt, kw))
             for image in kw.get("images", []):
                 self.assertEqual(hashlib.sha256(Path(image["path"]).read_bytes()).hexdigest(), image["sha256"])
+            if self.fail_turn:
+                raise RuntimeError("Fixture turn failed")
             return {"text": "Image inspected.", "session_id": "l3-fixture", "reported_session_id": "l3-fixture"}
 
         self.patch(engines, "claude_print", side_effect=answer)
@@ -121,6 +124,43 @@ class TestImageConversations(AltitudeCase):
             self.assertTrue(l3.deliver_queued(self.project)["completed"])
         self.assertEqual(len([row for row in l3.chat_history(self.project, None) if row["role"] == "user"]), 1)
 
+    def test_finished_image_claim_never_returns_to_waiting_queue(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                self.fail_turn = failed
+                body = self.body()
+                _, receipt, _ = self.request("/api/chat", body)
+                message = receipt["queued"]
+                finish = l3._finish_image_queue
+                observed = []
+
+                def observe(project):
+                    if any(row.get("image_turn_id") for row in l3._queue_rows(l3.queue_path(project))):
+                        observed.append(project)
+                        self.assertIsNone(l3.active(project))
+                        status, snapshot, _ = self.request(f"/api/chat/{project}")
+                        self.assertEqual(status, 200)
+                        saved = [row for row in snapshot["history"] if row.get("request_id") == message["id"]]
+                        self.assertEqual(len(saved), 1)
+                        self.assertEqual(saved[0]["images"], message["images"])
+                        self.assertEqual(snapshot["queued"], [])
+                        self.assertEqual(l3.queued(project), [])
+                        self.assertFalse(l3.drop_queued(project, message["id"]))
+                        # Retained claims still own the immutable receipt until finalization.
+                        self.assertEqual(self.request("/api/chat", body)[1]["queued"]["id"], message["id"])
+                        self.assertEqual(self.request("/api/chat", {**body, "text": "Changed"})[0], 409)
+                    return finish(project)
+
+                try:
+                    with mock.patch.object(l3, "_finish_image_queue", side_effect=observe):
+                        result = l3.deliver_queued(self.project)
+                    self.assertEqual(observed, [self.project])
+                    self.assertEqual(result["completed"], not failed)
+                    self.assertEqual(l3._queue_rows(l3.queue_path(self.project)), [])
+                    self.assertEqual(l3.chat_history(self.project, None)[-1]["role"], "error" if failed else "assistant")
+                finally:
+                    finish(self.project)
+
     def test_stopped_task_image_correction_keeps_stop_identity_and_saved_receipt(self):
         task = S.load_task(self.project, self.slug)
         task.update(state="blocked", stop_id="stopped-owner")
@@ -183,14 +223,18 @@ class TestImageConversations(AltitudeCase):
         self.assertEqual([row["text"] for row in humans], ["First image", "Second image", "Text after images"])
         self.assertNotEqual(humans[0]["images"][0]["id"], humans[1]["images"][0]["id"])
 
-    def test_saved_claim_after_interruption_fails_visibly_without_provider_replay(self):
+    def test_start_recovers_saved_claim_without_provider_replay(self):
         body = self.body()
         self.request("/api/chat", body)
         with S.project_lock(self.project):
             rows = l3._queue_rows(l3.queue_path(self.project))
             rows[0]["image_turn_id"] = "interrupted-turn"
             l3._write_queue(l3.queue_path(self.project), rows)
-        self.assertIsNone(l3.deliver_queued(self.project))
+        l3.save_info(self.project, {"turns": 1})
+        self.assertEqual(l3.queued(self.project), [])
+        with mock.patch.object(server, "request_l3_drain", side_effect=l3.deliver_queued) as drain:
+            server.start_l3(self.project)
+        drain.assert_called_once_with(self.project)
         self.assertEqual(self.calls, [])
         history = l3.chat_history(self.project, None)
         self.assertEqual([row["role"] for row in history], ["user", "error"])
