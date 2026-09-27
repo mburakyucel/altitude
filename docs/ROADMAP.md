@@ -31,6 +31,16 @@ suite pass: 1,342 Python tests, 343 web tests, typecheck/build and 316 phone/des
 one optional host probe is skipped. Deployment is verified. These checks do not prove a fresh-machine
 installation, native Mac behavior or engine authentication.
 
+The manually dispatched [Linux installation lifecycle harness](DEVELOPMENT.md#installation-lifecycle-acceptance)
+adds packaged installation, real per-user service/HTTPS checks, update, failed activation recovery and
+uninstall retention on disposable Ubuntu 24.04 runners. Its first hosted execution remains pending
+until a run's artifact/source identity and results are recorded. The synthetic version pair uses
+one source commit, so it supplies no cross-release migration evidence. Runs are independent of
+other owners' delivery and the required PR gate. This is partial #226 acceptance; the parent stays
+open, and macOS remains with `macos-support-native-runtime-behind-the`. Minimal OS installation,
+reboot/login/logout, browser/device CA trust, public-download bootstrap, native confinement and
+live-provider compatibility remain outside this harness's evidence.
+
 The private-trial path is Linux-only until the macOS evidence below is recorded. The following
 remaining acceptance stays under #225/#226/#219/#350; those issues stay open:
 
