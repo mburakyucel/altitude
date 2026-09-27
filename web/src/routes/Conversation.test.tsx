@@ -138,6 +138,63 @@ function liveReply() {
 describe.each([390, 1440])("project switching at %ipx", (width) => {
   const field = (name: string) => screen.getByRole("textbox", { name: `Message L3 about ${name}-project` });
 
+  it("canonical completion replaces a stalled stream and ignores its late chunks", async () => {
+    const reply = liveReply();
+    const { chats } = projectChats(() => reply.response);
+    setViewport(width);
+    const { user, queryClient } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Inspect sample");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await act(async () => {
+        reply.frame({ turn: { id: "stalled", started_at: ago(0), trigger: "chat" } });
+        reply.frame({ t: "Partial answer" });
+      });
+      await screen.findByText("Partial answer");
+      await user.type(field("alpha"), "Next draft");
+      chats["alpha-project"]!.history.push(
+        { role: "user", text: "Inspect sample", trigger: "chat", turn_id: "stalled" },
+        { role: "assistant", text: "Canonical complete answer", trigger: "chat", turn_id: "stalled" },
+      );
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "alpha-project"] }); });
+      expect(await screen.findByText("Canonical complete answer")).toBeInTheDocument();
+      expect(screen.queryByText("Partial answer")).toBeNull();
+      await act(async () => reply.frame({ t: " obsolete fragment" }));
+      expect(screen.queryByText(/obsolete fragment/)).toBeNull();
+      expect(field("alpha")).toHaveValue("Next draft");
+    } finally { await act(async () => reply.close()); }
+  });
+
+  it("a queue receipt keeps an accepted preview through a failed refresh and read Retry never resends", async () => {
+    let failReads = false;
+    const { chats, fetchMock } = projectChats(() => {
+      failReads = true;
+      return jsonResponse({ queued: { id: "accepted-queue", text: "Accepted sample", at: ago(0), trigger: "chat" } });
+    });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => failReads && String(input).startsWith("/api/chat/alpha-project")
+      ? Promise.resolve(jsonResponse({ error: "Read unavailable" }, 503)) : original(input, init));
+    setViewport(width);
+    const { user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.type(field("alpha"), "Accepted sample");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Could not load the conversation.", { exact: false });
+    await user.type(field("alpha"), "Newer draft");
+    expect(screen.getByText("Accepted sample")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Queued messages" })).toBeNull();
+    expect(screen.queryByText(/Could not confirm delivery/)).toBeNull();
+    expect(sessionStorage.getItem("altitude.submitted:project/alpha-project")).toBeNull();
+    // The real queue may have been removed by another view; an empty fresh snapshot owns that fact.
+    chats["alpha-project"]!.queued = [];
+    failReads = false;
+    await user.click(screen.getByRole("button", { name: "Retry", exact: true }));
+    await waitFor(() => expect(screen.queryByText("Accepted sample")).toBeNull());
+    expect(field("alpha")).toHaveValue("Newer draft");
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+  });
+
   it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
     let receipt!: (response: Response) => void;
     let stale!: (response: Response) => void;

@@ -329,7 +329,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         onAccepted();
         await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
         queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
-          cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
+          cached && !cached.messages?.some((message) => message.id === row.id)
+            ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
         );
         for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
         if (images && submission.current?.request_id === images.request_id) submission.current = null;
