@@ -11,6 +11,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   running in the terminal, nothing is typed and you get Copy instead. Agents mark these commands with a
   `run` code fence holding one line; every other code block now has a Copy button and is never an action.
 
+- Reopening a terminal right after it closed shows the new shell instead of sometimes staying on
+  "Loading the terminal…".
+
 - English dictation gets sentence punctuation and capitals in any browser that runs WebAssembly
   in a worker. A small model bundled with Altitude runs on the device's CPU, adds only punctuation and
   capitals, and never changes your words. Each device downloads it (about 23 MB) from your Altitude

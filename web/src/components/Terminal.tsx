@@ -80,7 +80,10 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     setOpening(true);
     setOpenError(null);
     try {
-      client.setQueryData(queryKey, await terminalOpen(project, task));
+      const opened = await terminalOpen(project, task);
+      // A status read sent before the shell opened would answer "none" after it and replace this answer.
+      await client.cancelQueries({ queryKey });
+      client.setQueryData(queryKey, opened);
     } catch (error) {
       setOpenError((error as Error).message);
     } finally {

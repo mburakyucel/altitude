@@ -236,4 +236,6 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await close.click();
   await expect(page).toHaveURL(/\/projects\/atlas$/);
   await walk.state("15-closed-back-to-project", { visible: [page.getByRole("button", { name: "Terminal", exact: true })], hidden: [panel, toast] });
+  // An overview read still in flight at teardown would find its response disposed.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

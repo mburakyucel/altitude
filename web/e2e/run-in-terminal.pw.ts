@@ -6,9 +6,9 @@ import { walkthrough } from "./walkthrough";
  * Chat commands (SPEC.md §3.3) against real shells: a `run` block in the task conversation and in project
  * chat opens that conversation's terminal with the command typed at the prompt and nothing run until
  * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter runs it, a
- * program in the foreground, the terminal off, a reload typing nothing, no terminal for a finished task,
- * the project terminal, a plain code block, an unsafe block and a refused copy. The saved messages and the
- * shell's profile are the only fixtures.
+ * program in the foreground, output that never settles, the terminal off, a reload typing nothing, no
+ * terminal for a finished task, the project terminal, a plain code block, an unsafe block and a refused
+ * copy. The saved messages and the shell's profile are the only fixtures.
  */
 test.use({ serviceScript: "terminal-service.py" });
 
@@ -75,7 +75,7 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", a
   await page.keyboard.press("Control+C");
 
   // Output that never settles has no prompt to type at: refused after five seconds, typed later by nothing.
-  await page.keyboard.type("while :; do echo tick; sleep 0.1; done");
+  await page.keyboard.type("bash -c 'while :; do echo tick; sleep 0.1; done'");
   await page.keyboard.press("Enter");
   await conversation();
   await openIt.click();

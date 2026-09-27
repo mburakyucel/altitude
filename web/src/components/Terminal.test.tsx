@@ -18,7 +18,7 @@ const overview = { projects: [{ name: "demo", managed: true, counts: {} }], queu
 const none = (enabled = true): TerminalStatus => ({ state: "none", enabled });
 const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
 
-function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus } = {}) {
+function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus | Promise<TerminalStatus> } = {}) {
   let current = status;
   const posts: [string, unknown][] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -39,13 +39,30 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response; statu
       }
       return json({ ok: true });
     }
-    if (url === "/api/terminal/demo") return json(answers.status?.() ?? current);
+    if (url === "/api/terminal/demo") return json(await (answers.status?.() ?? current));
     return json({ error: "not in this fixture" }, 404);
   }));
   return posts;
 }
 
 describe("Project terminal", () => {
+  it("reopens after it ended even when a status read from before the open answers after it", async () => {
+    let answer!: (status: TerminalStatus) => void;
+    const posts = fixture(none(), { status: () => new Promise((resolve) => { answer = resolve; }) });
+    const { router, queryClient } = renderApp({ route: "/projects/demo" });
+    queryClient.setQueryData(["terminal", "demo", null], none());
+    await act(() => router.navigate("/projects/demo/terminal"));
+    await waitFor(() => expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/open"));
+    expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
+    await act(async () => {
+      answer(none());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(queryClient.getQueryData(["terminal", "demo", null])).toMatchObject({ id: "t1" });
+    expect(screen.getByTestId("terminal-screen")).toHaveTextContent("t1");
+    expect(router.state.location.pathname).toBe("/projects/demo/terminal");
+  });
+
   it("says the terminal is off and links to Settings", async () => {
     const posts = fixture(none(false));
     renderApp({ route: "/projects/demo/terminal" });
