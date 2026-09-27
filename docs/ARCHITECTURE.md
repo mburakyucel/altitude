@@ -594,8 +594,9 @@ into the task branch before pushing when needed, preserving adopted ancestry and
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
-CI and assessment share the `--wait` deadline. Polls hold the task review lock only for current-candidate
-reads, serializing fetches with assessment; sleeps release it. Missing or unfinished review, candidate
+CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
+reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
+`FETCH_HEAD` receipt. Fresh context invalidation prompts the owner again. Missing or unfinished review, candidate
 movement or ownership loss refuses. No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.

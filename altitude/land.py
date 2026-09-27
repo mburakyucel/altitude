@@ -928,14 +928,14 @@ def _required_pr_check(root: Path, base_sha: str) -> bool:
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority):
     """Keep the repository turn while the owner assesses an integrated head and CI runs."""
     from . import reviews
-    deadline, notified = time.monotonic() + max(wait, 0), set()
+    deadline, notified = time.monotonic() + max(wait, 0), None
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
         stale = None
-        # assess also holds this short lock while fetching: no competing assessment fetch,
-        # and no review lock held during the polling sleep.
-        with reviews.merge_lock(project, slug):
-            if merge:
+        if merge:
+            # Only local review reads share admission's lock; network reads and sleeps
+            # leave review requests available, including during nonmerging publication.
+            with reviews.merge_lock(project, slug):
                 _require_current_publisher(project, slug, S.load_task(project, slug), authority)
                 try:
                     reviews.require_merge(project, slug, pair)
@@ -945,16 +945,16 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority):
                     stale = exc
                 except T.TransitionError as exc:
                     raise LandError(str(exc)) from exc
-                if stale:
-                    _assert_pair_current(root, pair)
-            checks = _checks_value(root, pair["number"], pair)
-        if stale and stale.review_id not in notified:
+        checks = _checks_value(root, pair["number"], pair)
+        notice = (stale.review_id, stale.context_hash) if stale else None
+        if stale and notice != notified:
             _note(f"waiting for owner assessment of review {stale.review_id} on head {pair['head_sha']} "
-                  f"and base {pair['base_sha']}; keeping the repository turn within --wait {wait}s. "
+                  f"and base {pair['base_sha']}; keeping the repository turn with "
+                  f"{max(0, round(deadline - time.monotonic()))}s remaining in --wait. "
                   "Keep this command running in a background/tool session; inspect the candidate, post any "
                   f"explanation, then run alt task review assess --review-id {stale.review_id} --file <assessment.json> "
                   "in a separate command and collect this landing's result. Cancel landing if code needs edits.")
-            notified.add(stale.review_id)
+        notified = notice
         if checks not in ("pending", "pass", "none-configured"):
             return checks
         if stale is None and checks != "pending":

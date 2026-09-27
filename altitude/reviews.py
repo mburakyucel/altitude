@@ -21,8 +21,9 @@ _inflight_lock = threading.Lock()
 class AssessmentRequired(T.TransitionError):
     """A completed review needs owner judgment of the pinned landing candidate."""
 
-    def __init__(self, review_id):
+    def __init__(self, review_id, context_hash):
         self.review_id = review_id
+        self.context_hash = context_hash
         super().__init__("Code, base, proposal or context changed after review assessment. "
                          "Assess the current candidate before merging.")
 
@@ -138,7 +139,8 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise T.TransitionError("Commit the selected task changes before capturing or assessing review.")
     if fetch:
-        _git(root, "fetch", "--no-tags", "origin", "main")
+        # In-turn assessment must not overwrite landing's fetch receipt in this worktree.
+        _git(root, "fetch", "--no-write-fetch-head", "--no-tags", "origin", "main")
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
     tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
@@ -596,7 +598,7 @@ def require_merge(project, slug, pair):
         if identity["base"] != pair["base_sha"] or identity["head"] != pair["head_sha"]:
             raise T.TransitionError("Review candidate differs from the pinned landing base or head; re-run alt land.")
         if not _same(review["reconciled"], identity):
-            raise AssessmentRequired(review["id"])
+            raise AssessmentRequired(review["id"], identity["context_hash"])
 
 
 def cancel_attached(project, slug, reason):

@@ -711,6 +711,16 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_assessment_preserves_concurrent_landing_fetch_receipt(self):
+        result = self.run_review()
+        branch = 'worktree-' + self.slug
+        git('push', '-q', 'origin', branch, cwd=self.worktree)
+        git('fetch', '-q', 'origin', branch, cwd=self.worktree)
+        fetched_head = git('rev-parse', 'FETCH_HEAD', cwd=self.worktree)
+        self.assertNotEqual(fetched_head, git('rev-parse', 'origin/main', cwd=self.worktree))
+        self.assess(result)
+        self.assertEqual(git('rev-parse', 'FETCH_HEAD', cwd=self.worktree), fetched_head)
+
     def test_failure_retry_preserves_operator_requirement(self):
         review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
         self.engine.side_effect = lambda *args, **kwargs: {"error": "Review engine exited", "termination_confirmed": True}

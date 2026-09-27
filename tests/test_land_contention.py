@@ -212,7 +212,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
         return first, second
 
-    def reviewed(self, slug, *, assess=True):
+    def reviewed(self, slug, *, assess=True, proposal=False):
         worktree, _ = self.owners[slug]
         git('commit', '-qm', 'Review checkpoint', cwd=worktree)
         task = S.load_task(self.project, slug)
@@ -230,11 +230,20 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                                       request_id='review-' + slug)
             reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1)
             engine.assert_called_once()
+            if proposal:
+                self.assess(slug)
+                source = T.message(self.project, slug, 'l2', 'Proposal: preserve independent changes.')
+                request = reviews.request(self.project, slug, actor='l2', expected_attempt=1,
+                                          subject='proposal', request_id='proposal-' + slug)
+                reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1,
+                            proposal_id=source['id'])
         if assess:
             self.assess(slug)
+            if proposal:
+                self.assess(slug, review_id='proposal-' + slug)
 
-    def assess(self, slug):
-        return reviews.assess(self.project, slug, 'review-' + slug, actor='l2', expected_attempt=1,
+    def assess(self, slug, *, review_id=None):
+        return reviews.assess(self.project, slug, review_id or 'review-' + slug, actor='l2', expected_attempt=1,
                               dispositions=[], reason='Inspected the complete candidate and all current task context.')
 
     def assessment_wait(self, call):
@@ -246,11 +255,15 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def test_reviewed_waiter_reassesses_integrated_head_without_losing_turn(self):
         self.ship_check_workflow()
-        self.reviewed('second')
+        self.reviewed('second', proposal=True)
+        T.set_hold_merge(self.project, 'second', 'Operator approval of this delivery')
+        approval = T.message(self.project, 'second', T.OPERATOR_MESSAGE_ROLE, 'Merge the reviewed delivery after checks.')
+        self.assess('second')
+        self.assess('second', review_id='proposal-second')
         old_review = S.load_task(self.project, 'second')['reviews'][0]
         first = self.start('first', required_check=True)
         self.checked('first')
-        second = self.start('second', required_check=True, wait=20)
+        second = self.start('second', required_check=True, wait=20, approval=approval['id'])
         self.waiting(second)
         self.release('first')
         self.merged('first', self.finish(first))
@@ -269,6 +282,11 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         # Real message handling and assess run concurrently with the process holding the turn.
         T.message(self.project, 'second', 'l3', 'Continue with the integrated candidate.')
         self.assess('second')
+        self.await_condition(lambda: 'assessment of review proposal-second' in (second[1] / 'notes').read_text(),
+                             'separate proposal assessment')
+        self.assertEqual(S.load_task(self.project, 'second')['hold_merge'], 'Operator approval of this delivery')
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
+        self.assess('second', review_id='proposal-second')
         result = self.merged('second', self.finish(second))
         self.assertEqual(result['head'], integrated)
         self.assertEqual(result['checks'], 'pass')
@@ -281,6 +299,39 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         saved = S.load_task(self.project, 'second')['reviews'][0]
         self.assertEqual(saved['snapshot'], old_review['snapshot'])
         self.assertEqual(saved['merged_head'], integrated)
+        finished = S.load_task(self.project, 'second')
+        self.assertIsNone(finished['hold_merge'])
+        self.assertEqual(finished['merge_approval']['approval'], approval['id'])
+
+    def test_review_request_remains_available_during_nonmerging_ci_read(self):
+        self.ship_check_workflow()
+        self.reviewed('first')
+        first = self.start('first', merge=False, required_check=True)
+        self.checked('first')  # GitHub response is held at a file barrier inside _checks_value.
+        choice = {'engine': config.ENGINES[1], 'model': 'fixture', 'label': 'Fixture', 'allowance_known': True}
+        with mock.patch.object(route, 'pick_review', return_value=choice):
+            request = reviews.request(self.project, 'first', actor='l2', expected_attempt=1,
+                                      subject='proposal', request_id='review-during-ci')
+        self.assertEqual(request['state'], 'requested')
+        self.release('first')
+        result = self.finish(first)['result']
+        self.assertEqual((result['checks'], result['merged']), ('pass', False))
+
+    def test_new_context_after_assessment_prompts_again_while_ci_is_pending(self):
+        self.ship_check_workflow()
+        self.stale_review()
+        first = self.start('first', required_check=True, wait=20)
+        self.assessment_wait(first)
+        fixture = self.owners['first'][1]
+        (fixture / 'checks.json').write_text('[{"bucket":"pending"}]')
+        self.assess('first')
+        T.message(self.project, 'first', 'l3', 'Correction: inspect the final context too.')
+        self.await_condition(lambda: (first[1] / 'notes').read_text().count('waiting for owner assessment') >= 2,
+                             'renewed assessment notice')
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.assess('first')
+        (fixture / 'checks.json').write_text('[{"bucket":"pass"}]')
+        self.merged('first', self.finish(first))
 
     def stale_review(self):
         self.reviewed('first')

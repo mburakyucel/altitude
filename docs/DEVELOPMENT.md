@@ -415,7 +415,7 @@ landing processes, Git and fixture reviewers through main integration, in-turn a
 required checks, timeout, termination, ownership loss and material-edit refusal. Original review
 receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
-Runner executions outside the command do not share its turn. Any base or head movement during landing
+Runner executions outside the command do not share its turn. Any base or head movement after candidate pinning
 refuses the merge. A later invocation can reuse the successful head when main is already an
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
 commits outside the head and require reconciliation, a push and fresh checks on the new head.
