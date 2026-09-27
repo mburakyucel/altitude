@@ -3,6 +3,7 @@ page at all (the `alt` CLI), a plain-HTTP request names an address or localhost,
 import json
 import socket
 import threading
+import time
 
 from tests.support import AltitudeCase
 from altitude import config, server
@@ -83,4 +84,11 @@ class TestRequestBoundary(AltitudeCase):
         with socket.create_connection(self.httpd.server_address, timeout=10) as sock:
             sock.sendall(b"GET /api/overview HTTP/1.1\r\nHost: " + self.host.encode() + b"\r\n")  # headers never end
             self.assertEqual(sock.recv(1), b"")
+        body = json.dumps({"name": "Ada"}).encode()
+        with socket.create_connection(self.httpd.server_address, timeout=10) as sock:  # only the headers are timed
+            sock.sendall(f"POST /api/operator-name HTTP/1.0\r\nHost: {self.host}\r\nContent-Type: application/json\r\n"
+                         f"Content-Length: {len(body)}\r\n\r\n".encode())
+            time.sleep(0.5)
+            sock.sendall(body)
+            self.assertIn(b" 200 ", sock.recv(65536))
 
