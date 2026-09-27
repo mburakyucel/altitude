@@ -30,11 +30,14 @@ class TestImageConversations(AltitudeCase):
                          l2_engine=self.engine)
         S.save_task(self.project, self.task)
         self.calls = []
+        self.fail_turn = False
 
         def answer(prompt, **kw):
             self.calls.append((prompt, kw))
             for image in kw.get("images", []):
                 self.assertEqual(hashlib.sha256(Path(image["path"]).read_bytes()).hexdigest(), image["sha256"])
+            if self.fail_turn:
+                raise RuntimeError("Fixture turn failed")
             return {"text": "Image inspected.", "session_id": "l3-fixture", "reported_session_id": "l3-fixture"}
 
         self.patch(engines, "claude_print", side_effect=answer)
@@ -124,6 +127,7 @@ class TestImageConversations(AltitudeCase):
     def test_finished_image_claim_never_returns_to_waiting_queue(self):
         for failed in (False, True):
             with self.subTest(failed=failed):
+                self.fail_turn = failed
                 body = self.body()
                 _, receipt, _ = self.request("/api/chat", body)
                 message = receipt["queued"]
@@ -148,10 +152,7 @@ class TestImageConversations(AltitudeCase):
                     return finish(project)
 
                 try:
-                    with ExitStack() as stack:
-                        stack.enter_context(mock.patch.object(l3, "_finish_image_queue", side_effect=observe))
-                        if failed:
-                            stack.enter_context(mock.patch.object(l3, "turn", side_effect=RuntimeError("Fixture turn failed")))
+                    with mock.patch.object(l3, "_finish_image_queue", side_effect=observe):
                         result = l3.deliver_queued(self.project)
                     self.assertEqual(observed, [self.project])
                     self.assertEqual(result["completed"], not failed)
