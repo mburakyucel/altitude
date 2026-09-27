@@ -3,7 +3,10 @@ import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "image-input-service.py" });
-test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "ignoreErrors" }); });
+test.afterEach(async ({ page, request }) => {
+  await request.post("/fixture/release-completion");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 
 type Scope = "project" | "task";
 const path = (scope: Scope, project = "alpha") => `/projects/${project}${scope === "task" ? "/tasks/image-task" : ""}`;
@@ -72,8 +75,6 @@ for (const scope of ["project", "task"] as const) {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/task/action" && request.postDataJSON()?.action === "stop") stopRequests.push(request.url());
     });
     const file = await screenshotFile(page);
-    // Hold the real completion boundary after active clears but before its retained claim is removed.
-    if (scope === "project") await request.post("/fixture/pause-completion");
     await walk.state("01-empty", { visible: [v.add, v.field], hidden: [v.strip] });
     await expect(v.add).toHaveCSS("width", "44px");
     await v.field.fill(caption);
@@ -103,6 +104,8 @@ for (const scope of ["project", "task"] as const) {
       const response = await route.fetch();
       await route.fulfill({ response });
     });
+    // Hold the real completion boundary after active clears but before its retained claim is removed.
+    if (scope === "project") await request.post("/fixture/pause-completion");
     await walk.state("04-sending-images", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
     await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled();
     release();

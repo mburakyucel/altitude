@@ -222,14 +222,18 @@ class TestImageConversations(AltitudeCase):
         self.assertEqual([row["text"] for row in humans], ["First image", "Second image", "Text after images"])
         self.assertNotEqual(humans[0]["images"][0]["id"], humans[1]["images"][0]["id"])
 
-    def test_saved_claim_after_interruption_fails_visibly_without_provider_replay(self):
+    def test_start_recovers_saved_claim_without_provider_replay(self):
         body = self.body()
         self.request("/api/chat", body)
         with S.project_lock(self.project):
             rows = l3._queue_rows(l3.queue_path(self.project))
             rows[0]["image_turn_id"] = "interrupted-turn"
             l3._write_queue(l3.queue_path(self.project), rows)
-        self.assertIsNone(l3.deliver_queued(self.project))
+        l3.save_info(self.project, {"turns": 1})
+        self.assertEqual(l3.queued(self.project), [])
+        with mock.patch.object(server, "request_l3_drain", side_effect=l3.deliver_queued) as drain:
+            server.start_l3(self.project)
+        drain.assert_called_once_with(self.project)
         self.assertEqual(self.calls, [])
         history = l3.chat_history(self.project, None)
         self.assertEqual([row["role"] for row in history], ["user", "error"])
