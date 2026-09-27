@@ -1550,10 +1550,17 @@ next tap asks again; any other recognizer error is the failed state and keeps th
 Cancel, including cancelling a voice Send or leaving the composer, discards the words and restores
 editing at once while it aborts the recognizer. That capture's microphone stream is released when
 the recognizer reports its end, or after at most three seconds. Speech recognition is
-one per page, so the next capture in any composer shows "Opening microphone…" until then instead
-of starting on top of a recognizer that is still shutting down. The browser manages the device audio
+one per page. The waveform stops drawing immediately, but closes its audio context only after
+recognizer shutdown; the next capture in any composer shows "Opening microphone…" until both
+recognizer shutdown and that asynchronous context close complete. Cancel during this wait restores
+editing without opening another microphone. The three-second limit bounds recognizer shutdown,
+not the browser's context close. The browser manages the device audio
 session for capture; Altitude does not override it. Cancel with the X returns focus to the microphone
-button, so a phone keyboard does not open; Escape returns focus to the field. The microphone
+button, so a phone keyboard does not open; Escape returns focus to the field. The recognizer
+ignores callbacks after cancellation or its end, including while punctuation is pending.
+Abandoned captures do not queue inference when a pending model load completes or apply late
+punctuation output. Native-device capture and audio-session behavior require native evidence;
+scripted recognizer tests establish ordering and text isolation only. The microphone
 stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
 endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
 server whose backend or endpoint URL changed shows the server's words and reads the backend again.

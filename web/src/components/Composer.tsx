@@ -26,6 +26,20 @@ const MAX_UPLOAD_BYTES = 16 << 20;
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
 
+/** AudioContext.close is asynchronous too: no composer opens a microphone over an old graph. */
+let waveformClosing: Promise<void> | null = null;
+
+function closeWaveform(context: AudioContext) {
+  // Read after React's cleanup pass: on navigation, the capture's cleanup asks recognition to
+  // end after the waveform's cleanup runs. Keep the graph alive until that recognizer lets go.
+  const closing = Promise.resolve().then(() => RecognitionCapture.idle())
+    .then(() => context.close()).catch(() => undefined);
+  const pending = Promise.all([waveformClosing, closing]).then(() => {
+    if (waveformClosing === pending) waveformClosing = null;
+  });
+  waveformClosing = pending;
+}
+
 type Phase = "idle" | "starting" | "listening" | "transcribing";
 type Capture = MediaRecorder | RecognitionCapture;
 type SendFailure = "refused" | "unconfirmed" | "transcription" | null;
@@ -220,6 +234,7 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
       analyser.fftSize = 512;
       context.createMediaStreamSource(stream).connect(analyser);
     } catch {
+      if (context) closeWaveform(context);
       return;
     }
     const data = new Uint8Array(analyser.fftSize);
@@ -257,7 +272,7 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
     frame = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(frame);
-      void context?.close().catch(() => undefined);
+      if (context) closeWaveform(context);
     };
   }, [stream, running]);
 
@@ -710,8 +725,8 @@ export default function Composer({
     const opening = new AbortController();
     abort.current = opening;
     const ending = RecognitionCapture.idle();
-    if (ending) {
-      await ending;
+    if (ending || waveformClosing) {
+      await Promise.all([ending, waveformClosing]);
       if (!mounted.current || opening.signal.aborted) return;
     }
     let opened: MediaStream | null = null;
