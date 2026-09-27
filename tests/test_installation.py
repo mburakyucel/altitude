@@ -1,6 +1,7 @@
 """Real private archives and lifecycle state; native service effects stay in fixtures."""
 import hashlib
 import io
+import http.server
 import json
 import os
 from pathlib import Path
@@ -10,15 +11,19 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tests.support import REPO, SUITE
-from altitude import config, installation, platform, state as S, tls
+from tests.fakes import FakeL2
+from tests.support import REPO, SUITE, make_repo
+from altitude import config, dispatch, engines, git_policy, installation, monitor, platform, state as S, tasks as T, tls
 
 
-class Installation(unittest.TestCase):
+class InstallationCase(unittest.TestCase):
+    """A throwaway home and prefix; native service, TLS and health probes are fixtures."""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -134,6 +139,8 @@ class Installation(unittest.TestCase):
             path.write_text("Fictional retained owner data\n")
         return {path: path.read_bytes() for path in paths}
 
+
+class Installation(InstallationCase):
     def test_install_update_and_uninstall_keep_settings_trust_and_user_data(self):
         retained = self.retained_data()
         first = self.install()
@@ -568,3 +575,187 @@ class Platform(unittest.TestCase):
                                    Path("/tmp/install.json"), {"PATH": "/usr/bin:/bin"})
         # systemd's ':' command prefix keeps ${...} literal; quotes alone do not.
         self.assertIn('ExecStart=:"/usr/bin/python3" -B "/tmp/${UNDEFINED}/application/current/bin/alt" serve', unit)
+
+
+class PublishedReleaseCase(InstallationCase):
+    """v0.1.0 installed; GitHub's release lookup and downloads are fixtures."""
+    RELEASES = "https://github.com/example/altitude/releases"
+
+    def setUp(self):
+        super().setUp()
+        self.install()
+        self.requests = []
+        self.published = {}
+        patcher = mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.download = installation._get
+        patcher = mock.patch.object(installation, "_get", side_effect=self.get)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def get(self, url, limit):
+        self.requests.append(url)
+        if url not in self.published:
+            raise OSError("fixture: not published")
+        return self.published[url]
+
+    def publish(self, version, *, latest=None, checksum=None, edited=True):
+        archive, digest = self.archive(version, edited=edited)
+        download = f"{self.RELEASES}/download/{version}/altitude-{version}.tar.gz"
+        self.published[download] = archive.read_bytes()
+        self.published[download + ".sha256"] = f"{checksum or digest}\n".encode()
+        if latest is not None:
+            self.published["https://api.github.com/repos/example/altitude/releases/latest"] = json.dumps(latest).encode()
+        return download
+
+
+class PublishedUpdate(PublishedReleaseCase):
+    """`alt update` without an archive."""
+
+    def test_every_download_redirect_hop_must_stay_on_https(self):
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/next")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # The first hop of a real download is always HTTPS; a plain-HTTP hop after it is refused before it is requested.
+        with self.assertRaisesRegex(ValueError, "redirected away from HTTPS"):
+            self.download(f"http://127.0.0.1:{server.server_port}/first", 1024)
+
+    def test_the_archive_must_be_the_requested_release_and_newer_under_the_lock(self):
+        mislabelled, digest = self.archive("v0.0.9")
+        download = f"{self.RELEASES}/download/v0.1.1/altitude-v0.1.1.tar.gz"
+        self.published.update({download: mislabelled.read_bytes(), download + ".sha256": digest.encode()})
+        with self.assertRaisesRegex(ValueError, "The v0.1.1 release contains v0.0.9"):
+            installation.update("v0.1.1")
+        # Another update activated v0.2.0 while this one was downloading v0.1.1.
+        newer, digest = self.archive("v0.2.0", edited=True)
+        installation.install(newer, digest, self.prefix)
+        self.publish("v0.1.1")
+        with self.assertRaisesRegex(ValueError, "Altitude v0.2.0 is already installed; v0.1.1 is not newer"):
+            installation.update("v0.1.1")
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.2.0")
+        self.assertFalse((self.prefix / "versions/v0.1.1").exists())
+
+    def test_latest_release_is_downloaded_verified_and_activated(self):
+        download = self.publish("v0.1.1", latest={"tag_name": "v0.1.1", "prerelease": False, "draft": False})
+        result = installation.update()
+        self.assertEqual((result["version"], result["updated"]), ("v0.1.1", True))
+        self.assertEqual(result["notes"], f"{self.RELEASES}/tag/v0.1.1")
+        self.assertEqual(set(result), {"version", "updated", "service", "url", "notes"})
+        self.assertNotIn(str(self.home), json.dumps(result))
+        self.assertEqual(self.requests, ["https://api.github.com/repos/example/altitude/releases/latest",
+                                         download, download + ".sha256"])
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.1")
+        self.assertEqual(installation.metadata(self.prefix / "versions/v0.1.0")["version"], "v0.1.0")
+
+    def test_current_or_older_latest_changes_nothing(self):
+        for latest in ("v0.1.0", "v0.1.0-rc.2", "v0.0.9"):
+            with self.subTest(latest=latest):
+                self.published = {"https://api.github.com/repos/example/altitude/releases/latest":
+                                  json.dumps({"tag_name": latest}).encode()}
+                self.requests.clear()
+                self.actions.clear()
+                result = installation.update()
+                self.assertEqual(result, {"version": "v0.1.0", "updated": False, "detail": "Altitude v0.1.0 is up to date"})
+                self.assertEqual(len(self.requests), 1)
+                self.assertEqual(self.actions, [])
+
+    def test_named_version_installs_that_release_without_a_lookup(self):
+        download = self.publish("v0.2.0-rc.1")
+        self.assertEqual(installation.update("v0.2.0-rc.1")["version"], "v0.2.0-rc.1")
+        self.assertEqual(self.requests, [download, download + ".sha256"])
+        self.requests.clear()
+        with self.assertRaisesRegex(ValueError, "published v0.MINOR.PATCH"):
+            installation.update("latest; rm -rf ~")
+        for older in ("v0.0.9", "v0.1.0-rc.1"):
+            with self.subTest(older=older), self.assertRaisesRegex(ValueError, "older than the installed v0.1.0"):
+                installation.update(older)
+        self.assertEqual(self.requests, [])
+
+    def test_mismatched_published_checksum_keeps_the_installed_version(self):
+        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"}, checksum="0" * 64)
+        self.actions.clear()
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            installation.update()
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.0")
+        self.assertFalse((self.prefix / "versions/v0.1.1").exists())
+        self.assertEqual(self.actions, [])
+
+    def test_unusable_lookup_or_unnamed_repository_refuses_before_downloading(self):
+        for latest in ({"tag_name": "v0.2.0", "prerelease": True}, {"tag_name": "main"}, ["v0.2.0"]):
+            with self.subTest(latest=latest):
+                self.published = {"https://api.github.com/repos/example/altitude/releases/latest":
+                                  json.dumps(latest).encode()}
+                self.requests.clear()
+                with self.assertRaisesRegex(ValueError, "no valid version"):
+                    installation.update()
+                self.assertEqual(len(self.requests), 1)
+        self.requests.clear()
+        with mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "example/altitude"}):
+            with self.assertRaisesRegex(RuntimeError, "update with --archive and --sha256"):
+                installation.update()
+        self.assertEqual(self.requests, [])
+        with mock.patch.object(installation, "_get", side_effect=OSError("fixture: offline")):
+            with self.assertRaisesRegex(OSError, "offline"):
+                installation.update()
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.0")
+
+
+class UpdatedProjectGuards(PublishedReleaseCase):
+    """#348: after `alt update`, a registered project's next task dispatches with current guards."""
+
+    def serve(self, version):
+        """The daemon after activation runs `current`, as the restarted service does."""
+        source = (self.prefix / "current").resolve()
+        self.assertEqual(source.name, version)
+        release = json.loads((source / "release.json").read_text())
+        for name, value in (("SOURCE", source), ("REPO", source), ("RELEASE", {**release, "repository": "https://github.com/example/altitude"}),
+                            ("INSTALL_CONFIG", self.settings), ("PERSONAS", source / "personas"),
+                            ("SCHEMAS", source / "schemas"), ("TEMPLATES", source / "templates"), ("HOOKS", source / "hooks")):
+            patcher = mock.patch.object(config, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_next_dispatch_after_update_uses_current_guards_and_version(self):
+        self.patch = lambda target, name, *new, **kwargs: self.enterContext(mock.patch.object(target, name, *new, **kwargs))
+        for name, value in (("claude_agents", []), ("usage_hold", None),
+                            ("installation", {"available": None, "why": "fixture engines"})):
+            self.patch(engines, name, return_value=value)
+        self.patch(monitor, "quota", return_value={"known": True})
+        engine = FakeL2()
+        engine.install(self)
+        repo = make_repo(self.home / "Projects/demo")
+        config.save_projects({"demo": {"name": "demo", "path": str(repo)}})
+
+        self.serve("v0.1.0")
+        first = T.new("demo", "Before the update", "Fictional work on the first version.")
+        dispatch.run("demo", first["slug"])
+        self.assertEqual(S.load_task("demo", first["slug"])["state"], "running")
+        self.assertEqual(git_policy.require_hooks_installed(repo), self.prefix / "hooks")
+
+        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"})
+        self.assertEqual(installation.update()["version"], "v0.1.1")
+        self.serve("v0.1.1")
+        second = T.new("demo", "After the update", "Fictional work on the updated version.")
+        dispatch.run("demo", second["slug"])
+        self.assertEqual(S.load_task("demo", second["slug"])["state"], "running")
+        self.assertEqual(engine.calls[-1]["persona"], self.prefix / "versions/v0.1.1/personas/l2.md")
+        self.assertEqual(git_policy.require_hooks_installed(repo), self.prefix / "hooks")
+        # The installed guard runs the updated version and still protects main.
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("ALTITUDE_")}
+        refused = subprocess.run(["git", "commit", "--allow-empty", "-m", "Direct to main"], cwd=repo,
+                                 env=environment, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("task branch", refused.stderr)
+        self.assertIn("current/hooks/pre-commit", (self.prefix / "hooks/pre-commit").read_text())
+        self.assertEqual((self.prefix / "current/hooks/pre-commit").resolve(), self.prefix / "versions/v0.1.1/hooks/pre-commit")

@@ -429,12 +429,14 @@ def main(argv=None) -> None:
     sub.add_parser("doctor", help="inspect application prerequisites without provider requests")
     sub.add_parser("recover", help="restore the previous installation after interrupted activation")
     sub.add_parser("uninstall", help="remove the owned application service and retain user data")
-    for verb in ("install", "update"):
-        installer = sub.add_parser(verb, help="install an exact verified private application archive")
-        installer.add_argument("--archive", type=Path, required=True)
-        installer.add_argument("--sha256", required=True)
-        if verb == "install":
-            installer.add_argument("--prefix", type=Path)
+    installer = sub.add_parser("install", help="install an exact verified private application archive")
+    installer.add_argument("--archive", type=Path, required=True)
+    installer.add_argument("--sha256", required=True)
+    installer.add_argument("--prefix", type=Path)
+    updater = sub.add_parser("update", help="update to the latest published release, a named version or an exact archive")
+    updater.add_argument("--version", help="a published release version, for example v0.1.1")
+    updater.add_argument("--archive", type=Path, help="an exact archive file instead of downloading; needs --sha256")
+    updater.add_argument("--sha256")
     service = sub.add_parser("service", help="manage the installed application user service")
     service.add_argument("operation", choices=("start", "stop", "status", "logs", "prepare-tls"))
     service.add_argument("--directory", type=Path, help="existing source deployment certificate directory")
@@ -514,9 +516,13 @@ def main(argv=None) -> None:
     if c in ("install", "update", "recover", "uninstall", "doctor", "service"):
         from altitude import installation
         try:
-            if c in ("install", "update"):
-                prefix = installation._prefix() if c == "update" else args.prefix
-                result = installation.install(args.archive, args.sha256, prefix)
+            if c == "install":
+                result = installation.install(args.archive, args.sha256, args.prefix)
+            elif c == "update":
+                if (args.archive is None) != (args.sha256 is None) or (args.archive and args.version):
+                    ap.error("update takes --archive with --sha256, or --version, or neither for the latest release")
+                result = (installation.install(args.archive, args.sha256, installation._prefix()) if args.archive
+                          else installation.update(args.version))
             elif c == "service":
                 if args.operation == "prepare-tls":
                     if args.directory is None:
