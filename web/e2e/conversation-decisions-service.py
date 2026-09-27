@@ -177,16 +177,38 @@ def main():
                 T.set_hold_merge("atlas", slug, "Operator review of the completed rollout")
                 return self._json({"slug": slug})
             if self.path == "/fixture/held-pr":
-                # A freeform question that names the held PR discusses it; the one-tap review card stays.
+                # The explicit PR question is the review surface; an independent region choice stays usable.
                 slug = T.new("atlas", "Checkout fix", "Fictional held delivery for deterministic browser verification.")["slug"]
                 T.dispatch("atlas", slug, attempt=1, session_id=f"fixture-{slug}", agent_id=f"fixture-{slug}",
                            worktree=str(add_worktree(repo, slug)), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
-                T.block("atlas", slug, HELD_FREEFORM, actor="l2", updates={"waiting_on": "burak"})
+                T.block("atlas", slug, HELD_FREEFORM, actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+                        questions={"questions": [{"question": HELD_FREEFORM}, REGION]})
                 held = S.load_task("atlas", slug)
                 held.update(prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
                 S.save_task("atlas", held)
                 T.set_hold_merge("atlas", slug, "Operator review of the checkout fix")
                 return self._json({"slug": slug})
+            if self.path == "/fixture/held-pr-response":
+                body = self._body()
+                slug = body["slug"]
+                # Finish the real HTTP-triggered resume before stepping the deterministic owner.
+                with server._bg_guard:
+                    resumed = server._bg.get(f"resume:atlas:{slug}")
+                if resumed:
+                    resumed.join(10)
+                    assert not resumed.is_alive(), "The fixture resume did not finish"
+                row = S.load_task("atlas", slug)
+                if row["state"] == "blocked":
+                    T.resume("atlas", slug)
+                T.take_inbox("atlas", slug)
+                if body.get("resolve"):
+                    question = next(q for q in row["questions"] if q["status"] == "open" and q["detail"] == HELD_FREEFORM)
+                    assert question["response"]["text"] == "Use Order summary as the checkout heading."
+                    T.resolve_question("atlas", slug, question["id"], question["revision"], question["response"]["message_id"],
+                                       disposition="answered", reason="The requested heading is recorded; merge approval remains undecided.",
+                                       expected_attempt=row["attempt"])
+                T.block("atlas", slug, T._groups(row)[-1]["reason"], actor="l2", expected_attempt=row["attempt"])
+                return self._json(T.question_group_view("atlas", S.load_task("atlas", slug)))
             if self.path == "/fixture/held-pr-options":
                 slug = self._body()["slug"]
                 T.resume("atlas", slug)

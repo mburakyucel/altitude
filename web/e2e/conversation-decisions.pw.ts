@@ -1015,7 +1015,7 @@ test("a multi-paragraph question renders paragraphs and a copyable command block
   expect((await readTask(request, slug)).question?.status).toBe("open");
 });
 
-test("a freeform question naming a held PR keeps the one-tap review; a question with options replaces it", async ({ page, request }, info) => {
+test("a pending PR question is the single review surface through response pickup and re-parking", async ({ page, request }, info) => {
   const created = await request.post("/fixture/held-pr");
   expect(created.ok()).toBe(true);
   const { slug } = await created.json() as { slug: string };
@@ -1023,20 +1023,57 @@ test("a freeform question naming a held PR keeps the one-tap review; a question 
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const question = "PR #42 is ready. Anything to change in the checkout copy before it merges?";
   const approve = conversation.getByRole("button", { name: "Approve merge", exact: true });
+  const west = conversation.getByRole("button", { name: "West", exact: true });
+  const initial = (await readTask(request, slug)).question_group.questions[0]!;
+  const card = questionCard(page, initial);
   await walk.open("/");
-  await walk.state("held-01-needs-you-freeform-question-and-review", {
-    visible: [page.getByText(question, { exact: true }).first(), page.getByRole("button", { name: "Approve merge", exact: true }).first()], hidden: [],
+  await expect(page.getByText(question, { exact: true })).toHaveCount(1);
+  await walk.state("held-01-needs-you-one-freeform-review", {
+    visible: [page.getByText(question, { exact: true }), page.getByRole("button", { name: "West", exact: true })],
+    hidden: [page.getByRole("button", { name: "Approve merge", exact: true })],
   });
   await walk.open(taskPath(slug));
-  await walk.state("held-02-chat-freeform-question-and-review", {
-    visible: [conversation.getByText(question, { exact: true }), conversation.getByText("Your turn · review before merge", { exact: true }), approve],
-    hidden: [],
+  await expect(conversation.getByText(question, { exact: true })).toHaveCount(1);
+  await walk.state("held-02-chat-one-freeform-review-and-independent-question", {
+    visible: [card.getByRole("textbox"), west],
+    hidden: [conversation.getByText("Your turn · review before merge", { exact: true }), approve],
+  });
+  await card.getByRole("textbox").fill("Use Order summary as the checkout heading.");
+  await submit(page, request, slug, false);
+  const submitted = (await readTask(request, slug)).question_group.questions[0]!;
+  expect(submitted.response?.text).toBe("Use Order summary as the checkout heading.");
+  expect(submitted.resolution).toBeNull();
+  const parked = await request.post("/fixture/held-pr-response", { data: { slug } });
+  expect(parked.ok()).toBe(true);
+  const reparked = (await parked.json() as Group).questions[0]!;
+  expect(reparked).toMatchObject({ id: initial.id, revision: initial.revision, response: submitted.response });
+  await page.reload();
+  await walk.state("held-03-submitted-freeform-keeps-receipt-and-independent-choice", {
+    visible: [card.getByText("Sent to L2", { exact: true }), west],
+    hidden: [card.getByRole("textbox"), approve],
+  });
+  expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
+  const resolved = await request.post("/fixture/held-pr-response", { data: { slug, resolve: true } });
+  expect(resolved.ok()).toBe(true);
+  expect((await resolved.json() as Group).questions[0]!.resolution)
+    .toMatchObject({ disposition: "answered", message_id: submitted.response!.message_id });
+  await page.reload();
+  await walk.state("held-04-resolved-discussion-restores-unapproved-merge-review", {
+    visible: [card.getByText("Decision recorded", { exact: true }), approve, west],
+    hidden: [card.getByRole("textbox")],
   });
   expect((await request.post("/fixture/held-pr-options", { data: { slug } })).ok()).toBe(true);
   await page.reload();
-  await walk.state("held-03-question-with-options-is-the-review", {
-    visible: [conversation.getByRole("button", { name: "Merge checkout fix", exact: true })],
+  await walk.state("held-05-question-with-options-is-the-review", {
+    visible: [conversation.getByRole("button", { name: "Merge checkout fix", exact: true }), west],
     hidden: [conversation.getByText("Your turn · review before merge", { exact: true }), approve],
   });
-  expect((await readTask(request, slug)).hold_merge).toBe("Operator review of the checkout fix");
+  await west.click();
+  await submit(page, request, slug, false);
+  const independent = await readTask(request, slug);
+  expect(independent.question_group.questions.find((row) => row.question === "Which backup region should we use?")?.response)
+    .toMatchObject({ text: "Use the west region for backups." });
+  expect(independent.question_group.questions.find((row) => row.question === "Merge PR #42 with the checkout copy as shown?")?.response)
+    .toBeNull();
+  expect(independent.hold_merge).toBe("Operator review of the checkout fix");
 });
