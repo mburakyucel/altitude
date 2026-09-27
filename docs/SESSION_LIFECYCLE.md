@@ -239,6 +239,9 @@ is released only after termination is confirmed; uncertain termination follows t
 recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
 on the task, separate from native-helper usage attribution. Later proposal/code/base/context changes
 show their relevant staleness; L2 reconciliation does not claim the reviewer examined later revisions.
+Landing lists all stale subjects and changed evidence together. The owner explains their dispositions
+before assessing each request; late context changes during final validation retain the repository
+turn and original assessment deadline. Proposal findings and assessments remain independently required.
 The run neither switches engines after launch nor retries automatically.
 See [commands and evidence](CLI.md#cross-engine-review).
 

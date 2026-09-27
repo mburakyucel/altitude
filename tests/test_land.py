@@ -129,7 +129,7 @@ class TestLand(AltitudeCase):
     def remote_heads(self):
         return sorted(git("branch", "--format=%(refname:short)", cwd=self.remote).split())
 
-    def test_cross_engine_assessment_rechecks_context_after_final_merge_validation(self):
+    def final_validation_context(self, *, wait):
         from altitude import config, engines, reviews, route, tasks as T
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         self.no_checks()
@@ -159,8 +159,23 @@ class TestLand(AltitudeCase):
                 corrected.append(T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Correction: preserve empty results too."))
             return result
         with mock.patch.object(land, "_pr_view", new=correct_during_validation):
-            with self.assertRaisesRegex(land.LandError, "context changed"):
-                land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True, approval=approval['id'])
+            if wait:
+                (self.ghdir / "merge_git.txt").touch()
+                def assess_when_notified(message):
+                    if 'waiting for owner assessment' in message:
+                        self.assertEqual(S.load_task('demo', 'fix-x')['hold_merge'], 'Operator approval before merging')
+                        reviews.assess("demo", "fix-x", request["id"], actor="l2", expected_attempt=1,
+                                       dispositions=[], reason="Checked the correction and final candidate.")
+                with mock.patch.object(land, '_note', side_effect=assess_when_notified), \
+                        mock.patch.object(land, 'CHECK_POLL_SECONDS', .01):
+                    result = land.land("Reviewed delivery", cwd=self.repo, wait=5, merge=True, approval=approval['id'])
+                self.assertTrue(result['merged'])
+                self.assertEqual(len(corrected), 1)
+                self.assertEqual(sum(call[:2] == ['pr', 'merge'] for call in self.gh_log()), 1)
+                return
+            else:
+                with self.assertRaisesRegex(land.LandError, "changed after review assessment"):
+                    land.land("Reviewed delivery", cwd=self.repo, wait=0, merge=True, approval=approval['id'])
         self.assertEqual(len(corrected), 1, "The correction arrives during the final validation, after candidate tests")
         self.assertTrue(any(call == ["make", "test"] for call in self.runner_log()))
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
@@ -175,6 +190,12 @@ class TestLand(AltitudeCase):
         merged_task = S.load_task("demo", "fix-x")
         self.assertEqual(merged_task["review_merged_head"], result["head"])
         self.assertEqual(merged_task["reviews"][-1]["merged_head"], result["head"])
+
+    def test_cross_engine_assessment_rechecks_context_after_final_merge_validation(self):
+        self.final_validation_context(wait=False)
+
+    def test_cross_engine_assessment_waits_for_context_after_final_merge_validation(self):
+        self.final_validation_context(wait=True)
 
     def test_refuses_on_main(self):
         with self.assertRaisesRegex(land.LandError, "main"):

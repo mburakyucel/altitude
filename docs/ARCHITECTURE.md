@@ -596,7 +596,12 @@ For a completed review whose assessment is stale, the current L2's merging invoc
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
 reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
-`FETCH_HEAD` receipt. Fresh context invalidation prompts the owner again. Missing or unfinished review, candidate
+`FETCH_HEAD` receipt. A notice names every stale review and subject with the assessed/current values
+of its changed evidence, so the owner posts explanations together before assessing each request.
+Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
+Fresh context invalidation, including during final merge validation, uses the same wait and original
+deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
+Missing or unfinished review, candidate
 movement or ownership loss refuses. No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.

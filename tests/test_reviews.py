@@ -679,12 +679,19 @@ class TestReviews(AltitudeCase):
         self.commit("value.py", "VALUE = 3\n")
         with self.assertRaises(reviews.AssessmentRequired) as stale:
             reviews.require_merge(self.project, self.slug, self.pair())
-        self.assertEqual(stale.exception.review_id, result['id'])
-        self.assess(result)
+        evidence = stale.exception.stale_reviews[0]
+        self.assertEqual(evidence['id'], result['id'])
+        self.assertEqual(set(evidence['changes']), {'head', 'tree'})
+        self.assertIn(result['id'] + ' (changes)', str(stale.exception))
+        assessed = self.assess(result)
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Correction: retain the empty result too.")
         self.assertEqual(reviews.view(self.project, self.slug)["latest"]["coverage"], "earlier")
-        with self.assertRaises(T.TransitionError):
+        with self.assertRaises(reviews.AssessmentRequired) as stale:
             reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(set(stale.exception.stale_reviews[0]['changes']), {'context_hash'})
+        self.assertIn('alt task review assess --review-id ' + result['id'], str(stale.exception))
+        self.assertIn('alt task messages ' + self.slug, str(stale.exception))
+        self.assertIn(assessed['reconciled']['at'], str(stale.exception))
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
 
@@ -917,11 +924,11 @@ class TestReviews(AltitudeCase):
         latest = reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]
         self.assertEqual(latest["coverage"], "earlier")
         self.assertEqual(latest["snapshot"]["proposal"]["text"], proposal["text"])
-        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assess(review)
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Approve merging this feature")
-        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assess(review)
         reviews.require_merge(self.project, self.slug, self.pair())
@@ -934,7 +941,7 @@ class TestReviews(AltitudeCase):
         reviews.require_merge(self.project, self.slug, self.pair())
         revised = T.message(self.project, self.slug, "l2", "Proposal version two with cursor continuity")
         self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["coverage"], "earlier")
-        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
             reviews.require_merge(self.project, self.slug, self.pair())
         assessed = reviews.assess(self.project, self.slug, review["id"], actor="l2", expected_attempt=1,
                                   dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Second proposal adds the missing constraint"}],
@@ -969,7 +976,7 @@ class TestReviews(AltitudeCase):
         view = reviews.view(self.project, self.slug)
         self.assertEqual(view["subjects"]["changes"]["latest"]["id"], changes["id"])
         self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], proposed["id"])
-        with self.assertRaisesRegex(T.TransitionError, "context changed"):
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assess(changes)
         reviews.require_merge(self.project, self.slug, self.pair())

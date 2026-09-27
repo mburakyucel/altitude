@@ -226,17 +226,17 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
             return {'termination_confirmed': True, 'text': 'No findings', 'findings': [], 'limitations': []}
         with mock.patch.object(route, 'pick_review', return_value=choice), \
                 mock.patch.object(engines, 'review', side_effect=provider) as engine:
-            request = reviews.request(self.project, slug, actor='l2', expected_attempt=1,
-                                      request_id='review-' + slug)
-            reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1)
-            engine.assert_called_once()
             if proposal:
-                self.assess(slug)
                 source = T.message(self.project, slug, 'l2', 'Proposal: preserve independent changes.')
                 request = reviews.request(self.project, slug, actor='l2', expected_attempt=1,
                                           subject='proposal', request_id='proposal-' + slug)
                 reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1,
                             proposal_id=source['id'])
+                self.assess(slug, review_id='proposal-' + slug)
+            request = reviews.request(self.project, slug, actor='l2', expected_attempt=1,
+                                      request_id='review-' + slug)
+            reviews.run(self.project, slug, request['id'], actor='l2', expected_attempt=1)
+            self.assertEqual(engine.call_count, 2 if proposal else 1)
         if assess:
             self.assess(slug)
             if proposal:
@@ -265,10 +265,17 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.checked('first')
         second = self.start('second', required_check=True, wait=20, approval=approval['id'])
         self.waiting(second)
+        T.message(self.project, 'second', 'l3', 'Preserve both independent results after integration.')
         self.release('first')
         self.merged('first', self.finish(first))
         self.release('second')
         self.assessment_wait(second)
+        notice = (second[1] / 'notes').read_text()
+        self.assertIn('review proposal-second (proposal)', notice)
+        self.assertIn('review review-second (changes)', notice)
+        self.assertIn('context_hash:', notice)
+        self.assertIn('head:', notice)
+        self.assertIn('base:', notice)
         worktree, fixture = self.owners['second']
         integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
         self.assertNotEqual(integrated, old_review['reconciled']['head'])
@@ -280,10 +287,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.waiting(third)
         self.assertFalse((self.owners['third'][1] / 'log.jsonl').exists())
         # Real message handling and assess run concurrently with the process holding the turn.
-        T.message(self.project, 'second', 'l3', 'Continue with the integrated candidate.')
         self.assess('second')
-        self.await_condition(lambda: 'assessment of review proposal-second' in (second[1] / 'notes').read_text(),
-                             'separate proposal assessment')
         self.assertEqual(S.load_task(self.project, 'second')['hold_merge'], 'Operator approval of this delivery')
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
         self.assess('second', review_id='proposal-second')
@@ -302,6 +306,46 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         finished = S.load_task(self.project, 'second')
         self.assertIsNone(finished['hold_merge'])
         self.assertEqual(finished['merge_approval']['approval'], approval['id'])
+
+    def late_context(self, *, hosted):
+        if hosted:
+            self.ship_check_workflow()
+        slug = 'first'
+        self.reviewed(slug)
+        T.set_hold_merge(self.project, slug, 'Operator approval required')
+        approval = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, 'Merge after checks.')
+        self.assess(slug)
+        call = self.start(slug, required_check=hosted, wait=20, approval=approval['id'])
+        self.checked(slug)
+        T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, 'Retain the complete public result.')
+        self.release(slug)
+        self.assessment_wait(call)
+        self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
+        with self.assertRaises(T.TransitionError):
+            reviews.assess(self.project, slug, 'review-' + slug, actor='l2', expected_attempt=1,
+                           dispositions=[{'finding_id': 'unknown', 'disposition': 'fixed', 'reason': 'Invalid'}],
+                           reason='An invalid assessment cannot release this wait.')
+        self.assertEqual(S.load_task(self.project, slug)['hold_merge'], 'Operator approval required')
+        self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
+        self.assess(slug)
+        self.merged(slug, self.finish(call))
+        self.assertEqual(len(self.calls(slug, ['pr', 'create'])), 0)
+
+    def test_message_during_hosted_validation_waits_without_requeueing(self):
+        self.late_context(hosted=True)
+
+    def test_message_during_local_validation_waits_without_requeueing(self):
+        self.late_context(hosted=False)
+
+    def test_final_assessment_does_not_restart_wait_deadline(self):
+        self.reviewed('first')
+        call = self.start('first', wait=.1)
+        self.checked('first')
+        T.message(self.project, 'first', 'l3', 'Inspect this correction before merging.')
+        time.sleep(.2)  # The local suite uses the existing file barrier past --wait.
+        self.release('first')
+        self.assertIn('assessment wait timed out', self.finish(call)['error'])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
 
     def test_review_request_remains_available_during_nonmerging_ci_read(self):
         self.ship_check_workflow()
