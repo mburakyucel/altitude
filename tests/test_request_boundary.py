@@ -77,3 +77,10 @@ class TestRequestBoundary(AltitudeCase):
             with self.subTest(length=length):
                 status, reply = self.request("POST", "/api/operator-name", headers={"Content-Length": length})
                 self.assertEqual((status, reply), (413, {"error": "Request is too large."}))
+
+    def test_a_silent_client_loses_its_connection(self):
+        self.patch(server, "REQUEST_READ_SECONDS", new=0.2)
+        with socket.create_connection(self.httpd.server_address, timeout=10) as sock:
+            sock.sendall(b"GET /api/overview HTTP/1.1\r\nHost: " + self.host.encode() + b"\r\n")  # headers never end
+            self.assertEqual(sock.recv(1), b"")
+

@@ -257,7 +257,9 @@ at the certificate. Every POST must come from Altitude's own page or from a clie
 request's `Host`. The `alt` CLI sends neither header; another site open in the operator's browser
 cannot make it send an action. The Vite dev proxy gives the dev page's own requests altd's origin and
 leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages and voice
-recordings have their own limits. The web app's pages refuse to be framed by any page
+recordings have their own limits. A client that sends no complete request line and headers within
+thirty seconds loses its connection. An internal error's text reaches only the CLI and paired
+devices; any other client gets a fixed message, and altd's log keeps the details. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
 
 Then `access.py` decides who is asking. The page and its files, `/ca.crt`, `GET /api/health`,

@@ -1228,6 +1228,8 @@ class _HeadWriter:
 
 
 TLS_HANDSHAKE_SECONDS = 10
+REQUEST_READ_SECONDS = 30  # a client silent this long before its request line and headers loses the connection
+INTERNAL_ERROR = "Altitude hit an internal error; its log has the details."  # what an unpaired client sees
 UNPAIRED = "Pair this device to use Altitude."
 
 
@@ -1258,11 +1260,23 @@ class Handler(BaseHTTPRequestHandler):
                 return  # a failed or abandoned handshake drops only this connection, as accept did
         super().handle()
 
+    def handle_one_request(self) -> None:
+        # One thread serves each connection, so a client that stays silent (idle keep-alive, a request that
+        # never finishes) would hold its thread forever. Only reading the request line and headers is bounded;
+        # the handler clears the timeout and a stream keeps its own loop.
+        self.connection.settimeout(REQUEST_READ_SECONDS)
+        super().handle_one_request()
+
+    def parse_request(self) -> bool:
+        parsed = super().parse_request()
+        self.connection.settimeout(None)
+        return parsed
+
     def log_message(self, fmt, *args):  # quieter: one line per new client address, nothing per request
         ip = self.client_address[0]
         if ip not in self._seen_clients:
             self._seen_clients.add(ip)
-            log(f"first request from {ip}: {self.command} {self.path}")
+            log(f"first request from {ip}: {getattr(self, 'command', None)} {getattr(self, 'path', '')}")
 
     def end_headers(self) -> None:
         if self._set_cookie:
@@ -1587,6 +1601,11 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self._machine or self._device is not None
 
+    def _detail(self, exc: Exception) -> str:
+        """An internal error's text, which can name private paths: the CLI and paired devices read it, so a
+        fault stays visible to the operator, and any other client gets a fixed message."""
+        return str(exc) if self._machine or self._device is not None else INTERNAL_ERROR
+
     def _still_admitted(self) -> bool:
         """Whether a long stream may go on: a device revoked while it streams loses the stream too."""
         return self._machine or self._device is not None and access.known(self._device["id"])
@@ -1880,7 +1899,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as e:  # noqa: BLE001
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
-            return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else str(e)}, 500)
+            return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else self._detail(e)}, 500)
 
     def _review_run(self, body):
         streamed = False
@@ -2267,7 +2286,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             log(f"POST {self.path}: {e}\n{traceback.format_exc()}")
             try:
-                self._json({"error": "Could not confirm image send. Retry this submission." if image_submission else str(e)}, 500)
+                self._json({"error": "Could not confirm image send. Retry this submission." if image_submission else self._detail(e)}, 500)
             except Exception:  # noqa: BLE001
                 pass
 

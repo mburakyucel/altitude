@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from tests.support import ALT, AltitudeCase
 from tests.test_restart_command import load_script
-from altitude import access, config, server
+from altitude import access, config, server, state as S, tasks as T
 
 IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 DESKTOP = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -242,6 +242,26 @@ class TestAccess(AltitudeCase):
                 chunks.append(chunk)
         head = b"".join(chunks).partition(b"\r\n\r\n")[0].decode()
         return int(head.split()[1]), head
+
+    def test_error_details_reach_only_the_cli_and_paired_devices(self):
+        task = T.new(self.project, "Corrupt record", "Keep failures visible to the operator.")
+        S.status_path(self.project, task["slug"]).write_text("{corrupt}\n")
+        path = f"/api/task/{self.project}/{task['slug']}"
+        self.assertEqual(self.request("GET", path)[:2], (401, {"error": server.UNPAIRED, "pair": True}))
+        self.assertEqual(self.request("POST", "/api/terminal-access", {"enabled": True})[:2],
+                         (401, {"error": server.UNPAIRED, "pair": True}))
+        device, _ = self.paired()
+        status, reply, _ = self.request("GET", path, device=device)
+        self.assertEqual(status, 500)
+        self.assertIn("corrupt JSON", reply["error"])
+
+        def broken(_handler, _path):
+            raise OSError("/home/example/altitude/web/dist/index.html is unreadable")
+        self.patch(server.Handler, "_static", new=broken)
+        self.assertEqual(self.request("GET", "/")[:2], (500, {"error": server.INTERNAL_ERROR}))
+        status, reply, _ = self.request("GET", "/", device=device)
+        self.assertEqual(status, 500)
+        self.assertIn("/home/example/", reply["error"])
 
     def test_a_paired_device_makes_a_code_for_another(self):
         phone, _ = self.paired()
