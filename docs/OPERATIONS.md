@@ -359,7 +359,8 @@ For a cancel/restart failure, note the device, OS/browser version, and whether A
 browser tab or a Home Screen app. In a project and task conversation, keep a short typed draft,
 dictate, tap X, then tap the microphone and speak again; repeat three times. X preserves the typed
 draft and leaves the keyboard closed. A restart waits for recognition to end and for the waveform
-audio context to close before acquiring audio. Record whether it stays on **Opening microphone…**,
+audio context to close before acquiring audio, with at most three seconds for each wait. Record
+whether it stays on **Opening microphone…**,
 shows **Listening…** with a moving or flat waveform, or reports an error, and whether words appear.
 Cancel remains available during shutdown waits. Compare one Stop → microphone cycle with X →
 microphone. If the failure occurs in an already-open tab, preserve the observations and draft before

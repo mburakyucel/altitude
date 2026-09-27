@@ -1551,10 +1551,10 @@ Cancel, including cancelling a voice Send or leaving the composer, discards the 
 editing at once while it aborts the recognizer. That capture's microphone stream is released when
 the recognizer reports its end, or after at most three seconds. Speech recognition is
 one per page. The waveform stops drawing immediately, but closes its audio context only after
-recognizer shutdown; the next capture in any composer shows "Opening microphone…" until both
-recognizer shutdown and that asynchronous context close complete. Cancel during this wait restores
-editing without opening another microphone. The three-second limit bounds recognizer shutdown,
-not the browser's context close. The browser manages the device audio
+recognizer shutdown; the next capture in any composer shows "Opening microphone…" while both
+recognizer shutdown and that asynchronous context close settle. Each wait is bounded at three
+seconds: an unanswered browser close cannot disable all later microphone attempts until reload.
+Cancel during either wait restores editing without opening another microphone. The browser manages the device audio
 session for capture; Altitude does not override it. Cancel with the X returns focus to the microphone
 button, so a phone keyboard does not open; Escape returns focus to the field. The recognizer
 ignores callbacks after cancellation or its end, including while punctuation is pending.

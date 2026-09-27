@@ -25,15 +25,23 @@ const MAX_UPLOAD_BYTES = 16 << 20;
 /** A transcription that takes longer than this is a failure the hint reports; typing still works. */
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
+const WAVEFORM_CLOSE_MS = 3000;
 
-/** AudioContext.close is asynchronous too: no composer opens a microphone over an old graph. */
+/** Give asynchronous audio graph shutdown a chance to finish before another microphone opens. */
 let waveformClosing: Promise<void> | null = null;
 
 function closeWaveform(context: AudioContext) {
-  // Read after React's cleanup pass: on navigation, the capture's cleanup asks recognition to
-  // end after the waveform's cleanup runs. Keep the graph alive until that recognizer lets go.
+  // Read after React's synchronous cleanup pass: the capture cleanup calls cancel() synchronously,
+  // publishing idle() before this microtask even if waveform cleanup ran first (navigation test).
   const closing = Promise.resolve().then(() => RecognitionCapture.idle())
-    .then(() => context.close()).catch(() => undefined);
+    .then(() => new Promise<void>((resolve) => {
+      // A browser that never acknowledges close must not disable voice until a page reload.
+      const timer = setTimeout(resolve, WAVEFORM_CLOSE_MS);
+      void Promise.resolve().then(() => context.close()).catch(() => undefined).finally(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    }));
   const pending = Promise.all([waveformClosing, closing]).then(() => {
     if (waveformClosing === pending) waveformClosing = null;
   });

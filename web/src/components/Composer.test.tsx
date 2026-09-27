@@ -1020,6 +1020,41 @@ describe("Composer", () => {
     expect(onSubmit).toHaveBeenCalledTimes(action === "Send" ? 1 : 0);
   });
 
+  it.each(["browser", "endpoint"] as const)("%s microphone can retry after a waveform close never answers", async (backend) => {
+    const { getUserMedia } = installVoiceBrowser({ backend });
+    if (backend === "endpoint") stubTranscribe("new words");
+    const close = vi.fn().mockImplementationOnce(() => new Promise<void>(() => undefined)).mockResolvedValue(undefined);
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.stubGlobal("AudioContext", class {
+      createAnalyser() { return { fftSize: 512 }; }
+      createMediaStreamSource() { return { connect: vi.fn() }; }
+      close = close;
+    });
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => screen.getByRole("button", { name: "Cancel voice input" }).click());
+      await act(async () => screen.getByRole("button", { name: "Start voice input" }).click());
+      expect(close).toHaveBeenCalledOnce();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2999); });
+      expect(getUserMedia).toHaveBeenCalledOnce();
+      expect(screen.getByText("Opening microphone…")).toBeInTheDocument();
+      await act(async () => screen.getByRole("button", { name: "Cancel voice input" }).click());
+      expect(field).toHaveValue("Draft");
+      expect(field).toBeEnabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(getUserMedia).toHaveBeenCalledOnce();
+      await act(async () => screen.getByRole("button", { name: "Start voice input" }).click());
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+    if (backend === "browser") act(() => FakeSpeechRecognition.instances[1]!.hear(["new words"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Draft new words"));
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  });
+
   it.each([false, true])("browser recognition survives waveform close rejection (setup fails: %s)", async (setupFails) => {
     installVoiceBrowser({ backend: "browser" });
     const close = vi.fn(async () => { throw new Error("Audio renderer unavailable"); });
