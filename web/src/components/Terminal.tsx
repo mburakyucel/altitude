@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { terminalOpen, terminalSend, terminalStatus, useOverview, useTerminalStatus } from "../data/api";
 import type { TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
+import { subscribeCommands, takeCommand } from "../data/terminalCommand";
 import "./terminal.css";
 
 // xterm.js loads only when a terminal is on screen.
@@ -62,6 +63,17 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
   const closing = useRef(false);
   const left = useRef(false);
   const data = status.data;
+  // A chat command to type at this terminal's prompt (SPEC.md §3.3): taken once, dropped when the view
+  // leaves or cannot show a running shell.
+  const [command, setCommand] = useState<{ text: string; seq: number } | null>(null);
+  useEffect(() => {
+    const pick = () => {
+      const text = takeCommand(project, task);
+      if (text !== null) setCommand((last) => ({ text, seq: (last?.seq ?? 0) + 1 }));
+    };
+    pick();
+    return subscribeCommands(pick);
+  }, [project, task]);
 
   const open = async () => {
     attempted.current = true;
@@ -126,13 +138,17 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     </button>
     : <button type="button" className="btn terminal-close" onClick={() => void close(false)}>Close</button> : null;
   const restart = overview.data?.restart;
+  const off = data?.state === "none" && !data.enabled;
+  useEffect(() => {
+    if (command && (off || openError || (status.isError && !data))) setCommand(null);
+  }, [command, off, openError, status.isError, data]);
 
   let content: ReactNode;
   if (status.isError && !data) {
     content = <Card tone="danger" title="Couldn't read the terminal" action={<button type="button" className="btn" onClick={() => void status.refetch()}>Retry</button>}>{status.error.message}</Card>;
   } else if (openError) {
     content = <Card tone="danger" title="Couldn't open a terminal" action={<button type="button" className="btn" onClick={() => void open()}>Retry</button>}>{openError}</Card>;
-  } else if (data?.state === "none" && !data.enabled) {
+  } else if (off) {
     content = <Card title="Terminal is off" action={<Link className="btn" to="/settings" state={{ settingsFrom: `${location.pathname}${location.search}` }}>Open Settings</Link>}>A terminal runs any command as you on this computer. Turn it on for this computer in Settings.</Card>;
   } else if (!running) {
     content = <div className="terminal-card" role="status" aria-label="Starting the terminal">
@@ -149,7 +165,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
       {restart && !restart.failed ? <p className="terminal-note" role="status">Altitude restarts at its next quiet point to apply an update. This terminal will close then.</p> : null}
       <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>
         <TerminalScreen key={data.id} project={project} task={task} id={data.id!} keys={keys} reconnecting={reconnecting}
-          intro={`Runs as you in ${data.folder}`}
+          intro={`Runs as you in ${data.folder}`} command={command} onCommand={() => setCommand(null)}
           onEnd={leave} onReconnecting={setReconnecting} />
       </Suspense>
     </>;

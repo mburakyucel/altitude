@@ -1,5 +1,6 @@
 import { createContext, Fragment, useContext } from "react";
 import type { ReactNode } from "react";
+import { CodeBlock } from "./CodeBlock";
 
 export const ProseRepository = createContext<string | null | undefined>(null);
 export const ProseProject = createContext<string | undefined>(undefined);
@@ -12,12 +13,13 @@ const REFERENCE = new RegExp(`(?<![\\w/#@\\\\.-])(?:(PR|pull request|issue)\\s+)
 const INLINE = /(`+)([\s\S]*?)\1(?!`)|\*\*[^*]+\*\*|!?\[[^\]]+\]\((?:<[^>\n]+>|[^\s)]+)\)|https?:\/\/[^\s<>)]+|\bfile:\/\/[^\s<>`"'\]}]+|(?<![\w/:\\.-])\/(?!\/)[^\s<>`"'[\]{}]+/g;
 
 /** Share fence boundaries across full prose, compact mirrors, and folded summaries. */
-function codeBlocks(text: string): { text: string; code: boolean }[] {
-  const blocks: { text: string; code: boolean }[] = [];
+function codeBlocks(text: string): { text: string; code: boolean; info: string }[] {
+  const blocks: { text: string; code: boolean; info: string }[] = [];
   let lines: string[] = [];
   let fence = "";
+  let info = "";
   const flush = () => {
-    blocks.push({ text: lines.join("\n"), code: Boolean(fence) });
+    blocks.push({ text: lines.join("\n"), code: Boolean(fence), info });
     lines = [];
   };
   for (const line of text.split("\n")) {
@@ -25,6 +27,7 @@ function codeBlocks(text: string): { text: string; code: boolean }[] {
     const delimiter = marker?.[1] ?? "";
     if (marker && (!fence || (delimiter[0] === fence[0] && delimiter.length >= fence.length && !marker[2]?.trim()))) {
       flush();
+      info = fence ? "" : marker[2]!;
       fence = fence ? "" : delimiter;
     } else lines.push(line);
   }
@@ -121,8 +124,9 @@ const HEADING = /^\s*#{1,6}\s+(.*)$/;
 
 /**
  * Markdown-lite prose for a reply (SPEC.md §3.3): paragraphs split on blank lines with line breaks
- * kept, bulleted and numbered lists, fenced code blocks, inline code, bold, and links. A heading line
- * reads as a plain paragraph: replies carry no headings and no tables, so neither gets a shape here.
+ * kept, bulleted and numbered lists, fenced code blocks (outside a document with Copy, and `run` blocks
+ * as commands), inline code, bold, and links. A heading line reads as a plain paragraph: replies carry
+ * no headings and no tables, so neither gets a shape here.
  */
 export function Prose({ text, document = false }: { text: string; document?: boolean }) {
   const repository = useContext(ProseRepository);
@@ -162,7 +166,8 @@ export function Prose({ text, document = false }: { text: string; document?: boo
   for (const block of codeBlocks(text)) {
     if (block.code) {
       flush();
-      blocks.push(<pre key={blocks.length} className="session-code">{block.text}</pre>);
+      // A document (the file reader) stays read-only text: its code has no Copy and no terminal action.
+      blocks.push(document ? <pre key={blocks.length} className="session-code">{block.text}</pre> : <CodeBlock key={blocks.length} text={block.text} info={block.info} />);
       continue;
     }
     for (const line of block.text.split("\n")) {

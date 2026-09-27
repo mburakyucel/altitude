@@ -2,13 +2,14 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { TerminalStatus } from "../data/api";
+import { requestCommand } from "../data/terminalCommand";
 
 // The xterm screen needs a real canvas; here it only reports how its terminal ended.
 const screenEnd: { current?: (status: TerminalStatus) => void } = {};
 vi.mock("./TerminalScreen", () => ({
-  default: ({ id, onEnd }: { id: string; onEnd: (status: TerminalStatus) => void }) => {
+  default: ({ id, command, onEnd }: { id: string; command?: { text: string } | null; onEnd: (status: TerminalStatus) => void }) => {
     screenEnd.current = onEnd;
-    return <div data-testid="terminal-screen">{id}</div>;
+    return <div data-testid="terminal-screen" data-command={command?.text}>{id}</div>;
   },
 }));
 
@@ -141,6 +142,27 @@ describe("Project terminal", () => {
     await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Retry" }));
     expect(await screen.findByTestId("terminal-screen")).toBeVisible();
     expect(posts.filter(([url]) => url.endsWith("/open"))).toHaveLength(2);
+  });
+
+  it("hands its own chat command to the screen, taken once", async () => {
+    fixture(running());
+    requestCommand("demo", "other-task", "echo not-mine");
+    requestCommand("demo", undefined, "echo mine");
+    const { unmount } = renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).toHaveAttribute("data-command", "echo mine");
+    unmount();
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).not.toHaveAttribute("data-command");
+  });
+
+  it("drops a chat command when the terminal is off", async () => {
+    fixture(none(false));
+    requestCommand("demo", undefined, "echo off");
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByText("Terminal is off")).toBeVisible();
+    fixture(running());
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).not.toHaveAttribute("data-command");
   });
 
   it("opens full screen on phone with Back and Close", async () => {

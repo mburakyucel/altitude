@@ -255,6 +255,37 @@ from `GET /api/project/<name>`, and each Needs you card uses its own project.
 Phone (390×844) and desktop (1440×900) evidence: `web/e2e/prose-references.pw.ts` uses
 `walkthrough.ts` and a disposable real service, with named metadata failure/delay overlays.
 
+#### Chat commands
+
+A step only the operator can take (handing over private files, an admin step needing their password)
+arrives as a command: a fence whose info string is exactly `run`, holding one line. Its block shows
+the whole command in monospace, wrapped and never shortened, over a row with **Copy** and **Open in
+terminal** (primary, terminal icon). Open in terminal shows the terminal of the conversation the message
+is in — the task's terminal on a task page (phone Terminal tab, desktop panel's Terminal view), the
+project folder's terminal from project chat — and types the command at its prompt with the cursor at the
+end. It never presses Enter: the operator runs, edits or clears the line. The command reaches the terminal
+only through page memory, never the URL or history, so a link, reload, Back or Forward types nothing.
+Every other fence (`sh`, bare) is code with **Copy** at its top right and is never an action; a command
+for another machine uses one. Inline code is unchanged. Only conversation replies and question cards in
+a task or project conversation offer Open in terminal; elsewhere (Live session, Needs you, reports) a
+`run` block has Copy only. The file reader's documents keep plain code with no controls.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Command | The block with Copy and Open in terminal. |
+| Plain code block | Code with Copy; no action. |
+| Copied / refused | Copy reads "Copied" for two seconds; a browser that refuses it reads "Couldn't copy", and the text stays selectable. |
+| Not one safe line | A `run` fence with more than one line, or a control, invisible-formatting or line-separator character (tab, escape, zero-width, direction override): shown verbatim with Copy and "Not offered for the terminal: <reason>." |
+| No terminal here | A task that is finished, rejected or has no worktree: Copy and "This task has no terminal now." |
+| Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
+| Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
+| A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows nothing for five seconds, a failed check or stopped typing. |
+| Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
+| Enter | Only the operator's Enter runs it. |
+
+Phone (390×844) and desktop (1440×900) evidence: `web/e2e/run-in-terminal.pw.ts` walks these states
+against real shells from saved task and project messages.
+
 File references use ordinary accent-coloured underlined links, with no chip, icon, border or
 background. Preserve the supplied absolute path, `file:///` URI or Markdown link label. Hover
 exposes the full target; opening exposes it on both viewports. References outside code open a
@@ -978,6 +1009,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Closed elsewhere (another tab or device, or the setting turned off) | The view returns; toast "The terminal was closed elsewhere." |
 | Task finished / project unmanaged | The view returns; toast "The task finished, so its terminal closed." / "The project is no longer managed, so its terminal closed." The task's Terminal tab disappears. |
 | Ended while disconnected (an Altitude restart) | The view returns; toast "The terminal closed while the connection was lost." |
+| Chat command | Opened from a `run` block in its conversation: the command typed at the prompt, not run; or a notice with Copy when a program holds the foreground (§3.3 Chat commands). |
 | Could not read, start or refused | "Couldn't read the terminal" or "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**, shown at once. |
 
 Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as

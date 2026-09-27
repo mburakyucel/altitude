@@ -5,11 +5,16 @@ import "@xterm/xterm/css/xterm.css";
 import { ApiError, terminalSend, terminalStatus, terminalStream } from "../data/api";
 import type { TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
+import { CopyButton } from "./CodeBlock";
 
 const RECONNECT_MS = 2_000;
 const RESIZE_MS = 100;
 /** The most one input request carries (altd refuses more than 64 KiB): a long paste goes in pieces, in order. */
 const INPUT_CHUNK = 16_384;
+/** A chat command waits until the screen has drawn output and then stayed quiet this long: the prompt. */
+const SETTLE_MS = 300;
+/** A shell that shows nothing this long after the screen appears gets no command. */
+const PROMPT_WAIT_MS = 5_000;
 
 const KEYS: { label: string; name: string; data: string }[] = [
   { label: "Esc", name: "Escape", data: "\x1b" },
@@ -43,16 +48,22 @@ export function inputPiece(text: string): string {
  * order, one request at a time over a kept connection, and every request names terminal `id`, so nothing
  * reaches a terminal that replaced it. Input that fails may have arrived in part, so typing stops, with an
  * alert, until the operator has checked the screen.
+ *
+ * A chat `command` (SPEC.md §3.3) is typed as a paste once the screen has settled on the shell's prompt,
+ * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead.
  */
-export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, onEnd, onReconnecting }: {
+export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
   project: string;
   task?: string;
   id: string;
   keys: boolean;
   intro: string;
   reconnecting: boolean;
+  command?: { text: string; seq: number } | null;
   onEnd: (status: TerminalStatus) => void;
   onReconnecting: (lost: boolean) => void;
+  /** The command was typed or refused: the view no longer holds it. */
+  onCommand?: () => void;
 }) {
   const toast = useToast();
   const host = useRef<HTMLDivElement>(null);
@@ -63,8 +74,13 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
   const [ctrl, setCtrl] = useState(false);
   const stopped = useRef(false);
   const [inputError, setInputError] = useState<string | null>(null);
-  const report = useRef({ onEnd, onReconnecting });
-  report.current = { onEnd, onReconnecting };
+  const report = useRef({ onEnd, onReconnecting, onCommand });
+  report.current = { onEnd, onReconnecting, onCommand };
+  const output = useRef({ seen: false, at: 0, shown: Date.now() });
+  const live = useRef(true);
+  const [held, setHeld] = useState<{ text: string; reason: string } | null>(null);
+  const request = useRef(command?.seq);
+  request.current = command?.seq;
 
   useEffect(() => {
     const term = new XTerm({
@@ -102,6 +118,8 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         const chunk = JSON.parse((event as MessageEvent<string>).data) as { offset: number; data: string };
         term.write(bytes(chunk.data));
         offset = chunk.offset;
+        output.current.seen = true;
+        output.current.at = Date.now();
       });
       stream.addEventListener("end", (event) => finish(JSON.parse((event as MessageEvent<string>).data) as TerminalStatus));
       stream.onopen = () => report.current.onReconnecting(false);
@@ -172,7 +190,9 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     fit.fit();
     connect();
     term.focus();
+    live.current = true;
     return () => {
+      live.current = false;
       done = true;
       clearTimeout(retry);
       clearTimeout(resize);
@@ -182,6 +202,45 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       term.dispose();
     };
   }, [project, task, id]); // eslint-disable-line react-hooks/exhaustive-deps -- the intro is drawn once
+
+  // Type the chat command once the prompt has settled, after checking no program holds the foreground.
+  useEffect(() => {
+    if (!command) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refuse = (reason: string) => {
+      setHeld({ text: command.text, reason });
+      report.current.onCommand?.();
+    };
+    const attempt = async () => {
+      const seen = output.current;
+      const now = Date.now();
+      if (!seen.seen && now - seen.shown < PROMPT_WAIT_MS) {
+        timer = setTimeout(() => void attempt(), SETTLE_MS);
+        return;
+      }
+      if (seen.seen && now - seen.at < SETTLE_MS) {
+        timer = setTimeout(() => void attempt(), SETTLE_MS - (now - seen.at));
+        return;
+      }
+      if (!seen.seen) return refuse("The terminal hasn't shown a prompt, so the command wasn't typed.");
+      if (stopped.current) return refuse("Typing is stopped, so the command wasn't typed.");
+      let current: TerminalStatus;
+      try {
+        current = await terminalStatus(project, task);
+      } catch {
+        if (live.current && request.current === command.seq) refuse("Altitude couldn't check the terminal, so the command wasn't typed.");
+        return;
+      }
+      if (!live.current || request.current !== command.seq || current.id !== id || current.state !== "running") return;
+      if (current.busy) return refuse(`${current.busy} is running, so the command wasn't typed.`);
+      setHeld(null);
+      pasteText.current(command.text);
+      focus.current();
+      report.current.onCommand?.();
+    };
+    void attempt();
+    return () => clearTimeout(timer);
+  }, [command?.seq, command?.text]); // eslint-disable-line react-hooks/exhaustive-deps -- one attempt per request
 
   const paste = async () => {
     try {
@@ -197,6 +256,13 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     {inputError ? <div className="terminal-stopped" role="alert">
       <p>{`Typing stopped: ${inputError} Part of what you typed may not have arrived; check the screen.`}</p>
       <button type="button" className="btn" onClick={() => { stopped.current = false; setInputError(null); focus.current(); }}>Resume typing</button>
+    </div> : null}
+    {held ? <div className="terminal-held" role="status">
+      <p>{held.reason}</p>
+      <CopyButton text={held.text} label="Copy command" />
+      <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => { setHeld(null); focus.current(); }}>
+        <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+      </button>
     </div> : null}
     <div className="terminal-frame">
       <div className="terminal-screen" ref={host} />
