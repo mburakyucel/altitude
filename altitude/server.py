@@ -20,6 +20,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import urllib.error
@@ -70,12 +71,19 @@ DESIGN_TYPES = {
 
 
 def design_viewer_url(project: str) -> str | None:
-    """Where this project's wireframe viewer is served, or None when the project has no boards."""
+    """The stable link to this project's wireframe viewer, or None when the project has no boards. Opening it
+    from a paired browser redirects to that browser's read pass (`design_entry`)."""
     try:
         root = config.project_path(project)
     except (KeyError, OSError):
         return None
-    return f"/{DESIGN_ROUTE}/{quote(project)}/{DESIGN_ENTRY}" if (root / DESIGN_ENTRY).is_file() else None
+    if not (root / DESIGN_ENTRY).is_file():
+        return None
+    return f"/{DESIGN_ROUTE}/{quote(project)}"
+
+
+def design_entry(project: str, device_id: str) -> str:
+    return f"/{DESIGN_ROUTE}/{quote(project)}/{access.design_pass(project, device_id)}/{DESIGN_ENTRY}"
 
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording
@@ -1220,6 +1228,7 @@ class _HeadWriter:
 
 
 TLS_HANDSHAKE_SECONDS = 10
+UNPAIRED = "Pair this device to use Altitude."
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1232,6 +1241,10 @@ class Handler(BaseHTTPRequestHandler):
     _agent: bool | None = None
 
     _seen_clients: set = set()
+    # One handler serves every request on a keep-alive connection, so `_admit` resets these per request.
+    _device: dict | None = None
+    _machine = False
+    _set_cookie: str | None = None
 
     def handle(self) -> None:
         # I-20260924-205802: a handshake on the accept thread let one stalled client time out every request,
@@ -1252,6 +1265,9 @@ class Handler(BaseHTTPRequestHandler):
             log(f"first request from {ip}: {self.command} {self.path}")
 
     def end_headers(self) -> None:
+        if self._set_cookie:
+            self.send_header("Set-Cookie", self._set_cookie)
+            self._set_cookie = None
         super().end_headers()
         if self.command == "HEAD" and getattr(self, "_head", False):
             self.wfile.drop = True
@@ -1315,20 +1331,24 @@ class Handler(BaseHTTPRequestHandler):
         shows what is on main, with nothing to rebuild after a merge. Two subtrees of that checkout
         are readable, only the listed extensions, and nothing is cached, so an edit that lands is the
         edit the browser draws. A project without boards, a directory, and an escape attempt are all
-        the same plain 404. Each file is served in a sandbox, so a board's scripts cannot act as Altitude."""
+        the same plain 404. Each file is served in a sandbox, so a board's scripts cannot act as Altitude, and
+        its path carries the read pass (`access.design_pass`) that lets the sandboxed boards load their files."""
         if len(parts) > 2 and parts[2] == "tasks":
             if len(parts) != 7:
                 return self._plain("Design unavailable", 404)
             return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
         project = unquote(parts[1]) if len(parts) > 1 else ""
-        entry = design_viewer_url(project)
-        if entry is None:
+        if design_viewer_url(project) is None:
             return self._plain("not found", 404)
         if len(parts) == 2:  # the stable per-project link; the boards' relative imports need the depth
-            return self._redirect(entry)
+            if self._device is None:
+                return self._plain("Open the boards from a paired browser.", 403)
+            return self._redirect(design_entry(project, self._device["id"]))
+        if not access.design_pass_valid(project, parts[2]):
+            return self._plain("not found", 404)
         root = config.project_path(project).resolve()
         try:
-            resolved = (root / unquote("/".join(parts[2:]))).resolve()
+            resolved = (root / unquote("/".join(parts[3:]))).resolve()
         except (OSError, ValueError):  # embedded NUL and friends
             return self._plain("not found", 404)
         ctype = DESIGN_TYPES.get(resolved.suffix.lower())
@@ -1343,6 +1363,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         # Boards are project content: their scripts run in an opaque origin, without Altitude's authority.
         self.send_header("Content-Security-Policy", "sandbox allow-scripts")
+        self.send_header("Referrer-Policy", "no-referrer")  # the path's read pass stays on this machine's pages
         self.end_headers()
         self.wfile.write(data)
 
@@ -1543,6 +1564,62 @@ class Handler(BaseHTTPRequestHandler):
             return "Requests must come from Altitude's own page."
         return None
 
+    def _admit(self, parts: list[str]) -> bool:
+        """Whether this request may proceed: the page, its files, the CA, health and pairing are open to anyone;
+        everything else needs this machine's key (the `alt` CLI) or a paired device's cookie. A device's
+        cookie is renewed, at most daily, while it is used."""
+        self._machine = access.is_machine(self.headers.get(access.KEY_HEADER))
+        try:
+            jar = SimpleCookie(self.headers.get("Cookie") or "")
+        except CookieError:
+            jar = SimpleCookie()
+        key = jar[access.COOKIE].value if access.COOKIE in jar else None
+        self._device = access.device(key)
+        self._set_cookie = None
+        if self._device and access.renew(self._device):
+            self._set_cookie = self._device_cookie(key)
+        if not parts or parts[0] not in ("api", DESIGN_ROUTE):
+            return True
+        if len(parts) == 2 and (self.command, parts[1]) in (("GET", "health"), ("HEAD", "health"), ("GET", "access"),
+                                                             ("HEAD", "access"), ("POST", "pair")):
+            return True
+        if parts[0] == DESIGN_ROUTE and len(parts) > 3 and access.design_pass_valid(unquote(parts[1]), parts[2]):
+            return True
+        return self._machine or self._device is not None
+
+    def _still_admitted(self) -> bool:
+        """Whether a long stream may go on: a device revoked while it streams loses the stream too."""
+        return self._machine or self._device is not None and access.known(self._device["id"])
+
+    def _device_cookie(self, key: str, max_age: int = access.COOKIE_SECONDS) -> str:
+        secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
+        return f"{access.COOKIE}={key}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
+
+    def _pair(self, body: dict) -> None:
+        name = access.device_name(self.headers.get("User-Agent") or "", body.get("standalone") is True)
+        try:
+            key, device = access.redeem(body.get("code"), name)
+        except access.AccessError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+        log(f"paired a device: {name}")
+        self._set_cookie = self._device_cookie(key)
+        return self._json({"device": {k: device[k] for k in ("id", "name", "paired", "used")}})
+
+    def _devices_post(self, action: str, body: dict) -> None:
+        if action == "code":
+            return self._json(access.issue_code())
+        if action != "revoke" or not isinstance(body.get("id"), str):
+            return self._json({"error": "unknown api"}, 404)
+        try:
+            access.revoke(body["id"])
+        except access.AccessError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+        log("revoked a paired device")
+        current = self._device and self._device["id"]
+        if current == body["id"]:
+            current, self._set_cookie = None, self._device_cookie("", 0)
+        return self._json({"devices": access.devices(), "current": current})
+
     def _terminal_denied(self, *, json_body: bool) -> str | None:
         """Why a terminal request is refused: a cross-site page (the terminal is command execution, so a
         page elsewhere must not be able to type into it) or one of Altitude's own agents."""
@@ -1583,7 +1660,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         quiet = 0.0
         while True:
-            if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1):
+            if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1) or not self._still_admitted():
                 return
             data, offset, missed, ended = terminal.read(term, offset, TERMINAL_WAIT_SECONDS)
             if data or missed:
@@ -1676,6 +1753,8 @@ class Handler(BaseHTTPRequestHandler):
             # The wait doubles as disconnect detection: a closed tab reads as end of stream.
             if select.select([self.connection], [], [], CHANGE_SECONDS)[0] and not self.connection.recv(1):
                 return
+            if not self._still_admitted():
+                return
             current = change_marks()
             changed = sorted(name for name in marks.keys() | current.keys() if marks.get(name) != current.get(name))
             if "" in changed:  # a registry edit (engine pin, WIP cap) can change any project's view
@@ -1698,6 +1777,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
         q = parse_qs(u.query)
+        if not self._admit(parts):
+            return self._json({"error": UNPAIRED, "pair": True}, 401)
         try:
             if parts and parts[0] == "ca.crt":  # the local CA, for installing on a phone once
                 return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
@@ -1729,6 +1810,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._task_design(parts[2:])
             if api == "images":
                 return self._images(parts, q)
+            if api == "access":
+                return self._json({"paired": self._machine or self._device is not None,
+                                   "device": self._device and self._device["name"]})
+            if api == "devices" and len(parts) == 2:
+                return self._json({"devices": access.devices(), "current": self._device and self._device["id"]})
             if api == "overview":
                 return self._json(overview())
             if api == "voice":
@@ -1837,6 +1923,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": refused}, 403)
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
+        if not self._admit(parts):
+            self.close_connection = True
+            return self._json({"error": UNPAIRED, "pair": True}, 401)
         image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
@@ -1848,6 +1937,10 @@ class Handler(BaseHTTPRequestHandler):
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
                 return self._terminal_post(parts, o)
+            if parts == ["api", "pair"]:
+                return self._pair(o)
+            if api == "devices" and len(parts) == 3:
+                return self._devices_post(parts[2], o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2114,7 +2207,7 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     try:
                         self._stream_send({"t": t})
-                    except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:
+                    except OSError as e:
                         gone.append(e)
                         log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
 
@@ -2125,12 +2218,30 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     try:
                         self._stream_send({"turn": l3.active(project)})
-                    except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:
+                    except OSError as e:
                         gone.append(e)
                         log(f"POST {self.path}: client went away as the turn started ({type(e).__name__}: {e})")
 
-                res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started,
-                                     **({"slug": slug} if slug else {}))
+                over = threading.Event()
+
+                def watch() -> None:
+                    # A device removed mid-turn loses its open answer within a second, even while the turn is
+                    # silent; the turn itself goes on.
+                    while not over.wait(CHANGE_SECONDS):
+                        if not self._still_admitted():
+                            gone.append(PermissionError("device revoked"))
+                            try:
+                                self.connection.shutdown(socket.SHUT_RDWR)
+                            except OSError:
+                                pass
+                            return
+
+                threading.Thread(target=watch, daemon=True).start()
+                try:
+                    res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started,
+                                         **({"slug": slug} if slug else {}))
+                finally:
+                    over.set()
                 if gone:
                     return
                 self._stream_send({"queued": res["queued"]} if res.get("queued") else {"done": {k: res.get(k) for k in (

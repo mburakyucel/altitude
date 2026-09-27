@@ -442,6 +442,7 @@ def main(argv=None) -> None:
     service.add_argument("--directory", type=Path, help="existing source deployment certificate directory")
     service.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
+    sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
 
     args = ap.parse_args(argv)
     if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
@@ -511,6 +512,8 @@ def main(argv=None) -> None:
                     sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
                 out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
         except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
             sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
         except OSError as exc:
             sys.exit(f"alt {c}: altd unavailable: {exc}")
@@ -851,6 +854,15 @@ def main(argv=None) -> None:
         return
     if c == "tls-init":
         from altitude import server; out(server.tls_init(args.ip)); return
+    if c == "pair":
+        if ACTOR != config.OPERATOR_ACTOR:
+            sys.exit("alt pair: only the operator pairs devices")
+        from altitude import access
+        code = access.issue_code()
+        print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes)\n"
+              f"On the device, open {'https' if config.TLS else 'http'}://{config.HOST}:{config.PORT}/pair?code={code['code']}\n"
+              "or type the code on its Pair this device screen. A new code cancels this one.")
+        return
 
 
 if __name__ == "__main__":

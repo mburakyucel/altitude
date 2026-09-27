@@ -3,12 +3,16 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { expect, test as base } from "@playwright/test";
 
-/** Every spec owns a disposable real API/storage process serving this checkout's built bundle. */
-export const test = base.extend<{ service: string; scenario: string; single: boolean; serviceScript: string }>({
+type Service = { url: string; device: string };
+
+/** Every spec owns a disposable real API/storage process serving this checkout's built bundle. Its browser is
+ * paired with that service unless a spec sets `paired: false` to walk the pairing screen itself. */
+export const test = base.extend<{ altitude: Service; service: string; scenario: string; single: boolean; serviceScript: string; paired: boolean }>({
   scenario: ["acceptance", { option: true }],
   single: [false, { option: true }],
   serviceScript: ["", { option: true }],
-  service: async ({ scenario, single, serviceScript }, use) => {
+  paired: [true, { option: true }],
+  altitude: async ({ scenario, single, serviceScript }, use) => {
     const script = serviceScript || (["acceptance", "tasks"].includes(scenario) ? "acceptance-service.py" : `project-${scenario}-service.py`);
     const child = spawn("python3", [`e2e/${script}`, ...(single ? ["single"] : scenario === "tasks" ? ["tasks"] : [])], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -28,7 +32,7 @@ export const test = base.extend<{ service: string; scenario: string; single: boo
       const data = JSON.parse(ready[0] as string);
       expect(data.disposable).toBe(true);
       expect(new URL(data.url).hostname).toBe("127.0.0.1");
-      await use(data.url as string);
+      await use({ url: data.url as string, device: data.device as string });
       expect(child.exitCode, `Disposable service died during the test: ${stderr}`).toBeNull();
       expect(child.signalCode, "Disposable service was killed during the test").toBeNull();
     } finally {
@@ -41,12 +45,20 @@ export const test = base.extend<{ service: string; scenario: string; single: boo
       expect(stderr, "The isolated server must not hide failed background workflows").toBe("");
     }
   },
+  service: async ({ altitude }, use) => { await use(altitude.url); },
   baseURL: async ({ service }, use) => { await use(service); },
+  // API calls made by a spec itself act as a paired device.
+  request: async ({ playwright, altitude }, use) => {
+    const request = await playwright.request.newContext({ baseURL: altitude.url, extraHTTPHeaders: { Cookie: `altitude_device=${altitude.device}` } });
+    await use(request);
+    await request.dispose();
+  },
   // Chromium strands a request issued while Playwright disables request interception after a page's
   // last route expires or is removed (the voice Send with image lost its POST under parallel runs).
   // This never-matching route keeps interception on for the whole test; Playwright continues
   // unmatched requests itself, without calling a test handler.
-  context: async ({ context }, use) => {
+  context: async ({ context, altitude, paired }, use) => {
+    if (paired) await context.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
     await context.route("altitude-e2e:keep-interception", () => undefined);
     await use(context);
   },

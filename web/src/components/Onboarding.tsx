@@ -66,7 +66,7 @@ export function NameForm({ onSaved, actions, save: label }: FormProps) {
 }
 
 /** The copyable command for the operator's own terminal. */
-function Command({ text }: { text: string }) {
+export function Command({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;

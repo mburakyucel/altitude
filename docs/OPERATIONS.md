@@ -66,6 +66,18 @@ through its task reply and report follow-ups and cannot mutate issues directly. 
 [GitHub issues](CLI.md#github-issues) for arguments and the rule excluding home paths and private
 incident evidence from published text.
 
+## Devices and lockout recovery
+
+**Settings → Devices** lists every paired browser with the day it paired and was last used. **Remove**
+asks once, then signs that browser out at once: its next request shows the pairing screen and its
+open streams end. Removing the browser you are using returns it to the pairing screen too.
+
+Nothing on the network can unlock Altitude. If no paired browser is at hand, open a shell on the
+computer running Altitude, locally or over SSH, and run `alt pair`; it writes a fresh code directly
+to `~/.config/altitude/access/`, so it works whatever address Altitude listens on and whether or not
+a browser is open. To sign out every browser, remove `~/.config/altitude/access/devices.json`. Back up
+the folder only to a place as private as `~/.config`.
+
 ## Remove a project
 
 In the project's **More actions** menu, **Remove project** detaches its coordinator and stops

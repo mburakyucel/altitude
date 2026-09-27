@@ -10,7 +10,7 @@ import threading
 import unittest
 
 from tests.support import AltitudeCase
-from altitude import server
+from altitude import access, server
 
 
 class _RecordingHTTPServer(server.ThreadingHTTPServer):
@@ -36,6 +36,8 @@ class TestDesignViewer(AltitudeCase):
         tokens.mkdir(parents=True)
         (tokens / "tokens.css").write_bytes(b":root { --page: #fff; }")
         (self.repo / "secret.css").write_bytes(b"/* outside both trees */")
+        self.device_key, device = access.redeem(access.issue_code()["code"], "Test browser")
+        self.pass_ = access.design_pass(self.project, device["id"])
 
         self.bare = "bare-project"
         self.bare_repo = self.tmp / "bare"
@@ -62,11 +64,11 @@ class TestDesignViewer(AltitudeCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def _get(self, path):
+    def _get(self, path, cookie=""):
         """One raw GET, so a traversal path reaches the server exactly as a browser would send it."""
         host, port = self.httpd.server_address
         with socket.create_connection((host, port), timeout=2) as sock:
-            sock.sendall(f"GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+            sock.sendall(f"GET {path} HTTP/1.0\r\nHost: {host}\r\n{cookie}Connection: close\r\n\r\n".encode())
             chunks = []
             while True:
                 chunk = sock.recv(65536)
@@ -81,24 +83,22 @@ class TestDesignViewer(AltitudeCase):
             headers[name.lower()] = value.strip()
         return int(lines[0].split()[1]), headers, body
 
-    def test_url_is_the_entry_point_of_a_project_that_has_boards(self):
-        self.assertEqual(server.design_viewer_url(self.project),
-                         f"/design/{self.project}/design/wireframes/index.html")
+    def test_url_is_the_stable_link_of_a_project_that_has_boards(self):
+        self.assertEqual(server.design_viewer_url(self.project), f"/design/{self.project}")
         self.assertIsNone(server.design_viewer_url(self.bare))
         self.assertIsNone(server.design_viewer_url("not-a-project"))
 
     def test_project_view_carries_the_viewer_url(self):
-        self.assertEqual(server.project_view(self.project)["design_viewer"],
-                         f"/design/{self.project}/design/wireframes/index.html")
+        self.assertEqual(server.project_view(self.project)["design_viewer"], f"/design/{self.project}")
         self.assertIsNone(server.project_view(self.bare)["design_viewer"])
 
     def test_serves_a_board_and_the_tokens_its_stylesheet_imports(self):
         for path, ctype, body in (
-            (f"/design/{self.project}/design/wireframes/index.html", "text/html; charset=utf-8",
+            (f"/design/{self.project}/{self.pass_}/design/wireframes/index.html", "text/html; charset=utf-8",
              b"<!doctype html><title>boards</title>"),
-            (f"/design/{self.project}/design/wireframes/viewer.css", "text/css; charset=utf-8",
+            (f"/design/{self.project}/{self.pass_}/design/wireframes/viewer.css", "text/css; charset=utf-8",
              b'@import url("../../web/design/tokens.css");'),
-            (f"/design/{self.project}/web/design/tokens.css", "text/css; charset=utf-8",
+            (f"/design/{self.project}/{self.pass_}/web/design/tokens.css", "text/css; charset=utf-8",
              b":root { --page: #fff; }"),
         ):
             with self.subTest(path=path):
@@ -112,21 +112,22 @@ class TestDesignViewer(AltitudeCase):
                 self.assertEqual(headers["x-content-type-options"], "nosniff")
 
     def test_nothing_is_cached_so_an_edit_is_never_hidden(self):
-        _, headers, _ = self._get(f"/design/{self.project}/design/wireframes/index.html")
+        _, headers, _ = self._get(f"/design/{self.project}/{self.pass_}/design/wireframes/index.html")
         self.assertEqual(headers["cache-control"], "no-store")
 
     def test_an_edited_board_is_served_without_a_restart(self):
         (self.boards / "index.html").write_bytes(b"<!doctype html><title>edited</title>")
-        _, _, body = self._get(f"/design/{self.project}/design/wireframes/index.html")
+        _, _, body = self._get(f"/design/{self.project}/{self.pass_}/design/wireframes/index.html")
         self.assertEqual(body, b"<!doctype html><title>edited</title>")
 
-    def test_the_project_path_redirects_to_the_viewer(self):
+    def test_the_project_path_redirects_a_paired_browser_to_its_viewer(self):
         for path in (f"/design/{self.project}", f"/design/{self.project}/"):
             with self.subTest(path=path):
-                status, headers, _ = self._get(path)
+                status, headers, _ = self._get(path, f"Cookie: {access.COOKIE}={self.device_key}\r\n")
                 self.assertEqual(status, 302)
                 self.assertEqual(headers["location"],
-                                 f"/design/{self.project}/design/wireframes/index.html")
+                                 f"/design/{self.project}/{self.pass_}/design/wireframes/index.html")
+        self.assertEqual(self._get(f"/design/{self.project}")[0], 403)  # the CLI has no browser to pass
 
     def test_a_project_without_boards_is_a_plain_404(self):
         for path in (f"/design/{self.bare}", f"/design/{self.bare}/design/wireframes/index.html",
@@ -140,13 +141,13 @@ class TestDesignViewer(AltitudeCase):
     def test_only_the_listed_extensions_are_readable(self):
         for name in ("README.md", "serve.sh"):
             with self.subTest(name=name):
-                status, _, _ = self._get(f"/design/{self.project}/design/wireframes/{name}")
+                status, _, _ = self._get(f"/design/{self.project}/{self.pass_}/design/wireframes/{name}")
                 self.assertEqual(status, 404)
 
     def test_a_directory_is_not_listed(self):
-        for path in (f"/design/{self.project}/design/wireframes/",
+        for path in (f"/design/{self.project}/{self.pass_}/design/wireframes/",
                      f"/design/{self.project}/design/",
-                     f"/design/{self.project}/web/design/"):
+                     f"/design/{self.project}/{self.pass_}/web/design/"):
             with self.subTest(path=path):
                 status, _, body = self._get(path)
                 self.assertEqual(status, 404)
@@ -155,10 +156,10 @@ class TestDesignViewer(AltitudeCase):
     def test_the_rest_of_the_checkout_stays_unreachable(self):
         for path in (
             f"/design/{self.project}/secret.css",
-            f"/design/{self.project}/design/wireframes/../../secret.css",
-            f"/design/{self.project}/design/wireframes/..%2f..%2fsecret.css",
+            f"/design/{self.project}/{self.pass_}/design/wireframes/../../secret.css",
+            f"/design/{self.project}/{self.pass_}/design/wireframes/..%2f..%2fsecret.css",
             f"/design/{self.project}/%2e%2e/%2e%2e/etc/passwd",
-            f"/design/{self.project}/design/wireframes/....//....//secret.css",
+            f"/design/{self.project}/{self.pass_}/design/wireframes/....//....//secret.css",
         ):
             with self.subTest(path=path):
                 status, _, body = self._get(path)
@@ -169,7 +170,7 @@ class TestDesignViewer(AltitudeCase):
         outside = self.tmp / "elsewhere.css"
         outside.write_bytes(b"/* not a board */")
         (self.boards / "escape.css").symlink_to(outside)
-        status, _, body = self._get(f"/design/{self.project}/design/wireframes/escape.css")
+        status, _, body = self._get(f"/design/{self.project}/{self.pass_}/design/wireframes/escape.css")
         self.assertEqual(status, 404)
         self.assertNotIn(b"not a board", body)
 

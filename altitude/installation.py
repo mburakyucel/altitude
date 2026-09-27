@@ -522,7 +522,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
                 time.sleep(0.25)
             return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device, comparing the CA fingerprint, then open the URL."}
+                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device, comparing the CA fingerprint, then open the URL and pair the browser with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:

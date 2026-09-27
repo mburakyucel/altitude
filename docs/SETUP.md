@@ -157,6 +157,23 @@ pending until observed. Remove this CA in the same browser/OS certificate manage
 the installation; on iOS remove its profile under General → VPN & Device Management. Do not
 clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 
+### Pair each device
+
+Altitude opens only in browsers you pair, including the one on the computer running it. An
+unpaired browser shows **Pair this device**. In a terminal on that computer, locally or over SSH,
+run:
+
+```sh
+alt pair
+```
+
+It prints an eight-character code and a `/pair?code=…` link. Type the code on the device, or open
+the link there. A code works once, for ten minutes; a new code cancels the previous one and five
+wrong codes cancel it. A paired device stays paired for 400 days of disuse and renews while you use
+it. A paired device can also make a code in **Settings → Devices** for another one. On an iPhone,
+Safari and the Home Screen app keep separate cookies, so pair each of them; the Home Screen app
+appears in the list as "Home Screen app on iPhone". Clearing a browser's site data unpairs it.
+
 ### Home-screen app and bookmarks
 
 Open the trusted HTTPS URL and reload before adding Altitude. On iOS, use Safari's Share → Add to
@@ -187,7 +204,7 @@ Declining permission, or a browser without notifications, leaves Needs you and t
 
 ## First run in the browser
 
-With no project managed, the web app opens First run. Its four steps are skippable, go **‹ Back**
+After [pairing](#pair-each-device), with no project managed, the web app opens First run. Its four steps are skippable, go **‹ Back**
 without saving, keep their place in the URL across reloads and are each a row in
 **Settings → This machine** afterwards:
 

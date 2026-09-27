@@ -8,7 +8,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.support import SUITE  # imports the offline guards before application paths freeze
-from altitude import config, engines, installation, server, terminal
+from altitude import access, config, engines, installation, server, terminal
 
 
 def configure(*, expected_error=lambda _message: False):
@@ -43,7 +43,10 @@ def serve(handler=server.Handler, *, release=lambda: None):
     stopping = threading.Event()
     httpd.timeout = 0.5
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
-    print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True}), flush=True)
+    # The browser is paired like any other: a code from the real store, redeemed for this run's device key.
+    access.prepare()
+    device, _ = access.redeem(access.issue_code()["code"], "Playwright browser")
+    print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True, "device": device}), flush=True)
     try:
         # Finish registering an accepted request before cleanup joins its thread.
         while not stopping.is_set():

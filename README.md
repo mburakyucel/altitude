@@ -75,7 +75,8 @@ coding account's allowance and normal charges.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device), open the printed
-   HTTPS URL and use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
+   HTTPS URL, [pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
+   use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
 <details>
 <summary>Ask your coding agent to help install</summary>

@@ -146,6 +146,10 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("heading", { name: "Incident reports", exact: true })).toBeVisible();
       await expect(main.getByRole("radio", { name: "Keep incidents on this computer" })).toBeChecked();
       await expect(main.getByLabel("Repository")).toHaveCount(0);
+    } else if (route === "/settings/devices") {
+      await expect(main.getByRole("heading", { name: "Devices", exact: true })).toBeVisible();
+      await expect(main.getByRole("list", { name: "Paired devices" }).getByText("Playwright browser")).toBeVisible();
+      await expect(main.getByRole("button", { name: "Make a pairing code" })).toBeEnabled();
     } else if (route === "/settings/projects/:name") {
       await expect(main.getByRole("heading", { name: project.name, exact: true })).toBeVisible();
       await expect(main.getByRole("combobox", { name: "L3 engine" })).toBeVisible();

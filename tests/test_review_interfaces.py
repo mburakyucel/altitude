@@ -30,6 +30,7 @@ class TestReviewInterfaces(AltitudeCase):
         handler.path = path
         handler._body = lambda **kwargs: body
         handler._refused = lambda: None  # routing only; tests/test_request_boundary.py covers the boundary
+        handler._admit = lambda _parts: True  # and tests/test_access.py covers pairing
         handler._json = lambda value, status=200: (status, value)
         return handler.do_POST()
 

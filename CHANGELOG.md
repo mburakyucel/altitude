@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude opens only in browsers you pair. Run `alt pair` on the computer running Altitude, locally
+  or over SSH, and type the code it prints on the device's **Pair this device** screen, or open the
+  link it prints there. **Settings → Devices** lists paired devices, removes one at once and makes a
+  code for another. After updating, every browser, including the one on that computer, pairs once;
+  the `alt` CLI keeps working without a step.
+
 - English dictation gets sentence punctuation and capitals in any browser that runs WebAssembly
   in a worker. A small model bundled with Altitude runs on the device's CPU, adds only punctuation and
   capitals, and never changes your words. Each device downloads it (about 23 MB) from your Altitude

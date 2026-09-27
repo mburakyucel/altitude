@@ -247,7 +247,8 @@ only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
 until the user imports the public CA and verifies it; `alt doctor` and the installer report the CA
 path, SHA-256 fingerprint, URL and per-platform trust steps. Remote binding and trust remain explicit;
-HTTPS supplies no application login. See [setup](SETUP.md#trust-https-on-each-device).
+HTTPS identifies Altitude, and pairing (below) decides who may use it. See
+[setup](SETUP.md#trust-https-on-each-device).
 
 Every request passes the same checks before routing. Without TLS the `Host` must be an address or
 `localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which HTTPS refuses
@@ -259,9 +260,26 @@ leaves any other page's origin in place. A JSON body is at most 1 MiB; image mes
 recordings have their own limits. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
 
-altd creates `machine.key` in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside
-every runtime, source and project root) when it starts. Only the operator's account can read it; the
-`alt` CLI and the restart script send it as `X-Altitude-Key` with their requests to altd.
+Then `access.py` decides who is asking. The page and its files, `/ca.crt`, `GET /api/health`,
+`GET /api/access` and `POST /api/pair` answer anyone; every other request, including design boards,
+needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
+lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
+source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
+restart script send it as `X-Altitude-Key`, and it is compared in constant time. Only the operator's
+account can read it, so it proves a caller runs on this machine as the operator; Altitude's workers
+share that account, as they share its files. `alt pair` (operator only) writes one pairing code
+straight to `devices.json`: eight characters from an alphabet without look-alikes, valid ten minutes,
+stored as a SHA-256 hash. A new code replaces the old, and five wrong codes from anyone cancel it, so
+pairing works over SSH, with any bind address and without a running page. Redeeming the code gives
+the browser a random key in the `altitude_device` cookie (HttpOnly, SameSite=Strict, Secure over
+HTTPS, 400 days); `devices.json` keeps only its hash with the device's name, read from the user agent
+and whether the page runs as a Home Screen app, and the day it was last used. A device's cookie
+renews on its first request each day. Removing a device in Settings deletes its row: its next
+request gets 401, its open change, terminal and chat streams end within about a second, since each
+re-checks the device every second, and its design-board links stop opening. A chat turn whose stream
+ends this way still finishes and is logged. The file store needs only POSIX file locking and modes, so macOS
+behaves the same. The web app shows only the pairing screen until `GET /api/access` reports the
+browser paired, and returns to it on any 401.
 
 ### Project setup
 
@@ -939,8 +957,8 @@ may have arrived in part, so the page stops sending keys until the operator resu
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
-Every terminal request is refused unless it comes from Altitude's own page and not from Altitude
-itself. Its reads and streams pass the same-page rule every POST passes (see
+Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
+not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see
 [Responsibilities](#responsibilities)), and its POST bodies must be `application/json`. This stops
 another site open in the operator's browser from typing into a shell. Then `terminal.agent_connection`,
 asked once per connection since a connection keeps its client socket, finds the client end of the TCP
@@ -1887,19 +1905,24 @@ on the phone; typing remains available without speech services.
 
 ### Design evidence
 
-The same server serves each project's wireframe boards. `GET /design/<project>` redirects to
-`/design/<project>/design/wireframes/index.html`, read from that project's own deployment checkout on
+The same server serves each project's wireframe boards. `GET /design/<project>` redirects a paired
+browser to `/design/<project>/<pass>/design/wireframes/index.html`, read from that project's own deployment checkout on
 every request and sent uncached, so a merged board change needs no build step and no restart to be
 visible. Only the `design/wireframes/` and `web/design/` subtrees are readable and only the
 extensions a board needs; the resolved path must stay inside those subtrees, and a project without
 `design/wireframes/index.html`, a directory, and anything outside the rule are one plain 404. The
 tree is mirrored under the prefix because a board's stylesheet imports the build's design tokens two
-levels up. `/api/project` reports that URL only when the boards exist, and the project header's
+levels up. `/api/project` reports `/design/<project>` only when the boards exist, and the project header's
 overflow menu turns it into Design boards, opening in a new tab. Any project with boards gets one; the
 route knows nothing about this repository's own. Every file is served with
 `Content-Security-Policy: sandbox allow-scripts`: a board's scripts run in an opaque origin, so
 project content cannot act with Altitude's authority. From that origin the viewer cannot probe for a
-listed board that is missing, so the board's frame shows the server's plain 404.
+listed board that is missing, so the board's frame shows the server's plain 404. A browser sends no
+SameSite cookie with an opaque origin's requests, so the path carries `<pass>` instead: the paired
+browser's device id and an HMAC of the project, that id and the day under the machine key. It opens
+that project's boards alone, on the day it is made and the next, and only while the device stays
+paired, so removing a device ends its links too. Only the redirect for a paired browser mints one,
+and the boards are sent with `Referrer-Policy: no-referrer` so it stays off other sites.
 
 Pending task designs use captured screenshots and text, bound to the existing question revision.
 The current L2 supplies an explicit selection through `alt task block --design-file`, optionally
