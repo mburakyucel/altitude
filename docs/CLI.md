@@ -1136,9 +1136,9 @@ check, with or without `--merge`. It waits before fetching, publishing or checki
 when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
 wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds, independently of `--wait`, which still bounds hosted-check
-polling. A timeout refuses without selecting a candidate or publishing changes; retry explicitly
-when ready.
+Admission waits at most 3600 seconds, independently of `--wait`, which bounds the shared CI and
+owner-assessment wait (600 seconds by default). An admission timeout refuses without selecting a
+candidate or publishing changes; retry explicitly when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
@@ -1146,6 +1146,18 @@ adopted history. Conflicts abort integration and retain local work for the owner
 not stashed. Required checks, review and original approval sources still govern delivery.
 Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
+
+When integration makes a completed review assessment stale, a merging L2 invocation keeps its turn
+while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
+deadline; failed or unavailable checks end the wait. Keep landing alive in a native background/tool
+session and read its partial output. Inspect the printed head/base and current conversation, post any
+explanation, then run `alt task review assess --review-id <id> --file <assessment.json>` in a separate
+command. Assess every stale request, including proposals, and collect the original landing result.
+No assessment or finding disposition is carried forward automatically. If code needs edits or another
+review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
+head/base, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
+immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
+Final review/context, CI, holds and approval checks still run; review refusal leaves the merge hold intact.
 
 The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
 in other repositories do not wait for it. The containerized
@@ -1368,7 +1380,9 @@ requires evidence. With no findings, use an empty array and an assessment reason
 assessing; post the outcome explanation before assessment so it is included in the final context.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.
 This updates L2's assessment without another reviewer invocation.
-Code, base or subsequent conversation changes require changes reassessment before merge. Later
+Code, base or subsequent conversation changes require changes reassessment before merge. During
+[concurrent landing](#concurrent-landings), the current owner can assess the pinned integrated candidate
+while the original landing command retains its turn; this invokes no reviewer. Later
 proposal/source/context changes require proposal assessment or deliberate new review; optional
 `assess --proposal-message` identifies a deliberately revised proposal. Every accepted request must be
 assessed or authorized for withdrawal before merge, including earlier changes requests. Later L2

@@ -677,8 +677,9 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError):
             reviews.require_merge(self.project, self.slug, {**self.pair(), "head_sha": "a" * 40})
         self.commit("value.py", "VALUE = 3\n")
-        with self.assertRaises(T.TransitionError):
+        with self.assertRaises(reviews.AssessmentRequired) as stale:
             reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(stale.exception.review_id, result['id'])
         self.assess(result)
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Correction: retain the empty result too.")
         self.assertEqual(reviews.view(self.project, self.slug)["latest"]["coverage"], "earlier")
@@ -686,6 +687,16 @@ class TestReviews(AltitudeCase):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_unfinished_request_takes_precedence_over_stale_assessment(self):
+        completed = self.run_review()
+        self.assess(completed)
+        self.request(subject='proposal')
+        T.message(self.project, self.slug, 'l3', 'New context invalidates the earlier assessment.')
+        with self.assertRaises(T.TransitionError) as refused:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertNotIsInstance(refused.exception, reviews.AssessmentRequired)
+        self.assertIn('must finish', str(refused.exception))
 
     def test_changed_main_base_requires_new_candidate_assessment(self):
         result = self.run_review()
@@ -699,6 +710,16 @@ class TestReviews(AltitudeCase):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_assessment_preserves_concurrent_landing_fetch_receipt(self):
+        result = self.run_review()
+        branch = 'worktree-' + self.slug
+        git('push', '-q', 'origin', branch, cwd=self.worktree)
+        git('fetch', '-q', 'origin', branch, cwd=self.worktree)
+        fetched_head = git('rev-parse', 'FETCH_HEAD', cwd=self.worktree)
+        self.assertNotEqual(fetched_head, git('rev-parse', 'origin/main', cwd=self.worktree))
+        self.assess(result)
+        self.assertEqual(git('rev-parse', 'FETCH_HEAD', cwd=self.worktree), fetched_head)
 
     def test_failure_retry_preserves_operator_requirement(self):
         review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
