@@ -117,7 +117,7 @@ export class RecognitionCapture {
       () => { this.punctuationFailed = true; },
     );
     this.recognizer.onresult = (event) => {
-      if (this.state === "inactive") return;
+      if (this.state === "inactive" || this.aborting || this.recognizerEnded) return;
       this.finals = [];
       this.interim = "";
       for (let index = 0; index < event.results.length; index++) {
@@ -132,6 +132,7 @@ export class RecognitionCapture {
       this.onupdate?.(this.text);
     };
     this.recognizer.onerror = (event) => {
+      if (this.state === "inactive" || this.aborting || this.recognizerEnded) return;
       if (event.error === "not-allowed" || event.error === "service-not-allowed") this.failure = "denied";
       else if (event.error !== "no-speech" && event.error !== "aborted") this.failure = "failed";
     };
@@ -197,8 +198,13 @@ export class RecognitionCapture {
     const input = [...this.lead, ...words].slice(from);
     const kept = this.punctuated.slice(0, keep - lead);
     this.punctuating = punctuator
-      .then((model) => model.punctuate(input))
+      .then((model) => {
+        // A cancelled capture must not queue stale inference when the shared model finishes loading.
+        if (this.state === "inactive" || this.aborting) return;
+        return model.punctuate(input);
+      })
       .then((output) => {
+        if (!output || this.state === "inactive" || this.aborting) return;
         if (output.length !== input.length) throw new Error("The punctuation model changed the word count.");
         const revised = output.slice(keep - from);
         // A kept sentence end starts the next sentence, whatever the model now makes of that boundary.
@@ -210,7 +216,7 @@ export class RecognitionCapture {
         this.source = words;
         this.sync();
       })
-      .catch(() => { this.punctuationFailed = true; })
+      .catch(() => { if (this.state !== "inactive" && !this.aborting) this.punctuationFailed = true; })
       .finally(() => {
         this.punctuating = null;
         if (this.state === "inactive" || this.aborting) return;

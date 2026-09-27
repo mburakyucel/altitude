@@ -1,6 +1,6 @@
 import { test } from "./fixtures";
 import { expect, type Page, type TestInfo } from "@playwright/test";
-import { fixtureProject } from "./fixture-data";
+import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /*
@@ -33,7 +33,7 @@ function views(page: Page, info: TestInfo) {
   return {
     phone: info.project.name === "phone",
     main,
-    field: main.getByRole("textbox", { name: /^Message L3 about /, includeHidden: true }),
+    field: main.getByRole("textbox", { name: /^Message (?:L3 about |the L2$)/, includeHidden: true }),
     send: main.getByRole("button", { name: "Send", exact: true }),
     mic: main.getByRole("button", { name: "Start voice input", exact: true }),
     stop: main.getByRole("button", { name: "Stop voice input", exact: true }),
@@ -299,9 +299,25 @@ test.describe("recognizer text as heard", () => {
     // Each capture's microphone is a steady tone of its own, so a restart must show a moving waveform
     // from a live stream, not the flat one the operator saw.
     await page.addInitScript(`
+      const NativeAudioContext = window.AudioContext;
       window.fixtureStreams = [];
+      window.fixtureWaveforms = [];
+      window.AudioContext = class extends NativeAudioContext {
+        constructor(...args) {
+          super(...args);
+          this.fixtureCloseCalled = false;
+          window.fixtureWaveforms.push(this);
+        }
+        close() {
+          this.fixtureCloseCalled = true;
+          if (!window.fixtureHoldClose) return super.close();
+          return new Promise((resolve, reject) => {
+            this.fixtureReleaseClose = () => super.close().then(resolve, reject);
+          });
+        }
+      };
       Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
-        const context = new AudioContext();
+        const context = new NativeAudioContext();
         const oscillator = context.createOscillator();
         const destination = context.createMediaStreamDestination();
         oscillator.connect(destination);
@@ -361,8 +377,8 @@ test.describe("recognizer text as heard", () => {
     }
 
     // A recognizer still shutting down: Cancel returns at once, and a restart opens the microphone
-    // only once that recognizer has ended.
-    await page.evaluate("window.fixtureHoldAbort = true");
+    // only once that recognizer has ended and its waveform audio context has closed.
+    await page.evaluate("window.fixtureHoldAbort = true; window.fixtureHoldClose = true");
     await v.mic.click();
     await expect(v.listening).toBeVisible();
     await hear(page, ["gone at once"]);
@@ -383,8 +399,27 @@ test.describe("recognizer text as heard", () => {
     // The cancelled recognizer's stream stays open until it ends; the restart has not opened one yet.
     expect(await page.evaluate("window.fixtureStreams.length")).toBe(5);
     expect(await page.evaluate(`window.fixtureStreams[4].getTracks().every(track => track.readyState === "live")`)).toBe(true);
+    expect(await page.evaluate("window.fixtureWaveforms[4].fixtureCloseCalled")).toBe(false);
     await page.evaluate("window.fixtureHoldAbort = false; window.fixtureRecognizers[4].end()");
     await expect.poll(() => page.evaluate(`window.fixtureStreams[4].getTracks().every(track => track.readyState === "ended")`)).toBe(true);
+    await expect.poll(() => page.evaluate("window.fixtureWaveforms[4].fixtureCloseCalled")).toBe(true);
+    await walk.state("08b-restart-waits-for-waveform-close", {
+      visible: [opening, v.field, v.cancel],
+      hidden: [v.mic, v.listening],
+    });
+    expect(await page.evaluate("window.fixtureStreams.length")).toBe(5);
+    expect(await recognizers()).toBe(5);
+    await walk.state("08c-cancel-while-waveform-closes", {
+      action: () => v.cancel.click(),
+      visible: [v.mic, v.field],
+      hidden: [opening, v.cancel, v.listening],
+    });
+    await expect(v.field).toHaveValue("Typed draft");
+    await expect(v.field).toBeEditable();
+    await v.mic.click();
+    await expect(opening).toBeVisible();
+    expect(await page.evaluate("window.fixtureStreams.length")).toBe(5);
+    await page.evaluate("window.fixtureHoldClose = false; window.fixtureWaveforms[4].fixtureReleaseClose()");
     await expect(v.listening).toBeVisible();
     await expect(opening).toBeHidden();
     await expect.poll(loudest).toBeGreaterThan(0.5);
@@ -411,6 +446,47 @@ test.describe("recognizer text as heard", () => {
     await expect(v.field).toHaveValue("");
     expect(posts).toHaveLength(1);
     expect(JSON.parse(posts[0]!)).toMatchObject({ text: "Typed draft fresh words" });
+  });
+
+  test("browser recognition: task composer repeatedly cancels with X, restarts, and Stop preserves the typed draft", async ({ page, request }, info) => {
+    const project = await fixtureProject(request);
+    const task = await fixtureTask(request, project.name);
+    const walk = walkthrough(page, info);
+    const v = views(page, info);
+    await browserBackend(page);
+    await page.addInitScript(FAKE_RECOGNIZER);
+    await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`,
+      (route) => route.fulfill({ json: { ...task, state: "running" } }));
+    await walk.open(`${project.path}/tasks/${task.slug}`);
+    await v.field.fill("Task draft");
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await walk.state(`task-${cycle}-listening`, {
+        action: () => v.mic.click(),
+        visible: [v.listening, v.field, v.wave, v.stop, v.cancel],
+        hidden: [v.mic, v.transcribing],
+      });
+      await hear(page, [`discard ${cycle}`]);
+      await expect(v.field).toHaveValue(`Task draft discard ${cycle}`);
+      await walk.state(`task-${cycle}-x-discards`, {
+        action: () => v.cancel.click(),
+        visible: [v.mic, v.field],
+        hidden: [v.stop, v.cancel, v.wave, v.transcribing],
+      });
+      await expect(v.field).toHaveValue("Task draft");
+      await expect(v.field).toBeEditable();
+      await expect(v.mic).toBeFocused();
+    }
+    await v.mic.click();
+    await expect(v.listening).toBeVisible();
+    await hear(page, ["fresh task words"]);
+    await walk.state("task-restarted-stop-lands-words", {
+      action: () => v.stop.click(),
+      visible: [v.field, v.mic, v.send],
+      hidden: [v.stop, v.cancel, v.wave, v.transcribing],
+    });
+    await expect(v.field).toHaveValue("Task draft fresh task words");
+    await expect(v.field).toBeEditable();
+    expect(await page.evaluate("window.fixtureRecognizers.length")).toBe(3);
   });
 
   test("browser recognition: denied by the recognizer, and a browser without one says typing works", async ({ page, request }, info) => {

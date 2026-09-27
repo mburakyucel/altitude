@@ -354,3 +354,17 @@ draft and nothing else appears; record again and use the arrow to transcribe and
 then cancel a recording and deny microphone access once and confirm the
 typed draft remains usable. If Safari reports that voice needs HTTPS, use your configured secure URL and verify the local CA is
 enabled under Certificate Trust Settings.
+
+For a cancel/restart failure, note the device, OS/browser version, and whether Altitude is in a
+browser tab or a Home Screen app. In a project and task conversation, keep a short typed draft,
+dictate, tap X, then tap the microphone and speak again; repeat three times. X preserves the typed
+draft and leaves the keyboard closed. A restart waits for recognition to end and for the waveform
+audio context to close before acquiring audio, with at most three seconds for each wait. Record
+whether it stays on **Opening microphone…**,
+shows **Listening…** with a moving or flat waveform, or reports an error, and whether words appear.
+Cancel remains available during shutdown waits. Compare one Stop → microphone cycle with X →
+microphone. If the failure occurs in an already-open tab, preserve the observations and draft before
+one reload and repeat: this distinguishes the loaded client from the currently served build; a
+reload is a diagnostic comparison, not successful restart acceptance. Native success requires
+repeated capture and transcription on the affected device without further reloads; Chromium's
+scripted recognition and synthetic audio do not establish that result.

@@ -194,6 +194,102 @@ describe("RecognitionCapture", () => {
     expect(RecognitionCapture.idle()).toBeNull();
   });
 
+  it.each(["cancel", "cancel after Stop", "timeout"])("%s while the model loads does not queue abandoned words ahead of the next capture", async (ending) => {
+    let loaded!: (model: { punctuate: (words: readonly string[]) => Promise<string[]> }) => void;
+    const loading = new Promise<{ punctuate: (words: readonly string[]) => Promise<string[]> }>((resolve) => { loaded = resolve; });
+    const punctuate = vi.fn(async (words: readonly string[]) => sentence(words));
+    punctuationFixture.load = () => loading;
+    const abandoned = new RecognitionCapture(stream, { lang: "en-US" });
+    abandoned.start();
+    FakeSpeechRecognition.instances[0]!.hear(["discard these words"]);
+    if (ending !== "cancel") abandoned.stop();
+    if (ending === "timeout") await vi.advanceTimersByTimeAsync(3000);
+    else abandoned.cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(abandoned.state).toBe("inactive");
+
+    const next = new RecognitionCapture(stream, { lang: "en-US" });
+    next.start();
+    FakeSpeechRecognition.instances[1]!.hear(["fresh words"]);
+    loaded({ punctuate });
+    await vi.advanceTimersByTimeAsync(0);
+    next.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(punctuate.mock.calls).toEqual([[["fresh", "words"]]]);
+    expect(next.text).toBe("Fresh words.");
+    expect(abandoned.text).toBe("discard these words");
+  });
+
+  it.each(["cancel", "timeout"])("in-flight punctuation cannot change a capture after %s", async (ending) => {
+    let answer!: (words: string[]) => void;
+    punctuationFixture.load = async () => ({ punctuate: () => new Promise<string[]>((resolve) => { answer = resolve; }) });
+    const capture = new RecognitionCapture(stream, { lang: "en-US" });
+    const stopped = vi.fn();
+    const updated = vi.fn();
+    capture.onstop = stopped;
+    capture.onupdate = updated;
+    capture.start();
+    FakeSpeechRecognition.instances[0]!.hear(["words already landed"]);
+    await vi.advanceTimersByTimeAsync(0);
+    capture.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    if (ending === "cancel") capture.cancel();
+    else await vi.advanceTimersByTimeAsync(10000);
+    expect(capture.state).toBe("inactive");
+    updated.mockClear();
+    answer(["Words", "already", "landed."]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(capture.text).toBe("words already landed");
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(updated).not.toHaveBeenCalled();
+  });
+
+  it("Cancel ignores native words and errors while its recognizer is still ending", async () => {
+    const capture = new RecognitionCapture(stream, { lang: "en-US" });
+    capture.start();
+    const recognizer = FakeSpeechRecognition.instances[0]!;
+    recognizer.answersAbort = false;
+    recognizer.hear(["discarded"]);
+    await vi.advanceTimersByTimeAsync(0);
+    const updated = vi.fn();
+    capture.onupdate = updated;
+    capture.cancel();
+    recognizer.hear(["late cancelled words"]);
+    recognizer.onerror?.({ error: "not-allowed" });
+    expect(capture.text).toBe("discarded");
+    expect(capture.failure).toBeNull();
+    expect(updated).not.toHaveBeenCalled();
+    recognizer.silence();
+    expect(capture.state).toBe("inactive");
+  });
+
+  it("Stop accepts its final phrase before native end and ignores later words and refusal during punctuation", async () => {
+    let answer!: (words: string[]) => void;
+    punctuationFixture.load = async () => ({ punctuate: () => new Promise<string[]>((resolve) => { answer = resolve; }) });
+    const capture = new RecognitionCapture(stream, { lang: "en-US" });
+    const stopped = vi.fn();
+    capture.onstop = stopped;
+    capture.start();
+    const recognizer = FakeSpeechRecognition.instances[0]!;
+    recognizer.answersStop = false;
+    recognizer.hear([], "last");
+    capture.stop();
+    recognizer.hear(["last phrase"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(capture.text).toBe("last phrase");
+    recognizer.silence();
+    recognizer.hear(["late replacement"]);
+    recognizer.onerror?.({ error: "not-allowed" });
+    expect(capture.text).toBe("last phrase");
+    expect(capture.failure).toBeNull();
+    expect(stopped).not.toHaveBeenCalled();
+    answer(["Last", "phrase."]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(capture.text).toBe("Last phrase.");
+    expect(capture.failure).toBeNull();
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
   it("other languages load no model and keep the recognizer's text", async () => {
     const load = vi.fn(punctuationFixture.load);
     punctuationFixture.load = load;
