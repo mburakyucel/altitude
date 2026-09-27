@@ -1715,6 +1715,12 @@ when ready, even unchanged. Relevant revisions and checks precede a completed-wo
 independent work need not finish. Answers settle only their stated scope and preserve required work.
 Guidance waits for the owner's checkpoint; it considers an earlier answer with later guidance before acting.
 No message classifier or automatic invalidation supplies that judgment.
+An open operator question naming or linking the held PR supplies its single response surface,
+including a freeform question. The generated review card stays hidden until the owner resolves
+that question, including while its submitted response waits for interpretation. This presentation
+rule supplies no merge authority: an unrelated answer mentioning the PR never counts as approval,
+and the held-review fallback returns after resolution when still needed. Independent questions and
+ordinary chat remain available. The changes-review exception still requires quick options.
 Existing stopped/fault cards link to their ordinary task controls; an operational
 pause with no open question offers Resume through the existing daemon operation.
 If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and
@@ -1940,7 +1946,7 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, no open question with options links its PR and the PR is not already
+at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
