@@ -39,7 +39,7 @@ class TestChatStream(AltitudeCase):
         body = json.dumps({"project": self.project, "text": "hello"}).encode()
         host, port = self.httpd.server_address
         with socket.create_connection((host, port), timeout=5) as sock:
-            sock.sendall(b"POST /api/chat HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+            sock.sendall(b"POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
                          + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
             self.assertIn(b"200", sock.recv(64))  # the stream opened, then the page is refreshed
         self.assertTrue(finished.wait(10), "the turn was unwound when the client left")

@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -83,6 +83,7 @@ def design_viewer_url(project: str) -> str | None:
 # on this computer, the network or a hosted provider. Browser recognition never uploads. Altitude
 # owns no speech model.
 VOICE_MAX_BODY = 16 << 20
+BODY_LIMIT = 1 << 20  # every other JSON request; image messages and recordings have their own limits
 VOICE_TYPES = {
     "audio/mp4": ".m4a",
     "audio/webm": ".webm",
@@ -1314,7 +1315,7 @@ class Handler(BaseHTTPRequestHandler):
         shows what is on main, with nothing to rebuild after a merge. Two subtrees of that checkout
         are readable, only the listed extensions, and nothing is cached, so an edit that lands is the
         edit the browser draws. A project without boards, a directory, and an escape attempt are all
-        the same plain 404."""
+        the same plain 404. Each file is served in a sandbox, so a board's scripts cannot act as Altitude."""
         if len(parts) > 2 and parts[2] == "tasks":
             if len(parts) != 7:
                 return self._plain("Design unavailable", 404)
@@ -1339,6 +1340,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # Boards are project content: their scripts run in an opaque origin, without Altitude's authority.
+        self.send_header("Content-Security-Policy", "sandbox allow-scripts")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1412,6 +1416,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "public, max-age=31536000, immutable" if immutable else "no-store")
+        # Another site cannot frame Altitude to steer the operator's clicks.
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1420,9 +1427,10 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise images.ImageError("Invalid message size.", 400)
-        if max_bytes is not None and (n < 0 or n > max_bytes):
+        if n < 0 or n > (max_bytes or BODY_LIMIT):
             self.close_connection = True
-            raise images.ImageError("Message is too large. Use up to 4 images, 10 MB each and 20 MB total.", 413)
+            raise images.ImageError("Message is too large. Use up to 4 images, 10 MB each and 20 MB total."
+                                    if max_bytes is not None else "Request is too large.", 413)
         raw = self.rfile.read(n)
         if max_bytes is not None and len(raw) != n:
             raise images.ImageError("The message upload was incomplete.", 400)
@@ -1443,7 +1451,6 @@ class Handler(BaseHTTPRequestHandler):
             raise images.ImageError("Image access denied.", 403)
 
     def _image_request(self, body: dict) -> dict:
-        self._image_origin()
         if self.headers.get_content_type() != "application/json":
             raise images.ImageError("Image messages require JSON input.", 415)
         try:
@@ -1513,22 +1520,34 @@ class Handler(BaseHTTPRequestHandler):
         log(f"voice transcription: {len(text)} characters from {length} uploaded bytes")
         return self._json({"text": text})
 
-    def _terminal_denied(self, *, json_body: bool) -> str | None:
-        """Why a terminal request is refused: a cross-site page (the terminal is command execution, so a
-        page elsewhere must not be able to type into it) or one of Altitude's own agents."""
+    def _cross_site(self) -> bool:
+        """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
+        at all (the `alt` CLI) sends neither header."""
         origin = self.headers.get("Origin")
-        if (self.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none")
-                or origin and urlparse(origin).netloc != self.headers.get("Host")
-                or json_body and self.headers.get_content_type() != "application/json"):
-            return "Terminal requests must come from Altitude's own page."
-        # Over plain HTTP a DNS-rebinding page names its own host in both Origin and Host; HTTPS refuses it
-        # at the certificate. Without TLS the terminal answers only an address or localhost.
+        scheme = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
+        return (self.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none")
+                or bool(origin) and origin != f"{scheme}://{self.headers.get('Host')}")
+
+    def _refused(self) -> str | None:
+        """Why a request is refused before routing. Over plain HTTP a DNS-rebinding page names its own host in
+        both Origin and Host (HTTPS refuses it at the certificate), so without TLS Altitude answers only an
+        address or localhost. Every action must come from Altitude's own page: a page on another site can make
+        the operator's browser send a request it cannot read the answer to."""
         host = urlparse(f"//{self.headers.get('Host') or ''}").hostname or ""
         if not isinstance(self.connection, ssl.SSLSocket) and host != "localhost":
             try:
                 ipaddress.ip_address(host)
             except ValueError:
-                return "Over plain HTTP, open the terminal at Altitude's address or localhost."
+                return "Over plain HTTP, open Altitude at its address or localhost."
+        if self.command == "POST" and self._cross_site():
+            return "Requests must come from Altitude's own page."
+        return None
+
+    def _terminal_denied(self, *, json_body: bool) -> str | None:
+        """Why a terminal request is refused: a cross-site page (the terminal is command execution, so a
+        page elsewhere must not be able to type into it) or one of Altitude's own agents."""
+        if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
+            return "Terminal requests must come from Altitude's own page."
         # One connection keeps one client socket, so its first terminal request decides for the rest.
         if self._agent is None:
             self._agent = terminal.agent_connection(self.client_address, self.connection.getsockname())
@@ -1673,6 +1692,9 @@ class Handler(BaseHTTPRequestHandler):
             quiet = 0.0
 
     def do_GET(self) -> None:
+        refused = self._refused()
+        if refused:
+            return self._json({"error": refused}, 403)
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
         q = parse_qs(u.query)
@@ -1809,6 +1831,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(result, code)
 
     def do_POST(self) -> None:
+        refused = self._refused()
+        if refused:
+            self.close_connection = True  # the unread body cannot be mistaken for the next request
+            return self._json({"error": refused}, 403)
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
         image_submission = False
@@ -2661,6 +2687,11 @@ def main(host: str | None = None, port: int | None = None) -> None:
             raise SystemExit(1) from e
     host = host or config.HOST
     port = port or config.PORT
+    try:
+        access.prepare()
+    except OSError as exc:
+        log(f"cannot prepare the private access store ({exc}); refusing to start")
+        raise SystemExit(1) from exc
     try:
         context = tls.check(host) if config.TLS else None
     except (tls.TLSFailure, OSError) as exc:

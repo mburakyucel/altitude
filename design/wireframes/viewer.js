@@ -396,7 +396,9 @@
   if (window.innerWidth < 760) document.body.classList.add('no-rail');
   build();
   buildRail();
-  checkFiles();
+  // Altitude serves the boards in a sandbox: an opaque origin cannot probe, so a missing board shows the
+  // server's own "not found" in its frame instead.
+  if (window.origin !== 'null' || location.protocol === 'file:') checkFiles();
   markCurrent();
   fitAll(false);
 })();

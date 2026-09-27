@@ -29,6 +29,7 @@ class TestReviewInterfaces(AltitudeCase):
         handler = object.__new__(server.Handler)
         handler.path = path
         handler._body = lambda **kwargs: body
+        handler._refused = lambda: None  # routing only; tests/test_request_boundary.py covers the boundary
         handler._json = lambda value, status=200: (status, value)
         return handler.do_POST()
 

@@ -14,13 +14,13 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import config, dispatch, git_policy, incidents, state as S  # noqa: E402
+from altitude import access, config, dispatch, git_policy, incidents, state as S  # noqa: E402
 
 
 ROOT = config.REPO
@@ -140,7 +140,9 @@ def fetch(path: str, *, timeout: float = 2.0) -> bytes:
     last_error: Exception | None = None
     for scheme in schemes:
         try:
-            with urlopen(f"{scheme}://{host}:{port}{path}", timeout=timeout,
+            # The address is this machine's own, so the key never leaves it.
+            request = Request(f"{scheme}://{host}:{port}{path}", headers={access.KEY_HEADER: access.machine_key() or ""})
+            with urlopen(request, timeout=timeout,
                          context=context if scheme == "https" else None) as response:
                 if response.status != 200:
                     raise RestartError(f"{path} returned HTTP {response.status}")

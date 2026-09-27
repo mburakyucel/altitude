@@ -249,6 +249,20 @@ until the user imports the public CA and verifies it; `alt doctor` and the insta
 path, SHA-256 fingerprint, URL and per-platform trust steps. Remote binding and trust remain explicit;
 HTTPS supplies no application login. See [setup](SETUP.md#trust-https-on-each-device).
 
+Every request passes the same checks before routing. Without TLS the `Host` must be an address or
+`localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which HTTPS refuses
+at the certificate. Every POST must come from Altitude's own page or from a client that is no page:
+`Sec-Fetch-Site`, when present, must be `same-origin` or `none`, and an `Origin` must name the
+request's `Host`. The `alt` CLI sends neither header; another site open in the operator's browser
+cannot make it send an action. The Vite dev proxy gives the dev page's own requests altd's origin and
+leaves any other page's origin in place. A JSON body is at most 1 MiB; image messages and voice
+recordings have their own limits. The web app's pages refuse to be framed by any page
+(`frame-ancestors 'none'`).
+
+altd creates `machine.key` in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside
+every runtime, source and project root) when it starts. Only the operator's account can read it; the
+`alt` CLI and the restart script send it as `X-Altitude-Key` with their requests to altd.
+
 ### Project setup
 
 `project_setup.py` owns the concrete folder, repository, instructions, guards and coordinator
@@ -926,12 +940,11 @@ may have arrived in part, so the page stops sending keys until the operator resu
 folder, and the reason and exit code on close.
 
 Every terminal request is refused unless it comes from Altitude's own page and not from Altitude
-itself. `Sec-Fetch-Site`, when present, must be `same-origin` or `none`. An `Origin` must name the
-request's `Host`, and POST bodies must be `application/json`. Without TLS the `Host` must also be an
-address or `localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which
-HTTPS refuses at the certificate. This stops another site open in the operator's browser from typing
-into a shell. Then `terminal.agent_connection`, asked once per connection since a connection keeps its
-client socket, finds the client end of the TCP connection in
+itself. Its reads and streams pass the same-page rule every POST passes (see
+[Responsibilities](#responsibilities)), and its POST bodies must be `application/json`. This stops
+another site open in the operator's browser from typing into a shell. Then `terminal.agent_connection`,
+asked once per connection since a connection keeps its client socket, finds the client end of the TCP
+connection in
 `/proc/net/tcp{,6}`, in both address families since an IPv6 socket can reach an IPv4 address. A
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds
@@ -1883,7 +1896,10 @@ extensions a board needs; the resolved path must stay inside those subtrees, and
 tree is mirrored under the prefix because a board's stylesheet imports the build's design tokens two
 levels up. `/api/project` reports that URL only when the boards exist, and the project header's
 overflow menu turns it into Design boards, opening in a new tab. Any project with boards gets one; the
-route knows nothing about this repository's own.
+route knows nothing about this repository's own. Every file is served with
+`Content-Security-Policy: sandbox allow-scripts`: a board's scripts run in an opaque origin, so
+project content cannot act with Altitude's authority. From that origin the viewer cannot probe for a
+listed board that is missing, so the board's frame shows the server's plain 404.
 
 Pending task designs use captured screenshots and text, bound to the existing question revision.
 The current L2 supplies an explicit selection through `alt task block --design-file`, optionally

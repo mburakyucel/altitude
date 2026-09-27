@@ -458,7 +458,7 @@ class TestTerminalHttp(TerminalCase):
         port = self.httpd.server_address[1]
         rebound = {"Host": f"rebind.example:{port}", "Origin": f"http://rebind.example:{port}"}
         refused = self.request("POST", f"/api/terminal/{self.project}/open", {}, status=403, headers=rebound)
-        self.assertEqual(refused["error"], "Over plain HTTP, open the terminal at Altitude's address or localhost.")
+        self.assertEqual(refused["error"], "Over plain HTTP, open Altitude at its address or localhost.")
         local = {"Host": f"localhost:{port}", "Origin": f"http://localhost:{port}"}
         self.assertEqual(self.request("GET", f"/api/terminal/{self.project}", headers=local)["state"], "none")
         headers = {"Origin": f"http://{self.host}", "Sec-Fetch-Site": "same-origin"}

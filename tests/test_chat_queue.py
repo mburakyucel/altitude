@@ -749,7 +749,7 @@ class TestChatQueue(AltitudeCase):
 
     def request(self, method: str, path: str, body: dict | None = None) -> tuple[int, bytes]:
         raw = json.dumps(body).encode() if body is not None else b""
-        head = f"{method} {path} HTTP/1.0\r\nHost: x\r\n"
+        head = f"{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n"
         if body is not None:
             head += f"Content-Type: application/json\r\nContent-Length: {len(raw)}\r\n"
         host, port = self.httpd.server_address
@@ -1101,7 +1101,7 @@ class TestChatQueue(AltitudeCase):
         with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
              mock.patch.object(server, "request_l3_drain", side_effect=lambda _project: completed.set()):
             with socket.create_connection((host, port), timeout=5) as sock:
-                sock.sendall(b"POST /api/chat HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                sock.sendall(b"POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
                              + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
                 self.assertIn(b"200", sock.recv(128))
                 self.assertTrue(started.wait(5))

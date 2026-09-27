@@ -87,6 +87,9 @@ class TestHead(AltitudeCase):
                     self.assertEqual(head_headers[name], get_headers[name])
                 self.assertEqual(int(head_headers["content-length"]), len(get_body))
                 self.assertEqual(head_body, b"")
+                if not path.startswith("/api/") and not path.endswith(".wav"):  # another site cannot frame the app
+                    self.assertEqual(get_headers["content-security-policy"], "frame-ancestors 'none'")
+                    self.assertEqual(get_headers["x-frame-options"], "DENY")
                 self.assertEqual(self.httpd.errors, [])
                 self.assertNotIn("Traceback", "\n".join(self.logs))
 
