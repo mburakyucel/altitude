@@ -478,7 +478,11 @@ test("the L3 dilemma ends the chat; a follow-up hands the turn back until it is 
     visible: [turnLabel(page).getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question.question, { exact: true }), ...(info.project.name === "phone" ? [] : [page.getByText("Replying hands the turn back to the L2.", { exact: true })]), card.getByRole("button", { name: question.recommendation!.label, exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
     hidden: [page.getByRole("combobox", { name: "Recipient", exact: true }), page.getByPlaceholder("Add a note for the L2 (optional)")],
   });
-  await expect(conversation.getByText("The brief sets no retention limit; the operator should choose the rollback window.", { exact: true })).toHaveCount(1);
+  // L3's coordination with the L2 stays one folded line until the operator opens it.
+  const coordination = conversation.locator('[data-role="l3"]');
+  await expect(coordination.getByText("The brief sets no retention limit; the operator should choose the rollback window.", { exact: true })).toHaveCount(0);
+  await coordination.getByRole("button", { name: "Show", exact: true }).click();
+  await expect(coordination.getByText("The brief sets no retention limit; the operator should choose the rollback window.", { exact: true })).toBeVisible();
   await send(page, "Could we roll back after day seven?");
   await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
   expect((await readTask(request, slug)).question?.status).toBe("open");
