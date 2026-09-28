@@ -42,6 +42,10 @@ install the newest release candidate from its own tag:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
 ```
 
+`v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
+installation fails at service start. The next release candidate carries the fix; see the
+[changelog](../CHANGELOG.md).
+
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
 `openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
@@ -83,8 +87,8 @@ alt doctor
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
 migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
-An initial custom `--prefix` must be empty; updates retain customized hook launchers and refuse
-to overwrite them. Resolve the named ownership conflict before retrying.
+An initial custom `--prefix` must be empty and must not end in whitespace or a backslash; updates
+retain customized hook launchers and refuse to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
 It checks GitHub authentication without a provider request; repository permissions, model access
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.
