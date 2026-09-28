@@ -1365,6 +1365,19 @@ and the generated `install.sh`, and publishes them as the GitHub release that th
 fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
 
+### Web delivery
+
+altd serves the built app from `web/dist`. `index.html` is uncached, so each open learns the current
+build; Vite names every file under `/assets/` by its content hash, and those files are cached as
+immutable. A warm open therefore fetches only the page and its API reads, and a cold open, the first
+on a device or the first after an update changes the app script, downloads the script and styles
+before anything shows. Hashed scripts, styles, WebAssembly, word lists, SVG and JSON travel
+gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip; altd compresses each once per
+process. That cuts the cold download to about a third: in the fictional walkthrough on simulated
+slow 4G the page appears in about 1.7 seconds instead of 4.4. The punctuation model's packed weights
+barely compress and travel as stored. Opening requests no dictation asset; `web/e2e/first-open.pw.ts`
+walks cold, warm and slow opens with dictation assets failing.
+
 ### Conversations and navigation
 
 The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch
@@ -1622,8 +1635,10 @@ setup and failed startup, without awaiting graph activation or `AudioContext.res
 For English recognition it punctuates on the device: `web/src/punctuation` loads a bundled
 punctuation and true-casing model (1-800-BAD-CODE `punctuation_fullstop_truecase_english`,
 Apache-2.0, reduced to a 16k English vocabulary with 4-bit weights) on a minimal single-threaded
-onnxruntime-web build, in a Web Worker, on the first capture of the page. Vite emits both under the
-hashed, immutable `/assets/`; `scripts/punctuation` records how they are built from pinned upstream
+onnxruntime-web build, in a Web Worker, on the first capture of the page, never on opening. Vite
+emits both under the hashed, immutable `/assets/`, so a device downloads the model once until the
+model itself changes; words land as recognized while it downloads, and nothing is fetched in the
+background; `scripts/punctuation` records how they are built from pinned upstream
 sources.
 Each finalized phrase is sent with up to sixteen earlier words as context; the model may revise the
 last four earlier words (a phrase end becoming a comma) and earlier punctuation stays fixed. Output
