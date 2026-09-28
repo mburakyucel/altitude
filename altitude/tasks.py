@@ -2022,14 +2022,62 @@ def _names_pr(number: int) -> re.Pattern:
     return re.compile(rf"(/pull/|PR #?){number}\b")
 
 
+def _closed(events: list[dict], number: int) -> bool:
+    """#575: the latest delivery, adoption or observed state of this PR says it closed without merging."""
+    latest = next((e for e in reversed(events) if e.get("number") == number and e.get("kind") in (
+        "delivery", "pr-adopted", "pr-closed", "pr-reopened")), {})
+    return latest.get("kind") == "pr-closed"
+
+
+def _held_pr(task: dict, events: list[dict]) -> int | None:
+    """The task's current PR under a merge hold, unless Altitude has observed it closed without merging."""
+    number = (task.get("prs") or [None])[-1]
+    return number if number and task.get("hold_merge") and not _closed(events, number) else None
+
+
+def record_pr_state(project: str, slug: str, number: int, state: str, *, by: str) -> bool:
+    """Record an observed closure or reopening of the task's current PR once; delivery, hold and history stay."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if (state not in ("OPEN", "CLOSED") or (task.get("prs") or [None])[-1] != number
+                or _closed(S.read_events(project, slug), number) == (state == "CLOSED")):
+            return False
+        S.append_event(project, slug, "pr-closed" if state == "CLOSED" else "pr-reopened", number=number, by=by)
+    return True
+
+
+def observe_held_pr(project: str, slug: str, *, by: str) -> str | None:
+    """Read the held PR's GitHub state as its owner stops; an unreadable state leaves the recorded review as is.
+    The read names the checkout origin's repository and checks the returned identity, so an inherited
+    GH_REPO or a same-numbered PR elsewhere cannot record a closure (review of #575)."""
+    from . import github_intake, verify
+    task = S.load_task(project, slug)
+    number = (task.get("prs") or [None])[-1]
+    if not (number and task.get("hold_merge")):
+        return None
+    try:
+        owner, repo = github_intake.project_repo(project)
+        info = verify.gh(["pr", "view", str(number), "--repo", f"{owner}/{repo}", "--json", "number,url,state"],
+                         config.project_path(project))
+    except (verify.VerifierFault, github_intake.IssueIntakeError, KeyError) as exc:
+        return f"PR #{number} state unavailable: {exc}"
+    url = f"https://github.com/{owner}/{repo}/pull/{number}"
+    if not (isinstance(info, dict) and info.get("number") == number and str(info.get("url", "")).lower() == url.lower()
+            and info.get("state") in ("OPEN", "CLOSED", "MERGED")):
+        return f"PR #{number} state unavailable: GitHub returned no matching record"
+    record_pr_state(project, slug, number, info["state"], by=by)
+    return None
+
+
 def approved_pr(project: str, task: dict) -> int | None:
     """#451: the operator's review-card approval of the held PR stands through routine integration until the
     hold changes or a later operator message about the PR; the owner judges scope and applies it with
     `alt land --merge --approval`, asking again only when the change materially conflicts with it."""
-    number = (task.get("prs") or [None])[-1]
-    if not (number and task.get("hold_merge")):
+    events = S.read_events(project, task["slug"])
+    number = _held_pr(task, events)
+    if not number:
         return None
-    holds = [e["at"] for e in S.read_events(project, task["slug"]) if e.get("kind") in ("new", "hold-merge")]
+    holds = [e["at"] for e in events if e.get("kind") in ("new", "hold-merge")]
     # Records keep whole seconds; an approval must come in a later second than the hold.
     second = lambda at: datetime.fromisoformat(at.replace("Z", "+00:00")).replace(microsecond=0)
     since = second(holds[-1] if holds else "1970-01-01T00:00:00+00:00")
@@ -2063,9 +2111,10 @@ def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
     An open operator question naming the PR supplies its single response surface, with quick choices
     or a freeform field. Its submitted response stays there until the owner resolves the question.
-    The question does not supply merge authority; recorded approval keeps its separate rules (#451)."""
-    number = (task.get("prs") or [None])[-1]
-    if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
+    The question does not supply merge authority; recorded approval keeps its separate rules (#451).
+    A PR observed closed without merging asks for no review (#575)."""
+    number = _held_pr(task, S.read_events(project, task["slug"]))
+    if (number and (task.get("delivery") or task.get("adopted_pr"))
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
             and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")

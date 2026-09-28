@@ -10,7 +10,7 @@ import urllib.request
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase, git, make_repo
-from altitude import config, engines, l3, server, state as S
+from altitude import config, engines, l3, server, state as S, tasks as T
 
 
 class TestPrClose(AltitudeCase):
@@ -101,6 +101,30 @@ class TestPrClose(AltitudeCase):
                 self.assertEqual(server.pr_close(self.project, 42, actor="operator"),
                                  self.record(state) | {"outcome": outcome})
                 self.assertEqual([args[1:3] for args, _ in self.calls], [["pr", "view"]])
+
+    def test_closing_a_held_pr_retires_its_review_card_and_keeps_its_records(self):
+        # #575: an observed closure ends the merge-review request; the delivery, hold and history remain.
+        tasks = {}
+        for title, prs in (("Held port", [41, 42]), ("Earlier port", [42, 43])):
+            task = T.new(self.project, title, "Port it.", actor="burak", hold_merge="Operator review before merge")
+            task.update(state="blocked", waiting_on="l3", prs=prs, delivery={"number": prs[-1], "head": "a" * 40,
+                                                                              "at": S.now()})
+            S.save_task(self.project, task)
+            tasks[title] = task["slug"]
+        self.assertEqual(sorted(row["pr"] for row in T.decisions(self.project)), [42, 43])
+        self.state = "MERGED"
+        server.pr_close(self.project, 42, actor="l3")
+        self.assertEqual(len(T.decisions(self.project)), 2, "a merged PR is not recorded as closed")
+        self.state = "OPEN"
+        server.pr_close(self.project, 42, actor="l3")
+        server.pr_close(self.project, 42, actor="l3")
+        self.assertEqual([row["pr"] for row in T.decisions(self.project)], [43], "only the current PR's card retires")
+        held = S.load_task(self.project, tasks["Held port"])
+        self.assertEqual((held["hold_merge"], held["prs"], held["delivery"]["number"]),
+                         ("Operator review before merge", [41, 42], 42))
+        self.assertEqual([(e["kind"], e["number"], e["by"]) for e in S.read_events(self.project, tasks["Held port"])
+                          if e["kind"] == "pr-closed"], [("pr-closed", 42, "l3")])
+        self.assertFalse([e for e in S.read_events(self.project, tasks["Earlier port"]) if e["kind"] == "pr-closed"])
 
     def test_uncertain_writes_are_decided_by_verified_state(self):
         for failure in (None, 1, subprocess.TimeoutExpired("gh", 30), OSError("fixture unavailable")):
