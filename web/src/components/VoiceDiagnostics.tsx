@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { clearVoiceDiagnostics, startVoiceDiagnostics, stopVoiceDiagnostics, subscribeVoiceDiagnostics, voiceDiagnosticReport, voiceDiagnosticsActive } from "./voiceDiagnostics";
+import { clearVoiceDiagnostics, startVoiceDiagnostics, stopVoiceDiagnostics, subscribeVoiceDiagnostics, voiceDiagnosticReport, voiceDiagnosticsActive } from "./voiceTrace";
 
 export default function VoiceDiagnostics() {
   const active = useSyncExternalStore(subscribeVoiceDiagnostics, voiceDiagnosticsActive);

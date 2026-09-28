@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { clearVoiceDiagnostics, startVoiceDiagnostics, stopVoiceDiagnostics, traceVoice, traceVoiceTracks, voiceDiagnosticReport, voiceDiagnosticsActive, voiceError } from "./voiceDiagnostics";
+import { clearVoiceDiagnostics, startVoiceDiagnostics, stopVoiceDiagnostics, traceVoice, traceVoiceTracks, voiceDiagnosticReport, voiceDiagnosticsActive, voiceError } from "./voiceTrace";
 import { RecognitionCapture } from "./recognition";
 import { FakeSpeechRecognition } from "./voiceTest";
 

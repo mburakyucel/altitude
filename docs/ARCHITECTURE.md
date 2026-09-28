@@ -318,6 +318,31 @@ ends this way still finishes and is logged. The file store needs only POSIX file
 behaves the same. The web app shows only the pairing screen until `GET /api/access` reports the
 browser paired, and returns to it on any 401.
 
+### Linux and macOS
+
+Everything above the platform seam is the same on both hosts. These are the behaviors that differ;
+`platform.py` owns each one, and the sections named in the last column describe it.
+
+| Area | Linux x86_64 | macOS 15+ on Apple silicon | Where |
+| --- | --- | --- | --- |
+| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
+| Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
+| A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
+| Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
+| Machine-grant commands | outside the worker sandbox, user bus reachable | outside any sandbox, launchd reachable | Isolation and landing |
+| Terminal Close | the session plus processes carrying the terminal's environment mark | the shell is its own launchd job, and Close kills its coalition (Apple's binaries hide their environment) | Operator terminal |
+| Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
+| Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
+| Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
+| Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
+| Source-checkout deployment (TLS drop-in, self-restart) | supported | refused with an explicit message; installed releases update the same way on both | Operations |
+| L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
+
+Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
+default and runtime folders are named after projects.
+
 ### Project setup
 
 `project_setup.py` owns the concrete folder, repository, instructions, guards and coordinator
@@ -1730,7 +1755,7 @@ Abandoned captures do not queue inference when a pending model load completes or
 punctuation output. Native-device capture and audio-session behavior require native evidence;
 scripted recognizer tests establish ordering and text isolation only. The microphone
 diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
-`voiceDiagnostics.ts` retains up to 256 metadata-only events for ten minutes, including track
+`voiceTrace.ts` retains up to 256 metadata-only events for ten minutes, including track
 state, recognizer callbacks and one waveform state/signal-presence sample per second. It never
 records speech, drafts, raw samples or device identifiers, uploads data, or changes capture behavior.
 The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.
