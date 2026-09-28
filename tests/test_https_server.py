@@ -35,6 +35,18 @@ class TestHTTPSServer(AltitudeCase):
         worker.assert_not_called()
         self.assertIn("HTTPS startup refused", server.log.call_args.args[0])
 
+    def test_devices_certificate_names_the_ca_a_phone_must_match(self):
+        self.assertIsNone(server.certificate_view(), "no CA file of its own, nothing to match")
+        server.tls_init()
+        view = server.certificate_view()
+        self.assertEqual(view["name"], "Altitude local CA")
+        self.assertEqual(f"sha256 Fingerprint={view['sha256']}", tls.info()["ca_sha256"])
+        self.assertTrue(view["scope"].startswith("Names under localhost"), view["scope"])
+        (config.TLS_DIR / "ca.crt").write_text("not a certificate\n")
+        self.assertIn("HTTPS certificate operation failed", server.certificate_view()["error"])
+        self.patch(config, "TLS", False)
+        self.assertIsNone(server.certificate_view())
+
     def test_mismatched_bind_host_refuses_before_binding(self):
         server.tls_init()
         with mock.patch.object(server, "ThreadingHTTPServer") as httpd:

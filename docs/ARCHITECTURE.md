@@ -261,8 +261,12 @@ Invalid TLS refuses startup or reports renewal failure without switching to HTTP
 completes its handshake on its own request thread within ten seconds, so a stalled client drops
 only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
-until the user imports the public CA and verifies it; `alt doctor` and the installer report the CA
-path, SHA-256 fingerprint, URL and per-platform trust steps. Remote binding and trust remain explicit;
+until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
+report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
+constraints ("No limits" when it has none), with the URL and per-platform trust steps. `alt tls-share`
+(operator only) runs in the CLI process, not in altd: for ten minutes it answers plain HTTP on the
+configured non-loopback address and an ephemeral port with `ca.crt` and nothing else, and prints the
+name and fingerprint the device checks before installing it. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
@@ -278,7 +282,7 @@ thirty seconds loses its connection. An internal error's text reaches only the C
 devices; any other client gets a fixed message, and altd's log keeps the details. The web app's pages refuse to be framed by any page
 (`frame-ancestors 'none'`).
 
-Then `access.py` decides who is asking. The page and its files, `/ca.crt`, `GET /api/health`,
+Then `access.py` decides who is asking. The page and its files, `GET /api/health`,
 `GET /api/access` and `POST /api/pair` answer anyone; every other request, including design boards,
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,

@@ -68,7 +68,12 @@ export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().n
 export type Access = z.infer<typeof AccessSchema>;
 export const DeviceSchema = z.object({ id: z.string(), name: z.string(), paired: z.string(), used: z.string() }).passthrough();
 export type Device = z.infer<typeof DeviceSchema>;
-const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.string().nullish() }).passthrough();
+const CertificateSchema = z.union([
+  z.object({ name: z.string(), expires: z.string(), sha256: z.string(), scope: z.string() }),
+  z.object({ error: z.string() }),
+]);
+export type Certificate = z.infer<typeof CertificateSchema>;
+const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.string().nullish(), certificate: CertificateSchema.nullish() }).passthrough();
 export type Devices = z.infer<typeof DevicesSchema>;
 export const PairingCodeSchema = z.object({ code: z.string(), expires: z.string(), minutes: z.number() }).passthrough();
 export type PairingCode = z.infer<typeof PairingCodeSchema>;
