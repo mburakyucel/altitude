@@ -92,11 +92,13 @@ Remaining before public release:
   [third-party notices](../THIRD_PARTY_NOTICES.md) ship in the archive, and contributors accept
   the [CLA](../CLA.md). A CLA-checking bot is an optional repository setting the maintainer may add.
 - Maintainer actions on release day, in this order: review the
-  [history audit](https://github.com/mburakyucel/altitude/issues/233) result, enable private
-  vulnerability reporting in the repository's security settings, review branch protection, add a
-  tag ruleset reserving `v*` tags to the maintainer and turn on immutable releases
-  ([publish a release](RELEASING.md#publish-a-release)), apply
-  the repository description and topics below, then flip visibility.
+  [history audit](https://github.com/mburakyucel/altitude/issues/233) result and its latest delta,
+  restore GitHub Actions billing so hosted jobs start, make the self-hosted runner admit the
+  public repository's owner runs, apply the repository description and topics below and flip
+  visibility. Then enable private vulnerability reporting, review branch protection, add a tag
+  ruleset reserving `v*` tags to the maintainer and confirm fork-workflow approval; the free plan
+  offers rulesets and these settings only for public repositories. Immutable releases are on
+  ([publish a release](RELEASING.md#publish-a-release)).
 - Recommended description: **“Persistent project orchestration for coding agents: project direction,
   directly reachable task owners, isolated worktrees and checked PRs.”** Recommended topics:
   `ai-development`, `coding-agents`, `developer-tools`, `developer-workspace`, `git-worktrees`.
