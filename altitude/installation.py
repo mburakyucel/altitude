@@ -423,7 +423,8 @@ def doctor() -> dict:
     try:
         identity = tls.info()
         trust = {"state": "unknown", "url": tls.url(),
-                 **{key: identity[key] for key in ("ca_cert", "ca_sha256", "trust_steps")}}
+                 **{key: identity[key] for key in ("ca_cert", "ca_name", "ca_sha256", "ca_expires", "ca_scope",
+                                                    "trust_steps")}}
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
@@ -645,7 +646,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
                 time.sleep(0.25)
             return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device, comparing the CA fingerprint, then open the URL and pair the browser with the code `alt pair` prints."}
+                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device (alt tls-share offers the certificate to a phone), comparing the CA name and fingerprint before installing, then open the URL and pair the browser with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:

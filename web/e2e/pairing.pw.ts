@@ -29,7 +29,10 @@ test("an unpaired browser sees only the pairing screen, and wrong and cancelled 
   const walk = walkthrough(page, info);
   const { heading, field, pair, alert, app } = screen(page);
   await walk.open("/projects");
-  await walk.state("01-unpaired", { visible: [heading, field, page.getByText("alt pair", { exact: true })], hidden: [alert, app] });
+  await walk.state("01-unpaired", {
+    visible: [heading, field, page.getByText("alt pair", { exact: true }), page.getByText("Pair only after it opens without a warning.", { exact: false })],
+    hidden: [alert, app],
+  });
   await expect(pair).toBeDisabled();
   const cancelled = await code(request);
   await walk.state("02-wrong-code", {

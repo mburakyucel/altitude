@@ -1241,6 +1241,13 @@ once in the row ("It will need a new code to open Altitude again.", or "This bro
 the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
+With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
+once. To add a phone, run this on the computer running Altitude; it gives a ten-minute link and the
+steps:", the copyable `alt tls-share` command, "Before installing it on the phone, check that its name
+and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
+them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
+CA) and Expires. An unreadable certificate shows "Could not read the certificate: <reason>" in red;
+without HTTPS or a CA file the card is absent. `web/e2e/certificate.pw.ts` walks these at both widths.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
@@ -1320,8 +1327,9 @@ An unpaired browser sees one centred card instead of the app, at every route: th
 **Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
 a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
-field (uppercase, one-time-code autofill) and a full-width **Pair** button, disabled while the field is
-empty. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
+empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
+after it opens without a warning. To set up a phone, run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |

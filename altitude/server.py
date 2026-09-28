@@ -1350,18 +1350,6 @@ class Handler(BaseHTTPRequestHandler):
                 del self.protocol_version
                 self._keep_open = False
 
-    def _file(self, path: Path, ctype: str | None = None) -> None:
-        if not path.exists():
-            self._json({"error": "not found"}, 404)
-            return
-        data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype or mimetypes.guess_type(str(path))[0] or "application/octet-stream")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
-
     def _plain(self, text: str, code: int) -> None:
         body = f"{text}\n".encode()
         self.send_response(code)
@@ -1616,7 +1604,7 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _admit(self, parts: list[str]) -> bool:
-        """Whether this request may proceed: the page, its files, the CA, health and pairing are open to anyone;
+        """Whether this request may proceed: the page, its files, health and pairing are open to anyone;
         everything else needs this machine's key (the `alt` CLI) or a paired device's cookie. A device's
         cookie is renewed, at most daily, while it is used."""
         self._machine = access.is_machine(self.headers.get(access.KEY_HEADER))
@@ -1857,8 +1845,6 @@ class Handler(BaseHTTPRequestHandler):
         if not self._admit(parts):
             return self._json({"error": UNPAIRED, "pair": True}, 401)
         try:
-            if parts and parts[0] == "ca.crt":  # the local CA, for installing on a phone once
-                return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
             if parts and parts[0] == DESIGN_ROUTE:
                 return self._design(parts)
             if not parts or parts[0] != "api":
@@ -1891,7 +1877,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"paired": self._machine or self._device is not None,
                                    "device": self._device and self._device["name"]})
             if api == "devices" and len(parts) == 2:
-                return self._json({"devices": access.devices(), "current": self._device and self._device["id"]})
+                return self._json({"devices": access.devices(), "current": self._device and self._device["id"],
+                                   "certificate": certificate_view()})
             if api == "overview":
                 return self._json(overview())
             if api == "voice":
@@ -2926,6 +2913,19 @@ def main(host: str | None = None, port: int | None = None) -> None:
         srv.server_close()
         stop_l3_verb_brokers()
         terminal.close_all()
+
+
+def certificate_view() -> dict | None:
+    """The CA a device trusts, as Settings › Devices shows it for adding a phone; None without HTTPS or
+    without a CA file of its own."""
+    ca = config.TLS_DIR / "ca.crt"
+    if not config.TLS or not ca.exists():
+        return None
+    try:
+        authority = tls.identity(ca)
+    except (tls.TLSFailure, OSError) as exc:
+        return {"error": str(exc)}
+    return {**authority, "scope": tls.describe_scope(authority["scope"])}
 
 
 def tls_init(ip: str | None = None) -> dict:
