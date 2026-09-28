@@ -22,7 +22,10 @@ from unittest import mock
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
-SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
+# Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
+# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes).
+SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir="/tmp")).resolve()
+tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
 OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
