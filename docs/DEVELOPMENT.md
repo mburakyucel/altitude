@@ -300,12 +300,6 @@ Two observed engine differences matter when reading voice results: this WebKit b
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
 
-A test that WebKit fails for a reason still under investigation is marked
-`test.fail(browserName === "webkit", reason)`, so the lane stays green while the failure persists
-and reports the test once WebKit passes it. After the terminal's code fails to load, WebKit's
-Reload of that page does not request the code again, while a new page loads it; whether iOS
-Safari behaves the same needs a physical iPhone.
-
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number
