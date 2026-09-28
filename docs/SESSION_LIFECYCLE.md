@@ -678,6 +678,10 @@ three seconds), followed by the waveform audio context's asynchronous close (at 
 seconds), before acquiring audio. An unanswered close does not prevent later attempts.
 Cancel during either wait restores editing and prevents that attempt from acquiring audio later.
 Cancelled model loads and late recognition or punctuation callbacks cannot change the draft.
+Optional voice troubleshooting retains bounded event metadata in page memory across conversation
+and Settings navigation. It stops on View report or after ten minutes, resets on Start diagnostics,
+and clears on Clear report or reload. It creates no server record; only an explicit copy and chat
+submission shares the report with the task owner.
 After a denial, the next tap asks the browser
 again. Navigation cancels ordinary unsent voice input. An explicit Send
 retains its original conversation, text and images while transcription completes; leaving a project

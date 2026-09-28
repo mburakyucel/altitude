@@ -1621,6 +1621,13 @@ ignores callbacks after cancellation or its end, including while punctuation is 
 Abandoned captures do not queue inference when a pending model load completes or apply late
 punctuation output. Native-device capture and audio-session behavior require native evidence;
 scripted recognizer tests establish ordering and text isolation only. The microphone
+diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
+`voiceDiagnostics.ts` retains up to 256 metadata-only events for ten minutes, including track
+state, recognizer callbacks and one waveform state/signal-presence sample per second. It never
+records speech, drafts, raw samples or device identifiers, uploads data, or changes capture behavior.
+The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.
+The report identifies the loaded script basename and browser/Home Screen mode, without the origin
+or conversation URL. The microphone
 stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
 endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
 server whose backend or endpoint URL changed shows the server's words and reads the backend again.

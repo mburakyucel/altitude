@@ -392,3 +392,17 @@ one reload and repeat: this distinguishes the loaded client from the currently s
 reload is a diagnostic comparison, not successful restart acceptance. Native success requires
 repeated capture and transcription on the affected device without further reloads; Chromium's
 scripted recognition and synthetic audio do not establish that result.
+
+For a silent restart, **Settings → Voice input → Voice troubleshooting** offers **Start diagnostics**.
+Return to the conversation without reloading, reproduce once, then return to **View report** and
+**Copy report**. Paste the report into the owning task conversation. It includes the loaded asset
+name, browser version, Home Screen mode, microphone track states, recognizer events and waveform
+audio-context state/timing. It contains no recordings, speech, drafts, device identifiers or server
+addresses. Collection is opt-in, keeps the latest 256 events in page memory, stops after ten minutes,
+and sends nothing automatically. View report stops collection; Clear report or reloading deletes it.
+If copying is denied, the selectable report provides a manual fallback. This evidence distinguishes
+silent input from a suspended waveform graph; it does not itself prove a native-browser cause.
+Read the graph state and whether its clock advances before interpreting signal presence; signal
+is omitted while the graph is not running. State samples occur once per second while the waveform
+draws, so brief transitions or a stopped drawing loop require further investigation. A dropped-event
+count identifies truncated reports; start a fresh report and reproduce briefly when it is nonzero.

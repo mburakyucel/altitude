@@ -1209,6 +1209,14 @@ breakdown on their task/report pages rather than appearing as live Monitor sessi
 
 ### 3.15 Settings and Voice input
 
+Voice input includes a collapsed **Voice troubleshooting** disclosure. It explains metadata-only,
+on-device collection and the Start → reproduce → View report flow. Start diagnostics opts in for
+up to ten minutes; Stop diagnostics freezes collection. View report stops collection and shows a
+labelled read-only text area with Copy report; clipboard denial leaves the text selectable. Clear
+report deletes the in-memory evidence. No audio or conversation text is collected or automatically
+sent. Collection survives in-app navigation and ends on reload. Controls and report work at both
+phone and desktop widths.
+
 Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
 or the desktop rail's operator row. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.

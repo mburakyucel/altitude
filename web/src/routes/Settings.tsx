@@ -10,6 +10,7 @@ import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
+import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = {
@@ -112,6 +113,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
       </p> : null}
     </form>
     <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings; the speech service that transcribes them controls its own retention.</p>
+    <VoiceDiagnostics />
   </>;
 }
 
