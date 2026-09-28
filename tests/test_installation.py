@@ -1,7 +1,8 @@
 """Real private archives and lifecycle state; native service effects stay in fixtures."""
 import hashlib
-import io
+import http.client
 import http.server
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -570,6 +572,12 @@ class Platform(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
 
+    def test_detached_update_keeps_dollar_expressions_in_paths_literal(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), mock.patch.object(platform, "run", return_value="") as run:
+            platform.detach("altitude-update-v0.2.0", ["/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"], {"PATH": "/usr/bin"})
+        self.assertIn("--expand-environment=no", run.call_args.args)
+        self.assertEqual(run.call_args.args[-3:], ("/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"))
+
     def test_execstart_disables_environment_expansion_in_literal_paths(self):
         unit = platform.definition(Path("/tmp/${UNDEFINED}/application"), Path("/usr/bin/python3"),
                                    Path("/tmp/install.json"), {"PATH": "/usr/bin:/bin"})
@@ -759,3 +767,223 @@ class UpdatedProjectGuards(PublishedReleaseCase):
         self.assertIn("task branch", refused.stderr)
         self.assertIn("current/hooks/pre-commit", (self.prefix / "hooks/pre-commit").read_text())
         self.assertEqual((self.prefix / "current/hooks/pre-commit").resolve(), self.prefix / "versions/v0.1.1/hooks/pre-commit")
+
+
+class NoticeCase(PublishedReleaseCase):
+    """v0.1.0 installed, its release lookup a fixture, and the detached update recorded instead of run."""
+    LATEST = "https://api.github.com/repos/example/altitude/releases/latest"
+
+    def setUp(self):
+        super().setUp()
+        self.detached = []
+        patcher = mock.patch.object(platform, "detach", side_effect=lambda *a: self.detached.append(a) or "")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def latest(self, version):
+        self.published[self.LATEST] = json.dumps({"tag_name": version}).encode()
+
+
+class NewVersionNotice(NoticeCase):
+    """The daemon's release check, what the app and terminal show, and the app's Update button."""
+
+    def test_check_runs_every_twelve_hours_and_retries_an_hour_after_going_offline(self):
+        installation.check_for_update(now=1000)
+        self.assertEqual(self.requests, [self.LATEST])
+        self.assertIsNone(installation.update_status()["available"])
+        installation.check_for_update(now=1000 + 3599)
+        self.assertEqual(len(self.requests), 1)
+        self.latest("v0.2.0")
+        installation.check_for_update(now=1000 + 3600)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(installation.update_status()["available"],
+                         {"version": "v0.2.0", "notes": f"{self.RELEASES}/tag/v0.2.0"})
+        installation.check_for_update(now=1000 + 3600 + 12 * 3600 - 1)
+        self.assertEqual(len(self.requests), 2)
+        installation.check_for_update(now=1000 + 3600 + 12 * 3600)
+        self.assertEqual(len(self.requests), 3)
+        self.assertEqual(installation.update_status()["available"]["version"], "v0.2.0")
+
+    def test_only_a_newer_stable_release_is_offered(self):
+        for version, offered in (("v0.1.0", False), ("v0.0.9", False), ("v0.1.1", True)):
+            with self.subTest(version=version):
+                (config.ROOT / "update.json").unlink(missing_ok=True)
+                self.latest(version)
+                installation.check_for_update()
+                self.assertEqual(bool(installation.update_status()["available"]), offered)
+        self.published[self.LATEST] = json.dumps({"tag_name": "v0.3.0-rc.1", "prerelease": True}).encode()
+        (config.ROOT / "update.json").unlink()
+        installation.check_for_update()
+        self.assertIsNone(installation.update_status()["available"])
+
+    def test_the_switch_stops_the_check_and_hides_the_notice(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        S.write_json(config.ROOT / "settings.json", {"update_check": False})
+        self.requests.clear()
+        (config.ROOT / "update.json").unlink()
+        installation.check_for_update()
+        self.assertEqual(self.requests, [])
+        status = installation.update_status()
+        self.assertEqual((status["check"], status["available"]), (False, None))
+
+    def test_a_source_deployment_neither_checks_nor_reports(self):
+        with mock.patch.object(config, "RELEASE", None):
+            installation.check_for_update()
+            self.assertIsNone(installation.update_status())
+        self.assertEqual(self.requests, [])
+
+    def test_the_terminal_line_appears_once_a_day_from_the_saved_check(self):
+        self.assertIsNone(installation.update_notice())
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        self.requests.clear()
+        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: run alt update "
+                         "(notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
+        self.assertIsNone(installation.update_notice())
+        day_ago = (config.ROOT / "update-notice").stat().st_mtime - 86400
+        os.utime(config.ROOT / "update-notice", (day_ago, day_ago))
+        self.assertIsNotNone(installation.update_notice())
+        self.assertEqual(self.requests, [])
+
+    def test_doctor_reports_the_available_release(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        with mock.patch.object(installation, "_gh_signed_in", return_value=False), \
+                mock.patch.object(tls, "info", side_effect=OSError("fixture: no certificate")):
+            self.assertEqual(installation.doctor()["update"]["available"]["version"], "v0.2.0")
+
+    def test_the_button_runs_the_verified_update_for_exactly_the_shown_version(self):
+        for version in ("v0.2.0", "v0.1.0", "v0.0.9"):
+            with self.subTest(before_check=version), self.assertRaisesRegex(ValueError, "Only the newer release"):
+                installation.request_update(version)
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        for version in ("v0.1.1", "v0.3.0", "v0.1.0", "v0.2.0; rm -rf ~"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Only the newer release"):
+                installation.request_update(version)
+        self.assertEqual(self.detached, [])
+        status = installation.request_update("v0.2.0")
+        self.assertEqual(status["attempt"]["state"], "running")
+        saved = json.loads(self.settings.read_text())
+        [(name, argv, environment)] = self.detached
+        self.assertEqual(name, "altitude-update-v0.2.0")
+        self.assertEqual(argv, [saved["python"], "-B", str(self.prefix / "current/bin/alt"), "update", "--version", "v0.2.0"])
+        self.assertEqual(environment["ALTITUDE_CONFIG"], str(self.settings))
+        self.assertNotIn("ALTITUDE_ACTOR", environment)
+        installation.request_update("v0.2.0")
+        self.assertEqual(len(self.detached), 1)
+
+    def test_a_failed_or_stalled_update_is_reported_and_can_be_retried(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        installation.request_update("v0.2.0")
+        with self.assertRaises(OSError):
+            installation.update("v0.2.0")
+        status = installation.update_status()
+        self.assertEqual((status["current"], status["attempt"]["state"]), ("v0.1.0", "failed"))
+        # The page gets a fixed sentence; the cause stays in the terminal or the update unit's log.
+        self.assertEqual(status["attempt"]["error"], "Run alt update in a terminal to see why.")
+        installation.request_update("v0.2.0")
+        self.assertEqual(len(self.detached), 2)
+        with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
+            self.assertEqual(installation.update_status()["attempt"], {**installation._update_record()[1]["attempt"],
+                             "state": "failed", "error": "Run alt update in a terminal to see why."})
+
+    def test_an_update_that_cannot_start_is_marked_failed(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        with mock.patch.object(platform, "detach", side_effect=RuntimeError("fixture: systemd-run failed")):
+            with self.assertRaises(RuntimeError):
+                installation.request_update("v0.2.0")
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+
+    def test_a_check_finishing_during_an_update_keeps_its_attempt(self):
+        self.latest("v0.2.0")
+        installation.check_for_update()
+        lookup = installation.latest_release
+
+        def slow_lookup(repository):
+            installation.request_update("v0.2.0")  # the Update button while the daemon's lookup is in flight
+            return lookup(repository)
+
+        with mock.patch.object(installation, "latest_release", side_effect=slow_lookup), \
+                mock.patch.object(installation.time, "time", return_value=time.time() + 13 * 3600):
+            installation.check_for_update()
+        self.assertEqual(installation.update_status()["attempt"]["state"], "running")
+
+    def test_a_finished_update_clears_the_notice(self):
+        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"})
+        installation.check_for_update()
+        installation.request_update("v0.1.1")
+        installation.update("v0.1.1")
+        with mock.patch.object(config, "RELEASE", {"version": "v0.1.1", "repository": "https://github.com/example/altitude"}):
+            status = installation.update_status()
+        self.assertEqual((status["current"], status["available"], status["attempt"]), ("v0.1.1", None, None))
+
+
+class UpdateRequests(NoticeCase):
+    """The Update button and the check switch through the real HTTP handler, behind the terminal's checks."""
+
+    def setUp(self):
+        super().setUp()
+        from altitude import server, terminal
+        self.agent = mock.patch.object(terminal, "agent_connection", return_value=False).start()
+        self.addCleanup(mock.patch.stopall)
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.latest("v0.2.0")
+        installation.check_for_update()
+
+    def post(self, path, body, *, status=200, headers=None):
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        try:
+            connection.request("POST", path, json.dumps(body), {"Content-Type": "application/json", **(headers or {})})
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, status, payload)
+            return payload
+        finally:
+            connection.close()
+
+    def test_cross_site_pages_and_agents_cannot_start_an_update(self):
+        # Every action refuses another site and a rebound host before routing; the update also needs JSON.
+        for headers, error in (({"Origin": "https://elsewhere.example"}, "Requests must come from Altitude's own page."),
+                               ({"Sec-Fetch-Site": "cross-site"}, "Requests must come from Altitude's own page."),
+                               ({"Host": "rebound.example"}, "Over plain HTTP, open Altitude at its address or localhost."),
+                               ({"Content-Type": "text/plain"}, "Update requests must come from Altitude's own page.")):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403, headers=headers)["error"], error)
+        self.agent.return_value = True
+        self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403)["error"],
+                         "Update requests from Altitude's own agents are refused.")
+        self.post("/api/update-check", {"enabled": False}, status=403)
+        self.assertEqual(self.detached, [])
+        self.assertTrue(installation.update_status()["check"])
+
+    def test_launch_and_record_failures_reach_the_page_without_private_paths(self):
+        public = "Altitude could not complete the update request. Run alt update in a terminal to see why."
+        with mock.patch.object(platform, "detach", side_effect=RuntimeError(f"systemd-run failed in {self.home}")):
+            self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=503)["error"], public)
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        with mock.patch("altitude.server._save_machine", side_effect=ValueError(f"Invalid JSON in {self.home}/settings.json")):
+            self.assertEqual(self.post("/api/update-check", {"enabled": False}, status=503)["error"], public)
+        installation._update_record()[0].write_text("{not json")
+        for path, body in (("/api/update", {"version": "v0.2.0"}), ("/api/update-check", {"enabled": False})):
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, body, status=503)["error"], public)
+
+    def test_the_page_starts_only_the_shown_version_and_switches_the_check(self):
+        self.post("/api/update", {"version": "v0.3.0"}, status=409)
+        self.post("/api/update", {"version": ["v0.2.0"]}, status=400)
+        self.post("/api/update", {"version": "v0.2.0", "force": True}, status=400)
+        self.assertEqual(self.detached, [])
+        self.assertEqual(self.post("/api/update", {"version": "v0.2.0"})["update"]["attempt"]["state"], "running")
+        self.assertEqual(len(self.detached), 1)
+        off = self.post("/api/update-check", {"enabled": False})
+        self.assertEqual((off["update_check"], off["update"]["available"]), (False, None))
+        self.post("/api/update-check", {"enabled": "no"}, status=400)
+        self.assertTrue(self.post("/api/update-check", {"enabled": True})["update_check"])

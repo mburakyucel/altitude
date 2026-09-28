@@ -128,6 +128,13 @@ alt service logs
 alt update
 ```
 
+The daemon makes the same lookup at startup and every twelve hours and records what it finds.
+`alt doctor`, Settings › This machine and a notice in the app show a newer stable release, and an
+`alt` command you run in a terminal prints one line about it at most once a day. The app's
+**Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
+in its own user unit so the update survives the restart. **Check for new versions** in Settings
+turns the lookup off. Nothing updates on its own.
+
 `alt update` asks GitHub for the newest stable release of the repository the installed release
 was built from (one anonymous request to `api.github.com`) and does nothing when the installed
 version is current or newer. Otherwise it downloads that release's archive and its `.sha256`

@@ -226,3 +226,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   does nothing when the installed version is current. `--version` installs a named newer release;
   `--archive` with `--sha256` still installs a local archive. Registered projects keep current Git
   guards and dispatch on the updated version.
+
+- An installed Altitude tells you when a newer stable release is published. The daemon asks GitHub
+  twice a day (one anonymous request; **Check for new versions** in Settings turns it off). The app
+  shows a dismissible notice with What’s new and **Update**, which after a confirm installs exactly
+  that version through the same verified `alt update`, restoring the running version if it fails.
+  Settings › This machine shows the version and the `alt update` command, `alt doctor` reports it,
+  and a terminal `alt` command mentions it at most once a day. Nothing updates on its own.

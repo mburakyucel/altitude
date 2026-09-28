@@ -444,6 +444,10 @@ def main(argv=None) -> None:
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
+    if "ALTITUDE_ACTOR" not in os.environ and config.RELEASE is not None and args.cmd != "update" and sys.stderr.isatty():
+        from altitude import installation
+        if notice := installation.update_notice():
+            print(notice, file=sys.stderr)
     if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
         config.ensure_root()
     c = args.cmd

@@ -223,6 +223,22 @@ service-inspection shims and the source-checkout TLS setup remain Linux-specific
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance remains pending.
 
+An installed copy's daemon checks for a newer release at startup and every twelve hours, off the
+timer thread: one anonymous request to GitHub's latest-release endpoint for the repository in
+`release.json`, retried after an hour when offline. `update.json` in the runtime home keeps the
+newest stable release found and any update the app started, and the daemon, the app's request and
+the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
+overview's `update` field and `alt doctor` report the installed version and a newer one; an
+interactive `alt` command prints one line about it at most once a day from that record, never to
+agents. `POST /api/update` accepts only the exact newer version the record shows and starts
+`alt update --version` in its own transient user unit (`platform.detach`), so the update outlives
+the service restart it causes; it passes the operator terminal's request checks, and Altitude has
+no login, so anyone who can open the page can start an update to that verified release, never a
+downgrade or another build. An update that fails, or has not finished after thirty minutes, reads
+as failed until retried; the installed version keeps running or is restored by activation recovery.
+The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
+private paths, stay in the daemon log, the update unit's journal or the terminal.
+
 `source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
 The operator selects its existing certificate directory; native unit/process/listener evidence and
 a verified HTTPS handshake bind that selection to the running source deployment. Check-only shows

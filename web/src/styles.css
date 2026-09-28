@@ -1273,6 +1273,7 @@
   padding: 2px 12px;
 }
 .restart-banner-summary { flex: 1; }
+.update-notice-error { flex-basis: 100%; }
 .restart-details { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .restart-banner-text {
   display: flex;
