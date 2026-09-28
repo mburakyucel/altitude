@@ -18,7 +18,8 @@ FINGERPRINT = "sha256 Fingerprint=AA:BB:CC"
 
 
 class InstallScript(unittest.TestCase):
-    """install.sh with fixture commands on PATH: curl serves a local release, systemctl answers as told."""
+    """install.sh with fixture commands on PATH: curl serves a local release; systemctl, launchctl, sw_vers and
+    openssl answer as told."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-sh-"))
@@ -39,13 +40,15 @@ class InstallScript(unittest.TestCase):
                                                             REPOSITORY, digest["altitude-v0.1.0.tar.gz"], digest["install.py"]))
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("sh", "cat", "cp", "cut", "sha256sum", "mktemp", "rm", "openssl"):
+        for tool in ("sh", "cat", "cp", "cut", "sha256sum", "mktemp", "rm"):
             (self.bin / tool).symlink_to(subprocess.check_output(["sh", "-c", f"command -v {tool}"], text=True).strip())
         (self.bin / "python3").symlink_to(sys.executable)
         self.fixture("uname", 'case "$1" in -s) echo "${FIXTURE_SYSTEM:-Linux}" ;; -m) echo "${FIXTURE_MACHINE:-x86_64}" ;; esac')
         self.fixture("id", 'echo "${FIXTURE_UID:-1000}"')
         self.fixture("systemctl", 'exit "${FIXTURE_SYSTEMD:-0}"')
-        self.fixture("sw_vers", 'echo 15.5')
+        self.fixture("launchctl", 'exit "${FIXTURE_LAUNCHD:-0}"')
+        self.fixture("openssl", 'echo "${FIXTURE_OPENSSL:-OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)}"')
+        self.fixture("sw_vers", 'echo "${FIXTURE_MACOS:-15.5}"')
         self.fixture("xcode-select", 'exit 1')
         self.fixture("curl", f'echo "$@" >> {self.tmp}/downloads\n'
                              'for last; do :; done\n'
@@ -111,28 +114,32 @@ class InstallScript(unittest.TestCase):
         self.assertIn("the installer stopped with the message above", result.stderr)
         self.assertNotIn("is installed", result.stdout)
 
-    def test_a_mac_stops_with_what_it_found_before_downloading(self):
-        result = self.run_script(FIXTURE_SYSTEM="Darwin", FIXTURE_MACHINE="arm64")
-        self.assertEqual(result.returncode, 1)
-        version = ".".join(map(str, sys.version_info[:3]))
-        self.assertIn("Altitude cannot be installed on this Mac yet. Nothing was installed or changed.", result.stderr)
-        self.assertIn(f"Detected: macOS 15.5 on arm64; Python {version} at {self.bin}/python3", result.stderr)
-        home_python = self.tmp / "home/.pyenv/bin"
-        home_python.mkdir(parents=True)
-        (home_python / "python3").symlink_to(sys.executable)
-        result = self.run_script(FIXTURE_SYSTEM="Darwin", FIXTURE_MACHINE="arm64", PATH=f"{home_python}:{self.bin}")
-        self.assertIn(f"Python {version} at ~/.pyenv/bin/python3", result.stderr)
-        self.assertNotIn(str(self.tmp / "home"), result.stderr)
-        self.assertIn("native macOS runtime", result.stderr)
-        self.assertIn(f"Follow macOS support: {REPOSITORY}/issues/225", result.stderr)
-        self.assertEqual(self.downloads(), [])
+    def test_a_mac_installs_once_its_prerequisites_are_met(self):
+        mac = {"FIXTURE_SYSTEM": "Darwin", "FIXTURE_MACHINE": "arm64"}
+        result = self.run_script(**mac)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
+        downloaded = self.downloads()
+        cases = [({"FIXTURE_MACHINE": "x86_64"}, "on Macs with Apple silicon; this machine is Darwin x86_64"),
+                 ({"FIXTURE_MACOS": "14.7.2"}, "needs macOS 15 or newer; this Mac runs macOS 14.7.2"),
+                 ({"FIXTURE_OPENSSL": "LibreSSL 3.3.6"}, "the openssl on PATH is LibreSSL 3.3.6; Altitude's HTTPS setup "
+                                                         "needs OpenSSL 3"),
+                 ({"FIXTURE_LAUNCHD": "113"}, "this account has no desktop session on this Mac")]
+        for env, message in cases:
+            with self.subTest(message):
+                result = self.run_script(**{**mac, **env})
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.downloads(), downloaded)
         (self.bin / "python3").unlink()
         self.fixture("python3", 'case "$*" in *exit*) exit 1 ;; *) echo 3.9.6 ;; esac')
-        result = self.run_script(FIXTURE_SYSTEM="Darwin", FIXTURE_MACHINE="arm64")
-        self.assertIn("Python 3.12 or newer not found (3.9.6)", result.stderr)
+        result = self.run_script(**mac)
+        self.assertIn("Python 3.12 or newer was not found (3.9.6)", result.stderr)
+        self.assertIn("brew install python@3.12", result.stderr)
 
     def test_unsupported_machines_and_missing_prerequisites_stop_with_the_fix(self):
-        cases = [({"FIXTURE_MACHINE": "aarch64"}, "runs on Linux x86_64; this machine is Linux aarch64"),
+        cases = [({"FIXTURE_MACHINE": "aarch64"}, "runs on Linux x86_64 and on Macs with Apple silicon; "
+                                                  "this machine is Linux aarch64"),
                  ({"FIXTURE_SYSTEM": "FreeBSD"}, "this machine is FreeBSD x86_64"),
                  ({"FIXTURE_UID": "0"}, "not as root"),
                  ({"FIXTURE_SYSTEMD": "1"}, "no systemd user manager is reachable")]

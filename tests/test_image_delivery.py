@@ -56,6 +56,8 @@ class _Process:
 
 
 class ImageDeliveryCase(AltitudeCase):
+    host = "linux"  # systemd fixtures: the engine command is read from the systemd-run argv
+
     def setUp(self):
         super().setUp()
         path = self.tmp / "image.png"

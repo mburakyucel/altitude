@@ -29,6 +29,8 @@ with open(log, "ab") as out:
 
 
 class TestMachineAccess(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)

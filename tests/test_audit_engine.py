@@ -9,6 +9,8 @@ from altitude import config, engines, l3, platform
 
 
 class TestConversationReview(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.quiet_engines()

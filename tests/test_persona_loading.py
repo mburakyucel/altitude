@@ -65,6 +65,8 @@ class _ProviderProcess:
 
 
 class PersonaLoading(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()

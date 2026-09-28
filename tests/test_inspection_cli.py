@@ -21,6 +21,8 @@ def cli(*argv: str) -> str:
 
 
 class TestInspectionCLI(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)
