@@ -153,8 +153,8 @@ notices; users need no source build. Existing archive names are immutable. Build
 hand creates no tag, GitHub release or public publication.
 
 Record archive checksum and install/update/recovery evidence alongside candidate checks. The initial
-runtime target is Ubuntu 24.04 x86_64; on macOS, `install.sh` stops before downloading anything
-until the native runtime and host validation exist. Deterministic fixtures do not establish
+runtime target is Ubuntu 24.04 x86_64; macOS 15 or newer on Apple silicon installs through the same
+`install.sh` while its native host validation is pending. Deterministic fixtures do not establish
 physical Mac, fresh-machine, browser trust or live provider compatibility. No public support claim
 precedes that evidence.
 
