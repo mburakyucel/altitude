@@ -71,3 +71,7 @@
 .device-row .btn-danger { background: var(--danger); border-color: var(--danger); color: var(--on-accent); font-weight: 600; }
 .settings-version { flex-wrap: wrap; }
 .settings-version .onboarding-command { margin-top: 0; }
+.device-certificate { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.device-certificate .onboarding-command { align-self: stretch; }
+.device-certificate .settings-network { margin-top: 0; }
+.certificate-fingerprint { font-family: var(--font-mono); white-space: pre-line; }

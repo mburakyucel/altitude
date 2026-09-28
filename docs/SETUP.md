@@ -114,19 +114,60 @@ The [README prompt](../README.md#get-started) provides a short starting point fo
 ### Trust HTTPS on each device
 
 Trusting Altitude's own certificate authority (CA) once on each device removes the browser warning
-for good: the device then treats Altitude like any trusted site. The installer and `alt doctor` print
-the URL, the `ca.crt` path, its SHA-256 fingerprint and these steps in short form (`trust_steps`).
+for good: the device then treats Altitude like any trusted site. `alt doctor` shows the URL, the
+CA's name, expiry, SHA-256 fingerprint and what trusting it allows, all read from the certificate
+itself, with these steps in short form (`trust_steps`); **Settings → Devices** shows the same
+certificate facts on a device that already trusts Altitude.
 
-Import only `ca.crt` and compare its SHA-256 fingerprint with the installer or `alt doctor` output.
-For another device, transfer it using a cable, verified AirDrop or an existing authenticated
-file-transfer channel. Never transfer `ca.key` or `server.key`. Do not bypass a browser warning or
-use HTTP to obtain the first trusted certificate. Trust grants the CA authority to identify sites.
+Only `ca.crt` goes to a device, over any channel: cable, AirDrop, your own email or cloud, or
+`alt tls-share` for a phone. Never transfer `ca.key` or `server.key`. The channel does not have to
+be trusted; the check before installing is what counts. Confirm the file holds only that certificate,
+with the expected name and SHA-256 fingerprint, and delete it if anything differs. Never click through
+a browser warning to reach Altitude. Trust grants the CA authority to identify sites, and its name is
+whatever it was created with, not necessarily "Altitude".
 A CA that Altitude generates covers only loopback, private-network addresses (10/8, 172.16/12,
 192.168/16, 100.64/10, IPv6 unique-local), the private names `localhost`, `.local`, `.internal` and
 `home.arpa`, and a DNS name configured when it was created, including that name's subdomains. It
 cannot vouch for other public websites; if its key leaked it could still impersonate other
 private-network devices, such as a router page, or names under a configured public domain. A CA
-created without these limits, or supplied externally, keeps its original scope.
+created without these limits, or supplied externally, keeps its original scope, and Altitude shows
+it as "No limits".
+
+#### Set up a phone
+
+On the computer running Altitude, locally or over SSH, run:
+
+```sh
+alt tls-share
+```
+
+For ten minutes it offers the certificate at a plain-HTTP link on the configured address
+(`ALTITUDE_HOST`, which must not be loopback) and prints the steps below with the CA's real name and
+fingerprint. It serves nothing else; Ctrl-C closes it sooner. A firewall on that computer can block
+the link's port; then use another channel.
+
+On an iPhone or iPad:
+
+1. Open the link in Safari and tap **Allow**. Open Settings → **Profile Downloaded**.
+2. Before tapping **Install**, check that it contains only a **Certificate** with the printed name,
+   and that **More Details** → that certificate shows the printed SHA-256. If anything differs, tap
+   **Remove** and stop: someone else answered the link.
+3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
+   Trust Settings**. Installing the profile alone does not enable TLS trust.
+   [Apple guidance](https://support.apple.com/en-us/102390).
+4. Open the HTTPS address in a new Private tab. It must load with no warning; then
+   [pair](#pair-each-device) and add the Home Screen app.
+
+Safari may remember an earlier "visit this website" exception, which can hide missing trust in an
+ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
+every site and unpairs Safari.
+
+On Android, open the link in Chrome and install the file under Settings → Security → Encryption &
+credentials → Install a certificate → **CA certificate** (names vary by device), comparing the
+fingerprint where the device shows it. Firefox for Android also needs its third-party CA setting.
+[Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
+
+#### Other devices
 
 - **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
   certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →
@@ -139,18 +180,12 @@ created without these limits, or supplied externally, keeps its original scope.
   otherwise use its Authorities import. This is client guidance, not native Mac runtime support.
   [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
   [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
-- **iPhone/iPad:** install the certificate profile in Settings, then enable its root under
-  General → About → Certificate Trust Settings. Installing the profile alone does not enable TLS
-  trust. [Apple guidance](https://support.apple.com/en-us/102390).
-- **Android:** Settings → Security → Encryption & credentials → Install a certificate →
-  **CA certificate**; names vary by device. Select the transferred public CA and confirm trust.
-  [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
 
 The CA is valid for ten years; Altitude renews its one-year server certificate automatically and
 reissues it when the listening address changes, so devices keep their trust. A device trusts again
 only when the CA expires or is replaced, for example after a new installation or a lost key.
 
-Open the exact HTTPS URL without a warning and reload it before adding a home-screen app. Check
+Open the exact HTTPS URL without a warning, in a new private window, and reload it before adding a home-screen app. Check
 the installed app separately: a shortcut or cached page does not prove TLS works. A phone needs
 the explicitly configured remote address, not `localhost`. Device/browser acceptance remains
 pending until observed. Remove this CA in the same browser/OS certificate manager when retiring

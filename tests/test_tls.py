@@ -1,5 +1,6 @@
 """Real disposable TLS identities and handshakes; no host trust stores or services."""
 import json
+import re
 from pathlib import Path
 import ssl
 import tempfile
@@ -176,6 +177,38 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(tls.check("192.0.2.15"), self.directory / "ca.crt", "192.0.2.15"),
                          b"typed conversation")
         self.assertEqual((self.directory / "ca.crt").read_bytes(), ca)
+        # Its identity says so plainly instead of assuming Altitude's limits.
+        self.assertIsNone(tls.identity(self.directory / "ca.crt")["scope"])
+        self.assertTrue(tls.info()["ca_scope"].startswith("No limits: this CA can vouch for any website"))
+
+    def test_identity_reads_name_fingerprint_and_scope_from_the_certificate(self):
+        tls.initialize("trial.example")
+        authority = tls.identity(self.directory / "ca.crt")
+        self.assertEqual(authority["name"], "Altitude local CA")
+        self.assertEqual(f"sha256 Fingerprint={authority['sha256']}", tls.info("trial.example")["ca_sha256"])
+        self.assertRegex(authority["sha256"], r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
+        self.assertEqual(authority["scope"]["excluded"], [])
+        for entry in ("localhost", "home.arpa", "trial.example", "10.0.0.0/8", "100.64.0.0/10", "::1/128", "fc00::/7"):
+            self.assertIn(entry, authority["scope"]["permitted"])
+        described = tls.describe_scope(authority["scope"])
+        self.assertTrue(described.startswith("Only localhost, local, internal, home.arpa, 127.0.0.0/8"), described)
+        self.assertIn("trial.example", described, "a configured, possibly public, name is part of the scope")
+        info = tls.info("trial.example")
+        self.assertEqual((info["ca_name"], info["ca_scope"]), ("Altitude local CA", described))
+        self.assertIn("SHA-256", " ".join(info["trust_steps"]))
+
+    def test_identity_of_an_external_ca_keeps_its_own_name_and_limits(self):
+        key, certificate = self.root / "external.key", self.root / "external.crt"
+        tls._openssl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                     "-keyout", key, "-out", certificate, "-days", "30", "-subj", "/O=Home\\, Inc./CN=mkcert studio@example",
+                     "-addext", "nameConstraints=critical,permitted;DNS:studio.example,excluded;IP:10.9.0.0/255.255.0.0")
+        authority = tls.identity(certificate)
+        self.assertEqual(authority["name"], "mkcert studio@example")
+        self.assertEqual(authority["scope"], {"permitted": ["studio.example"], "excluded": ["10.9.0.0/16"]})
+        self.assertEqual(tls.describe_scope(authority["scope"]),
+                         "Only studio.example, each name with its subdomains, except 10.9.0.0/16.")
+        self.assertEqual(tls.describe_scope({"permitted": [], "excluded": ["studio.example"]}),
+                         "Any website except studio.example.")
 
     def test_leaf_renewal_keeps_ca_and_key_and_reloads_existing_context(self):
         self.create()
@@ -327,3 +360,63 @@ class TestTLS(unittest.TestCase):
         with self.assertRaisesRegex(tls.TLSFailure, "without a port or URL"):
             tls.initialize("example.com\nDNS:another.example")
         self.assertFalse(self.directory.exists())
+
+
+class TestShare(unittest.TestCase):
+    """`alt tls-share` offers only the public CA, over plain HTTP, on the address a phone reaches."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=SUITE)
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        for name, value in {"TLS_DIR": self.root / "configuration" / "tls", "HOST": "127.0.0.1",
+                            "ROOT": self.root / "runtime", "SOURCE": self.root / "source",
+                            "PROJECT_ROOTS": [self.root / "projects"],
+                            "PROJECTS_FILE": self.root / "runtime" / "projects.json"}.items():
+            patcher = mock.patch.object(config, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        tls.initialize()
+
+    def test_a_loopback_or_wildcard_address_is_refused_with_the_setting_to_change(self):
+        for host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            with self.subTest(host=host), mock.patch.object(config, "HOST", host), \
+                    self.assertRaisesRegex(tls.TLSFailure, "Set ALTITUDE_HOST"):
+                tls.share(out=lambda line: self.fail(f"printed {line!r} before refusing"))
+
+    def test_serves_only_the_certificate_and_prints_what_the_phone_must_match(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        lines, printed = [], threading.Event()
+
+        def out(line):
+            lines.append(line)
+            printed.set()
+
+        # The suite may bind only loopback, so loopback stands in for the phone's network address here.
+        with mock.patch.object(tls, "_phone_host", return_value=("IP", "127.0.0.1")):
+            sharing = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
+            sharing.start()
+            self.assertTrue(printed.wait(10))
+            steps = lines[0]
+            link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", steps).group(0)
+            with urllib.request.urlopen(link, timeout=5) as response:
+                self.assertEqual(response.headers["Content-Type"], "application/x-x509-ca-cert")
+                self.assertEqual(response.read(), (config.TLS_DIR / "ca.crt").read_bytes())
+            for other in ("/", "/ca.key", "/server.key", "/api/health"):
+                with self.subTest(path=other), self.assertRaises(urllib.error.HTTPError) as refused:
+                    urllib.request.urlopen(link.replace("/ca.crt", other), timeout=5)
+                self.assertEqual(refused.exception.code, 404)
+            sharing.join(15)
+        self.assertFalse(sharing.is_alive(), "the link closes by itself")
+        authority = tls.identity(config.TLS_DIR / "ca.crt")
+        pairs = authority["sha256"].split(":")
+        for row in (pairs[:8], pairs[8:16], pairs[16:24], pairs[24:]):
+            self.assertIn(" ".join(row), steps)
+        self.assertIn("contains only a Certificate, named Altitude local CA", steps)
+        self.assertIn("Before tapping Install", steps)
+        self.assertIn(tls.describe_scope(authority["scope"]), steps)
+        self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
+        self.assertIn(f"open {tls.url()} in a new Private tab", steps)
+        self.assertEqual(lines[1:], ["Sent the certificate to 127.0.0.1.", "The link is closed."])

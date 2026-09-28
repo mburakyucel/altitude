@@ -5,6 +5,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- `alt tls-share` sets up a phone's HTTPS trust without another computer or AirDrop: for ten minutes
+  it offers the certificate at a plain-HTTP link on the configured network address and prints what
+  the phone must match before tapping Install: a lone certificate, its real name and its SHA-256.
+  The installer, `alt doctor` and **Settings → Devices** show the certificate's name, expiry and
+  what trusting it allows, read from the certificate, including "No limits" for an unconstrained
+  CA. Altitude's HTTPS address no longer serves `/ca.crt`.
+
 ## v0.1.0-rc.1 — 2026-09-28
 
 First release candidate of an early private preview, for Linux x86_64 with a systemd user service

@@ -617,6 +617,11 @@ works once, for ten minutes; a new code cancels the previous one and five wrong 
 Every other `alt` command that calls altd sends the machine key from the same store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
+`alt tls-share` (operator only) offers the public CA certificate to a phone for ten minutes at a
+plain-HTTP link on the configured, non-loopback `ALTITUDE_HOST`, and prints the CA's name, scope,
+expiry and SHA-256 fingerprint that the phone checks before installing it. It serves nothing else
+and exits when the time is up or on Ctrl-C. See [set up a phone](SETUP.md#set-up-a-phone).
+
 ## Project lifecycle
 
 `alt project remove <name>` is operator-only. Removing a project from Altitude means detaching its

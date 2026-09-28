@@ -21,16 +21,19 @@ _PRIVATE = ("DNS:localhost", "DNS:local", "DNS:internal", "DNS:home.arpa",
             "IP:192.168.0.0/255.255.0.0", "IP:100.64.0.0/255.192.0.0",
             "IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "IP:fc00::/fe00::")
 TRUST_STEPS = (
-    "Transfer only ca.crt by cable, verified AirDrop or an authenticated channel; never ca.key or server.key, "
-    "and never click through a warning to fetch it. Compare its SHA-256 fingerprint with ca_sha256.",
+    "Any channel may carry ca.crt, and `alt tls-share` offers it to a phone on this network for ten minutes. "
+    "Before installing, check that the file holds only this certificate (ca_name) and that its SHA-256 matches "
+    "ca_sha256; otherwise delete it. Never transfer ca.key or server.key.",
     "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
     "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
     "Mac: open ca.crt in Keychain Access, then set Trust > When using this certificate > Always Trust.",
-    "iPhone/iPad: open ca.crt and install the profile in Settings, then enable it under "
+    "iPhone/iPad: open ca.crt, then in Settings > Profile Downloaded check that it contains only a Certificate "
+    "named ca_name and that More Details shows its SHA-256 before tapping Install. Then turn it on under "
     "General > About > Certificate Trust Settings.",
     "Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate. "
     "Firefox for Android also needs its third-party CA certificate setting.",
-    "Open the HTTPS URL on each device; trust is confirmed only when it loads without a warning.",
+    "Open the HTTPS URL in a new private window on each device; trust is confirmed only when it loads without "
+    "a warning. Pair the device after that.",
 )
 
 
@@ -231,6 +234,56 @@ def check(host: str | None = None, *, renew: bool = True,
     return _load(directory, context) if context is not None else validated
 
 
+def _subtree(entry: str) -> str:
+    """One name-constraint entry as a person reads it: a DNS name, or an address range with its prefix length."""
+    kind, _, value = entry.partition(":")
+    if kind == "DNS":
+        return value
+    if kind == "IP" and "/" in value:
+        address, mask = value.lower().split("/", 1)
+        try:
+            prefix = bin(int(ipaddress.ip_address(mask))).count("1")
+            return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+        except ValueError:
+            pass
+    return entry
+
+
+def identity(certificate: Path) -> dict:
+    """What a device shows and trusts: the CA's display name, expiry, SHA-256 and name constraints, read from
+    the certificate itself. `scope` is None when the CA has no constraints and can vouch for any website."""
+    text = _openssl("x509", "-noout", "-subject", "-nameopt", "RFC2253", "-enddate", "-fingerprint", "-sha256",
+                    "-text", "-in", certificate).stdout
+    subject = re.search(r"^subject=\s*(.*)$", text, re.M).group(1).strip()
+    common = re.search(r"(?:^|,)CN=((?:[^,\\]|\\.)*)", subject)
+    scope, block, indent = None, None, 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("X509v3 Name Constraints"):
+            scope, indent = {"permitted": [], "excluded": []}, len(line) - len(line.lstrip())
+        elif scope is not None and block != "done":
+            if not stripped or len(line) - len(line.lstrip()) <= indent:
+                block = "done"
+            elif stripped in ("Permitted:", "Excluded:"):
+                block = stripped[:-1].lower()
+            elif block in scope:
+                scope[block].append(_subtree(stripped))
+    return {"name": re.sub(r"\\(.)", r"\1", common.group(1)) if common else subject,
+            "expires": re.search(r"^notAfter=(.*)$", text, re.M).group(1).strip(),
+            "sha256": re.search(r"Fingerprint=([0-9A-F:]+)", text).group(1), "scope": scope}
+
+
+def describe_scope(scope: dict | None) -> str:
+    """The authority a device grants by trusting the CA, in one sentence."""
+    if scope is None:
+        return ("No limits: this CA can vouch for any website, so whoever holds its key could impersonate "
+                "any site to a device that trusts it.")
+    if not scope["permitted"]:
+        return "Any website" + (f" except {', '.join(scope['excluded'])}" if scope["excluded"] else "") + "."
+    text = "Only " + ", ".join(scope["permitted"]) + ", each name with its subdomains"
+    return text + (f", except {', '.join(scope['excluded'])}" if scope["excluded"] else "") + "."
+
+
 def info(host: str | None = None) -> dict:
     """Return public identity evidence; local certificate validity does not prove device trust."""
     directory = config.TLS_DIR
@@ -238,7 +291,93 @@ def info(host: str | None = None) -> dict:
     ca = directory / "ca.crt"
     details = _openssl("x509", "-noout", "-dates", "-fingerprint", "-sha256",
                        "-in", directory / "server.crt").stdout.strip()
+    authority = identity(ca) if ca.exists() else None
     return {"dir": str(directory), "host": _host(host)[1], "managed": _managed(directory),
             "server_cert": details, "ca_cert": str(ca) if ca.exists() else None,
-            "ca_sha256": _openssl("x509", "-noout", "-fingerprint", "-sha256", "-in", ca).stdout.strip()
-            if ca.exists() else None, "trust": "unknown", "trust_steps": list(TRUST_STEPS)}
+            "ca_sha256": f"sha256 Fingerprint={authority['sha256']}" if authority else None,
+            "ca_name": authority and authority["name"], "ca_expires": authority and authority["expires"],
+            "ca_scope": authority and describe_scope(authority["scope"]),
+            "trust": "unknown", "trust_steps": list(TRUST_STEPS)}
+
+
+SHARE_MINUTES = 10
+
+
+def _phone_host() -> tuple[str, str]:
+    """The configured address, which a phone reaches only when it is not this computer's own loopback."""
+    kind, name = _host(None)
+    if name == "localhost" or kind == "IP" and ipaddress.ip_address(name).is_loopback:
+        raise TLSFailure("Altitude listens only on this computer, which a phone cannot reach. Set ALTITUDE_HOST to "
+                         "the private-network address the phone opens, restart Altitude, then retry.")
+    return kind, name
+
+
+def share(minutes: int = SHARE_MINUTES, out=print) -> None:
+    """Offer the public CA certificate to a phone on this network over plain HTTP for a few minutes. The
+    channel is unauthenticated: the printed steps have the phone check the file's contents and SHA-256
+    before installing it, and nothing else is served."""
+    import http.server
+    import socket
+    import time
+
+    kind, name = _phone_host()
+    ca = config.TLS_DIR / "ca.crt"
+    try:
+        body = ca.read_bytes()
+    except OSError as exc:
+        raise TLSFailure(f"Cannot read the CA certificate {ca}: {exc}. Run alt doctor.") from exc
+    authority = identity(ca)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        timeout = 10
+
+        def do_GET(self) -> None:
+            if self.path != "/ca.crt":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-x509-ca-cert")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command == "GET":
+                self.wfile.write(body)
+                out(f"Sent the certificate to {self.client_address[0]}.")
+
+        do_HEAD = do_GET
+
+        def log_message(self, *args) -> None:
+            pass
+
+    class Server(http.server.HTTPServer):
+        address_family = socket.AF_INET6 if kind == "IP" and ":" in name else socket.AF_INET
+
+    try:
+        server = Server((name, 0), Handler)
+    except OSError as exc:
+        raise TLSFailure(f"Cannot listen on {name} for the phone: {exc}.") from exc
+    with server:
+        server.timeout = 1
+        host = f"[{name}]" if server.address_family == socket.AF_INET6 else name
+        pairs = authority["sha256"].split(":")
+        out(f"For the next {minutes} minutes, on the phone open this link in Safari and tap Allow:\n"
+            f"  http://{host}:{server.server_address[1]}/ca.crt\n"
+            "Then Settings > Profile Downloaded. Before tapping Install, check that:\n"
+            f"  - it contains only a Certificate, named {authority['name']}\n"
+            "  - More Details > that certificate shows SHA-256:\n"
+            + "".join(f"      {' '.join(pairs[start:start + 8])}\n" for start in range(0, len(pairs), 8)) +
+            "If anything differs, tap Remove and stop: someone else answered the link.\n"
+            f"Trusting it allows: {describe_scope(authority['scope'])}\n"
+            f"It expires {authority['expires']}.\n"
+            f"After Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
+            f"Then open {url()} in a new Private tab. It must load with no warning; only then run alt pair.\n"
+            "Android: install the file under Settings > Security > Encryption & credentials > "
+            "Install a certificate > CA certificate.\n"
+            "Ctrl-C closes the link sooner.")
+        deadline = time.monotonic() + minutes * 60
+        try:
+            while time.monotonic() < deadline:
+                server.handle_request()
+        except KeyboardInterrupt:
+            pass
+    out("The link is closed.")

@@ -444,6 +444,7 @@ def main(argv=None) -> None:
     service.add_argument("--directory", type=Path, help="existing source deployment certificate directory")
     service.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
+    sub.add_parser("tls-share", help="offer the HTTPS certificate to a phone on this network for ten minutes")
     sub.add_parser("pair", help="print a one-time code that pairs one browser with Altitude")
 
     args = ap.parse_args(argv)
@@ -860,6 +861,15 @@ def main(argv=None) -> None:
         return
     if c == "tls-init":
         from altitude import server; out(server.tls_init(args.ip)); return
+    if c == "tls-share":
+        if ACTOR != config.OPERATOR_ACTOR:
+            sys.exit("alt tls-share: only the operator sets up devices")
+        from altitude import tls
+        try:
+            tls.share()
+        except tls.TLSFailure as exc:
+            sys.exit(f"alt tls-share: {exc}")
+        return
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt pair: only the operator pairs devices")
