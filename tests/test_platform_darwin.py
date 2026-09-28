@@ -146,6 +146,17 @@ class Service(DarwinCase):
         self.assertEqual(platform.job_logs_hint("altitude"), str(platform.logs_dir() / "altd.log"))
         self.assertEqual(platform.job_logs_hint("altitude-restart-1"), str(platform.logs_dir() / "altitude-restart-1.log"))
 
+    def test_the_source_checkout_service_stays_on_linux(self):
+        from altitude import config, server, source_tls
+        self.assertFalse(platform.source_service())
+        self.patch(config, "RELEASE", None)
+        with self.assertRaisesRegex(RuntimeError, "restart the source server by hand"):
+            server.restart_service()
+        with self.assertRaisesRegex(RuntimeError, "Linux source service"):
+            source_tls.prepare(self.tmp)
+        with mock.patch.object(platform.sys, "platform", "linux"):
+            self.assertTrue(platform.source_service())
+
     def test_service_evidence_reports_state_exit_and_coalition_memory(self):
         self.patch(platform, "_members", return_value=[(10, "1"), (11, "2")])
         self.patch(platform, "_footprint", side_effect=lambda pid: pid << 20)
@@ -390,6 +401,7 @@ class Supervisor(DarwinCase):
         self.stopped = self.patch(platform, "_stop_members", return_value=True)
         self.patch(platform, "_running", return_value=True)
         self.patch(platform.os, "execv", side_effect=SystemExit("removed"))
+        self.patch(platform, "CAFFEINATE", "/usr/bin/true")  # the power assertion; a fixture needs none
         self.job = self.tmp / "job"
         self.job.mkdir()
         self.out = self.tmp / "out.log"

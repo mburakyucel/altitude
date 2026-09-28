@@ -50,6 +50,12 @@ def require_supported() -> None:
     raise RuntimeError("Altitude runs on Linux x86_64 with systemd, or on macOS 15 or newer on Apple silicon.")
 
 
+def source_service() -> bool:
+    """Whether a source-checkout service can prepare its TLS drop-in and restart itself: systemd only. Installed
+    releases update the same way on both hosts."""
+    return not _darwin()
+
+
 def run(*args: str) -> str:
     try:
         result = subprocess.run(list(args), capture_output=True, text=True, timeout=45)
@@ -609,6 +615,7 @@ def find_library(name: str) -> str | None:
 
 LAUNCHCTL = shutil.which("launchctl") or "/bin/launchctl"
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
 
@@ -787,6 +794,15 @@ def seatbelt_profile(writable: list[str]) -> str:
             f"(deny file-write*)(allow file-write* {' '.join(rules)})")
 
 
+def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
+    """`command` under Altitude's Seatbelt profile on macOS, for a process that runs as the caller's own child
+    rather than as a job; unchanged on Linux. sandbox-exec replaces itself with the command, so its PID is the
+    command's."""
+    if not _darwin():
+        return command
+    return [SANDBOX_EXEC, "-p", seatbelt_profile([str(root) for root in writable]), *command]
+
+
 def job_main(argv: list[str]) -> None:
     """The launcher's and the supervisor's entry point (see `_entry`)."""
     role, argument = argv
@@ -921,7 +937,7 @@ def _supervise(job: Path) -> int:
                 os.set_blocking(streams[-1], True)
         command = spec["command"]
         if spec.get("writable") is not None:
-            command = [SANDBOX_EXEC, "-p", seatbelt_profile(spec["writable"]), *command]
+            command = confined(command, spec["writable"])
         try:
             child = subprocess.Popen(command, stdin=streams[0], stdout=streams[1], stderr=streams[2],
                                      env=spec["env"], cwd=spec["cwd"], start_new_session=terminal,
@@ -932,6 +948,13 @@ def _supervise(job: Path) -> int:
             child = None
         for stream in streams:
             os.close(stream)
+        if child is not None and not terminal:
+            # Idle sleep waits for the job (a closed lid still sleeps); the assertion ends with this supervisor.
+            try:
+                subprocess.Popen([CAFFEINATE, "-i", "-w", str(own)], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
         (job / "started").touch()
         if child is None:
             status = 127

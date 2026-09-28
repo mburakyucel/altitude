@@ -632,10 +632,13 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     env.update(extra_env or {})
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    writable = _claude_writable(Path(cwd), config.ROOT)
     if durable_timeout:
         cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout,
-                                   writable=_claude_writable(Path(cwd), config.ROOT))
+                                   writable=writable)
         env = codex_env(env, retain_user_bus=True)
+    else:
+        cmd = platform.confined(cmd, writable)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)

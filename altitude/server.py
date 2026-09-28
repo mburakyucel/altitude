@@ -2417,6 +2417,8 @@ class RestartBusy(RuntimeError):
 def restart_service() -> dict:
     if config.RELEASE is not None:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
+    if not platform.source_service():
+        raise RuntimeError("Source self-restart runs only as the Linux source service; restart the source server by hand")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
             raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review or report verification")
