@@ -198,6 +198,50 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
 });
 
+test("a long L3 coordination message folds to one line and opens in place", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const base = await runningTask(request, project.name);
+  const at = new Date().toISOString();
+  // A fictional equivalent of a long grant-coordination message: ids, times, constraints and instructions.
+  const coordination = "Sandbox grant re-recorded at 2026-01-05 10:00 UTC using the operator's earlier answer "
+    + "0a1b2c3d4e5f60718293a4b5c6d7e8f9, question 9f8e7d6c5b4a39281706f5e4d3c2b1a0 r1. Resolve 1234abcd5678ef90 against this "
+    + "confirmation and run the bounded make sandbox-check path, then review/check/land this increment under existing delivery "
+    + "rules. Keep the grant through its verification and landing; purpose grants cover relevant iteration, so do not revoke "
+    + "between steps or re-ask the operator for this unchanged purpose. Revoke when this increment's approved sandbox work is "
+    + "complete. Offline guest tests, 2 CPU/4 GiB, disposable overlay, fixture engines and no host service changes remain.";
+  const rows = [
+    TaskMessageSchema.parse({ id: "coord-1", at, role: "operator", text: "Please finish the sandbox check." }),
+    TaskMessageSchema.parse({ id: "coord-2", at, role: "l3", by: "l3", text: coordination }),
+    TaskMessageSchema.parse({ id: "coord-3", at, role: "l2", by: "l2", text: "Running the sandbox check now; I will report when it lands." }),
+  ];
+  await overlay(page, project.name, { ...base, messages: rows });
+  await walk.open(taskPath(project.name, base.slug));
+  await v.showConversation();
+  const row = v.conversation.locator('[data-role="l3"]');
+  const show = row.getByRole("button", { name: "Show", exact: true });
+  const hide = row.getByRole("button", { name: "Hide", exact: true });
+  const original = row.getByText(/Sandbox grant re-recorded/);
+  await walk.state("01-coordination-folded", {
+    visible: [row.getByText("L3 messaged the L2", { exact: true }), show, v.conversation.getByText("Please finish the sandbox check."),
+      v.conversation.getByText(/Running the sandbox check now/), v.composer],
+    hidden: [original, hide],
+  });
+  expect((await row.boundingBox())!.height).toBeLessThan(60);
+  await walk.state("02-coordination-open", {
+    action: () => show.click(),
+    visible: [original, hide, v.conversation.getByText(/Running the sandbox check now/)],
+    hidden: [show],
+  });
+  await expect(hide).toHaveAttribute("aria-expanded", "true");
+  await walk.state("03-coordination-folded-again", {
+    action: () => hide.click(),
+    visible: [show, v.composer],
+    hidden: [original, hide],
+  });
+});
+
 test("a blocked task: the question at the end of the chat, waiting for L3, a fault", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
@@ -221,7 +265,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
     project.name,
     { ...base, state: "blocked", live: null, resume_after: null, blocked_reason: question,
       question: decision, questions: [decision], question_group: { id: decision.id, revision: 1, anchor_id: anchor.id, questions: [decision] },
-      messages: [...(base.messages as unknown[]), anchor, { ...anchor, id: "timer-later", text: "I also checked the timer tests." }] },
+      messages: [...(base.messages as unknown[]), anchor, { ...anchor, id: "timer-later", role: "l2", by: "l2", text: "I also checked the timer tests." }] },
     { queue: [decision] },
   );
   await walk.open(`${taskPath(project.name, base.slug)}?question=${decision.id}&revision=${decision.revision}`);

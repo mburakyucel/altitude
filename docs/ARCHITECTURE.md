@@ -2203,8 +2203,10 @@ both viewports. A second wrapping row keeps chips visible: the state, the model 
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
-day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
-prose under day dividers, the open question group at the end of the conversation (closed groups
+day-divider, and composer components: the operator's rows as bubbles and the L2's rows as prose
+under day dividers. Each message L3 sent the L2 is one compact "L3 messaged the L2" line (with an
+image count when it carries images) whose Show opens the complete stored text and images in place;
+the task record, the L2's inbox and authority checks keep every word. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
