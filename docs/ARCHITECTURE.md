@@ -689,6 +689,11 @@ GitHub adapter, preserves the report and verification in a `report-superseded` e
 same owner into the existing blocked/resume path. No new attempt, provider, worktree or PR is
 created, and merge holds and original decision evidence remain intact. A failed PR lookup refuses
 the action before saving its text; after acceptance, wake failures retain the saved inbox request.
+L3 can also message or resume a reported owner whose current verifier verdict is `contradicted`,
+without an open PR. The verdict's owner identity and delivery must still match the task. This
+coordinator correction uses the same report retirement and resume transaction after merged delivery;
+it leaves the report file, decision evidence and unfinished acceptance with the original owner.
+The ordinary operator composer and resume admission retain their open-PR requirement.
 
 `report_after` marks follow-up work, and verification carries its owner identity, worker start and
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox

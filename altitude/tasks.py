@@ -418,12 +418,20 @@ def report_current(task: dict, path: Path) -> bool:
     return path.is_file() and (not after or path.stat().st_mtime >= datetime.fromisoformat(after).timestamp())
 
 
-def reported_continuable(task: dict, report: dict | None) -> bool:
-    """Local report evidence offers continuation; admission checks the PR's current state."""
+def _report_correction(task: dict, actor: str | None) -> bool:
+    """#553: L3 can return the current contradicted report without an open delivery PR."""
+    verified = task.get("verified") or {}
+    return (actor == "l3" and verified.get("verdict") == "contradicted"
+            and verified.get("owner") == report_owner(task)
+            and verified.get("delivery") == task.get("delivery"))
+
+
+def reported_continuable(task: dict, report: dict | None, *, actor: str | None = None) -> bool:
+    """Offer open-PR continuation, or L3 correction of the current contradicted report."""
     return bool(task.get("state") == "reported" and task.get("agent_id") and task.get("session_id")
-                and task.get("worktree") and any(
+                and task.get("worktree") and (_report_correction(task, actor) or any(
                     pr.get("number") in task.get("prs", []) and pr.get("merged") is False
-                    for pr in ((report or {}).get("landed") or {}).get("prs", [])))
+                    for pr in ((report or {}).get("landed") or {}).get("prs", []))))
 
 
 def continue_report(project: str, task: dict, *, actor: str, reason: str, check_pr: bool = True) -> dict:
@@ -433,8 +441,10 @@ def continue_report(project: str, task: dict, *, actor: str, reason: str, check_
     _require_daemon_fence(task, slug)
     report = S.read_json(S.task_dir(project, slug) / "report.json", {})
     if check_pr:
-        if not reported_continuable(task, report):
-            raise TransitionError(f"{slug}: continuation requires a reported owner with an open PR")
+        if not reported_continuable(task, report, actor=actor):
+            raise TransitionError(f"{slug}: continuation requires a reported owner with an open PR "
+                                  "or L3 correction of its current contradicted report")
+    if check_pr and not _report_correction(task, actor):
         try:
             open_pr = any((verify.gh(["pr", "view", str(pr["number"]), "--json", "state"],
                                     config.project_path(project)) or {}).get("state") == "OPEN"

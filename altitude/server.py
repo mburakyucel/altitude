@@ -430,7 +430,9 @@ def _validate_l3_alt_args(args: list[str]) -> None:
     if len(args) >= 3 and args[:1] == ["task"] and args[1] in L3_TASK_TARGETS:
         S.require_task_slug(args[2])
     if args[:2] == ["task", "block"]:
-        raise ValueError("L3 must use task stop --reason for a running worker")
+        raise ValueError("task block is owner-only; L3 uses task stop --reason for a running worker, "
+                         "or task message / task resume --reason to return a reported owner's "
+                         "current contradicted report for correction")
     if args[:2] == ["task", "hold-merge"] and "--off" in args[3:]:
         raise ValueError("only the operator may release a merge hold")
     if args[:1] == ["fyi"] and len(args) >= 3:

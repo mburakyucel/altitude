@@ -66,6 +66,57 @@ class TestContinuationJourney(AltitudeCase):
                   "review": [], "blocked": ""}
         S.write_json(S.task_dir(self.project, self.slug) / "report.json", report)
 
+    def test_merged_delivery_contradiction_returns_to_owner_and_retains_acceptance(self):
+        self.commit("README.md", "Delivered change\n", "Delivered change")
+        delivery = land.land("Checked delivery", cwd=self.worktree, merge=True, wait=0)
+        self.assertTrue(delivery["merged"])
+        merge_sha = git("rev-parse", "main", cwd=self.remote).strip()
+        self.write_report([(delivery["pr"], merge_sha)])
+        path = S.task_dir(self.project, self.slug) / "report.json"
+        report = S.read_json(path)
+        report.pop("blocked")
+        report["follow_ups"] = ["Real-device acceptance remains with this owner."]
+        S.write_json(path, report)
+        verdict = verify.verify(self.project, self.slug)
+        self.assertEqual(verdict["verdict"], "contradicted")
+        self.assertIn("report.json lacks `blocked`", verdict["problems"])
+        original = T.report(self.project, self.slug, verdict)
+        with self.assertRaises(T.TransitionError):
+            T.done(self.project, self.slug, digest="Delivery alone is not acceptance")
+
+        message = T.message(self.project, self.slug, "l3",
+                            "Correct the missing blocked field; retain the real-device acceptance question.")
+        waiting = S.load_task(self.project, self.slug)
+        self.assertEqual(waiting["resume_request"], message["id"])
+        self.assertIn(self.slug, dispatch.resume_due(self.project))
+        self.assertEqual(S.read_json(path), report)
+        history = [e for e in S.read_events(self.project, self.slug) if e["kind"] == "report-superseded"]
+        self.assertEqual(history[-1]["report"], report)
+        self.assertEqual(history[-1]["verified"]["verdict"], "contradicted")
+        with self.assertRaises(T.TransitionError):
+            T.report(self.project, self.slug, verdict)
+        dispatch.resume(self.project, self.slug)
+        resumed = S.load_task(self.project, self.slug)
+        for key in ("slug", "attempt", "session_id", "worktree", "branch", "prs", "delivery", "paths"):
+            self.assertEqual(resumed[key], original[key], key)
+        self.assertEqual(resumed["state"], "running")
+        self.assertIn(message["text"], self.engine.calls[-1]["prompt"])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+        self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "contradicted")
+
+        # The original owner publishes the correction and re-parks the retained acceptance.
+        report["blocked"] = "Operator: confirm real-device acceptance."
+        S.write_json(path, report)
+        T.block(self.project, self.slug, report["blocked"], actor="l2", updates={"waiting_on": "operator"})
+        self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "blocked")
+        with self.assertRaises(T.TransitionError):
+            T.done(self.project, self.slug, digest="Acceptance is still pending")
+        current = S.load_task(self.project, self.slug)
+        self.assertEqual(current["state"], "blocked")
+        self.assertTrue(any(q["status"] == "open" for q in current["questions"]))
+        self.assertEqual(current["prs"], [delivery["pr"]])
+        self.assertEqual(len(self.engine.calls), 2)
+
     def test_dirty_deployment_survives_checked_delivery_and_same_owner_followup(self):
         deployment_head = git("rev-parse", "HEAD", cwd=self.repo)
         (self.repo / "README.md").write_text("Deployment staged version\n")
