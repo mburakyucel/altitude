@@ -2089,8 +2089,8 @@ twelve seconds of audio. It exits on stdin EOF, so it ends with the daemon.
 `speech.Host` supervises it. The first recording starts the worker, after checking that about 2.5 GB
 of memory is available; every recording shares it, and it exits after fifteen minutes unused. Requests
 reach it through a writer thread, so a worker that is loading or hung never holds up a request. A
-watchdog kills it when it takes more than 30 seconds to load, 10 seconds to answer new audio or 15
-seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
+watchdog kills it when it takes more than 30 seconds to load, then 10 seconds to answer new audio or
+15 seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
 starts a fresh worker. Its stderr goes to `~/.altitude/speech/worker.log`; altd's log records starts,
 stops and reasons, never text.
 
@@ -2098,7 +2098,7 @@ The page's routes carry raw samples: `POST /api/voice/live` starts a recording f
 `X-Voice-Selection` (refused unless the backend is `host` and the runtime ready) and answers its id;
 `POST /api/voice/live/<id>/audio?seq=N&final=0|1` adds chunk `N`, at most ten seconds of 16 kHz 16-bit
 mono samples, and answers the text so far at once, never waiting for inference; `final=1` waits for
-the final text. Chunks are numbered from 0: a repeated number gets its first answer again without
+the final text, and cancelling the recording ends that wait at once. Chunks are numbered from 0: a repeated number gets its first answer again without
 adding audio, and a skipped one fails the recording. `POST /api/voice/live/<id>/cancel` discards it. A
 recording belongs to the paired device that opened it; at most two are active (a third is busy, 429),
 each up to ten minutes, and one without a request for 30 seconds is dropped. Audio stays in memory for

@@ -197,20 +197,28 @@ def _unpack(wheel: Path, site: Path) -> int:
     return total
 
 
-def setup(cancel: threading.Event | None = None) -> Path:
-    """Download, verify and activate this release's runtime. One setup runs at a time across the daemon and the
-    CLI; a second one is refused. Cancel or any failure leaves no staging behind and the previous state unchanged,
-    and a failure (not a cancel) is remembered for Settings until the next setup."""
-    cancel = cancel or threading.Event()
-    files, reason = manifest()
-    if files is None:
-        raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
+def _lock():
+    """Take the setup lock, which `status()` reads as setting-up; a second setup is refused."""
     ROOT.mkdir(parents=True, exist_ok=True)
-    with open(ROOT / ".lock", "a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SpeechError("Voice is already being set up.", 409) from None
+    handle = open(ROOT / ".lock", "a")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise SpeechError("Voice is already being set up.", 409) from None
+    return handle
+
+
+def setup(cancel: threading.Event | None = None, lock=None) -> Path:
+    """Download, verify and activate this release's runtime under `lock` (taken here when not given). One setup
+    runs at a time across the daemon and the CLI; a second one is refused. Cancel or any failure leaves no staging
+    behind and the previous state unchanged, and a failure (not a cancel) is remembered for Settings until the
+    next setup."""
+    cancel = cancel or threading.Event()
+    with lock or _lock():
+        files, reason = manifest()
+        if files is None:
+            raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
         staging = ROOT / ".staging"
         shutil.rmtree(staging, ignore_errors=True)
         try:
@@ -370,8 +378,11 @@ class Host:
             if recording is None or recording.device != device:
                 return
             del self.recordings[ident]
-            if self.worker is not None and recording.final is None:
-                self._send({"op": "close", "id": ident})
+            if recording.final is None and recording.error is None:
+                # A Stop still waiting for its final words ends here, not at the finish deadline.
+                recording.error = SpeechError("Voice stopped: this recording has ended.", 410)
+                if self.worker is not None:
+                    self._send({"op": "close", "id": ident})
             self.changed.notify_all()
 
     # --- setup and removal --------------------------------------------------------------------------------
@@ -379,13 +390,14 @@ class Host:
     def start_setup(self) -> None:
         """Set up in the background; Settings follows `status()`."""
         with self.changed:
-            if self.setup_cancel is not None or _setting_up():
+            if self.setup_cancel is not None:
                 raise SpeechError("Voice is already being set up.", 409)
+            lock = _lock()  # held before answering, so Settings reads setting-up at once
             self.setup_cancel = cancel = threading.Event()
 
         def run() -> None:
             try:
-                setup(cancel)
+                setup(cancel, lock)
                 self.log("voice: host runtime set up")
             except SpeechError as exc:
                 self.log(f"voice: setup ended: {exc}")
@@ -523,7 +535,8 @@ class Host:
                         self._stop("Voice stopped: voice was removed from this computer.")
                     elif not self.ready and now - self.started > LOAD_S:
                         self._stop("Voice stopped: the speech process did not start in time.")
-                    elif any(r.waiting_since and now - r.waiting_since > UPDATE_S for r in self.recordings.values()):
+                    elif self.ready and any(r.waiting_since and now - r.waiting_since > UPDATE_S
+                                            for r in self.recordings.values()):
                         self._stop("Voice stopped: the speech process stopped answering.")
                     elif not self.recordings and now - self.used > WORKER_IDLE_S:
                         self._stop("voice unused")

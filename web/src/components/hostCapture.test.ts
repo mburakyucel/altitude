@@ -166,6 +166,25 @@ describe("HostCapture", () => {
     expect(mic.track.stop).toHaveBeenCalled();
   });
 
+  it("stops when the host never answers the start, even while the microphone delivers", async () => {
+    const mic = microphone();
+    vi.stubGlobal("fetch", vi.fn((_path: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    })));
+    const capture = new HostCapture(mic.stream, "s");
+    capture.onstop = vi.fn();
+    capture.start();
+    await vi.advanceTimersByTimeAsync(0);
+    mic.speak(8000);
+    capture.stop();
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(capture.state).toBe("inactive");
+    expect(capture.failure).toBe("failed");
+    expect(capture.reason).toBe("Voice stopped: the connection to Altitude was lost.");
+    expect(capture.onstop).toHaveBeenCalledOnce();
+    expect(mic.track.stop).toHaveBeenCalled();
+  });
+
   it("a recording opened after cancel is discarded on the host too", async () => {
     const mic = microphone();
     let open: () => void = () => undefined;

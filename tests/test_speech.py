@@ -28,6 +28,8 @@ if mode == "fail-load":
     print(json.dumps({"error": "RuntimeError: no model"}), flush=True); sys.exit(1)
 if mode == "hang-load":
     time.sleep(60)
+if mode == "slow-load":
+    time.sleep(0.8)
 print(json.dumps({"ready": True}), flush=True)
 held = {}
 for line in sys.stdin:
@@ -225,6 +227,38 @@ class TestRecordings(SpeechCase):
                 with self.assertRaisesRegex(speech.SpeechError, "Voice stopped"):
                     self.text(host, ident, 1, 800)
 
+    def test_a_slow_load_is_not_mistaken_for_a_hung_update(self):
+        self.patch(speech, "UPDATE_S", 0.3)
+        host = self.host("slow-load")
+        ident = host.open(None)["id"]
+        self.text(host, ident, 0, 800)
+        worker = host.worker
+        seq = iter(range(1, 1000))
+        self.wait(lambda: self.text(host, ident, next(seq), 0)["text"] == "800 samples")
+        self.assertIs(host.worker, worker)
+
+    def test_cancelling_a_stop_that_waits_ends_only_that_recording(self):
+        host = self.host("hang-finish")
+        stopping, other = host.open(None)["id"], host.open("laptop")["id"]
+        self.text(host, stopping, 0, 800)
+        worker, outcome = host.worker, []
+
+        def stop():
+            try:
+                self.text(host, stopping, 1, 0, final=True)
+            except speech.SpeechError as exc:
+                outcome.append(exc)
+
+        waiting = threading.Thread(target=stop)
+        waiting.start()
+        time.sleep(0.1)
+        host.close(stopping, None)
+        waiting.join(2)
+        self.assertFalse(waiting.is_alive())
+        self.assertEqual(outcome[0].status, 410)
+        self.assertIs(host.worker, worker)
+        self.text(host, other, 0, 800, "laptop")
+
     def test_a_final_answer_that_never_comes_stops_voice(self):
         self.patch(speech, "FINISH_S", 0.3)
         host = self.host("hang-finish")
@@ -411,6 +445,23 @@ class TestSetup(SpeechCase):
         (speech.ROOT / "runtime-0000").mkdir(parents=True)
         speech.setup()
         self.assertEqual([path.name for path in speech._runtimes()], [speech.runtime().name])
+
+    def test_the_daemon_reads_setting_up_as_soon_as_it_accepts_setup(self):
+        release = threading.Event()
+
+        def slow(url, timeout):
+            release.wait(5)
+            return io.BytesIO(self.served[url])
+
+        self.patch(speech.urllib.request, "urlopen", new=slow)
+        host = self.host()
+        host.start_setup()
+        self.assertEqual(speech.status()["state"], "setting-up")
+        with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
+            speech.setup()
+        release.set()
+        self.wait(lambda: host.setup_cancel is None)
+        self.assertEqual(speech.status()["state"], "ready")
 
     def test_the_daemon_sets_up_in_the_background_and_can_cancel(self):
         host = self.host()

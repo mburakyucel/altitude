@@ -830,9 +830,9 @@ export async function changeHostVoice(action: "setup" | "cancel" | "remove"): Pr
 const HostTextSchema = z.object({ text: z.string(), final: z.boolean().optional() }).passthrough();
 
 /** Start a host voice recording for the selection the page read. */
-export async function startHostVoice(selection: string): Promise<{ id: string }> {
+export async function startHostVoice(selection: string, signal?: AbortSignal): Promise<{ id: string }> {
   return z.object({ id: z.string() }).passthrough().parse(
-    await api("/api/voice/live", { method: "POST", body: "{}", headers: { "X-Voice-Selection": selection } }));
+    await api("/api/voice/live", { method: "POST", body: "{}", headers: { "X-Voice-Selection": selection }, signal }));
 }
 
 /** Chunk `seq` of 16 kHz 16-bit samples; answers the text so far, or the final text. */

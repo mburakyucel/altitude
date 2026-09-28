@@ -137,7 +137,11 @@ export class HostCapture {
         this.fail("Voice stopped: this browser could not process the microphone.");
       },
     );
-    startHostVoice(this.selection).then(
+    // Opening is bounded like any chunk; an open the host answers after Cancel or the deadline is cancelled.
+    const request = new AbortController();
+    this.request = request;
+    const timer = setTimeout(() => request.abort(), REQUEST_MS);
+    startHostVoice(this.selection, request.signal).then(
       (opened) => {
         if (this.state === "inactive") { void cancelHostVoice(opened.id).catch(() => undefined); return; }
         this.id = opened.id;
@@ -145,7 +149,10 @@ export class HostCapture {
         this.pump();
       },
       (error) => this.fail(message(error), error),
-    );
+    ).finally(() => {
+      clearTimeout(timer);
+      if (this.request === request) this.request = null;
+    });
   }
 
   /** Stop listening, send what is left as the final chunk and end with the host's final words. */
