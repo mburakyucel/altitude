@@ -314,8 +314,9 @@ def resize(project: str, slug: str | None, ident, cols, rows) -> None:
 
 
 def close(project: str, slug: str | None, reason: str = "closed", ident=None) -> None:
-    """End the terminal by stopping its job; the reader records the close once the shell has gone. Close returns once
-    the job's launcher has ended, and says so when it has not. `ident`, when a page asks, names the terminal it shows."""
+    """End the terminal by stopping its job. Close returns once the reader has recorded the end, so a caller that
+    stops Altitude or removes its folders next loses no record, and says so when the job does not stop. `ident`,
+    when a page asks, names the terminal it shows."""
     term = _terminals.get((project, slug))
     if term is None or term.ended or ident is not None and ident != term.id:
         return
@@ -325,13 +326,11 @@ def close(project: str, slug: str | None, reason: str = "closed", ident=None) ->
     deadline = time.monotonic() + CLOSE_GRACE_SECONDS + STOP_SECONDS
     while True:  # a Close right after opening can reach the manager before the job exists: the next stop finds it
         stop(term.unit)
-        try:
-            term.proc.wait(STOP_POLL_SECONDS)
-            return
-        except subprocess.TimeoutExpired:
-            if time.monotonic() >= deadline:
-                raise TerminalError("The terminal did not stop. Close it again, or stop it from a desktop terminal.",
-                                    500) from None
+        with term.cond:
+            if term.cond.wait_for(lambda: term.ended, STOP_POLL_SECONDS):
+                return
+        if time.monotonic() >= deadline:
+            raise TerminalError("The terminal did not stop. Close it again, or stop it from a desktop terminal.", 500)
 
 
 def _finished(project: str, slug: str | None) -> str | None:

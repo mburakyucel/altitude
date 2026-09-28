@@ -979,9 +979,9 @@ tick's `terminal.sweep()` closes a task's terminal once the task is done, reject
 project's once it is no longer managed. Opening returns the running terminal when one exists.
 The job's control group holds every process the shell starts, including those that leave its session
 (`setsid`, daemons). Closing stops the job: SIGHUP to every process in it, then SIGKILL to whatever remains
-after two seconds, including commands that ignore the hang-up. Close repeats the stop until the shell's
-launcher has exited, which also covers a job the manager had not yet registered, and reports an error when
-the job is still running ten seconds later. The terminal ends when its shell exits; the
+after two seconds, including commands that ignore the hang-up. Close repeats the stop until the terminal
+has ended and its close is recorded, which also covers a job the manager had not yet registered and leaves
+nothing unrecorded when altd stops next, and reports an error when the job is still running ten seconds later. The terminal ends when its shell exits; the
 manager then stops the job, which kills everything the terminal started that is still running. altd holds the
 shell's side of the pseudo-terminal open for the terminal's life, so the end comes from the job, never from a
 hang-up. A process started through the user manager or a scheduler from the terminal is outside the job and

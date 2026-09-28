@@ -42,10 +42,9 @@ class TerminalCase(AltitudeCase):
                    worktree=str(self.worktree), branch="work")
 
     def _close_all(self):
-        for key, term in list(terminal._terminals.items()):
+        for key in list(terminal._terminals):
             if key[0] == self.project:
                 terminal.close(*key, "closed")
-                self.wait(lambda: term.ended)
                 terminal._terminals.pop(key, None)
 
     def turn(self, on: bool):
@@ -123,8 +122,10 @@ class TestTerminalLifecycle(TerminalCase):
         self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
         term = self.current(self.slug)
         terminal.close(self.project, self.slug)
-        self.assertEqual(self.gone(term).reason, "closed")
+        # Recorded by the time Close returns: Altitude stopping or a test's folders going next loses nothing.
         rows = [row for row in S.read_events(self.project, self.slug) if row["kind"] == "terminal"]
+        self.assertTrue(term.ended)
+        self.assertEqual(self.gone(term).reason, "closed")
         self.assertEqual([(row["action"], row["folder"]) for row in rows],
                          [("opened", str(self.worktree)), ("closed", str(self.worktree))])
 
@@ -290,7 +291,10 @@ class TestTerminalLifecycle(TerminalCase):
         self.turn(True)
         self.open()
         term = self.current()
-        terminal.close_all()
+        terminal.close_all()  # also what altd runs as it stops: every close is recorded before it returns
+        self.assertTrue(term.ended)
+        self.assertEqual([row["action"] for row in S.read_project_log(self.project) if row["kind"] == "terminal"],
+                         ["opened", "closed"])
         self.assertEqual(self.gone(term).reason, "closed")
 
     def test_an_open_racing_the_switch_going_off_starts_no_shell(self):

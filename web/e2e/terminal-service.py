@@ -111,10 +111,8 @@ def main():
                 held.set()
                 for stream in list(streams):
                     stream.connection.shutdown(socket.SHUT_RDWR)
-                for key, term in list(terminal._terminals.items()):
+                for key in list(terminal._terminals):
                     terminal.close(*key)
-                    with term.cond:
-                        term.cond.wait_for(lambda: term.ended, 5)
                 held.clear()
                 return self._json({"ok": True})
             return super().do_POST()

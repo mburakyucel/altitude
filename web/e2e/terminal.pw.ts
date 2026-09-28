@@ -75,6 +75,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+C");
   await expect(panel).toBeVisible();
+  // The shell turns bracketed paste back on as its new prompt starts; a paste before that would run at once.
+  await expect(output).toHaveText(/\^C\s*prepare-index-migration \$\s*$/);
 
   // Paste: the phone's Paste key reads the clipboard; on desktop the browser's paste reaches the shell.
   // Both paste as the shell asks (bracketed), so pasted lines wait for Enter.
