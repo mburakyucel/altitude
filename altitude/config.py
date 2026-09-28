@@ -117,7 +117,7 @@ def model_family(name: str | None) -> str | None:
 #: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
 DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
-PROJECT_SETTINGS = ("routing", *DEFAULT_SETTINGS)
+PROJECT_SETTINGS = ("routing", "l2_preference", *DEFAULT_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
@@ -172,6 +172,12 @@ def defaults_view(name: str) -> dict:
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
     return {"l3_engine": entry.get("l3_engine"),
+            "l2_preference": {"setting": "l2_preference", "value": entry.get("l2_preference"),
+                              "pin": entry.get("l2_engine"),
+                              "routing": format_routing(entry["routing"]) if "routing" in entry else None,
+                              "choices": [{"value": e, "label": ENGINE_LABELS[e],
+                                           "routed": any(o["engine"] == e for tier in entry.get("routing", AUTO_ROUTING) for o in tier)}
+                                          for e in ENGINES]},
             "roles": [{"role": role, "engines": [{"engine": engine, "label": ENGINE_LABELS[engine],
                                                    "model": field(role, engine, "model"),
                                                    "effort": field(role, engine, "effort")} for engine in ENGINES]}
@@ -331,6 +337,27 @@ def parse_routing(value: str) -> list[list[dict]]:
             options.append({"engine": engine, "model": model or None})
         tiers.append(options)
     return tiers
+
+
+def validate_preference(value) -> None:
+    if value is not None and value not in ENGINES:
+        raise ValueError(f"a provider preference is one of {', '.join(ENGINES)}, or unset for Auto")
+
+
+def format_routing(tiers: list[list[dict]]) -> str:
+    """The operator syntax parse_routing reads."""
+    return ">".join(",".join(o["engine"] + (":" + o["model"] if o.get("model") else "") for o in tier) for tier in tiers)
+
+
+def role_routing(role: str, project: dict) -> list[list[dict]]:
+    """The project's Auto tiers for this role. An L2 provider preference lifts that engine's options, in
+    their tier order, above every other option; the other engine stays below as its availability fallback."""
+    tiers = project.get("routing", AUTO_ROUTING)
+    prefer = project.get(f"{role}_preference")
+    if prefer not in ENGINES:
+        return tiers
+    split = [[o for o in tier if (o["engine"] == prefer) == first] for first in (True, False) for tier in tiers]
+    return [tier for tier in split if tier]
 
 
 def default_model(role: str, engine: str, project: dict | None = None) -> str | None:

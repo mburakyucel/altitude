@@ -73,6 +73,18 @@ class TestOperatorCommands(AltitudeCase):
         self.assertNotIn("routing", config.project(self.project))
         self.assertFalse(json.loads(self.alt(*args).stdout)["idempotent"], "an intervening change gets a new request")
 
+    def test_l2_preference_is_a_daemon_owned_project_setting(self):
+        result = self.alt("project", "set", self.project, "--l2-preference", "claude", "--reason", "use Claude more for L2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("l2_preference", config.project(self.project))
+        dispatch.run_settings(self.project)
+        self.assertEqual(config.project(self.project)["l2_preference"], "claude")
+        self.assertNotEqual(self.alt("project", "set", self.project, "--l2-preference", "other", "--reason", "x").returncode, 0)
+        result = self.alt("project", "set", self.project, "--unset-l2-preference", "--reason", "Auto")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dispatch.run_settings(self.project)
+        self.assertNotIn("l2_preference", config.project(self.project))
+
     def test_project_set_reregistration_is_last_write_wins_and_authority_is_validated(self):
         dispatch.request_setting(self.project, "routing", "codex", "test", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "already pending"):

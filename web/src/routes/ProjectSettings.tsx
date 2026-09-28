@@ -10,7 +10,7 @@ type Engine = ProjectDefaults["roles"][number]["engines"][number];
 
 const roles = {
   l3: { title: "L3 · project conversation", timing: "Applies from L3's next turn, in its existing conversation." },
-  l2: { title: "L2 · task owners", timing: "Applies to fresh task attempts. Started tasks keep their model and effort." },
+  l2: { title: "L2 · task owners", timing: "Applies to fresh task attempts. Started tasks keep their engine, model and effort." },
 };
 
 function SaveStatus({ save, retry }: { save: ReturnType<typeof useSetDefault>; retry: () => void }) {
@@ -65,6 +65,31 @@ function EffortField({ name, engine }: { name: string; engine: Engine }) {
   </div>;
 }
 
+/** Which engine fresh L2 attempts try first; Auto leaves the order to the project's routing tiers. */
+function ProviderPriority({ name, field }: { name: string; field: ProjectDefaults["l2_preference"] }) {
+  const save = useSetDefault(name);
+  const shown = save.isPending ? save.variables.value : field.value;
+  const label = (engine: string | null | undefined) => field.choices.find((c) => c.value === engine)?.label ?? engine;
+  const chosen = field.choices.find((c) => c.value === shown);
+  const others = field.choices.filter((c) => c !== chosen && c.routed).map((c) => c.label).join(" or ");
+  const note = field.pin ? `This project pins L2 to ${label(field.pin)}; the pin wins over this priority.`
+    : !chosen ? (field.routing ? `Auto follows this project's custom routing: ${field.routing}.`
+      : `Auto uses the default distribution: ${field.choices.map((c) => c.label).join(" and ")} share fresh tasks by weekly headroom.`)
+      : !chosen.routed ? `${chosen.label} is not in this project's custom routing (${field.routing}), so this priority has no effect.`
+        : `Fresh tasks start on ${chosen.label} when it is available${others ? `; ${others} takes over only when it is not` : ""}.`;
+  return <div className="provider-priority" role="group" aria-label="L2 provider priority">
+    <label className="default-engine"><strong>Provider priority</strong>
+      <select className="composer-pill-select" aria-label="Provider priority" value={shown ?? ""} disabled={save.isPending}
+        onChange={(event) => save.mutate({ setting: field.setting, value: event.target.value || null })}>
+        <option value="">Auto</option>
+        {field.choices.map((choice) => <option key={choice.value} value={choice.value}>Prefer {choice.label}</option>)}
+      </select>
+    </label>
+    <p className="text-meta text-muted">{note}</p>
+    <SaveStatus save={save} retry={() => save.variables && save.mutate(save.variables)} />
+  </div>;
+}
+
 function Session({ name }: { name: string }) {
   const project = useProject(name);
   const overview = useOverview();
@@ -83,7 +108,7 @@ function Session({ name }: { name: string }) {
   </p>;
 }
 
-/** One project's settings: the L3 engine and a model/effort pair per role and engine. */
+/** One project's settings: the L3 engine, the L2 provider priority and a model/effort pair per role and engine. */
 export default function ProjectSettings() {
   const { name = "" } = useParams();
   const { phone } = useViewport();
@@ -109,6 +134,7 @@ export default function ProjectSettings() {
             {defaults.data.roles.map((row) => <section key={row.role} className="settings-card" aria-label={roles[row.role].title}>
               <h2>{roles[row.role].title}</h2>
               <p className="text-meta text-muted">{roles[row.role].timing}</p>
+              {row.role === "l2" ? <ProviderPriority name={name} field={defaults.data.l2_preference} /> : null}
               {row.engines.map((engine) => <div key={engine.engine} className="default-engine-row" role="group" aria-label={`${row.role.toUpperCase()} on ${engine.label}`}>
                 <h3>{engine.label}</h3>
                 <ModelField name={name} engine={engine} />

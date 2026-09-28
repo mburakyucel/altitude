@@ -358,6 +358,10 @@ operational setting; altd applies it on the next tick and records the reason wit
 The default ties Codex and Claude on their role defaults (a Claude L2 on Opus, L3 on Fable), with
 Opus as L3's lower-tier fallback; an option that names no model takes the project's default model for that role
 for that engine first. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order.
+A project's L2 provider priority (`alt project set <name> --l2-preference <engine>` or **Provider
+priority** in its Settings page) moves that engine's options above the others, in their tier order,
+for fresh L2 only; the other engine stays the availability fallback, L3 is unchanged and Auto
+(unset) uses the tiers as written. [CLI details](CLI.md#automatic-routing-preferences).
 
 Auto selects from the highest tier with an eligible option. Within that tier it compares only named
 seven-day Claude data with a Codex window whose reported duration is exactly seven days. A five-hour

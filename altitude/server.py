@@ -2061,7 +2061,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 409)
             if parts == ["api", "defaults"]:
                 try:
-                    if o.get("setting") not in config.DEFAULT_SETTINGS:
+                    if o.get("setting") not in (*config.DEFAULT_SETTINGS, "l2_preference"):
                         raise ValueError("unknown project default")
                     dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
                     result = dispatch._run_setting(o["project"], o["setting"])
