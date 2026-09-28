@@ -225,8 +225,8 @@ the reviewer returns material findings and coverage gaps without unrelated explo
 the run and can cancel if it gets stuck or goes off scope. Authorized owner work can continue in
 parallel, but every accepted request prevents merge until L2 records finding dispositions and assesses
 its subject, or the requester is authorized to withdraw. L2 can record a finding as `open` to assess
-honestly without clearing it; an open finding keeps the review uncleared and merge refused until a later
-assessment fixes or dismisses it with evidence. A proposal request never supersedes a pending
+honestly without clearing it; an open finding keeps the review uncleared, merge refused and the
+review unreplaceable until a later assessment fixes or dismisses it with evidence. A proposal request never supersedes a pending
 changes request. L2 replies in normal prose; original results remain in review details. Proposal review
 never establishes implementation acceptance or releases its approval question.
 

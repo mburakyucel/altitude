@@ -198,7 +198,7 @@ def _project_review(review, task, identity):
                 else "assessed" if assessed and matches(assessed) else "earlier")
     mutable = task.get("state") in ("running", "blocked", "reported") and review in _current_reviews(task)
     latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == review.get("subject", "changes")), None)
-    rerunnable = task.get("state") in ("running", "blocked", "reported") and review == latest
+    rerunnable = task.get("state") in ("running", "blocked", "reported") and review == latest and not _unresolved(review)
     row.update(coverage=coverage, unresolved=_unresolved(review), can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
                can_retry=mutable and review["state"] in ("failed", "cancelled"),
@@ -276,6 +276,9 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                     or repeated.get("selection") != selection):
                 raise T.TransitionError("That review request identity already has a different focus or selection.")
             return _project_review(repeated, task, None)
+        if prior and _unresolved(prior):
+            # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
+            raise T.TransitionError("Fix or dismiss the review's open findings with evidence before requesting another.")
         if why := _eligible(task, subject):
             raise T.TransitionError(why)
         latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
