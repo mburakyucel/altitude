@@ -979,7 +979,79 @@ describe("Composer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it.each(["Cancel", "Stop", "Send", "navigation"])("browser recognition: %s finishes native capture and waveform shutdown before another microphone opens", async (action) => {
+  it.each(["browser", "endpoint"] as const)("%s connects each waveform before capture starts and closes each graph once", async (backend) => {
+    installVoiceBrowser({ backend });
+    if (backend === "endpoint") stubTranscribe("new words");
+    const order: string[] = [];
+    const closes: ReturnType<typeof vi.fn>[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.stubGlobal("AudioContext", class {
+      close = vi.fn(async () => undefined);
+      constructor() { closes.push(this.close); }
+      createAnalyser() { return { fftSize: 512 }; }
+      createMediaStreamSource() { return { connect: () => order.push("connected") }; }
+    });
+    const prototype = backend === "browser" ? FakeSpeechRecognition.prototype : FakeMediaRecorder.prototype;
+    const start = prototype.start;
+    vi.spyOn(prototype, "start").mockImplementation(function (this: FakeSpeechRecognition & FakeMediaRecorder) {
+      order.push("start");
+      start.call(this);
+    });
+    const view = mount({ initial: "Draft" });
+    for (const action of ["Cancel", "Cancel", "Stop", "navigation"]) {
+      await view.user.click(screen.getByRole("button", { name: "Start voice input" }));
+      await screen.findByRole("button", { name: "Stop voice input" });
+      expect(order).toEqual(Array.from({ length: closes.length }, () => ["connected", "start"]).flat());
+      if (backend === "browser") act(() => FakeSpeechRecognition.instances.at(-1)!.hear(["new words"]));
+      if (action === "navigation") view.unmount();
+      else await view.user.click(screen.getByRole("button", { name: `${action} voice input` }));
+      await waitFor(() => closes.forEach((close) => expect(close).toHaveBeenCalledOnce()));
+      if (action === "Cancel") expect(view.field).toHaveValue("Draft");
+      if (action === "Stop") await waitFor(() => expect(view.field).toHaveValue("Draft new words"));
+    }
+  });
+
+  it.each([
+    ["browser", "constructor"], ["browser", "start"], ["endpoint", "constructor"], ["endpoint", "start"],
+  ] as const)("releases a prepared waveform when %s %s throws, then retries", async (backend, failure) => {
+    const { track } = installVoiceBrowser({ backend });
+    if (backend === "endpoint") stubTranscribe("recovered");
+    const close = vi.fn(async () => undefined);
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.stubGlobal("AudioContext", class {
+      createAnalyser() { return { fftSize: 512 }; }
+      createMediaStreamSource() { return { connect: vi.fn() }; }
+      close = close;
+    });
+    if (backend === "browser") vi.stubGlobal("SpeechRecognition", class extends FakeSpeechRecognition {
+      constructor() { super(); if (failure === "constructor") throw new Error("fixture construction failure"); }
+      start() { throw new DOMException("fixture startup failure", "InvalidStateError"); }
+    });
+    else vi.stubGlobal("MediaRecorder", class extends FakeMediaRecorder {
+      constructor(stream: MediaStream, options?: MediaRecorderOptions) {
+        super(stream, options);
+        if (failure === "constructor") throw new Error("fixture construction failure");
+      }
+      start() { throw new DOMException("fixture startup failure", "InvalidStateError"); }
+    });
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(track.stop).toHaveBeenCalled();
+    expect(field).toHaveValue("Draft");
+    expect(field).not.toHaveAttribute("readonly");
+    vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    if (backend === "browser") act(() => FakeSpeechRecognition.instances.at(-1)!.hear(["recovered"]));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Draft recovered"));
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
+  });
+
+  it.each(["Cancel", "Stop", "Send", "navigation", "recording cap"])("browser recognition: %s finishes native capture and waveform shutdown before another microphone opens", async (action) => {
     const { getUserMedia } = installVoiceBrowser({ backend: "browser" });
     let closed!: () => void;
     const close = vi.fn(() => new Promise<void>((resolve) => { closed = resolve; }));
@@ -992,11 +1064,18 @@ describe("Composer", () => {
     });
     const onSubmit = vi.fn();
     const source = mount({ initial: "Typed draft", onSubmit });
-    await source.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    if (action === "recording cap") {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+      await act(async () => screen.getByRole("button", { name: "Start voice input" }).click());
+    } else await source.user.click(screen.getByRole("button", { name: "Start voice input" }));
     const recognizer = FakeSpeechRecognition.instances[0]!;
     recognizer.answersAbort = recognizer.answersStop = false;
     act(() => recognizer.hear(["spoken words"]));
-    if (action === "navigation") source.unmount();
+    if (action === "recording cap") {
+      try { await act(async () => { await vi.advanceTimersByTimeAsync(595_000); }); }
+      finally { vi.useRealTimers(); }
+      expect(recognizer.stopped).toBe(1);
+    } else if (action === "navigation") source.unmount();
     else await source.user.click(screen.getByRole("button", { name: action === "Send" ? "Send" : `${action} voice input` }));
     // The graph must stay alive until native recognition releases the microphone.
     expect(close).not.toHaveBeenCalled();
@@ -1015,7 +1094,7 @@ describe("Composer", () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     act(() => FakeSpeechRecognition.instances[1]!.hear(["restart works"]));
     await destination.user.click(screen.getByRole("button", { name: "Stop voice input" }));
-    await waitFor(() => expect(destination.field).toHaveValue(action === "Stop" ? "Typed draft spoken words restart works" : action === "Send" ? "restart works" : action === "navigation" ? "Other draft restart works" : "Typed draft restart works"));
+    await waitFor(() => expect(destination.field).toHaveValue(action === "Stop" || action === "recording cap" ? "Typed draft spoken words restart works" : action === "Send" ? "restart works" : action === "navigation" ? "Other draft restart works" : "Typed draft restart works"));
     await act(async () => closed());
     expect(onSubmit).toHaveBeenCalledTimes(action === "Send" ? 1 : 0);
   });
