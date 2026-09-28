@@ -33,8 +33,9 @@ installation, native Mac behavior or engine authentication.
 
 The manually dispatched [Linux installation lifecycle harness](DEVELOPMENT.md#installation-lifecycle-acceptance)
 adds packaged installation, real per-user service/HTTPS checks, update, failed activation recovery and
-uninstall retention on disposable Ubuntu 24.04 runners. Its first hosted execution remains pending
-until a run's artifact/source identity and results are recorded. The synthetic version pair uses
+uninstall retention on disposable Ubuntu 24.04 machines. Its hosted workflow has not executed; the
+[local VM run](DEVELOPMENT.md#local-vm-run) executes the same harness on the development host, and
+acceptance for a release needs a recorded run for its source commit. The synthetic version pair uses
 one source commit, so it supplies no cross-release migration evidence. Runs are independent of
 other owners' delivery and the required PR gate. This is partial #226 acceptance; the parent stays
 open, and macOS remains with `macos-support-native-runtime-behind-the`. Minimal OS installation,
