@@ -54,12 +54,14 @@ release exists, `https://github.com/mburakyucel/altitude/releases/latest/downloa
 names the newest one; `latest` skips release candidates.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
-Releases that the release workflow publishes from the public repository attest every release file,
-so you can check a script's build provenance with the GitHub CLI before running it.
-`v0.1.0-rc.1` was published while the repository was private and has no attestation.
+Releases that the release workflow publishes from the public repository attest every release file.
+`v0.1.0-rc.1` was published while the repository was private and has no attestation, so this check
+applies to later releases. To verify an attested release's script before running it, set `VERSION`
+to its tag:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/mburakyucel/altitude/releases/download/<version>/install.sh &&
+VERSION=v0.1.0   # an attested release
+curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```

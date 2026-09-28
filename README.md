@@ -70,9 +70,11 @@ coding account's allowance and normal charges.
    ```
 
    There is no stable release yet, so each preview installs from its own tag; check
-   [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script checks the machine, runs nothing it downloads unless it matches the release's
-   checksums and prints the next steps. The [installation steps](docs/SETUP.md#install-the-application)
-   show how to verify it first. On macOS it stops before installing: the native runtime is not delivered yet.
+   [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script
+   checks the machine, runs nothing it downloads unless it matches the release's checksums and
+   prints the next steps. The [installation steps](docs/SETUP.md#install-the-application) explain
+   what it trusts and how to verify attested releases. On macOS it stops before installing: the
+   native runtime is not delivered yet.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device), open the printed
