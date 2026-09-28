@@ -54,12 +54,18 @@ WORKTREE_ROOT = Path(".claude/worktrees")
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
-HOST = os.environ.get("ALTITUDE_HOST", "127.0.0.1")
-PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
+
+
+def network(environment) -> dict:
+    """Where a server started with this environment listens and which HTTPS identity it serves."""
+    return {"host": environment.get("ALTITUDE_HOST", "127.0.0.1"), "port": int(environment.get("ALTITUDE_PORT", "8890")),
+            "tls_dir": Path(environment.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser(),
+            "tls": environment.get("ALTITUDE_TLS", "1") != "0"}
+
+
+HOST, PORT, TLS_DIR, TLS = map(network(os.environ).get, ("host", "port", "tls_dir", "tls"))
 # The projects folder's initial value; `alt machine set --projects-folder` replaces it (project_roots()).
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
-TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser()
-TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
 
 def installation_environment() -> dict[str, str]:

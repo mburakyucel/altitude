@@ -321,13 +321,63 @@ def info(host: str | None = None) -> dict:
 SHARE_MINUTES = 10
 
 
-def _phone_host() -> tuple[str, str]:
-    """The configured address, which a phone reaches only when it is not this computer's own loopback."""
-    kind, name = _host(None)
-    if name == "localhost" or kind == "IP" and ipaddress.ip_address(name).is_loopback:
-        raise TLSFailure("Altitude listens only on this computer, which a phone cannot reach. Set ALTITUDE_HOST to "
-                         "the private-network address the phone opens, restart Altitude, then retry.")
-    return kind, name
+def service() -> dict:
+    """Where the running Altitude service listens and which certificate folder it serves from, as the service
+    itself started, so every shell reaches the same service. A shell setting that disagrees is refused."""
+    from . import platform
+    try:
+        pid, environment = platform.service_settings()
+        found = config.network(environment)
+    except (RuntimeError, ValueError) as exc:
+        raise TLSFailure(f"Cannot find the running Altitude service: {exc}") from exc
+    shell = config.network(os.environ)
+    differing = [key for key, name in (("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
+                                       ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir"))
+                 if key in os.environ and shell[name] != found[name]]
+    if differing:
+        raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
+                         "Unset them in this shell, then retry.")
+    kind, name = _host(found["host"])
+    address = f"[{name}]" if kind == "IP" and ":" in name else name
+    return {**found, "pid": pid, "kind": kind, "name": name,
+            "url": f"{'https' if found['tls'] else 'http'}://{address}:{found['port']}"}
+
+
+def _phone_address(found: dict) -> None:
+    """Refuse a service a phone cannot open over HTTPS."""
+    if not found["tls"]:
+        raise TLSFailure("The Altitude service serves plain HTTP, so it has no certificate for a phone to trust.")
+    if found["name"] == "localhost" or found["kind"] == "IP" and ipaddress.ip_address(found["name"]).is_loopback:
+        raise TLSFailure(f"The Altitude service is configured for {found['host']}, which only this computer can "
+                         "open. Set the service's ALTITUDE_HOST to the private-network address the phone opens, "
+                         "restart the service, then retry.")
+
+
+def _proven(found: dict) -> bytes:
+    """The CA certificate the service proves it serves under: its health, fetched over HTTPS trusting only
+    that certificate for the service's name, comes from the service's own process."""
+    import json
+    import urllib.request
+
+    ca = found["tls_dir"] / "ca.crt"
+    try:
+        body = ca.read_bytes()
+        context = ssl.create_default_context(cadata=body.decode())
+    except (OSError, ValueError, ssl.SSLError) as exc:
+        raise TLSFailure(f"Cannot read the Altitude service's CA certificate {ca}: {exc}. Run alt doctor.") from exc
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
+    try:
+        with opener.open(found["url"] + "/api/health", timeout=10) as response:
+            health = json.load(response)
+    except (OSError, ValueError) as exc:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            raise TLSFailure(f"The Altitude service at {found['url']} does not prove its identity with the CA "
+                             f"certificate {ca}: {reason.verify_message}. Run alt doctor.") from exc
+        raise TLSFailure(f"The Altitude service does not answer at {found['url']}: {reason}.") from exc
+    if not isinstance(health, dict) or health.get("pid") != found["pid"]:
+        raise TLSFailure(f"Another process answers at {found['url']}, not the running Altitude service.")
+    return body
 
 
 def share(minutes: int = SHARE_MINUTES, out=print) -> None:
@@ -339,13 +389,11 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
     import threading
     import time
 
-    kind, name = _phone_host()
-    ca = config.TLS_DIR / "ca.crt"
-    try:
-        body = ca.read_bytes()
-    except OSError as exc:
-        raise TLSFailure(f"Cannot read the CA certificate {ca}: {exc}. Run alt doctor.") from exc
-    authority = identity(ca)
+    found = service()
+    _phone_address(found)
+    body = _proven(found)
+    kind, name = found["kind"], found["name"]
+    authority = identity(found["tls_dir"] / "ca.crt")
     deadline = time.monotonic() + minutes * 60
     connections: set[socket.socket] = set()
 
@@ -399,7 +447,7 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
             f"Trusting it allows: {describe_scope(authority['scope'])}\n"
             f"It expires {authority['expires']}.\n"
             f"After Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
-            f"Then open {url()} in a new Private tab. It must load with no warning; only then run alt pair.\n"
+            f"Then open {found['url']} in a new Private tab. It must load with no warning; only then run alt pair.\n"
             "Android: install the file under Settings > Security > Encryption & credentials > "
             "Install a certificate > CA certificate.\n"
             "Ctrl-C closes the link sooner.")

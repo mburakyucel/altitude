@@ -873,11 +873,15 @@ def main(argv=None) -> None:
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt pair: only the operator pairs devices")
-        from altitude import access
+        from altitude import access, tls
         code = access.issue_code()
+        # The code works without the service, so a missing link never blocks recovering access.
+        try:
+            link = f"On the device, open {tls.service()['url']}/pair?code={code['code']}\nor type the code"
+        except tls.TLSFailure as exc:
+            link = f"No link: {exc}\nType the code"
         print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes)\n"
-              f"On the device, open {'https' if config.TLS else 'http'}://{config.HOST}:{config.PORT}/pair?code={code['code']}\n"
-              "or type the code on its Pair this device screen. A new code cancels this one.")
+              f"{link} on its Pair this device screen. A new code cancels this one.")
         return
 
 
