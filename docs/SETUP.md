@@ -34,11 +34,12 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs the
-latest published release as the account that will use Altitude:
+On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs a
+published release as the account that will use Altitude. The preview has no stable release yet, so
+install the newest release candidate from its own tag:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
@@ -48,16 +49,17 @@ each against the SHA-256 written into the script when the release was built, run
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
 Nothing is run from a download that does not match, and nothing runs as root. The script is one
-function called on its last line, so a download cut off midway does nothing. `latest` names the
-newest stable release; a release candidate installs from its own tag, for example
-`https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh`.
+function called on its last line, so a download cut off midway does nothing. Once a stable
+release exists, `https://github.com/mburakyucel/altitude/releases/latest/download/install.sh`
+names the newest one; `latest` skips release candidates.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
-To verify the script before running it, download it and check its build provenance with the GitHub
-CLI; the release workflow attests every release file:
+Releases that the release workflow publishes from the public repository attest every release file,
+so you can check a script's build provenance with the GitHub CLI before running it.
+`v0.1.0-rc.1` was published while the repository was private and has no attestation.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/mburakyucel/altitude/releases/latest/download/install.sh &&
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/mburakyucel/altitude/releases/download/<version>/install.sh &&
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```

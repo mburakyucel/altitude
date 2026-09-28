@@ -63,13 +63,14 @@ is the initial target; clean-machine and provider acceptance remain pending. You
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
-1. Install the latest release as the account that will use Altitude:
+1. Install the current release candidate as the account that will use Altitude:
 
    ```sh
-   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
+   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
    ```
 
-   The script checks the machine, runs nothing it downloads unless it matches the release's
+   There is no stable release yet, so each preview installs from its own tag; check
+   [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script checks the machine, runs nothing it downloads unless it matches the release's
    checksums and prints the next steps. The [installation steps](docs/SETUP.md#install-the-application)
    show how to verify it first. On macOS it stops before installing: the native runtime is not delivered yet.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
