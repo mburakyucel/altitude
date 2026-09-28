@@ -5,6 +5,19 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+## v0.1.0-rc.1 — 2026-09-28
+
+First release candidate of an early private preview, for Linux x86_64 with a systemd user service
+(target: Ubuntu 24.04). Install it from this release's `install.sh`; the one-line install and
+`alt update` use stable releases only.
+
+Known limitations: fresh-machine installation and updating from one published release to another
+are covered by deterministic tests only; live engine providers are not tested; on macOS `install.sh`
+stops before downloading anything.
+
+Recovery: a failed activation restores the previous version and keeps configuration, TLS identity
+and data; `alt recover` completes an interrupted one. A faulty release is followed by a new version.
+
 - Altitude opens only in browsers you pair. Run `alt pair` on the computer running Altitude, locally
   or over SSH, and type the code it prints on the device's **Pair this device** screen, or open the
   link it prints there. **Settings → Devices** lists paired devices, removes one at once and makes a
