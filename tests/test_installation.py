@@ -927,8 +927,9 @@ class UpdateRequests(NoticeCase):
 
     def setUp(self):
         super().setUp()
-        from altitude import server, terminal
+        from altitude import access, server, terminal
         self.agent = mock.patch.object(terminal, "agent_connection", return_value=False).start()
+        mock.patch.object(access, "is_machine", return_value=True).start()  # past the pairing gate, as AltitudeCase
         self.addCleanup(mock.patch.stopall)
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
