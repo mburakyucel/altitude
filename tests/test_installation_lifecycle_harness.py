@@ -71,6 +71,41 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--disposable-vm", result.stderr)
 
+    def test_shell_entry_refuses_an_unknown_phase(self):
+        result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
+                                 "b", "c", str(self.tmp / "results"), "a" * 40, "reboot"],
+                                capture_output=True, text=True, timeout=10, env=os.environ.copy())
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("reboot-install|reboot-verify", result.stderr)
+        self.assertFalse((self.tmp / "results").exists())
+
+    def test_shell_entry_accepts_each_phase_and_still_requires_root(self):
+        for phase in ("bootstrap", "reboot-install", "reboot-verify"):
+            with self.subTest(phase=phase):
+                result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
+                                         "b", "c", str(self.tmp / "results"), "a" * 40, phase],
+                                        capture_output=True, text=True, timeout=10,
+                                        env={k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"})
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn("Usage", result.stderr)
+                self.assertFalse((self.tmp / "results").exists())
+
+    def test_reboot_verify_refuses_when_the_machine_did_not_restart(self):
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, "a" * 40)
+        harness.home = self.tmp / "altitude-installation.fixture/alt-install-1"
+        (results / "reboot-state.json").write_text(json.dumps({"env": {}, "release": {}, "pid": "1",
+            "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}))
+        with mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
+                mock.patch("scripts.installation_lifecycle.os.getuid", return_value=1000), \
+                mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
+            user.return_value.pw_name = "alt-install-1"
+            with self.assertRaisesRegex(AssertionError, "did not restart"):
+                harness.execute("reboot-verify")
+            run.assert_not_called()
+        self.assertFalse(json.loads((results / "reboot-verify-result.json").read_text())["passed"])
+
 
 class TestInstallationVm(AltitudeCase):
     """The VM runner's guest configuration and refusal; no VM, image download or KVM access."""

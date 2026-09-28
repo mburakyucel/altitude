@@ -3,10 +3,15 @@
 
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
+The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
+its check after the VM restarts. `bootstrap` runs the built install.sh through its public curl | sh
+command against a release server on this machine's loopback, whose name the root wrapper points here.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -19,7 +24,9 @@ import ssl
 import subprocess
 import sys
 import tarfile
+import threading
 import time
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 
@@ -49,9 +56,14 @@ def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
     return output, release
 
 
+def boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
 class Lifecycle:
     def __init__(self, baseline: Path, candidate: Path, results: Path, expected_commit: str):
         self.baseline, self.candidate, self.results = baseline, candidate, results
+        self.state = results / "reboot-state.json"  # what reboot-verify needs from reboot-install
         self.expected_commit = expected_commit
         self.home = Path.home()
         self.prefix = self.home / ".local/share/altitude"
@@ -61,7 +73,7 @@ class Lifecycle:
         self.env = dict(os.environ)
         self.result = {"passed": False, "steps": [], "artifacts": [], "limits": [
             "Same-source version transition; no cross-release storage migration",
-            "No public download/bootstrap, minimal OS, reboot/login/logout or device trust acceptance",
+            "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
             "No live provider, native worker confinement or macOS acceptance",
         ]}
         self.sequence = 0
@@ -140,9 +152,13 @@ class Lifecycle:
         assert report["engines"] and all(item["available"] is None for item in report["engines"])
         assert report["engine_access"].startswith("unknown")
 
-    def exercise(self):
+    def disposable(self):
         assert os.getuid() != 0 and pwd.getpwuid(os.getuid()).pw_name.startswith("alt-install-")
         assert self.home.parent.name.startswith("altitude-installation.")
+
+    def prepare(self):
+        """Verify both archives and configure the fixture engines on a fresh disposable account."""
+        self.disposable()
         assert not self.prefix.exists() and not self.settings.exists(), "Needs a fresh disposable account"
         write_json(self.results / "environment.json", {
             "os_release": Path("/etc/os-release").read_text(), "kernel": platform.release(),
@@ -172,8 +188,14 @@ class Lifecycle:
             "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
         assert keys, "Package exposes no engine executable settings"
         self.env.update({key: str(fixture) for key in keys})
-        self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py",
-                 "--archive", old, "--sha256", old_sha)
+        return old, old_sha, package, before, new, new_sha, new_package, after
+
+    def install(self, archive: Path, checksum: str):
+        self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", archive, "--sha256", checksum)
+
+    def exercise(self):
+        old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
+        self.install(old, old_sha)
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
         # Keep projects unregistered: no task or coordinator may start in this test.
@@ -201,6 +223,10 @@ class Lifecycle:
         self.doctor("recovered", after)
         assert (self.prefix / "versions" / broken["version"]).is_dir()
         assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
+        self.uninstall(retained)
+
+    def uninstall(self, retained: dict):
+        port = int(self.env["ALTITUDE_PORT"])
         removed = json.loads(self.run("uninstall", self.alt, "uninstall"))
         assert removed["uninstalled"] and not removed["application_retained_for_project_hooks"]
         assert not self.alt.exists() and not (self.prefix / "current").exists()
@@ -215,15 +241,105 @@ class Lifecycle:
         self.result["retained_files"] = [str(path.relative_to(self.home)) for path in retained]
         self.result["passed"] = True
 
-    def execute(self):
+    def reboot_install(self):
+        """Install and leave the service running for the machine to restart."""
+        old, old_sha, _, before, *_ = self.prepare()
+        self.install(old, old_sha)
+        initial = self.healthy("installed", before)
+        self.doctor("installed", before)
+        write_json(self.state, {"env": self.env, "release": before, "pid": initial["pid"], "boot_id": boot_id()})
+        self.result["passed"] = True
+
+    def reboot_verify(self):
+        """After the restart, the user manager started the same installation without anyone logging in."""
+        self.disposable()
+        state = json.loads(self.state.read_text())
+        self.env.update(state["env"])
+        assert boot_id() != state["boot_id"], "The machine did not restart"
+        deadline = time.monotonic() + 90  # the user manager starts the service during boot, unattended
+        while time.monotonic() < deadline:
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", int(self.env["ALTITUDE_PORT"]))) == 0:
+                    break
+            time.sleep(1)
+        started = self.healthy("rebooted", state["release"])
+        assert started["pid"] != state["pid"]
+        self.doctor("rebooted", state["release"])
+        self.uninstall({})
+        self.result["passed"] = True
+
+    def bootstrap(self):
+        """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
+        old, old_sha, _, before, *_ = self.prepare()
+        script = self.baseline / "install.sh"
+        repository = re.search(r"^REPOSITORY='([^']+)'$", script.read_text(), re.M).group(1)
+        address = urlsplit(repository)
+        assert address.scheme == "https" and not address.port
+        sums = dict(reversed(line.split()) for line in (self.baseline / "SHA256SUMS").read_text().splitlines())
+        assert digest(script) == sums["install.sh"], "install.sh differs from the release's SHA256SUMS"
+        # A throwaway authority that only this test's curl trusts; the machine's trust store is untouched.
+        server = self.home / "release-server"
+        server.mkdir()
+        self.run("server-authority", "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                 "-subj", "/CN=Lifecycle test release authority", "-keyout", server / "ca.key", "-out", server / "ca.crt")
+        self.run("server-request", "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", f"/CN={address.hostname}",
+                 "-keyout", server / "server.key", "-out", server / "server.csr")
+        (server / "names").write_text(f"subjectAltName=DNS:{address.hostname}\n")
+        self.run("server-certificate", "openssl", "x509", "-req", "-in", server / "server.csr", "-CA", server / "ca.crt",
+                 "-CAkey", server / "ca.key", "-CAcreateserial", "-days", "1", "-extfile", server / "names",
+                 "-out", server / "server.crt")
+        root = server / "root"
+        releases = root / address.path.strip("/") / "releases"
+        (releases / "latest/download").mkdir(parents=True)
+        (releases / "download" / before["version"]).mkdir(parents=True)
+        (releases / "latest/download/install.sh").write_bytes(script.read_bytes())
+        (releases / "download" / before["version"] / "install.py").write_bytes((self.baseline / "install.py").read_bytes())
+        served = releases / "download" / before["version"] / old.name
+        requests = []
+
+        class Handler(SimpleHTTPRequestHandler):
+            def log_message(self, format, *args):
+                requests.append(" ".join(map(str, args)))
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 443), functools.partial(Handler, directory=str(root)))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(server / "server.crt", server / "server.key")
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.env["CURL_CA_BUNDLE"] = str(server / "ca.crt")
+        command = f"curl --proto '=https' --tlsv1.2 -fsSL {repository}/releases/latest/download/install.sh | sh"
         try:
-            self.exercise()
+            # A download that does not match the checksum built into install.sh runs nothing.
+            tampered = bytearray(old.read_bytes())
+            tampered[-1] ^= 1
+            served.write_bytes(tampered)
+            refused = self.run("bootstrap-tampered", "sh", "-c", command, success=False, timeout=120)
+            assert "does not match the checksum" in refused, refused
+            assert not self.prefix.exists() and not self.alt.exists(), "A refused download installed something"
+            served.write_bytes(old.read_bytes())
+            installed = self.run("bootstrap", "sh", "-c", command, timeout=300)
+            assert f"Altitude {before['version']} is installed" in installed, installed
+        finally:
+            httpd.shutdown()
+            write_json(self.results / "bootstrap-requests.json", requests)
+            del self.env["CURL_CA_BUNDLE"]
+        assert sum(f"GET /{address.path.strip('/')}/releases/download/{before['version']}/{old.name} " in line
+                   for line in requests) == 2, requests
+        self.healthy("bootstrapped", before)
+        self.doctor("bootstrapped", before)
+        self.uninstall({})
+        self.result["passed"] = True
+
+    def execute(self, phase: str = "all"):
+        try:
+            {"all": self.exercise, "bootstrap": self.bootstrap, "reboot-install": self.reboot_install,
+             "reboot-verify": self.reboot_verify}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            write_json(self.results / "result.json", self.result)
+            write_json(self.results / ("result.json" if phase == "all" else f"{phase}-result.json"), self.result)
 
 
 if __name__ == "__main__":
-    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute()
+    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute(*sys.argv[5:6])

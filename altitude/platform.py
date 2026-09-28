@@ -102,15 +102,22 @@ def logs() -> str:
 
 
 def definition(prefix: Path, python: Path, settings: Path, environment: dict[str, str]) -> str:
+    def literal(value: str | Path) -> str:
+        # systemd expands specifiers in every one of these settings, even inside quotes.
+        return str(value).replace("%", "%%")
+
     def quote(value: str | Path) -> str:
-        # systemd expands specifiers even inside quotes; no shell interprets these arguments.
-        return '"' + str(value).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+        # ExecStart= and Environment= split words and unescape; no shell interprets these arguments.
+        return '"' + literal(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     for value in (prefix, python, settings, *environment.values()):
         if any(ch in str(value) for ch in ("\n", "\r", "\x00")):
             raise ValueError("Service paths and PATH must not contain control characters")
+    if str(prefix) != str(prefix).rstrip() or str(prefix).endswith("\\"):
+        # WorkingDirectory= drops trailing whitespace and a trailing backslash continues the line.
+        raise ValueError("The installation prefix must not end in whitespace or a backslash")
     return ("[Unit]\nDescription=Altitude private application\n\n[Service]\nType=simple\n"
-            f"WorkingDirectory={quote(prefix)}\n"
+            f"WorkingDirectory={literal(prefix)}\n"  # one verbatim path: quotes would be part of it
             f"ExecStart=:{quote(python)} -B {quote(prefix / 'current/bin/alt')} serve\n"
             f"Environment={quote('ALTITUDE_CONFIG=' + str(settings))}\n"
             + "".join(f"Environment={quote(key + '=' + value)}\n" for key, value in environment.items())

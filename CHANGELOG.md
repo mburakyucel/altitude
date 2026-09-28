@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Installation starts its service under systemd: the generated unit names its working directory
+  as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes
+  and percent signs. `v0.1.0-rc.1` wrote that path in quotes, so systemd refused the unit and
+  installation failed at service start; installing on Linux needs a later release.
 - `alt tls-share` sets up a phone's HTTPS trust without another computer or AirDrop: for ten minutes
   it offers the certificate at a plain-HTTP link on the configured network address and prints what
   the phone must match before tapping Install: a lone certificate, its real name and its SHA-256.

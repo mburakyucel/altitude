@@ -8,7 +8,9 @@ The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifec
 exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
 and fixture engines. It has not executed on GitHub; the same harness runs in a
 [local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
-installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention,
+installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention (the local VM
+also checks the service starts again after a restart and runs the built `install.sh` against a
+release server inside the VM),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
@@ -41,6 +43,10 @@ install the newest release candidate from its own tag:
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
 ```
+
+`v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
+installation fails at service start. The next release candidate carries the fix; see the
+[changelog](../CHANGELOG.md).
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
@@ -83,8 +89,8 @@ alt doctor
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
 migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
-An initial custom `--prefix` must be empty; updates retain customized hook launchers and refuse
-to overwrite them. Resolve the named ownership conflict before retrying.
+An initial custom `--prefix` must be empty and must not end in whitespace or a backslash; updates
+retain customized hook launchers and refuse to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
 It checks GitHub authentication without a provider request; repository permissions, model access
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.
