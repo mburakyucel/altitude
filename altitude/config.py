@@ -480,7 +480,12 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     entry = {"path": str(path), "approval": approval,
              **{key: value for key, value in {"l2_engine": l2_engine, "l3_engine": l3_engine}.items() if value}}
     with S.project_lock(name):
-        previous = load_projects().get(name)
+        registered = load_projects()
+        # Runtime folders are named after projects, and a case-insensitive disk (macOS by default) holds one folder.
+        clash = next((other for other in registered if other != name and other.casefold() == name.casefold()), None)
+        if clash:
+            raise ValueError(f"Project {clash} is already registered; project names must differ by more than case")
+        previous = registered.get(name)
         _write_project(name, entry)
         try:
             yield entry

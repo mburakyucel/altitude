@@ -22,7 +22,10 @@ from unittest import mock
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
-SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
+# Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
+# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes).
+SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir="/tmp")).resolve()
+tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
 OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
@@ -107,7 +110,7 @@ def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arg
 
 os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
 sys.path.insert(0, str(REPO))
-from altitude import access, config, engines, incidents, monitor  # noqa: E402
+from altitude import access, config, engines, incidents, monitor, platform  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
 
@@ -309,12 +312,16 @@ def add_worktree(repo: Path, slug: str) -> Path:
 
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
-    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`."""
+    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
 
     gated = False
+    host: str | None = None
 
     def setUp(self) -> None:
         super().setUp()
+        if self.host:
+            self.patch(platform.sys, "platform", self.host)
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)

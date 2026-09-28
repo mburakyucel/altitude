@@ -6,7 +6,7 @@ import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
 import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
-import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
+import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns

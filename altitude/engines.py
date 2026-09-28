@@ -557,6 +557,15 @@ def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -
     return platform.manager_env(env) if retain_user_bus else platform.job_env(env)
 
 
+def _claude_writable(*roots: Path) -> tuple[Path, ...]:
+    """Where a Claude job may write when the platform confines its files (macOS): its roots, Claude's own state
+    (sessions, settings, and the account file with its atomic replacements) and the GitHub CLI's configuration.
+    Claude's permission boundary still decides within them."""
+    home = Path.home()
+    return (*roots, Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude"), Path(f"{home / '.claude.json'}*"),
+            home / ".config/gh")
+
+
 def claude_settings() -> Path:
     """The settings every Claude launch without a per-dispatch file gets: auto-compact at the configured window,
     stated explicitly rather than inherited from ~/.claude/settings.json. Rewritten when the number changes."""
@@ -623,9 +632,13 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     env.update(extra_env or {})
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    writable = _claude_writable(Path(cwd), config.ROOT)
     if durable_timeout:
-        cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout)
+        cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout,
+                                   writable=writable)
         env = codex_env(env, retain_user_bus=True)
+    else:
+        cmd = platform.confined(cmd, writable)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
@@ -1481,6 +1494,19 @@ def _git_dirs(cwd: Path) -> list[Path]:
     return list(dict.fromkeys(Path(line.strip()) for line in p.stdout.splitlines() if line.strip()))
 
 
+def _worktree_git_dirs(cwd: Path) -> list[Path]:
+    """The Git directories a worker writes, read from the worktree's `.git` without running Git: the repository's
+    own, or a linked worktree's metadata and the common directory it names. None outside a worktree's root."""
+    dot = Path(cwd) / ".git"
+    try:
+        if dot.is_dir():
+            return [dot.resolve()]
+        gitdir = (Path(cwd) / dot.read_text().removeprefix("gitdir:").strip()).resolve()
+        return [(gitdir / (gitdir / "commondir").read_text().strip()).resolve(), gitdir]
+    except (OSError, ValueError):
+        return []
+
+
 def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
 
@@ -1706,7 +1732,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
-            proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(worker_env)), cwd=str(cwd),
+            writable = _claude_writable(Path(cwd), *_worktree_git_dirs(cwd), config.ROOT) if engine == "claude" else None
+            proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(worker_env), writable=writable), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
@@ -2223,7 +2250,8 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     try:
         if on_start and on_start(worker) is False:
             return {**out, "error": "Review cancelled before launch."}
-        proc = subprocess.Popen(platform.job_command(unit, command, _review_env()),
+        proc = subprocess.Popen(platform.job_command(unit, command, _review_env(),
+                                                     writable=_claude_writable(Path(runtime)) if engine == "claude" else None),
                                 cwd=runtime, env=codex_env(retain_user_bus=True), text=True,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     except (OSError, RuntimeError, ValueError) as exc:

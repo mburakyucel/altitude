@@ -14,6 +14,8 @@ from altitude import config, engines, platform, route
 
 
 class ReviewEngineTests(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.snapshot = self.tmp / "snapshot"

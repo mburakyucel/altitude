@@ -1,32 +1,59 @@
 """The platform seam: the host's service manager and process facilities.
 
-Linux x86_64 with a systemd user manager is the implemented host. This module is the only place that names
-systemd, procfs or pidfd; engines, the terminal and the server ask it for jobs, processes and connections.
-The macOS runtime is not implemented yet (issue #225); `require_supported` refuses it.
+Two hosts are implemented. Linux x86_64 uses a systemd user manager, procfs and pidfd. macOS 15 or newer on Apple
+silicon uses a per-user LaunchAgent, one launchd job per worker job (each its own kernel coalition), libproc, sysctl
+and Seatbelt. This module is the only place that names them; engines, the terminal, images, installation and the
+server ask it for the service, jobs, processes and connections. Each operation reads `sys.platform` when called, so
+tests exercise either implementation against fixtures on any host.
 """
 from __future__ import annotations
 
+import ctypes
+import fcntl
 import ipaddress
+import json
 import os
 from pathlib import Path
 import platform as host_platform
+import plistlib
 import re
+import select
 import shlex
 import shutil
 import signal as signals
+import stat
 import struct
 import subprocess
 import sys
+import termios
+import time
 
 
 SERVICE = "altitude.service"
+#: The LaunchAgent that runs the service on macOS.
+LABEL = "dev.altitude.altd"
 #: What First run shows for a missing command-line tool, run in the operator's own terminal.
-INSTALL = {"gh": "sudo apt install gh", "git": "sudo apt install git"}
+INSTALL = ({"gh": "brew install gh", "git": "xcode-select --install"} if sys.platform == "darwin"
+           else {"gh": "sudo apt install gh", "git": "sudo apt install git"})
+
+
+def _darwin() -> bool:
+    return sys.platform == "darwin"
 
 
 def require_supported() -> None:
-    if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
-        raise RuntimeError("Packaged runtime currently targets Linux x86_64; native macOS validation is pending.")
+    machine = host_platform.machine()
+    if sys.platform == "linux" and machine in ("x86_64", "AMD64"):
+        return
+    if _darwin() and machine == "arm64" and int(host_platform.mac_ver()[0].split(".")[0] or 0) >= 15:
+        return
+    raise RuntimeError("Altitude runs on Linux x86_64 with systemd, or on macOS 15 or newer on Apple silicon.")
+
+
+def source_service() -> bool:
+    """Whether a source-checkout service can prepare its TLS drop-in and restart itself: systemd only. Installed
+    releases update the same way on both hosts."""
+    return not _darwin()
 
 
 def run(*args: str) -> str:
@@ -40,11 +67,15 @@ def run(*args: str) -> str:
 
 
 def service_path() -> Path:
+    if _darwin():
+        return Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
     return Path.home() / ".config/systemd/user" / SERVICE
 
 
 def status() -> dict[str, str]:
     require_supported()
+    if _darwin():
+        return _launchd_status()
     result = run("systemctl", "--user", "show", SERVICE,
                  "--property=LoadState,ActiveState,SubState,FragmentPath,MainPID,UnitFileState")
     values = dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
@@ -58,6 +89,8 @@ def status() -> dict[str, str]:
 
 def control(action: str) -> str:
     require_supported()
+    if _darwin():
+        return _launchd_control(action)
     if action == "reload":
         return run("systemctl", "--user", "daemon-reload")
     if action not in ("start", "stop", "restart", "enable", "disable"):
@@ -68,11 +101,20 @@ def control(action: str) -> str:
 def detach(name: str, argv: list[str], environment: dict[str, str]) -> str:
     """Run one command as its own short-lived user unit, so it outlives a restart of the Altitude service."""
     require_supported()
+    if _darwin():
+        if _launch(_detached_spec(name, argv, {**_login_env(), **environment})):
+            raise RuntimeError(f"Native user service failed: launchd did not start {name}")
+        return ""
     return run("systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no", f"--unit={name}",
                *(f"--setenv={key}={value}" for key, value in environment.items()), *argv)
 
 
 def logs() -> str:
+    if _darwin():
+        try:
+            return "".join((logs_dir() / "altd.log").read_text(errors="replace").splitlines(True)[-100:])
+        except FileNotFoundError:
+            return ""
     return run("journalctl", "--user", "-u", SERVICE, "--no-pager", "-n", "100")
 
 
@@ -84,6 +126,16 @@ def definition(prefix: Path, python: Path, settings: Path, environment: dict[str
     for value in (prefix, python, settings, *environment.values()):
         if any(ch in str(value) for ch in ("\n", "\r", "\x00")):
             raise ValueError("Service paths and PATH must not contain control characters")
+    if _darwin():
+        # launchd restarts the service when it fails (KeepAlive), not after a clean exit, as Restart=on-failure does.
+        log = str(logs_dir() / "altd.log")
+        return plistlib.dumps({
+            "Label": LABEL, "ProgramArguments": [str(python), "-B", str(prefix / "current/bin/alt"), "serve"],
+            "WorkingDirectory": str(prefix),
+            "EnvironmentVariables": {"ALTITUDE_CONFIG": str(settings), **environment,
+                                     "ALTITUDE_SERVICE": "1", "ALTITUDE_TLS": "1"},
+            "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 5, "Umask": 0o077,
+            "ProcessType": "Standard", "StandardOutPath": log, "StandardErrorPath": log}).decode()
     return ("[Unit]\nDescription=Altitude private application\n\n[Service]\nType=simple\n"
             f"WorkingDirectory={quote(prefix)}\n"
             f"ExecStart=:{quote(python)} -B {quote(prefix / 'current/bin/alt')} serve\n"
@@ -103,7 +155,10 @@ ENV_BIN = shutil.which("env") or "/usr/bin/env"
 
 def manager_env(env: dict) -> dict:
     """The environment of a process that asks the user manager for a job. A system service does not necessarily
-    inherit the interactive session's bus variables, so their canonical per-user values are synthesized."""
+    inherit the interactive session's bus variables, so their canonical per-user values are synthesized. macOS has
+    no such bus; the user's own temporary directory stays."""
+    if _darwin():
+        return job_env(env)
     env["TMPDIR"] = "/tmp"
     runtime_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     env["XDG_RUNTIME_DIR"] = runtime_dir
@@ -112,8 +167,9 @@ def manager_env(env: dict) -> dict:
 
 
 def job_env(env: dict) -> dict:
-    """The environment inside a job: no user-manager bus, and the shared temporary directory."""
-    env["TMPDIR"] = "/tmp"
+    """The environment inside a job: no user-manager bus, and the shared temporary directory (the user's own on
+    macOS)."""
+    env["TMPDIR"] = _user_temp() if _darwin() else "/tmp"
     env.pop("XDG_RUNTIME_DIR", None)
     env.pop("DBUS_SESSION_BUS_ADDRESS", None)
     return env
@@ -126,14 +182,22 @@ def _scrub(env: dict[str, str]) -> list[str]:
     return [ENV_BIN, "-i", *(f"{key}={env[key]}" for key in sorted(env))]
 
 
-def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_max: int | None = None) -> list[str]:
+def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_max: int | None = None,
+                writable: tuple[Path, ...] | None = None) -> list[str]:
     """Run a command synchronously, piped to the caller, in a job of its own that holds every descendant.
+
+    `writable` confines the job with Altitude's Seatbelt profile on macOS: it may signal only its own processes and
+    write only under these roots and the user's temporary directories. Linux leaves file confinement to the engine.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
     creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
     Unlike a process group, the service cgroup retains descendants that call ``setsid`` or double-fork. An engine's inner
     sandbox supplies the PID namespace; keeping syscall filters off the outer service preserves nested bwrap.
     """
+    if _darwin():
+        return _entry("launch", json.dumps({
+            "label": _label(name), "mode": "pipe", "command": command, "env": env, "runtime_max": runtime_max,
+            "writable": None if writable is None else [str(root) for root in writable]}))
     return [SYSTEMD_RUN, "--user", "--wait", "--pipe", f"--unit={name}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
@@ -146,6 +210,10 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
     """One shell command as a job that appends its own output to `log` and writes its exit status to `status`,
     so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it."""
     runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2"; exit "$status"'
+    if _darwin():
+        return _entry("launch", json.dumps({
+            "label": _label(name), "mode": "logged", "env": env, "runtime_max": timeout, "log": str(log),
+            "command": ["/bin/bash", "-c", runner, "altitude-machine", command, str(status)]}))
     return [SYSTEMD_RUN, "--user", "--wait", "--collect", "--quiet", f"--unit={name}", "--same-dir",
             "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
             f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
@@ -155,11 +223,15 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
 
 def detached_job_command(name: str, command: list[str], *, path: str) -> list[str]:
     """Start a command as a job outside the caller's own, so it survives the caller's restart."""
+    if _darwin():
+        return _entry("launch", json.dumps(_detached_spec(name, command, {**_login_env(), "PATH": path})))
     return [SYSTEMD_RUN, "--user", "--collect", "--quiet", f"--unit={name}", "--same-dir",
             f"--setenv=PATH={path}", "--", *command]
 
 
 def job_logs_hint(name: str) -> str:
+    if _darwin():
+        return str(logs_dir() / ("altd.log" if name in ("altitude", SERVICE) else f"{name}.log"))
     return f"journalctl --user -u {name}"
 
 
@@ -167,6 +239,8 @@ def job_active(name: str, env: dict) -> bool:
     """Whether the job still runs; an unknown state raises rather than reading as stopped."""
     if not name:
         raise RuntimeError("Worker unit identity is unavailable")
+    if _darwin():
+        return _launchd_job_active(name)
     p = subprocess.run([SYSTEMCTL, "--user", "is-active", name], capture_output=True, text=True, timeout=30, env=env)
     state = (p.stdout or "").strip()
     if p.returncode == 4 and state == "inactive":  # A collected transient unit is no longer running.
@@ -180,7 +254,10 @@ def job_active(name: str, env: dict) -> bool:
 
 
 def job_stop(name: str, env: dict | None = None, *, timeout: int = 120) -> None:
-    """Stop the job; `KillMode=control-group` takes every descendant with it. Callers confirm with `job_active`."""
+    """Stop the job; `KillMode=control-group` takes every descendant with it (on macOS, every member of the job's
+    coalition). Callers confirm with `job_active`."""
+    if _darwin():
+        return _launchd_job_stop(name, timeout)
     subprocess.run([SYSTEMCTL, "--user", "stop", name], capture_output=True, text=True, timeout=timeout, env=env)
 
 
@@ -188,6 +265,8 @@ def job_stop(name: str, env: dict | None = None, *, timeout: int = 120) -> None:
 
 def service_status(unit: str, env: dict) -> dict:
     """Read a user service's state once; inspection failure stays in the record."""
+    if _darwin():
+        return _launchd_service_status(unit)
     record = {"unit": unit, "state": None, "substate": None, "pid": None,
               "last_restart": None, "error": None}
     evidence = {
@@ -276,19 +355,29 @@ def service_status(unit: str, env: dict) -> dict:
 PROC = Path("/proc")
 
 
+#: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
+#: machine commands, restarts).
+ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
+
+
 def _stat(pid: int) -> list[str]:
     return (PROC / str(int(pid)) / "stat").read_text().rsplit(")", 1)[1].split()
 
 
 def process_start(pid: int) -> str:
-    """The process's start time in clock ticks, its identity against PID reuse. A missing process raises
-    FileNotFoundError."""
+    """The process's start time (clock ticks since boot on Linux, microseconds since the epoch on macOS), its
+    identity against PID reuse. A missing process raises FileNotFoundError."""
+    if _darwin():
+        return _started(_bsd(pid))
     return _stat(pid)[19]
 
 
 def process_running(pid: int, start: str) -> bool | None:
     """Whether the process with this identity still runs (a zombie has ended); None when `start` is not an
     identity. A missing process raises FileNotFoundError."""
+    if _darwin():
+        info = _bsd(pid)
+        return (_started(info) == start and info.status != SZOMB) if start.isdigit() else None
     fields = _stat(pid)
     if not start.isdigit():
         return None
@@ -297,6 +386,12 @@ def process_running(pid: int, start: str) -> bool | None:
 
 def process_name(pid: int) -> str | None:
     """The process's short command name, or None when it cannot be read."""
+    if _darwin():
+        try:
+            info = _bsd(pid)
+        except OSError:
+            return None
+        return (info.name or info.comm).decode(errors="replace") or None
     try:
         return (PROC / str(int(pid)) / "comm").read_text().strip() or None
     except OSError:
@@ -306,7 +401,17 @@ def process_name(pid: int) -> str | None:
 def signal_session(session: int, mark: bytes, sig: int) -> None:
     """Signal every process in `session` and every process whose environment carries `mark` (those that left the
     session: `setsid`, daemons). Each process is held by a pidfd before it is checked, so a pid reused by an
-    unrelated process in between is never signalled."""
+    unrelated process in between is never signalled. macOS has no process handle: the start time is checked again
+    right before the signal, and a PID is reused only after the counter wraps."""
+    if _darwin():
+        for pid in _pids():
+            try:
+                start = _started(_bsd(pid))
+                if (os.getsid(pid) == session or mark in _environment(pid)) and _started(_bsd(pid)) == start:
+                    os.kill(pid, sig)
+            except OSError:
+                pass
+        return
     for entry in PROC.iterdir():
         if not entry.name.isdigit():
             continue
@@ -324,6 +429,55 @@ def signal_session(session: int, mark: bytes, sig: int) -> None:
             os.close(handle)
 
 
+def _controlling_terminal() -> None:  # runs in the child between fork and exec
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+def start_terminal(ident: str, shell: list[str], tty: int, *, cwd: Path, env: dict[str, str]) -> subprocess.Popen:
+    """Start a terminal's shell as the session leader of the pseudo-terminal `tty`. On macOS the shell is its own
+    launchd job, since the environment that marks what the terminal started is unreadable for Apple's own binaries:
+    everything it starts stays in the job's coalition. The process returned there is the shell's launcher, which
+    exits with the shell's status; the job stops when the launcher does, as when the service restarts."""
+    if not _darwin():
+        return subprocess.Popen(shell, stdin=tty, stdout=tty, stderr=tty, cwd=cwd, env=env,
+                                start_new_session=True, preexec_fn=_controlling_terminal)
+    spec = {"label": _label(f"altitude-terminal-{ident}"), "mode": "pipe", "terminal": True, "command": shell,
+            "env": env}
+    return subprocess.Popen(_entry("launch", json.dumps(spec)), stdin=tty, stdout=tty, stderr=tty, cwd=cwd, env=env,
+                            start_new_session=True)
+
+
+def terminal_leader(ident: str, proc: subprocess.Popen) -> int | None:
+    """The shell's process ID, which leads its session and process group; None while it is starting."""
+    if not _darwin():
+        return proc.pid
+    try:
+        return int((_jobs() / _label(f"altitude-terminal-{ident}") / "leader").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def signal_terminal(ident: str, proc: subprocess.Popen, mark: bytes, sig: int) -> None:
+    """Signal everything the terminal started: on Linux its session and whatever carries `mark`; on macOS its job's
+    coalition, except the supervisor that records the shell's end."""
+    if not _darwin():
+        return signal_session(proc.pid, mark, sig)
+    job = _jobs() / _label(f"altitude-terminal-{ident}")
+    coalition = _recorded_coalition(job.name)
+    try:
+        supervisor = int((job / "supervisor").read_text())
+    except (OSError, ValueError):
+        supervisor = None
+    if not coalition:
+        return
+    for pid, start in _members(coalition):
+        try:
+            if pid != supervisor and _coalition_of(pid) == coalition and _started(_bsd(pid)) == start:
+                os.kill(pid, sig)
+        except OSError:
+            pass
+
+
 def _hex_address(address: str, port: int) -> tuple[str, str]:
     """An address as /proc/net/tcp{,6} spells it: host-order 32-bit words in hex, then the port."""
     ip = ipaddress.ip_address(address)
@@ -333,7 +487,19 @@ def _hex_address(address: str, port: int) -> tuple[str, str]:
 
 def client_socket(clients: list[str], client_port: int, servers: list[str], server_port: int) -> str | None:
     """The identity of the client end of a TCP connection on this host, given every spelling of each address,
-    or None when that end is not in this host's network namespace."""
+    or None when that end is not in this host's network namespace (on macOS, held by none of this user's
+    processes)."""
+    if _darwin():
+        wanted = {_tcp_handle(ipaddress.ip_address(client), client_port, ipaddress.ip_address(server), server_port)
+                  for client in clients for server in servers}
+        for pid in _pids():
+            try:
+                found = _tcp_handles(pid) & wanted
+            except OSError:
+                continue
+            if found:
+                return found.pop()
+        return None
     for client in clients:
         want, family = _hex_address(client, client_port)
         for server in servers:
@@ -347,9 +513,18 @@ def client_socket(clients: list[str], client_port: int, servers: list[str], serv
     return None
 
 
-def process_table() -> dict[int, tuple[int, list[str]]]:
-    """pid -> (parent pid, the process's control-group path components) for every readable process. A process
-    that exits while being read is left out: it cannot vouch for anything."""
+def process_table() -> dict[int, tuple[int, bool]]:
+    """pid -> (parent pid, whether it runs in the Altitude service or one of its jobs) for every readable process.
+    A process that exits while being read is left out: it cannot vouch for anything."""
+    if _darwin():
+        owned = _altitude_coalitions()
+        table = {}
+        for pid in _pids():
+            try:
+                table[pid] = (_bsd(pid).ppid, _coalition_of(pid) in owned)
+            except OSError:
+                continue
+        return table
     table = {}
     for entry in PROC.iterdir():
         if not entry.name.isdigit():
@@ -360,13 +535,19 @@ def process_table() -> dict[int, tuple[int, list[str]]]:
         except OSError:
             continue
         table[int(entry.name)] = (int(stat.rsplit(")", 1)[1].split()[1]),
-                                  [part for line in groups.splitlines() for part in line.split("/")])
+                                  any(ALTITUDE_UNIT.fullmatch(part) for line in groups.splitlines()
+                                      for part in line.split("/")))
     return table
 
 
 def holds(pid: int, handle: str) -> bool:
     """Whether the process visibly holds the socket. Unreadable descriptors (another user's process, or
     one made undumpable) prove nothing either way."""
+    if _darwin():
+        try:
+            return handle in _tcp_handles(pid)
+        except OSError:
+            return False
     try:
         for fd in (PROC / str(pid) / "fd").iterdir():
             try:
@@ -377,3 +558,673 @@ def holds(pid: int, handle: str) -> bool:
     except OSError:
         return False
     return False
+
+
+# --- Resource limits and native libraries ------------------------------------------------------------------------
+
+# Limits are set in a fresh helper process: preexec_fn is unsafe in the threaded HTTP server.
+_LIMITED_EXEC = """import os, resource, sys
+memory, cpu, output = map(int, sys.argv[1:4])
+resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+resource.setrlimit(resource.RLIMIT_FSIZE, (output, output))
+os.execv(sys.argv[4], sys.argv[4:])
+"""
+# macOS rejects RLIMIT_AS. A watcher forked before exec kills the command once its physical footprint passes the
+# limit; it is the command's child, so a kill of the command (a timeout) leaves nothing behind.
+_LIMITED_EXEC_DARWIN = """import ctypes, os, resource, signal, sys, time
+memory, cpu, output = map(int, sys.argv[1:4])
+resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+resource.setrlimit(resource.RLIMIT_FSIZE, (output, output))
+target = os.getpid()
+if os.fork() == 0:
+    usage = ctypes.create_string_buffer(512)
+    rusage = ctypes.CDLL("/usr/lib/libproc.dylib").proc_pid_rusage
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    while os.getppid() == target:
+        if rusage(target, 0, usage) == 0 and int.from_bytes(usage.raw[72:80], sys.byteorder) > memory:
+            os.kill(target, signal.SIGKILL)
+            break
+        time.sleep(0.01)
+    os._exit(0)
+os.execv(sys.argv[4], sys.argv[4:])
+"""
+
+
+def limited_command(command: list[str], *, memory: int, cpu: int, output: int) -> list[str]:
+    """`command` held to `memory` bytes, `cpu` seconds of processor time and files of at most `output` bytes."""
+    helper = _LIMITED_EXEC_DARWIN if _darwin() else _LIMITED_EXEC
+    return [sys.executable, "-c", helper, str(memory), str(cpu), str(output), *command]
+
+
+#: Where Homebrew installs libraries on Apple silicon and on Intel Macs; the loader does not search either.
+HOMEBREW = (Path("/opt/homebrew"), Path("/usr/local"))
+
+
+def find_library(name: str) -> str | None:
+    import ctypes.util
+    found = ctypes.util.find_library(name)
+    if found or not _darwin():
+        return found
+    return next((str(path) for prefix in HOMEBREW if (path := prefix / "lib" / f"lib{name}.dylib").exists()), None)
+
+
+# --- macOS: the LaunchAgent -----------------------------------------------------------------------------------------
+
+LAUNCHCTL = shutil.which("launchctl") or "/bin/launchctl"
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+CAFFEINATE = "/usr/bin/caffeinate"
+#: launchctl's status when the domain has no such job.
+NOT_FOUND = 113
+
+
+def logs_dir() -> Path:
+    return Path.home() / "Library/Logs/altitude"
+
+
+def _domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def _print(label: str) -> dict | None:
+    """launchd's view of a job in the user's domain: its top-level fields and its resource coalition, or None when
+    the domain has no such job. Anything else unreadable raises RuntimeError."""
+    try:
+        p = subprocess.run([LAUNCHCTL, "print", f"{_domain()}/{label}"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Native user service unavailable: {exc}") from exc
+    if p.returncode == NOT_FOUND:
+        return None
+    if p.returncode:
+        raise RuntimeError(f"Native user service failed: {(p.stderr or p.stdout).strip()[:500]}")
+    fields = {}
+    for line in p.stdout.splitlines():
+        if line.startswith("\t") and not line.startswith("\t\t") and " = " in line:
+            key, value = line.strip().split(" = ", 1)
+            fields.setdefault(key, value)
+    coalition = re.search(r"resource coalition = \{\s*ID = (\d+)", p.stdout)
+    fields["coalition"] = int(coalition.group(1)) if coalition else None
+    return fields
+
+
+def _launchd_status() -> dict[str, str]:
+    """The service in the vocabulary the installation reads: loaded (defined or bootstrapped), active (running),
+    its definition's path and main PID, and whether it is enabled."""
+    path = service_path()
+    job = _print(LABEL)
+    disabled = re.findall(r'"([^"]+)" => (?:disabled|true)', run(LAUNCHCTL, "print-disabled", _domain()))
+    running = bool(job and job.get("state") == "running" and job.get("pid"))
+    exited = (job or {}).get("last exit code", "")
+    fragment = (job or {}).get("path") or (str(path) if path.exists() else "")
+    if fragment and Path(fragment).resolve() == path.resolve():
+        fragment = str(path)
+    return {"LoadState": "loaded" if job or path.exists() else "not-found",
+            "ActiveState": "active" if running else "failed" if job and exited not in ("", "0", "(never exited)")
+            else "inactive",
+            "SubState": job.get("state", "") if job else "", "FragmentPath": fragment,
+            "MainPID": job["pid"] if running else "0",
+            "UnitFileState": "disabled" if LABEL in disabled else "enabled" if path.exists() else ""}
+
+
+def _launchd_control(action: str) -> str:
+    """start, stop and restart the service. launchd reads the definition when the service is bootstrapped, so
+    reload has nothing to do and restart bootstraps it again."""
+    target = f"{_domain()}/{LABEL}"
+    if action == "reload":
+        return ""
+    if action in ("enable", "disable"):
+        return run(LAUNCHCTL, action, target)
+    if action not in ("start", "stop", "restart"):
+        raise ValueError("Unknown application service operation")
+    job = _print(LABEL)
+    if job and action == "start":
+        return run(LAUNCHCTL, "kickstart", target)
+    if job:
+        # bootout ends the main process group; like KillMode=control-group, nothing else the service started stays.
+        run(LAUNCHCTL, "bootout", target)
+        if job["coalition"] and not _stop_members(job["coalition"]):
+            raise RuntimeError("Native user service failed: processes the service started are still running")
+    if action == "stop":
+        return ""
+    logs_dir().mkdir(parents=True, exist_ok=True)
+    return run(LAUNCHCTL, "bootstrap", _domain(), str(service_path()))
+
+
+def _launchd_service_status(unit: str) -> dict:
+    """The service's or a job's state and memory evidence, with the fields launchd has no equivalent for null."""
+    record = {"unit": unit, "state": None, "substate": None, "pid": None, "last_restart": None, "error": None,
+              **dict.fromkeys(("load_state", "invocation_id", "started_monotonic", "exited_monotonic", "result",
+                               "exec_main_code", "exec_main_status", "memory_current", "memory_peak", "memory_high",
+                               "memory_max"))}
+    try:
+        job = _print(LABEL if unit in ("altitude", SERVICE) else _label(unit))
+        if job is None:
+            record.update(state="inactive", load_state="not-found",
+                          error="Unit not loaded or load state unavailable; termination/resource evidence is unknown.")
+            return record
+        running = job.get("state") == "running" and job.get("pid")
+        record.update(state="active" if running else "inactive", substate=job.get("state"),
+                      pid=int(job["pid"]) if running else None, load_state="loaded")
+        if job.get("last exit code", "").isdigit():
+            record.update(exec_main_code="1", exec_main_status=job["last exit code"])
+        if job["coalition"]:
+            record["memory_current"] = str(sum(_footprint(pid) for pid, _ in _members(job["coalition"])))
+    except (OSError, RuntimeError, ValueError):
+        record["error"] = "Service inspection incomplete; unavailable fields remain null."
+    return record
+
+
+# --- macOS: jobs --------------------------------------------------------------------------------------------------
+#
+# A job is its own launchd job, so its processes share a kernel coalition that no setsid, double fork or cleared
+# environment leaves. Its program is a supervisor, outside any sandbox, that runs the command (under Altitude's
+# Seatbelt profile when the caller confines it), enforces the time limit, and when the command exits stops whatever is
+# left in the coalition, records the status and removes its own launchd job. The caller runs a launcher that hands the
+# supervisor its input and output: a regular file or device by path, as systemd-run --pipe passes the descriptor, and a
+# pipe through a FIFO the launcher relays.
+
+_BOOT = "import sys; sys.path.insert(0, sys.argv[1]); from altitude import platform; platform.job_main(sys.argv[2:])"
+
+
+def _entry(*args: str) -> list[str]:
+    return [sys.executable, "-I", "-B", "-c", _BOOT, str(Path(__file__).resolve().parent.parent), *args]
+
+
+def _label(name: str) -> str:
+    return "dev.altitude.job." + name.removesuffix(".service")
+
+
+def _jobs() -> Path:
+    return Path.home() / "Library/Caches/dev.altitude/jobs"
+
+
+def _user_temp() -> str:
+    """The user's private temporary directory, whatever TMPDIR says (launchd jobs get none)."""
+    try:
+        return os.confstr(65537) or "/tmp"  # _CS_DARWIN_USER_TEMP_DIR
+    except (OSError, ValueError):  # not a Mac
+        return "/tmp"
+
+
+def _login_env() -> dict[str, str]:
+    """What a login session gives a command; a launchd job starts with little more than PATH."""
+    return {**{key: os.environ[key] for key in ("HOME", "USER", "LOGNAME", "SHELL", "LANG") if key in os.environ},
+            "TMPDIR": _user_temp()}
+
+
+def _detached_spec(name: str, command: list[str], env: dict[str, str]) -> dict:
+    return {"label": _label(name), "mode": "detached", "command": command, "env": env,
+            "log": str(logs_dir() / f"{name}.log")}
+
+
+def _write_private(path: Path, data: str | bytes) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data.encode() if isinstance(data, str) else data)
+
+
+def _fd_path(fd: int) -> str | None:
+    """The path of a regular file or device this process holds, which the job opens itself; None for a pipe or
+    socket; the null device when the descriptor is closed."""
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        return os.devnull
+    if not (stat.S_ISREG(mode) or stat.S_ISCHR(mode)):
+        return None
+    return fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), bytes(1024)).split(b"\0", 1)[0].decode()
+
+
+def seatbelt_profile(writable: list[str]) -> str:
+    """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
+    write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
+    cache directories, /private/tmp and devices. Seatbelt matches resolved paths. launchd refuses service control to
+    every sandboxed process."""
+    user = str(Path(os.path.realpath(_user_temp())).parent)
+    rules = []
+    for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
+        if root.endswith("*"):
+            prefix = os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1])
+            rules.append('(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")')
+        else:
+            rules.append('(subpath "' + os.path.realpath(root).replace("\\", "\\\\").replace('"', '\\"') + '")')
+    return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
+            f"(deny file-write*)(allow file-write* {' '.join(rules)})")
+
+
+def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
+    """`command` under Altitude's Seatbelt profile on macOS, for a process that runs as the caller's own child
+    rather than as a job; unchanged on Linux. sandbox-exec replaces itself with the command, so its PID is the
+    command's."""
+    if not _darwin():
+        return command
+    return [SANDBOX_EXEC, "-p", seatbelt_profile([str(root) for root in writable]), *command]
+
+
+def job_main(argv: list[str]) -> None:
+    """The launcher's and the supervisor's entry point (see `_entry`)."""
+    role, argument = argv
+    sys.exit(_launch(json.loads(argument)) if role == "launch" else _supervise(Path(argument)))
+
+
+def _launch(spec: dict) -> int:
+    """The caller's end of a job: bootstrap its supervisor and, unless detached, relay output and exit with the
+    command's status."""
+    label, mode = spec["label"], spec["mode"]
+    job = _jobs() / label
+    job.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        job.mkdir(mode=0o700)
+    except FileExistsError:
+        print(f"Job {label} already exists.", file=sys.stderr)
+        return 1
+    relays: dict[int, int] = {}
+    try:
+        spec.update(cwd=os.getcwd(), launcher=None if mode == "detached" else [os.getpid(), _started(_bsd(os.getpid()))])
+        if mode == "pipe":
+            spec["stdin"] = _fd_path(0)
+            if spec["stdin"] is None:  # a pipe: callers write a whole prompt, then close it
+                _write_private(job / "stdin", sys.stdin.buffer.read())
+                spec["stdin"] = str(job / "stdin")
+            for fd in (1, 2):
+                path = _fd_path(fd)
+                if path is None:
+                    os.mkfifo(job / str(fd), 0o600)
+                    relays[os.open(job / str(fd), os.O_RDONLY | os.O_NONBLOCK)] = fd
+                    spec[str(fd)] = {"fifo": str(job / str(fd))}
+                else:
+                    spec[str(fd)] = {"file": path}
+            supervisor_log = job / "supervisor.log"
+        else:
+            Path(spec["log"]).parent.mkdir(parents=True, exist_ok=True)
+            spec.update(stdin=os.devnull, **{"1": {"file": spec["log"]}, "2": {"file": spec["log"]}})
+            supervisor_log = Path(spec["log"])
+        _write_private(job / "spec.json", json.dumps(spec))
+        _write_private(job / "job.plist", plistlib.dumps({
+            "Label": label, "ProgramArguments": _entry("supervise", str(job)), "WorkingDirectory": spec["cwd"],
+            "RunAtLoad": True, "AbandonProcessGroup": True, "ProcessType": "Standard",
+            "StandardOutPath": str(supervisor_log), "StandardErrorPath": str(supervisor_log)}))
+        started = subprocess.run([LAUNCHCTL, "bootstrap", _domain(), str(job / "job.plist")],
+                                 capture_output=True, text=True, timeout=60)
+        if started.returncode:
+            print(f"launchd did not start {label}: {(started.stderr or started.stdout).strip()[:300]}", file=sys.stderr)
+            shutil.rmtree(job, ignore_errors=True)
+            return 1
+        if mode == "detached":
+            return 0
+        if not _await(job, "started", label):
+            print(f"Job {label} ended before its command started.", file=sys.stderr)
+            subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=60)
+            return 1
+        _relay(relays)
+        if not _await(job, "status", label):
+            print(f"Job {label} ended without an exit status.", file=sys.stderr)
+            subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=60)
+            return 1
+        _await_removal(label)  # as systemd-run --wait returns once the unit has gone
+        return int((job / "status").read_text())
+    finally:
+        for source in relays:
+            os.close(source)
+        if mode != "detached":
+            shutil.rmtree(job, ignore_errors=True)
+
+
+def _await(job: Path, name: str, label: str) -> bool:
+    """Wait for the supervisor to write `name`; False once its launchd job has gone without it."""
+    checked = time.monotonic()
+    while not (job / name).exists() and not (job / "status").exists():
+        if time.monotonic() - checked >= 1:
+            checked = time.monotonic()
+            try:
+                job_gone = _print(label) is None
+            except RuntimeError:
+                job_gone = False
+            if job_gone and not (job / name).exists() and not (job / "status").exists():
+                return False
+        time.sleep(0.02)
+    return True
+
+
+def _await_removal(label: str, timeout: float = 10) -> None:
+    """Wait while the supervisor removes its launchd job after recording the status."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if _print(label) is None:
+                return
+        except RuntimeError:
+            return
+        time.sleep(0.02)
+
+
+def _relay(relays: dict[int, int]) -> None:
+    """Copy each FIFO to this process's own output until every writer has closed it."""
+    open_sources = dict(relays)
+    for source in open_sources:
+        os.set_blocking(source, True)
+    while open_sources:
+        ready, _, _ = select.select(list(open_sources), [], [])
+        for source in ready:
+            data = os.read(source, 65536)
+            if not data:
+                del open_sources[source]
+                continue
+            try:
+                while data:
+                    data = data[os.write(open_sources[source], data):]
+            except OSError:  # the caller stopped reading; keep draining so the command is not blocked
+                pass
+
+
+def _supervise(job: Path) -> int:
+    """The launchd end of a job: run the command, hold it to its time limit, stop whatever it leaves in the
+    coalition, record its status and remove this launchd job."""
+    spec = json.loads((job / "spec.json").read_text())
+    own = os.getpid()
+    coalition = _coalition_of(own)
+    _write_private(job / "coalition", str(coalition))
+    _write_private(job / "supervisor", str(own))
+    terminal = spec.get("terminal", False)
+    status = 1
+    try:
+        # A terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere.
+        streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
+        for fd in ("1", "2"):
+            if terminal:
+                streams.append(os.dup(streams[0]))
+            elif "file" in spec[fd]:
+                streams.append(os.open(spec[fd]["file"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600))
+            else:  # ENXIO: the launcher has gone, so nothing reads the output
+                streams.append(os.open(spec[fd]["fifo"], os.O_WRONLY | os.O_NONBLOCK))
+                os.set_blocking(streams[-1], True)
+        command = spec["command"]
+        if spec.get("writable") is not None:
+            command = confined(command, spec["writable"])
+        try:
+            child = subprocess.Popen(command, stdin=streams[0], stdout=streams[1], stderr=streams[2],
+                                     env=spec["env"], cwd=spec["cwd"], start_new_session=terminal,
+                                     preexec_fn=_controlling_terminal if terminal else None)
+            _write_private(job / "leader", str(child.pid))
+        except OSError as exc:
+            os.write(streams[2], f"{command[0]}: {exc}\n".encode())
+            child = None
+        for stream in streams:
+            os.close(stream)
+        if child is not None and not terminal:
+            # Idle sleep waits for the job (a closed lid still sleeps); the assertion ends with this supervisor.
+            try:
+                subprocess.Popen([CAFFEINATE, "-i", "-w", str(own)], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
+        (job / "started").touch()
+        if child is None:
+            status = 127
+        else:
+            try:
+                code = child.wait(timeout=spec.get("runtime_max")) if not terminal else _hold(child, spec["launcher"])
+            except subprocess.TimeoutExpired:
+                _stop_members(coalition, spare=own)
+                code = child.wait()
+            status = code if code >= 0 else 128 - code
+    except OSError as exc:
+        print(f"{spec['label']}: {exc}", file=sys.stderr)
+    finally:
+        _stop_members(coalition, spare=own)
+        _write_private(job / "status", str(status))
+        launcher = spec.get("launcher")
+        if launcher is None or not _running(*launcher):
+            shutil.rmtree(job, ignore_errors=True)
+        os.execv(LAUNCHCTL, [LAUNCHCTL, "remove", spec["label"]])
+    return status
+
+
+def _hold(child: subprocess.Popen, launcher: list) -> int:
+    """Wait for a terminal's shell; stop it (the caller stops the rest) once its launcher has gone."""
+    while True:
+        try:
+            return child.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            if not _running(*launcher):
+                child.kill()
+
+
+def _recorded_coalition(label: str) -> int | None:
+    try:
+        return int((_jobs() / label / "coalition").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _launchd_job_active(name: str) -> bool:
+    label = _label(name)
+    job = _print(label)
+    if job and (job.get("state") == "running" or job.get("last exit code") == "(never exited)"):
+        return True  # running, or bootstrapped and about to start
+    coalition = _recorded_coalition(label) or (job or {}).get("coalition")
+    try:
+        return bool(coalition and _members(coalition))
+    except OSError as exc:
+        raise RuntimeError("Worker unit status is unavailable") from exc
+
+
+def _launchd_job_stop(name: str, timeout: int) -> None:
+    label = _label(name)
+    try:
+        job = _print(label)
+    except RuntimeError:
+        job = None
+    coalition = _recorded_coalition(label) or (job or {}).get("coalition")
+    if coalition:
+        _stop_members(coalition, limit=timeout)
+    subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=timeout)
+    shutil.rmtree(_jobs() / label, ignore_errors=True)
+
+
+def _altitude_coalitions() -> set[int]:
+    """The coalitions of every job whose supervisor has recorded one and, when this process is the service, its own."""
+    owned = {_recorded_coalition(path.name) for path in _jobs().glob("*")}
+    if os.environ.get("ALTITUDE_SERVICE") == "1":
+        owned.add(_coalition_of(os.getpid()))
+    return {coalition for coalition in owned if coalition}
+
+
+# --- macOS: processes and sockets ---------------------------------------------------------------------------------
+
+_LIBPROC = None
+SZOMB = 5  # proc_bsdinfo.pbi_status of a process that has exited but not been reaped
+
+
+class _BSDInfo(ctypes.Structure):
+    _fields_ = ([(name, ctypes.c_uint32) for name in ("flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid",
+                                                      "rgid", "svuid", "svgid", "rfu")]
+                + [("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32)]
+                + [(name, ctypes.c_uint32) for name in ("nfiles", "pgid", "pjobc", "tdev", "tpgid")]
+                + [("nice", ctypes.c_int32), ("start_sec", ctypes.c_uint64), ("start_usec", ctypes.c_uint64)])
+
+
+class _FileInfo(ctypes.Structure):
+    _fields_ = [("openflags", ctypes.c_uint32), ("status", ctypes.c_uint32), ("offset", ctypes.c_int64),
+                ("type", ctypes.c_int32), ("guardflags", ctypes.c_uint32)]
+
+
+class _VInfoStat(ctypes.Structure):
+    _fields_ = [("dev", ctypes.c_uint32), ("mode", ctypes.c_uint16), ("nlink", ctypes.c_uint16),
+                ("ino", ctypes.c_uint64), ("uid", ctypes.c_uint32), ("gid", ctypes.c_uint32),
+                ("times", ctypes.c_int64 * 8), ("size", ctypes.c_int64), ("blocks", ctypes.c_int64),
+                ("blksize", ctypes.c_int32), ("flags", ctypes.c_uint32), ("gen", ctypes.c_uint32),
+                ("rdev", ctypes.c_uint32), ("qspare", ctypes.c_int64 * 2)]
+
+
+class _SockbufInfo(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint32) for name in ("cc", "hiwat", "mbcnt", "mbmax", "lowat")] + [
+        ("flags", ctypes.c_short), ("timeo", ctypes.c_short)]
+
+
+class _InSockInfo(ctypes.Structure):
+    class _V6(ctypes.Structure):
+        _fields_ = [("hlim", ctypes.c_uint8), ("cksum", ctypes.c_int), ("ifindex", ctypes.c_ushort),
+                    ("hops", ctypes.c_short)]
+    _fields_ = [("fport", ctypes.c_int), ("lport", ctypes.c_int), ("gencnt", ctypes.c_uint64),
+                ("flags", ctypes.c_uint32), ("flow", ctypes.c_uint32), ("vflag", ctypes.c_uint8),
+                ("ip_ttl", ctypes.c_uint8), ("rfu", ctypes.c_uint32), ("faddr", ctypes.c_uint32 * 4),
+                ("laddr", ctypes.c_uint32 * 4), ("v4", ctypes.c_uint8), ("v6", _V6)]
+
+
+class _SocketFdInfo(ctypes.Structure):
+    class _SocketInfo(ctypes.Structure):
+        _fields_ = [("stat", _VInfoStat), ("so", ctypes.c_uint64), ("pcb", ctypes.c_uint64),
+                    ("type", ctypes.c_int), ("protocol", ctypes.c_int), ("family", ctypes.c_int)] + [
+            (name, ctypes.c_short) for name in ("options", "linger", "state", "qlen", "incqlen", "qlimit", "timeo")] + [
+            ("error", ctypes.c_ushort), ("oobmark", ctypes.c_uint32), ("rcv", _SockbufInfo), ("snd", _SockbufInfo),
+            ("kind", ctypes.c_int), ("rfu", ctypes.c_uint32), ("proto", ctypes.c_uint64 * 66)]
+    _fields_ = [("pfi", _FileInfo), ("psi", _SocketInfo)]
+
+
+def _libproc():
+    global _LIBPROC
+    if _LIBPROC is None:
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pidfdinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+        _LIBPROC = lib
+    return _LIBPROC
+
+
+def _pidinfo(pid: int, flavor: int, buffer, arg: int = 0) -> int:
+    """proc_pidinfo into `buffer`: bytes filled. A process that does not exist raises FileNotFoundError."""
+    filled = _libproc().proc_pidinfo(int(pid), flavor, arg, ctypes.byref(buffer), ctypes.sizeof(buffer))
+    if filled <= 0:
+        error = ctypes.get_errno()
+        raise (FileNotFoundError if error == 3 else OSError)(error, f"process {pid} is unreadable")  # 3: ESRCH
+    return filled
+
+
+def _pids() -> list[int]:
+    lib = _libproc()
+    buffer = (ctypes.c_int * (lib.proc_listallpids(None, 0) + 256))()
+    count = lib.proc_listallpids(buffer, ctypes.sizeof(buffer))
+    if count <= 0:
+        raise OSError(ctypes.get_errno(), "The process table is unreadable")
+    return [pid for pid in buffer[:count] if pid > 0]
+
+
+def _bsd(pid: int) -> _BSDInfo:
+    info = _BSDInfo()
+    if _pidinfo(pid, 3, info) != ctypes.sizeof(info):  # PROC_PIDTBSDINFO
+        raise OSError(f"process {pid} is unreadable")
+    return info
+
+
+def _started(info: _BSDInfo) -> str:
+    return f"{info.start_sec}{info.start_usec:06d}"
+
+
+def _running(pid: int, start: str) -> bool:
+    try:
+        return process_running(pid, start) is True
+    except OSError:
+        return False
+
+
+def _coalition_of(pid: int) -> int:
+    """The process's resource coalition, which every descendant inherits whatever it does."""
+    ids = (ctypes.c_uint64 * 5)()
+    _pidinfo(pid, 20, ids)  # PROC_PIDCOALITIONINFO
+    return int(ids[0])
+
+
+def _members(coalition: int) -> list[tuple[int, str]]:
+    """(pid, start) of each readable process in the coalition."""
+    members = []
+    for pid in _pids():
+        try:
+            if _coalition_of(pid) == coalition:
+                members.append((pid, _started(_bsd(pid))))
+        except OSError:
+            continue
+    return members
+
+
+def _stop_members(coalition: int, *, spare: int | None = None, grace: float = 5, limit: float = 60) -> bool:
+    """Stop every process in the coalition but `spare`: SIGTERM, then SIGKILL for whatever outlasts `grace`,
+    repeated for members that fork meanwhile. Each signal is preceded by a fresh identity check. False when members
+    remain after `limit` seconds."""
+    began = time.monotonic()
+    termed: set[tuple[int, str]] = set()
+    while True:
+        members = [member for member in _members(coalition) if member[0] != spare]
+        if not members:
+            return True
+        elapsed = time.monotonic() - began
+        if elapsed >= limit:
+            return False
+        for pid, start in members:
+            sig = signals.SIGKILL if elapsed >= grace else signals.SIGTERM
+            if sig == signals.SIGTERM and (pid, start) in termed:
+                continue
+            try:
+                if _coalition_of(pid) == coalition and _started(_bsd(pid)) == start:
+                    os.kill(pid, sig)
+                    termed.add((pid, start))
+            except OSError:
+                pass
+        time.sleep(0.05)
+
+
+def _environment(pid: int) -> list[bytes]:
+    """The process's environment as KERN_PROCARGS2 reports it: argc, the executable path, argv, then environ."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0):
+        raise OSError(ctypes.get_errno(), f"process {pid} is unreadable")
+    buffer = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
+        raise OSError(ctypes.get_errno(), f"process {pid} is unreadable")
+    raw = buffer.raw[:size.value]
+    argc = int.from_bytes(raw[:4], sys.byteorder)
+    return [part for part in raw[4:].split(b"\0") if part][1 + argc:]
+
+
+def _footprint(pid: int) -> int:
+    usage = ctypes.create_string_buffer(512)
+    if _libproc().proc_pid_rusage(int(pid), 0, usage):  # RUSAGE_INFO_V0
+        return 0
+    return int.from_bytes(usage.raw[72:80], sys.byteorder)  # ri_phys_footprint
+
+
+def _tcp_handle(local, local_port: int, remote, remote_port: int) -> str:
+    return f"tcp:{local}:{local_port}>{remote}:{remote_port}"
+
+
+def _tcp_handles(pid: int) -> set[str]:
+    """The TCP connections the process holds, each named by its local and remote endpoints."""
+    fds = (ctypes.c_int32 * 2 * (_bsd(pid).nfiles + 64))()
+    count = _pidinfo(pid, 1, fds) // 8  # PROC_PIDLISTFDS: (fd, type) pairs
+    handles = set()
+    for fd, kind in fds[:count]:
+        if kind != 2:  # PROX_FDTYPE_SOCKET
+            continue
+        info = _SocketFdInfo()
+        if _libproc().proc_pidfdinfo(pid, fd, 3, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+            continue  # PROC_PIDFDSOCKETINFO; closed meanwhile
+        if info.psi.kind != 2:  # SOCKINFO_TCP
+            continue
+        tcp = _InSockInfo.from_buffer(info.psi.proto)
+
+        def address(words):
+            raw = bytes(words)
+            return ipaddress.ip_address(raw[12:] if tcp.vflag & 1 else raw)  # INI_IPV4
+
+        handles.add(_tcp_handle(address(tcp.laddr), _socket_port(tcp.lport), address(tcp.faddr), _socket_port(tcp.fport)))
+    return handles
+
+
+def _socket_port(value: int) -> int:
+    return int.from_bytes((value & 0xFFFF).to_bytes(2, sys.byteorder), "big")

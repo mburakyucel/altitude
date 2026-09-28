@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import base64
 import ctypes as C
-import ctypes.util
 import hashlib
 import json
 import os
@@ -17,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, images, state as S
+from altitude import config, images, platform, state as S
 
 
 def chunk(kind: bytes, data: bytes) -> bytes:
@@ -42,7 +41,7 @@ def exif(orientation: int) -> bytes:
 
 def rgb_profile(*, linear=False) -> bytes:
     """Generate a fictional ICC profile using the local color capability, without external assets."""
-    lib = C.CDLL(ctypes.util.find_library("lcms2"))
+    lib = C.CDLL(platform.find_library("lcms2"))
     lib.cmsCreate_sRGBProfile.restype = C.c_void_p
     if linear:
         class xyY(C.Structure):
@@ -85,6 +84,8 @@ class TestImages(AltitudeCase):
         output = self.tmp / ("fixture.jpg" if codec == "mjpeg" else "fixture.webp")
         result = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(source_path),
                                  "-threads", "1", "-c:v", codec, str(output)], capture_output=True, timeout=15)
+        if codec == "libwebp" and b"Unknown encoder" in result.stderr:  # Homebrew's ffmpeg decodes WebP only
+            result = subprocess.run(["cwebp", "-quiet", str(source_path), "-o", str(output)], capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         return output.read_bytes()
 
@@ -187,7 +188,7 @@ class TestImages(AltitudeCase):
     def test_profile_capability_and_unsupported_profile_errors_preserve_input_bounds(self):
         profile = rgb_profile()
         source = png(extra=chunk(b"iCCP", b"sRGB\0\0" + zlib.compress(profile)))
-        with mock.patch.object(images.ctypes.util, "find_library", return_value=None):
+        with mock.patch.object(platform, "find_library", return_value=None):
             with self.assertRaises(images.ImageError) as unavailable:
                 self.store(upload(source))
             self.assertEqual(unavailable.exception.status, 422)
@@ -270,7 +271,8 @@ class TestImages(AltitudeCase):
             with self.assertRaisesRegex(images.ImageError, "too long"):
                 self.store()
             command = run.call_args.args[0]
-            self.assertIn("RLIMIT_AS", command[2])
+            self.assertEqual(command[3], str(1 << 30))  # memory: RLIMIT_AS on Linux, a footprint watcher on macOS
+            self.assertIn("RLIMIT_AS" if platform.sys.platform != "darwin" else "proc_pid_rusage", command[2])
             self.assertIn("RLIMIT_CPU", command[2])
             self.assertIn("RLIMIT_FSIZE", command[2])
             self.assertLessEqual(run.call_args.kwargs["timeout"], 15)

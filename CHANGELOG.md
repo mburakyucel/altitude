@@ -11,6 +11,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   The installer, `alt doctor` and **Settings → Devices** show the certificate's name, expiry and
   what trusting it allows, read from the certificate, including "No limits" for an unconstrained
   CA. Altitude's HTTPS address no longer serves `/ca.crt`.
+- Macs with Apple silicon on macOS 15 or newer install with the same command, without administrator
+  rights. Altitude runs as a background service of your login (it starts when you log in and keeps
+  running with the screen locked), each agent job runs as its own background job that Stop ends
+  completely, and Claude Code jobs may write only in their task's worktree and their own state. The
+  installer asks for Homebrew's OpenSSL 3 when macOS's own openssl is on PATH. Native acceptance on a
+  spare Mac account is still pending, so macOS is not yet a supported platform.
 
 ## v0.1.0-rc.1 — 2026-09-28
 

@@ -38,6 +38,8 @@ class FakeProcess:
 
 
 class TestCodexAdapter(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)
@@ -69,7 +71,7 @@ class TestCodexAdapter(AltitudeCase):
              mock.patch.object(engines, "codex_sandbox", return_value=["s1", "s2"]), \
              mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
              mock.patch.object(platform, "job_command",
-                               side_effect=lambda unit, command, env: ["svc", unit, *command]), \
+                               side_effect=lambda unit, command, env, **kw: ["svc", unit, *command]), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
                                    extra_env={"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "1"}, **kw)
@@ -187,7 +189,7 @@ class TestCodexAdapter(AltitudeCase):
                                    communicate=lambda text, timeout=None: seen.update(stdin=text) or (stdout, ""))
 
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(platform, "job_command", side_effect=lambda unit, command, env: command):
+             mock.patch.object(platform, "job_command", side_effect=lambda unit, command, env, **kw: command):
             out = engines.codex_exec("hello", cwd=self.worktree, effort="high", resume="thr-l3",
                                      extra_env={"ALTITUDE_ACTOR": "l3"})
         self.assertEqual(seen["cmd"][:3], [config.CODEX_BIN, "exec", "resume"])

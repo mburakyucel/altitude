@@ -149,7 +149,7 @@ The daemon makes the same lookup at startup and every twelve hours and records w
 `alt doctor`, Settings › This machine and a notice in the app show a newer stable release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
 **Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
-in its own user unit so the update survives the restart. **Check for new versions** in Settings
+in a job of its own so the update survives the restart. **Check for new versions** in Settings
 turns the lookup off. Nothing updates on its own.
 
 `alt update` asks GitHub for the newest stable release of the repository the installed release
@@ -166,7 +166,10 @@ selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
-independent task workers are not stopped with the daemon. Projects continue using ordinary checked
+independent task workers are not stopped with the daemon. On a Mac the service is the LaunchAgent
+`dev.altitude.altd`: `alt service stop` boots it out until the next login or `alt service start`,
+and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
+`altitude-update-<version>.log` beside it. Projects continue using ordinary checked
 PR delivery; a managed source clone does not update the installed application. Project Git guards
 point at installation-owned `hooks` launchers that run the `current` version, and every dispatch
 and resume repairs and rechecks them, so registered projects dispatch on the updated version

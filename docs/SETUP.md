@@ -1,8 +1,10 @@
 # Set up Altitude
 
-Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The release
-archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
-Native macOS, Windows and genuine clean-machine/provider acceptance are not established.
+Altitude targets one operator on a Linux x86_64 machine with a systemd user manager, or on a Mac with
+Apple silicon running macOS 15 or newer. The release archive includes the CLI, daemon and built UI;
+Ubuntu 24.04 is the initial validation target. The macOS runtime is implemented and its native
+acceptance on a spare account is pending ([roadmap](ROADMAP.md#native-macos-runtime)); Windows and
+genuine clean-machine/provider acceptance are not established.
 
 The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
 exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
@@ -18,6 +20,13 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   selected engine's sandbox. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
   compatibility matrix is not established.
+- Or macOS 15 or newer on Apple silicon, with the account logged in (the screen may stay locked).
+  The service is a LaunchAgent of your login and needs no administrator rights; it starts at login,
+  so a Mac that restarts waits for one login, and running before any login is a later increment.
+  Put Homebrew's `openssl@3` ahead of `/usr/bin` on PATH (`brew install openssl@3`): macOS's own
+  LibreSSL cannot check a certificate's host name. Python 3.12 comes from `brew install python@3.12`
+  or python.org, Git from the Xcode command line tools. Each task job runs as its own launchd job,
+  also with a foreground Altitude server.
 - Python 3.12 or newer, Git, GitHub CLI (`gh`) and OpenSSL on PATH. The archive needs no Node,
   package manager, application source checkout or UI build. The backend uses Python's standard library.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
@@ -34,17 +43,18 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs a
-published release as the account that will use Altitude. The preview has no stable release yet, so
-install the newest release candidate from its own tag:
+On Linux x86_64 with a systemd user manager, or macOS 15 or newer on Apple silicon, with Python 3.12
+or newer, one command installs a published release as the account that will use Altitude. The
+preview has no stable release yet, so install the newest release candidate from its own tag:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
-when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
-`openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
+when something is missing: Linux x86_64 or a Mac with Apple silicon on macOS 15 or newer, not root,
+Python 3.12 or newer, `curl`, a SHA-256 tool, `openssl` (OpenSSL 3 on a Mac) and `systemctl --user` on
+Linux or a logged-in `gui` launchd domain on a Mac. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
@@ -65,9 +75,6 @@ curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
-
-On macOS the command stops before downloading anything and reports the macOS version, chip and
-Python it found; the native macOS runtime is not delivered yet ([#225](https://github.com/mburakyucel/altitude/issues/225)).
 
 The same installer runs by hand from the release files, for example offline or with a private
 archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
@@ -182,7 +189,7 @@ fingerprint where the device shows it. Firefox for Android also needs its third-
   [Firefox guidance](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
 - **Mac clients:** import the CA in Keychain Access and set its SSL trust explicitly. Safari and
   Chrome honor that setting; Firefox normally imports trusted roots from the System keychain,
-  otherwise use its Authorities import. This is client guidance, not native Mac runtime support.
+  otherwise use its Authorities import.
   [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
   [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
 

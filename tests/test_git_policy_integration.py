@@ -301,6 +301,7 @@ class TestInstallGitGuardsCommand(AltitudeCase):
 
 class TestDispatchDeploymentIndependence(AltitudeCase):
     """Task launches read current origin while deployment advances only through activation."""
+    host = "linux"  # the source service restarts itself only on Linux
 
     def setUp(self):
         super().setUp()

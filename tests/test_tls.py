@@ -3,12 +3,18 @@ import json
 import re
 from pathlib import Path
 import ssl
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
 from tests.support import SUITE
 from altitude import config, installation, tls
+
+# A validity period already over. OpenSSL 3.4 and newer refuse negative -days but take explicit dates.
+_help = subprocess.run(["openssl", "x509", "-help"], capture_output=True, text=True)
+EXPIRED = (["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"]
+           if "-not_after" in _help.stdout + _help.stderr else ["-days", "-1"])
 
 
 def handshake(server_context, ca: Path | None, host="localhost"):
@@ -247,7 +253,8 @@ class TestTLS(unittest.TestCase):
         def expired_leaf(*args, **kwargs):
             arguments = list(args)
             if "-days" in arguments:
-                arguments[arguments.index("-days") + 1] = "-1"
+                at = arguments.index("-days")
+                arguments[at:at + 2] = EXPIRED
             return run(*arguments, **kwargs)
 
         with tempfile.TemporaryDirectory(dir=self.root) as temporary:
@@ -259,7 +266,7 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(tls.check(), self.directory / "ca.crt"), b"typed conversation")
         self.assertEqual((self.directory / "ca.crt").read_bytes(), ca_before)
         run("x509", "-in", self.directory / "ca.crt", "-signkey", self.directory / "ca.key",
-            "-days", "-1", "-out", self.directory / "expired-ca.crt")
+            *EXPIRED, "-out", self.directory / "expired-ca.crt")
         (self.directory / "ca.crt").write_bytes((self.directory / "expired-ca.crt").read_bytes())
         before = self.snapshot()
         with self.assertRaises(tls.TLSFailure):
