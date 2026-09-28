@@ -1687,10 +1687,21 @@ Stop transcribes for editing and cancels on leaving; Send retains its operation 
 including leaving before the recorder emits its stop event. Failure returns the preexisting text to
 the source conversation. Recovery arriving from an earlier send remains a separate unsent draft;
 it is not appended to the captured voice Send. Image Retry retains the captured request context.
-This client operation lasts within the current document; it adds no streaming
-transcription service or server-side audio queue.
+This client operation lasts within the current document; it adds no server-side queue of sends or
+audio.
 The composer reads the installation's voice backend and destination identity from `GET /api/voice` and
-shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
+shows no microphone until it answers. With `host`, `hostCapture.ts` wraps streaming in the same
+recorder shape: a dedicated audio graph, separate from the waveform, runs an audio worklet (loaded
+from a blob URL) that averages the microphone down to 16 kHz 16-bit samples. The composer shows
+"Starting voice…" until the first samples arrive, then Listening. One request is in flight at a time,
+carrying what gathered since the last answer (normally half a second, at most ten seconds); a request
+lost on the network is repeated with the same number up to three times. Each answer replaces the words
+after the typed draft. Stop releases the microphone and sends the rest as the final chunk; Transcribing
+lasts until the final text lands. No samples within two seconds, an ended track, a worklet that cannot
+load, a refusal or a lost connection stops the recording: the words already shown land in the draft
+and the hint gives the reason. A 409 reads the backend again. Before setup, the microphone explains
+the one-time download with a **Set up voice** link; when host voice cannot run here or its setup
+failed, the microphone hides and the hint says why. With `browser`, the default, `recognition.ts` wraps the
 browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event).
 After the previous capture's shutdown gate and microphone acquisition, the composer synchronously
 creates and connects the waveform graph before starting either recognizer or recorder. React only
@@ -2004,14 +2015,14 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `browser` (the default) or a speech-service object with `url`, optional `model` and
-optional `key`; any other stored value reads as `browser`. `GET /api/voice` reports backend, URL,
-model, a `key_set` boolean and an opaque selection identity over backend and destination; it never
-returns the key. `alt machine set --voice` requests a change through the same durable request that
+settings file: `browser` (the default), `host`, or a speech-service object with `url`, optional
+`model` and optional `key`; any other stored value reads as `browser`. `GET /api/voice` reports
+backend, URL, model, a `key_set` boolean, an opaque selection identity over backend and destination,
+and `host`, where host voice stands on this computer; it never returns the key. `alt machine set --voice` requests a change through the same durable request that
 carries `wip`, and the CLI, `machine show` and the event log show a key only as `set`.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
-(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
+(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the three
 backend choices and names the saved service's host in its summary. Project three-dot menus and the
 desktop operator row open Settings. `POST /api/voice` saves through the same durable request/apply
 path as the CLI, with no restart or provider probe. Browser recognition saves immediately; the
@@ -2044,6 +2055,58 @@ recording and transcribing, restores the editable field after cancel or error, a
 microphone as progressive enhancement. Phone access uses an explicitly configured private HTTPS
 address whose certificate covers that address. Safari can use the microphone after the CA is trusted
 on the phone; typing remains available without speech services.
+
+#### Host voice
+
+With `host`, this computer transcribes: `altitude/speech.py` owns a pinned speech runtime and one
+speech worker, and the page streams samples to it. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
+CC-BY-4.0) as the int8 ONNX export `istupakov/parakeet-tdt-0.6b-v2-onnx` at a pinned revision, run on
+the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punctuates and capitalizes.
+
+`platform.speech_runtime()` names the runtime this host and interpreter can run (Linux x86_64, glibc
+2.28 or newer, CPython 3.12 or 3.13). Anything else, including macOS until native evidence is recorded,
+reads as `unavailable` with its reason. `speech.status()` is `unavailable`, `absent`, `setting-up`
+(with bytes done), `ready`, `failed` (with the reason) or `outdated`, with the download size.
+
+Setup (`alt voice setup`, or Settings through `POST /api/voice/host` with `setup`) downloads the
+manifest in `speech.py`: five model files from Hugging Face and three wheels from PyPI, about 698 MB.
+Each file streams into `~/.altitude/speech/.staging` with a size cap and must match its pinned
+SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
+backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
+naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
+rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
+reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
+any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
+`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
+worker within a second when its runtime disappears under it (`alt voice remove`).
+
+The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
+minimal environment, imports only the runtime's unpacked wheels, and reads one JSON request per line:
+`open`, `audio` (base64 samples), `finish` and `close`. It answers `ready` once the model is loaded,
+then each changed recording's text so far, finishing recordings first. It commits text at pauses once
+eight seconds are pending: the audio up to the middle of the last quiet run (quiet is relative to the
+recording's own level) is transcribed once and kept; without a pause by twelve seconds, the words that
+started at least a second before the end are kept, except the last. No read covers much more than
+twelve seconds of audio. It exits on stdin EOF, so it ends with the daemon.
+
+`speech.Host` supervises it. The first recording starts the worker, after checking that about 2.5 GB
+of memory is available; every recording shares it, and it exits after fifteen minutes unused. Requests
+reach it through a writer thread, so a worker that is loading or hung never holds up a request. A
+watchdog kills it when it takes more than 30 seconds to load, then 10 seconds to answer new audio or
+15 seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
+starts a fresh worker. Its stderr goes to `~/.altitude/speech/worker.log`; altd's log records starts,
+stops and reasons, never text.
+
+The page's routes carry raw samples: `POST /api/voice/live` starts a recording for the current
+`X-Voice-Selection` (refused unless the backend is `host` and the runtime ready) and answers its id;
+`POST /api/voice/live/<id>/audio?seq=N&final=0|1` adds chunk `N`, at most ten seconds of 16 kHz 16-bit
+mono samples, and answers the text so far at once, never waiting for inference; `final=1` waits for
+the final text, and cancelling the recording ends that wait at once. Chunks are numbered from 0: a repeated number gets its first answer again without
+adding audio, and a skipped one fails the recording. `POST /api/voice/live/<id>/cancel` discards it. A
+recording belongs to the paired device that opened it; at most two are active (a third is busy, 429),
+each up to ten minutes, and one without a request for 30 seconds is dropped. Audio stays in memory for
+its recording only. The live and setup routes refuse other sites and Altitude's own agents, as the
+terminal does; the daemon stops the worker on shutdown.
 
 ### Design evidence
 

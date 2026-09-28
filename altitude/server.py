@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -115,8 +115,8 @@ def _accepts_gzip(header: str | None) -> bool:
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording
 # unchanged to the machine's speech service, one OpenAI-compatible `audio/transcriptions` endpoint
-# on this computer, the network or a hosted provider. Browser recognition never uploads. Altitude
-# owns no speech model.
+# on this computer, the network or a hosted provider. Browser recognition never uploads. Host voice
+# streams samples to `altitude/speech.py`, which transcribes them on this computer.
 VOICE_MAX_BODY = 16 << 20
 BODY_LIMIT = 1 << 20  # every other JSON request; image messages and recordings have their own limits
 VOICE_TYPES = {
@@ -150,7 +150,7 @@ def voice_view() -> dict:
     setting = config.voice_setting()
     return {"backend": setting["backend"], "url": setting.get("url", ""),
             "model": setting.get("model", ""), "key_set": bool(setting.get("key")),
-            "selection": _voice_selection(setting)}
+            "selection": _voice_selection(setting), "host": speech.status()}
 
 
 def save_voice(body: dict) -> dict:
@@ -165,6 +165,10 @@ def save_voice(body: dict) -> dict:
         if body.keys() - {"backend", "selection"}:
             raise ValueError("Service fields apply only to your speech service.")
         value = "browser"
+    elif backend == "host":
+        if body.keys() - {"backend", "selection"}:
+            raise ValueError("Service fields apply only to your speech service.")
+        value = "host"
     elif backend == "endpoint":
         value = {"url": body.get("url")}
         for field in ("model", "key"):
@@ -184,7 +188,7 @@ def save_voice(body: dict) -> dict:
             if current.get("key"):
                 value["key"] = current["key"]
     else:
-        raise ValueError("Choose browser recognition or your speech service.")
+        raise ValueError("Choose browser recognition, this computer or your speech service.")
     dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR)
     result = dispatch._run_setting(None, "voice")
     if result["status"] != "done":
@@ -291,6 +295,10 @@ def log(msg: str) -> None:
     except OSError:
         pass
     print(line, end="", flush=True)
+
+
+#: The daemon's host voice recordings and speech worker.
+SPEECH = speech.Host(log)
 
 
 def spawn(key: str, fn, *a) -> bool:
@@ -1589,6 +1597,56 @@ class Handler(BaseHTTPRequestHandler):
         log(f"voice transcription: {len(text)} characters from {length} uploaded bytes")
         return self._json({"text": text})
 
+    def _host_voice(self, parts: list[str], query: dict) -> None:
+        """Host voice: `live` starts a recording, `live/<id>/audio?seq=N&final=0|1` adds samples and answers the
+        text so far, `live/<id>/cancel` discards it; `host` sets up, cancels setup or removes the runtime. The
+        live routes carry raw samples, so they are read here rather than as JSON."""
+        denied = self._terminal_denied(json_body=False, subject="Voice")
+        if denied:
+            self.close_connection = True
+            return self._json({"error": denied}, 403)
+        device = self._device["id"] if self._device else None
+        try:
+            if parts == ["api", "voice", "host"]:
+                action = self._body().get("action")
+                if action == "setup":
+                    SPEECH.start_setup()
+                elif action == "cancel":
+                    SPEECH.cancel_setup()
+                elif action == "remove":
+                    SPEECH.remove()
+                else:
+                    return self._json({"error": "Choose setup, cancel or remove."}, 400)
+                return self._json(voice_view())
+            self._keep_open = True  # one request every half second: no fresh handshake for each
+            if parts == ["api", "voice", "live"]:
+                self._body()
+                setting = config.voice_setting()
+                if setting["backend"] != "host" or self.headers.get("X-Voice-Selection") != _voice_selection(setting):
+                    raise speech.SpeechError("Voice settings changed. Your typed draft is unchanged. Record again with the new setting.", 409)
+                return self._json(SPEECH.open(device))
+            if len(parts) == 5 and parts[2] == "live" and parts[4] == "cancel":
+                self._body()
+                SPEECH.close(parts[3], device)
+                return self._json({"ok": True})
+            if len(parts) != 5 or parts[2] != "live" or parts[4] != "audio":
+                return self._json({"error": "unknown api"}, 404)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                seq = int((query.get("seq") or [""])[0])
+            except ValueError:
+                raise speech.SpeechError("Voice received a malformed recording.", 400) from None
+            final = (query.get("final") or ["0"])[0] == "1"
+            if length < 0 or length > speech.CHUNK_LIMIT or seq < 0:
+                self.close_connection = True
+                raise speech.SpeechError("Voice received a malformed recording.", 400)
+            pcm = self.rfile.read(length)
+            if len(pcm) != length:
+                raise speech.SpeechError("Voice stopped: the recording upload was incomplete.", 400)
+            return self._json(SPEECH.audio(parts[3], device, seq, pcm, final))
+        except speech.SpeechError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+
     def _cross_site(self) -> bool:
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
         at all (the `alt` CLI) sends neither header."""
@@ -2009,6 +2067,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "Use GET to read a document."}, 405)
             if api == "transcribe":
                 return self._transcribe_voice()
+            if api == "voice" and len(parts) > 2:
+                return self._host_voice(parts, parse_qs(u.query))
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
@@ -2970,6 +3030,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
             terminal.close_all()
         except terminal.TerminalError as exc:
             log(f"terminal: {exc}")  # each terminal's job is PartOf the service, which stops it too
+        SPEECH.shutdown()
 
 
 def certificate_view() -> dict | None:

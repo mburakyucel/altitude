@@ -681,12 +681,21 @@ export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
+/** Host voice on this computer: why it cannot run, or where its one-time setup stands. */
+const HostVoiceSchema = z.union([
+  z.object({ state: z.literal("unavailable"), reason: z.string() }),
+  z.object({
+    state: z.enum(["absent", "setting-up", "ready", "failed", "outdated"]), download_bytes: z.number(),
+    done_bytes: z.number().optional(), reason: z.string().optional(),
+  }),
+]);
 const VoiceSchema = z.object({
-  backend: z.enum(["browser", "endpoint"]), selection: z.string(),
-  url: z.string(), model: z.string(), key_set: z.boolean(),
+  backend: z.enum(["browser", "host", "endpoint"]), selection: z.string(),
+  url: z.string(), model: z.string(), key_set: z.boolean(), host: HostVoiceSchema,
 });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;
+export type HostVoice = z.infer<typeof HostVoiceSchema>;
 export type VoiceUpdate = { backend: VoiceBackend; selection: string; url?: string; model?: string; key?: string; keep_key?: boolean };
 
 /** Which backend this installation transcribes with; "browser" never uploads audio. */
@@ -812,6 +821,30 @@ const PrerequisitesSchema = z.object({
   })),
 });
 export type Prerequisite = z.infer<typeof PrerequisitesSchema>["items"][number];
+
+/** Set up, cancel setup of, or remove host voice; answers the settings with the new host state. */
+export async function changeHostVoice(action: "setup" | "cancel" | "remove"): Promise<VoiceSettings> {
+  return VoiceSchema.parse(await post("/api/voice/host", { action }));
+}
+
+const HostTextSchema = z.object({ text: z.string(), final: z.boolean().optional() }).passthrough();
+
+/** Start a host voice recording for the selection the page read. */
+export async function startHostVoice(selection: string, signal?: AbortSignal): Promise<{ id: string }> {
+  return z.object({ id: z.string() }).passthrough().parse(
+    await api("/api/voice/live", { method: "POST", body: "{}", headers: { "X-Voice-Selection": selection }, signal }));
+}
+
+/** Chunk `seq` of 16 kHz 16-bit samples; answers the text so far, or the final text. */
+export async function sendHostVoice(id: string, seq: number, pcm: Int16Array, final: boolean, signal?: AbortSignal) {
+  return HostTextSchema.parse(await api(`/api/voice/live/${id}/audio?seq=${seq}&final=${final ? 1 : 0}`, {
+    method: "POST", body: pcm as Int16Array<ArrayBuffer>, headers: { "Content-Type": "application/octet-stream" }, signal,
+  }));
+}
+
+export async function cancelHostVoice(id: string): Promise<void> {
+  await post(`/api/voice/live/${id}/cancel`, {});
+}
 
 /** What the agents need on the computer running Altitude; each read checks again. */
 export function usePrerequisites() {

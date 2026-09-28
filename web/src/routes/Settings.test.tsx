@@ -3,7 +3,7 @@ import { defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
-const saved = { backend: "endpoint", selection: "endpoint-one", url: "https://speech.example.test/transcribe", model: "", key_set: true };
+const saved = { backend: "endpoint", selection: "endpoint-one", url: "https://speech.example.test/transcribe", model: "", key_set: true, host: { state: "absent", download_bytes: 698435338 } };
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 function fixture(initial: Record<string, unknown> = saved) {
   let setting = { ...initial };
@@ -23,6 +23,77 @@ function fixture(initial: Record<string, unknown> = saved) {
   }));
   return calls;
 }
+
+/** The host's voice setup: each action moves `host` along as the server would. */
+function hostFixture(host: Record<string, unknown>, backend = "browser") {
+  const actions: string[] = [];
+  let setting = { backend, selection: `${backend}-selection`, url: "", model: "", key_set: false, host };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === "/api/voice/host") {
+      const { action } = JSON.parse(String(init?.body));
+      actions.push(action);
+      const next = action === "setup" ? { state: "setting-up", download_bytes: 698435338, done_bytes: 0 }
+        : action === "cancel" ? { state: "absent", download_bytes: 698435338 } : { state: "absent", download_bytes: 698435338 };
+      setting = { ...setting, host: next };
+      return json(setting);
+    }
+    if (path === "/api/voice") {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        setting = { ...setting, backend: body.backend, selection: `${body.backend}-selection` };
+      }
+      return json(setting);
+    }
+    if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+    if (path === "/api/machine") return json({ operator: null, incident_repository: null, altitude_repository: "fixture/altitude", terminal: false });
+    return json({}, 404);
+  }));
+  return { actions, advance: (next: Record<string, unknown>) => { setting = { ...setting, host: next }; } };
+}
+
+describe("Host voice settings", () => {
+  it.each([390, 1440])("choosing this computer offers the one-time setup, shows its progress and can cancel it (%i)", async (width) => {
+    setViewport(width);
+    const host = hostFixture({ state: "absent", download_bytes: 698435338 });
+    const { user } = renderApp({ route: "/settings/voice" });
+    expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
+    await user.click(await screen.findByRole("radio", { name: "This computer — live text" }));
+    expect(await screen.findByText("Needs a one-time download of about 698 MB, checked against this release.")).toBeVisible();
+    expect(screen.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Set up voice" }));
+    expect(await screen.findByText("Setting up… 0 MB of 698 MB")).toBeVisible();
+    expect(screen.getByRole("progressbar", { name: "Voice setup" })).toBeVisible();
+    host.advance({ state: "setting-up", download_bytes: 698435338, done_bytes: 349000000 });
+    expect(await screen.findByText("Setting up… 349 MB of 698 MB", {}, { timeout: 3000 })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel setup" }));
+    expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
+    expect(host.actions).toEqual(["setup", "cancel"]);
+  });
+
+  it("a finished setup can be removed, and a failed one retried", async () => {
+    const host = hostFixture({ state: "ready", download_bytes: 698435338 }, "host");
+    const { user } = renderApp({ route: "/settings/voice" });
+    expect(await screen.findByText(/Ready on this computer/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove voice (698 MB)" }));
+    expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
+    expect(host.actions).toEqual(["remove"]);
+  });
+
+  it("a failed setup says so and offers Retry", async () => {
+    hostFixture({ state: "failed", download_bytes: 698435338, reason: "Setup stopped: encoder-model.int8.onnx did not match its checksum." }, "host");
+    renderApp({ route: "/settings/voice" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Setup did not finish. Setup stopped: encoder-model.int8.onnx did not match its checksum.");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("a computer that cannot run voice says why and cannot choose it", async () => {
+    hostFixture({ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" });
+    renderApp({ route: "/settings/voice" });
+    expect(await screen.findByRole("radio", { name: "This computer — live text" })).toBeDisabled();
+    expect(screen.getByText("Not available on this computer: voice runs on Linux x86_64 only for now.")).toBeVisible();
+  });
+});
 
 describe("Voice settings", () => {
   it("locks the form until the response is applied even when query notifications wait", async () => {
@@ -108,7 +179,7 @@ describe("Voice settings", () => {
 
   it.each([390, 1440])("asks only for a URL, keeps the hosted key and model one click away, and names the host (%s)", async (width) => {
     setViewport(width);
-    const calls = fixture({ backend: "browser", selection: "browser-selection", url: "", model: "", key_set: false });
+    const calls = fixture({ backend: "browser", selection: "browser-selection", url: "", model: "", key_set: false, host: { state: "absent", download_bytes: 698435338 } });
     const { user } = renderApp({ route: "/settings" });
     await user.click(await screen.findByRole("link", { name: "Voice input Browser recognition" }));
     await user.click(await screen.findByRole("radio", { name: "Your speech service" }));

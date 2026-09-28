@@ -124,7 +124,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("radio", { name: "Your speech service", exact: true })).toBeChecked();
-      await expect(main.getByRole("radio")).toHaveCount(2);
+      await expect(main.getByRole("radio")).toHaveCount(3);
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       await expect(main.getByLabel("Service URL")).toHaveValue("https://speech.example.test/v1/audio/transcriptions");
       await expect(main.getByLabel("API key (optional)")).toHaveCount(0);

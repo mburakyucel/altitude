@@ -17,7 +17,10 @@
 .voice-option + .voice-option { border-top: 1px solid var(--hairline); }
 .voice-choice { display: flex; gap: 12px; align-items: center; font-weight: 600; cursor: pointer; min-height: 44px; }
 .voice-choice input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
-.voice-option > p, .voice-endpoint { margin-left: 30px; }
+.voice-option > p, .voice-endpoint, .voice-host { margin-left: 30px; }
+.voice-host { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.voice-host .btn { align-self: flex-start; min-height: 44px; }
+.voice-host progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .voice-endpoint { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .voice-endpoint label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
 .voice-endpoint input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); }

@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import { presetVoiceBackend } from "./voiceBackend";
-import type { VoiceBackend } from "../data/api";
+import type { HostVoice, VoiceBackend } from "../data/api";
+import { HostCapture } from "./hostCapture";
 import type { Punctuator } from "../punctuation";
 
 /**
@@ -122,13 +123,19 @@ export class FakeSpeechRecognition {
   }
 }
 
-export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean } = {}) {
+/** Host voice's microphone in tests: `speak` delivers 16 kHz samples to the capture listening now. */
+export const hostMicrophone = {
+  deliver: null as ((chunk: Int16Array) => void) | null,
+  speak(samples: number) { hostMicrophone.deliver?.(new Int16Array(samples)); },
+};
+
+export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean; host?: HostVoice } = {}) {
   const backend = options.backend ?? "endpoint";
   const recognition = options.recognition ?? backend === "browser";
   FakeMediaRecorder.instances = [];
   FakeSpeechRecognition.instances = [];
-  const track = { stop: vi.fn() };
-  const mediaStream = { getTracks: () => [track] } as unknown as MediaStream;
+  const track = Object.assign(new EventTarget(), { stop: vi.fn() });
+  const mediaStream = { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
   const getUserMedia = vi.fn(async () => mediaStream);
   const voiceNavigator = Object.create(window.navigator) as Navigator;
   Object.defineProperty(voiceNavigator, "mediaDevices", {
@@ -142,6 +149,14 @@ export function installVoiceBrowser(options: { backend?: VoiceBackend; recogniti
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   if (recognition) vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
   else vi.stubGlobal("SpeechRecognition", undefined);
-  presetVoiceBackend(backend);
+  if (backend === "host") {
+    vi.stubGlobal("AudioWorkletNode", class {});
+    hostMicrophone.deliver = null;
+    HostCapture.listen = async (_stream, samples) => {
+      hostMicrophone.deliver = samples;
+      return () => { if (hostMicrophone.deliver === samples) hostMicrophone.deliver = null; };
+    };
+  }
+  presetVoiceBackend(backend, options.host);
   return { getUserMedia, track };
 }

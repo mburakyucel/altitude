@@ -49,7 +49,7 @@ function views(page: Page, info: TestInfo) {
 }
 
 async function browserBackend(page: Page) {
-  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser", url: "", model: "", key_set: false, selection: "fixture-browser" } }));
+  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser", url: "", model: "", key_set: false, selection: "fixture-browser", host: { state: "absent", download_bytes: 698435338 } } }));
 }
 
 const PUNCTUATED_STOP = "So I think we should merge the PR today. Then look at the voice settings tomorrow. What do you think?";

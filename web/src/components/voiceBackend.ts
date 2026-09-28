@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { readVoiceSettings } from "../data/api";
-import type { VoiceBackend, VoiceSettings } from "../data/api";
+import type { HostVoice, VoiceBackend, VoiceSettings } from "../data/api";
 
 /*
  * The installation's transcription backend, read once per document from `GET /api/voice`. "browser"
- * runs the browser's own recognition; "endpoint" uploads the recording for the server to forward to
- * the machine's speech service. Until the read answers, the composer shows no microphone; a failed
+ * runs the browser's own recognition; "host" streams to this computer's speech model; "endpoint" uploads
+ * the recording for the server to forward to the machine's speech service. Until the read answers, the composer shows no microphone; a failed
  * read is retried while a composer is mounted.
  */
 const RETRY_MS = 5000;
@@ -24,9 +24,9 @@ function read() {
   reading = request;
 }
 
-/** Tests and fixtures name the backend directly instead of reading it. */
-export function presetVoiceBackend(backend: VoiceBackend | null) {
-  updateVoiceSettings(backend === null ? null : { backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false });
+/** Tests and fixtures name the backend directly instead of reading it; host voice is set up unless `host` says otherwise. */
+export function presetVoiceBackend(backend: VoiceBackend | null, host: HostVoice = { state: "ready", download_bytes: 0 }) {
+  updateVoiceSettings(backend === null ? null : { backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false, host });
 }
 
 /** A successful Settings save changes the next capture in every mounted composer. */
