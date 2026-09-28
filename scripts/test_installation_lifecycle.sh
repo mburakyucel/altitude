@@ -20,19 +20,23 @@ phase=${6:-all}
 baseline=$(realpath "$2")
 candidate=$(realpath "$3")
 mkdir -p "$4"
-kept="$(realpath "$4")/reboot-account"  # account and scratch left installed across the restart
 results=$(realpath "$4")
 [[ $phase == all ]] || { results="$results/$phase"; mkdir -p "$results"; }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 created=false
 keep=false
 test_uid=''
+# The account left installed across the restart; only root can write it.
+kept=/var/lib/altitude-installation-reboot-account
 if [[ $phase == reboot-verify ]]; then
-    read -r account scratch < "$kept"
-    [[ $account =~ ^alt-install-[0-9]+$ && $scratch =~ ^/var/tmp/altitude-installation\.[A-Za-z0-9]+$ ]] &&
-        id "$account" >/dev/null 2>&1 || { echo 'No installed reboot-install account to verify.' >&2; exit 2; }
+    account=$(cat "$kept" 2>/dev/null) || { echo 'No installed reboot-install account to verify.' >&2; exit 2; }
+    scratch=$(dirname -- "$(getent passwd "$account" | cut -d: -f6)")
+    [[ $account =~ ^alt-install-[0-9]+$ && $scratch =~ ^/var/tmp/altitude-installation\.[A-Za-z0-9]+$ &&
+       -d $scratch && ! -L $scratch && $(stat -c %u "$scratch") == 0 ]] ||
+        { echo "The recorded account $account is not a harness account." >&2; exit 2; }
     rm -f -- "$kept"
 else
+    [[ ! -e $kept ]] || { echo "A reboot-install account is still pending: $(cat "$kept")" >&2; exit 2; }
     # /var/tmp survives a restart; /tmp does not.
     scratch=$(mktemp -d /var/tmp/altitude-installation.XXXXXXXX)
     account="alt-install-$$"
@@ -55,11 +59,12 @@ cleanup() {
                 install -m 644 "$evidence" "$results/" || copy_exit=1
             done
         fi
-        if $keep && (( outcome == 0 )); then
-            printf '%s %s\n' "$account" "$scratch" > "$kept"
+        if $keep && (( outcome == 0 && copy_exit == 0 )) && (umask 077; printf '%s\n' "$account" > "$kept"); then
             echo "Left $account installed for reboot-verify" | tee -a "$results/cleanup.log"
             exit 0
         fi
+        # The account could not be recorded for reboot-verify, so it goes now.
+        $keep && { outcome=1; rm -f -- "$kept"; }
         timeout 15 loginctl disable-linger "$account" >> "$results/cleanup.log" 2>&1
         linger_exit=$?
         timeout 30 systemctl stop "user@$test_uid.service" >> "$results/cleanup.log" 2>&1

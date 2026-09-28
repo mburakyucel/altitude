@@ -301,7 +301,7 @@ def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        record["passed"] = list(exits.values()) == [0, 0, 0]
+        record["passed"] = list(exits.values()) == [0, 0, 0] and "uncopied_results" not in record
     finally:
         try:
             if machine:
