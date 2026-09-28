@@ -505,6 +505,16 @@ messages remain attached to the same task. Each distinct send keeps its own conv
 the resume claim consumes one exact batch and leaves later sends for the next checkpoint. A refused
 or uncertain provider launch uses the existing claim recovery, without duplicating the conversation.
 
+L3 can also return a reported owner's current `contradicted` verifier result through `task message`
+or `task resume`, even when all PRs are merged. The verdict must name the same report owner and
+delivery. This uses the same continuation transaction without an open-PR lookup; ordinary operator
+continuation still requires the open PR. Report correction preserves delivery and approval evidence,
+holds and acceptance context. The owner writes a fresh report with the required `blocked` string
+and retains or re-parks any unresolved acceptance question before completion. L3 does not edit the
+owner's report. Stop fencing, resume capacity and launch-failure recovery remain in force.
+The broker's owner-only `task block` refusal points L3 to this correction path for reported tasks
+and to `task stop` for running workers.
+
 Follow-ups also win against worker-exit/report-handoff races. Verification is bound to owner identity,
 worker start, block identity and the follow-up timestamp; stale verification, fault effects, archive
 callbacks and report-turn receipts cannot conclude resumed work. Every resumed code-owner turn

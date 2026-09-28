@@ -841,6 +841,16 @@ queued resume receipt means accepted work; inspect `alt task status <slug>` for 
 state or a capacity/recovery wait. Repeating the same outstanding coordinator resume request reuses
 its receipt. Separate messages remain separate, even when their text matches.
 
+L3 also uses `alt task message <slug> 'Correct the report and retain the pending acceptance.'`
+or `alt task resume <slug> --reason 'Correct the contradicted report'` when the current verifier
+verdict is `contradicted`, including after every delivery PR is merged. This correction path checks
+the recorded report owner and delivery, requires the existing owner session and worktree, and needs
+no open PR or GitHub lookup. It leaves the report file for its owner to correct. L3 checks task status
+for the queued handoff and eventual running state; the owner records unresolved acceptance in the
+fresh report's `blocked` string and retains or re-parks its question. This is coordinator report
+recovery; ordinary operator message/resume admission still requires an open PR for reported tasks.
+`task block` belongs to the owner; L3 uses `task stop` only for a running worker, not to return a report.
+
 The prior report and verification remain in `report-superseded` task events. The current owner must
 recheck delivery and write a fresh report before completion, including a replay/no-change turn.
 Preserve all previous deliveries, exact remaining scope and holds; chat acknowledgement is not

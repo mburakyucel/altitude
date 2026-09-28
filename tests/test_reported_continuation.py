@@ -25,6 +25,7 @@ class TestReportedContinuation(ChatCase):
         task.update(state="reported", attempt=3, l2_engine="codex", prs=[47],
                     paths=["tests/", "README.md"], hold_merge="Operator UX review",
                     hold_merge_id="original-hold", worker_started_at="2020-01-01T00:00:00+00:00")
+        task["merge_approval"] = {"approval": "earlier-approval", "pr": 46}
         task["verified"] = {"verdict": "ok", "problems": [], "signals": [], "spend": {},
                             "prs": [47], "owner": T.report_owner(task)}
         S.save_task(self.project, task)
@@ -45,7 +46,7 @@ class TestReportedContinuation(ChatCase):
 
     def assert_owner_preserved(self):
         for key in ("attempt", "session_id", "l2_engine", "worktree", "branch", "prs", "paths",
-                    "hold_merge", "hold_merge_id"):
+                    "hold_merge", "hold_merge_id", "merge_approval"):
             self.assertEqual(self.task().get(key), self.original.get(key), key)
 
     def assert_no_fault_effects(self):
@@ -84,6 +85,80 @@ class TestReportedContinuation(ChatCase):
         self.assertEqual(worker.call_count, 1)
         self.assertEqual(self.task()["state"], "running")
         self.assert_owner_preserved()
+
+    def contradicted_merged_report(self):
+        self.report["landed"]["prs"][0]["merged"] = True
+        self.report.pop("blocked")
+        S.write_json(self.report_path, self.report)
+        task = self.task()
+        task["verified"].update(verdict="contradicted", problems=["report.json lacks `blocked`"])
+        S.save_task(self.project, task)
+        self.original = copy.deepcopy(task)
+        self.gh.side_effect = AssertionError("Correction does not require a GitHub lookup")
+
+    def test_l3_merged_report_resume_is_idempotent_and_retains_hold(self):
+        self.contradicted_merged_report()
+        self.test_coordinator_resume_uses_same_daemon_path_and_is_idempotent()
+        self.assertEqual(S.read_json(self.report_path), self.report)
+        self.assertFalse(T.report_current(self.task(), self.report_path))
+
+    def test_merged_report_correction_failure_keeps_inbox_and_owner(self):
+        self.contradicted_merged_report()
+        row = self.send("Correct the report and retain pending device acceptance.", role="l3")
+        self.patch(engines, "resume_l2", return_value={"returncode": 1, "stderr": "fixture refused"})
+        self.patch(incidents, "system_fault")
+        with self.assertRaises(dispatch.ResumeFailure):
+            dispatch.resume(self.project, self.slug)
+        self.assertEqual([r["id"] for r in T.pending(self.project, self.slug)], [row["id"]])
+        self.assert_owner_preserved()
+        self.assertEqual(S.read_json(self.report_path), self.report)
+
+    def test_correction_requires_l3_current_verdict_and_existing_owner(self):
+        self.contradicted_merged_report()
+        variants = [{"verified": {**self.original["verified"], "verdict": verdict}}
+                    for verdict in ("ok", "blocked", "missing", "fault", None)]
+        variants += [{key: value} for key, value in (
+            ("agent_id", None), ("session_id", None), ("worktree", None),
+            ("state", "done"), ("state", "rejected"), ("attempt", 4),
+            ("report_after", "2026-01-01T00:00:00+00:00"), ("delivery", {"number": 48}))]
+        for change in variants:
+            for operation in ("message", "resume"):
+                with self.subTest(change=change, operation=operation):
+                    task = {**self.original, **change}
+                    S.save_task(self.project, task)
+                    with self.assertRaises(T.TransitionError):
+                        if operation == "message":
+                            self.send(role="l3")
+                        else:
+                            dispatch.request_task_operation(self.project, self.slug, "resume", "Correct report", actor="l3")
+                    self.assertEqual(self.task(), task)
+                    self.assertEqual(T.pending(self.project, self.slug), [])
+        S.save_task(self.project, self.original)
+        with self.assertRaises(T.TransitionError):
+            self.send(role=T.OPERATOR_MESSAGE_ROLE)
+        with self.assertRaises(T.TransitionError):
+            dispatch.request_task_operation(self.project, self.slug, "resume", "Continue", actor=T.OPERATOR_MESSAGE_ROLE)
+        self.assertFalse(T.reported_continuable(self.original, self.report), "ordinary composer is unchanged")
+        self.assertEqual(self.task(), self.original)
+
+    def test_correction_cannot_cross_pending_stop_or_restart_stopped_owner(self):
+        self.contradicted_merged_report()
+        task = self.task()
+        task["daemon_request"] = {"id": "stop-request", "operation": "stop", "status": "pending"}
+        S.save_task(self.project, task)
+        with self.assertRaises(T.TransitionError):
+            self.send(role="l3")
+        self.assertEqual(self.task(), task)
+        task.update(state="blocked", stop_id="human-stop")
+        task.pop("daemon_request")
+        S.save_task(self.project, task)
+        self.send(role="l3")
+        self.assertEqual(self.task()["stop_id"], "human-stop")
+        self.assertNotIn(self.slug, dispatch.resume_due(self.project))
+
+    def test_broker_block_refusal_distinguishes_report_correction_from_stop(self):
+        with self.assertRaisesRegex(ValueError, "task message / task resume.*contradicted report"):
+            server._validate_l3_alt_args(["task", "block", self.slug, "--reason", "Correct report"])
 
     def test_closed_or_unreadable_pr_refuses_before_saving_message(self):
         for response in ({"state": "CLOSED"}, {"state": "MERGED"}, None):
