@@ -877,7 +877,6 @@ class TestReviews(AltitudeCase):
         original = json.loads(json.dumps(question))
         available = reviews.view(self.project, self.slug)
         self.assertTrue(available["subjects"]["proposal"]["available"])
-        self.assertFalse(available["subjects"]["changes"]["available"])
         requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal")
         task = S.load_task(self.project, self.slug)
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
@@ -938,32 +937,63 @@ class TestReviews(AltitudeCase):
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
 
-    def test_other_open_questions_refuse_changes_review(self):
-        refusal = "Settle the open question before requesting changes review"
-        for why, questions in (
-                ("freeform question about the PR", None),
-                ("question with options about another PR", {"questions": [{**self.held_pr_question("Merge PR #420 first?")["questions"][0],
-                                                                             "options": [{"key": "go", "label": "Go", "text": "Merge PR #420."}],
-                                                                             "recommended_key": "go"}]}),
-                ("merge question without a held PR", "unheld")):
-            with self.subTest(why):
+    def test_changes_review_leaves_unrelated_open_questions_and_their_authority_intact(self):
+        # The one-command VM increment (#587): publication and runner-image decisions stay open while the
+        # independent candidate is reviewed; review settles none of them and grants no merge authority.
+        task = S.load_task(self.project, self.slug)
+        task.update(hold_merge="Operator review before merge")
+        S.save_task(self.project, task)
+        task = T.block(self.project, self.slug, "Publish the release repository now?", actor="l2", expected_attempt=1,
+                       updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions={"questions": [
+                           {"question": "Publish the release repository now?", "recommended_key": "wait", "options": [
+                               {"key": "publish", "label": "Publish", "text": "Publish the release repository."},
+                               {"key": "wait", "label": "Wait", "text": "Keep the release repository private."}]},
+                           {"question": "Which runner image should CI use?"}]})
+        original = json.loads(json.dumps([q for q in task["questions"] if q["status"] == "open"]))
+        cards = T.decisions(self.project)
+        self.assertEqual(len(original), 2)
+        # The operator's review request while the owner waits continues it solely for review.
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        with self.assertRaisesRegex(T.TransitionError, "Resume the current owner"):
+            self.run_review(requested)
+        claim = T.claim_resume(self.project, self.slug)
+        [wake] = [row for row in claim["messages"] if row["id"] == requested["id"]]
+        self.assertIn("authorizes only review and assessment, not implementation", wake["text"])
+        T.resume(self.project, self.slug, agent_id="resumed-owner", expected_claim=claim["id"], input_delivered=True)
+        self.assertEqual([q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"], original)
+        result = self.run_review(requested)
+        self.assertEqual(result["state"], "completed")
+        self.assess(result)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        # The running owner requests its own next review with the same questions still open.
+        self.commit("value.py", "VALUE = 3\n")
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["available"])
+        result = self.run_review(self.request(previous=result["id"]))
+        self.assertEqual(result["state"], "completed")
+        self.assess(result)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        task = T.block(self.project, self.slug, "Publish the release repository now?", actor="l2", expected_attempt=1)
+        self.assertEqual([q for q in task["questions"] if q["status"] == "open"], original)
+        self.assertEqual(T.decisions(self.project), cards)
+        self.assertEqual(task["hold_merge"], "Operator review before merge")
+        self.assertIsNone(task.get("merge_approval"))
+        # A later answer is new task context: the assessed review no longer clears the merge.
+        T.accept_question(self.project, self.slug, original[0]["id"], original[0]["revision"], "publish")
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(self.engine.call_count, 2)
+
+    def test_stop_fault_and_planned_wait_still_refuse_review(self):
+        for key, value in (("stop_id", "stop-1"), ("fault", "sandbox"), ("planned_wait", {"until": S.now()})):
+            with self.subTest(key):
                 task = S.load_task(self.project, self.slug)
-                task.update(state="running", questions=[], question_groups=[], hold_merge=None, prs=[], delivery=None,
-                            resume_after=None, resume_request=None)
+                task.update({"stop_id": None, "fault": None, "planned_wait": None, key: value})
                 S.save_task(self.project, task)
-                if questions == "unheld":
-                    questions = self.held_pr_question()
-                    task = S.load_task(self.project, self.slug)
-                    task.update(hold_merge=None)
-                    S.save_task(self.project, task)
-                else:
-                    self.held_pr_question()
-                T.block(self.project, self.slug, "Merge PR #42 as it stands?", actor="l2", expected_attempt=1,
-                        questions=questions)
-                self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["changes"]["why"],
-                                 refusal + "; only the held PR's merge question can stay open.")
-                with self.assertRaisesRegex(T.TransitionError, refusal):
-                    self.request()
+                for subject in ("proposal", "changes"):
+                    self.assertEqual(reviews.view(self.project, self.slug)["subjects"][subject]["why"],
+                                     "Continue or settle the task before requesting review.")
+                    with self.assertRaisesRegex(T.TransitionError, "Continue or settle the task"):
+                        self.request(subject=subject)
         self.engine.assert_not_called()
 
     def test_proposal_source_and_merge_approval_require_owner_reassessment(self):

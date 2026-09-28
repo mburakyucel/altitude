@@ -45,9 +45,6 @@ def _owner(task, actor, expected_attempt=None, *, required=False):
 def _eligible(task, subject="changes"):
     if task.get("fault") or task.get("stop_id") or task.get("planned_wait"):
         return "Continue or settle the task before requesting review."
-    # The held PR's merge question stays open through its review; any other answer can still change the code.
-    if subject == "changes" and any(q["status"] == "open" and not T.asks_merge(task, q) for q in task.get("questions", [])):
-        return "Settle the open question before requesting changes review; only the held PR's merge question can stay open."
     if task.get("state") == "reported":
         report = S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json")
         if not T.reported_continuable(task, report):
