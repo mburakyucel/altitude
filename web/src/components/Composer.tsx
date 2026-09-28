@@ -33,8 +33,7 @@ let waveformClosing: Promise<void> | null = null;
 
 function closeWaveform(context: AudioContext) {
   traceVoice("waveform.close-wait", context, { state: context.state });
-  // Read after React's synchronous cleanup pass: the capture cleanup calls cancel() synchronously,
-  // publishing idle() before this microtask even if waveform cleanup ran first (navigation test).
+  // Capture cleanup publishes idle() synchronously; read it after that cleanup finishes.
   const closing = Promise.resolve().then(() => RecognitionCapture.idle())
     .then(() => new Promise<void>((resolve) => {
       // A browser that never acknowledges close must not disable voice until a page reload.
@@ -231,26 +230,35 @@ function CloseIcon() {
  * width. It freezes (the loop stops, the last frame stays) while transcribing. Where the page has no
  * audio graph (a test runtime), the canvas simply stays blank.
  */
-function useWaveform(stream: MediaStream | null, running: boolean) {
+type Waveform = { context: AudioContext; analyser: AnalyserNode | null; stream: MediaStream };
+
+/** Connect the graph before capture starts, rather than in a later React effect. */
+function openWaveform(stream: MediaStream): Waveform | null {
+  if (typeof AudioContext === "undefined") return null;
+  let context: AudioContext | null = null;
+  try {
+    context = new AudioContext();
+    traceVoice("waveform.created", context, { state: context.state });
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    context.createMediaStreamSource(stream).connect(analyser);
+    traceVoice("waveform.connected", context, { state: context.state });
+    return { context, analyser, stream };
+  } catch (error) {
+    traceVoice("waveform.setup-error", context ?? undefined, { error: voiceError(error) });
+    // Even a partially built graph belongs to this capture and closes with it, not during startup.
+    return context ? { context, analyser: null, stream } : null;
+  }
+}
+
+function useWaveform(graph: Waveform | null, running: boolean) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const levels = useRef<number[]>(new Array<number>(WAVE_BARS).fill(0));
 
   useEffect(() => {
-    if (!stream || !running || typeof AudioContext === "undefined" || !canvas.current) return;
+    if (!graph?.analyser || !running || !canvas.current) return;
+    const { context, analyser, stream } = graph;
     let frame = 0;
-    let context: AudioContext | null = null;
-    let analyser: AnalyserNode | null = null;
-    try {
-      context = new AudioContext();
-      traceVoice("waveform.created", context, { state: context.state });
-      analyser = context.createAnalyser();
-      analyser.fftSize = 512;
-      context.createMediaStreamSource(stream).connect(analyser);
-    } catch (error) {
-      traceVoice("waveform.setup-error", undefined, { error: voiceError(error) });
-      if (context) closeWaveform(context);
-      return;
-    }
     const data = new Uint8Array(analyser.fftSize);
     let lastSample = -Infinity;
     const node = canvas.current;
@@ -293,9 +301,8 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
     frame = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(frame);
-      if (context) closeWaveform(context);
     };
-  }, [stream, running]);
+  }, [graph, running]);
 
   return canvas;
 }
@@ -352,7 +359,12 @@ export default function Composer({
   /** Browser recognition: the draft plus the words recognized so far, shown while listening. */
   const [live, setLive] = useState<string | null>(null);
   const displayedDraft = voiceSend?.text ?? live ?? value;
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const waveform = useRef<Waveform | null>(null);
+  const releaseWaveform = useCallback(() => {
+    const graph = waveform.current;
+    waveform.current = null;
+    if (graph) closeWaveform(graph.context);
+  }, []);
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
@@ -366,7 +378,7 @@ export default function Composer({
   const backend = voice?.backend ?? null;
   const captureSelection = useRef("");
   const unavailable = voiceUnavailable(backend);
-  const canvas = useWaveform(stream, phase === "listening");
+  const canvas = useWaveform(waveform.current, phase === "listening");
 
   useLayoutEffect(() => {
     const node = field.current;
@@ -405,6 +417,7 @@ export default function Composer({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      releaseWaveform();
       if (capTimer.current) clearTimeout(capTimer.current);
       const sending = sendAfterTranscribing.current;
       const retained = sending && voiceSends.get(conversation) === sending;
@@ -505,8 +518,8 @@ export default function Composer({
 
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());
-    setStream(null);
-  }, []);
+    releaseWaveform();
+  }, [releaseWaveform]);
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
   const submit = useCallback(
@@ -707,6 +720,7 @@ export default function Composer({
           if (recorder.current === active) { recorder.current = null; chunks.current = []; }
           if (active instanceof RecognitionCapture && active.state !== "inactive") discardRecognition(active);
           else active.stream.getTracks().forEach((track) => track.stop());
+          releaseWaveform();
           setLive(null);
           if (capTimer.current) clearTimeout(capTimer.current);
           endVoiceSend(sending);
@@ -724,11 +738,13 @@ export default function Composer({
     setPhase("transcribing");
     try {
       if (active.state !== "inactive") active.stop();
-      else void finish(active, stream);
+      else void finish(active, active.stream);
     } catch {
-      void finish(active, stream);
+      void finish(active, active.stream);
+    } finally {
+      releaseWaveform();
     }
-  }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, sendDisabled, stream]);
+  }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, releaseWaveform, sendDisabled]);
 
   const start = useCallback(async () => {
     if (unavailable || disabled || admitting.current || phase !== "idle") return;
@@ -765,6 +781,9 @@ export default function Composer({
         return;
       }
       const used = opened;
+      // Warm native recognition may start before React's next effect. Connect its companion
+      // waveform first, after the old capture's release gate, with no await before start().
+      waveform.current = openWaveform(opened);
       let active: Capture;
       if (backend === "browser") {
         const recognition = new RecognitionCapture(opened, { before: draft.current });
@@ -795,17 +814,15 @@ export default function Composer({
       active.start();
       traceVoice("capture.listening", active);
       startedAt.current = Date.now();
-      setStream(opened);
       setPhase("listening");
-      capTimer.current = setTimeout(() => {
-        try {
-          if (active.state !== "inactive") active.stop();
-        } catch {
-          void finish(active, used);
-        }
-      }, MAX_RECORDING_MS);
+      capTimer.current = setTimeout(() => stop(), MAX_RECORDING_MS);
     } catch (cause) {
       traceVoice("capture.open-error", opening, { error: voiceError(cause) });
+      const failed = recorder.current;
+      if (failed?.stream === opened) {
+        recorder.current = null;
+        if (failed instanceof RecognitionCapture) discardRecognition(failed);
+      }
       opened?.getTracks().forEach((track) => track.stop());
       if (!mounted.current || opening.signal.aborted) return;
       releaseStream(null);
@@ -815,7 +832,7 @@ export default function Composer({
       else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
-  }, [backend, voice, disabled, finish, focusField, phase, releaseStream, unavailable]);
+  }, [backend, voice, disabled, finish, focusField, phase, releaseStream, stop, unavailable]);
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback((refocus: "field" | "mic" = "field") => {
@@ -833,7 +850,7 @@ export default function Composer({
     if (active instanceof RecognitionCapture && active.state !== "inactive") {
       recorder.current = null;
       discardRecognition(active);
-      setStream(null);
+      releaseWaveform();
       setPhase("idle");
       focusField();
       return;
@@ -855,7 +872,7 @@ export default function Composer({
     releaseStream(active?.stream ?? null);
     setPhase("idle");
     focusField();
-  }, [conversation, focusField, releaseStream]);
+  }, [conversation, focusField, releaseStream, releaseWaveform]);
 
   useEffect(() => {
     if (!active && capturePhase !== "idle" && !voiceSend) cancel();
