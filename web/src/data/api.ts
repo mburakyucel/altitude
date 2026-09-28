@@ -772,6 +772,7 @@ export const TerminalStatusSchema = z
     offset: z.number().nullish(),
     exit_code: z.number().nullish(),
     reason: z.string().nullish(),
+    error: z.string().nullish(),
     busy: z.string().nullish(),
   })
   .passthrough();

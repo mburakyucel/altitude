@@ -58,7 +58,16 @@ including the same settings from the terminal.
 A step only the operator can take arrives in chat as a command block. **Open in terminal** types it at
 the prompt of that task's or project's terminal without pressing Enter; read it, then press Enter, edit
 it or clear it. A plain code block (a command for another machine) has Copy only. If a program is
-running in the terminal, nothing is typed and a notice offers Copy instead.
+running in the terminal, nothing is typed and a notice offers Copy instead. On Linux, `sudo` in the
+terminal asks for your password there, as in a desktop terminal. If the terminal cannot start, it shows
+why and closes; a desktop or SSH terminal on this computer runs the same command.
+
+A task's owner can read its task terminal's output, and the task terminal says so. After you run a
+step, reply in chat so the owner reads the result. The owner reads what the terminal printed, never what
+you typed at a hidden password prompt, and cannot type into or close the terminal. Output stays readable
+until a new terminal opens for the task, the task finishes or Altitude restarts; if a restart lost it,
+tell the owner what the command printed. Use a project terminal or a desktop terminal for work the owner
+should not see: what the owner reads also reaches its provider.
 
 L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
