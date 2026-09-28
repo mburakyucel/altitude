@@ -259,19 +259,19 @@ def build(commit: str, work: Path, results: Path) -> None:
 def run(results: Path, commit: str, cache: Path) -> int:
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
-    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True).stdout.strip()
+    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
               "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
-    note("verifying the Ubuntu cloud image")
-    record["image"] = base_image(cache)
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
     machine = None
     try:
         note(f"building both release versions from {commit[:12]}")
         build(commit, work, results)
+        note("verifying the Ubuntu cloud image")
+        record["image"] = base_image(cache)
         baseline, candidate = work / "baseline", work / "candidate"
         note("booting the VM")
         machine = Machine(work, cache / IMAGE)

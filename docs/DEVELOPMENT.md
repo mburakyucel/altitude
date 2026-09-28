@@ -473,7 +473,8 @@ this Linux evidence is partial acceptance toward #226 and does not close it or e
 `scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
 without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
 once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
-synthetic versions from a committed revision (default: the clean checkout's HEAD), runs every phase
+synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
+files), runs every phase
 and leaves the evidence in the results directory:
 
 ```sh
