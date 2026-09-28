@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import ctypes.util
 import hashlib
 import json
 import os
@@ -24,7 +23,7 @@ import zlib
 from functools import lru_cache
 from pathlib import Path
 
-from . import config, state as S
+from . import config, platform, state as S
 
 MAX_IMAGES = 4
 MAX_BYTES = 10 << 20
@@ -241,15 +240,6 @@ def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes]:
     return mime, width, height, orientation, profile
 
 
-# Set limits in a fresh helper process: preexec_fn is unsafe in the threaded HTTP server.
-_LIMITED_EXEC = """import os, resource, sys
-resource.setrlimit(resource.RLIMIT_AS, (1073741824, 1073741824))
-resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
-resource.setrlimit(resource.RLIMIT_FSIZE, (int(sys.argv[1]), int(sys.argv[1])))
-os.execv(sys.argv[2], sys.argv[2:])
-"""
-
-
 # The native API is used only by an isolated, bounded process, never the server's address space.
 # RGBA8 and COPY_ALPHA follow https://github.com/mm2/Little-CMS/blob/master/include/lcms2.h.
 _ICC_EXEC = """import ctypes as C, pathlib, sys
@@ -288,7 +278,7 @@ lib.cmsCloseProfile(target)
 
 
 def _process(command: list[str], directory: Path, deadline: float, limit: int) -> int:
-    command = [sys.executable, "-c", _LIMITED_EXEC, str(limit), *command]
+    command = platform.limited_command(command, memory=1 << 30, cpu=10, output=limit)
     with open(directory / "diagnostic", "wb") as errors:
         return subprocess.run(command, stdout=subprocess.DEVNULL, stderr=errors,
                               timeout=max(0.01, deadline - time.monotonic())).returncode
@@ -321,7 +311,7 @@ def _normalize(raw: bytes, directory: Path) -> tuple[bytes, str, int, int]:
     deadline = time.monotonic() + PROCESS_TIMEOUT
     try:
         if profile:
-            library = ctypes.util.find_library("lcms2")
+            library = platform.find_library("lcms2")
             if not library:
                 raise ImageError("Image input unavailable for this color profile: the local color converter is unavailable.", 422)
             pixels, icc = directory / "pixels.rgba", directory / "profile.icc"

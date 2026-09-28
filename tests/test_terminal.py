@@ -5,11 +5,14 @@ process table where a test needs a particular process layout, and the real one f
 """
 import base64
 import http.client
+import ipaddress
 import json
 import os
 import shutil
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -18,6 +21,18 @@ from tests.support import AltitudeCase, make_repo
 from altitude import config, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
+HOST = sys.platform
+# macOS has no setsid command. Like util-linux setsid, fork first when leading a process group (a background job).
+SETSID = "setsid" if shutil.which("setsid") else (
+    f"{sys.executable} -c 'import os, sys; os.getpgrp() == os.getpid() and os.fork() and os._exit(0); "
+    "os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])'")
+
+
+def processes() -> list[tuple[int, str, str]]:
+    """(pid, state, command line) of every process, from ps on either host."""
+    rows = subprocess.run(["ps", "-Ao", "pid=,stat=,command="], capture_output=True, text=True, check=True).stdout
+    return [(int(pid), state, command) for pid, state, command in
+            (line.strip().split(None, 2) for line in rows.splitlines() if len(line.split(None, 2)) == 3)]
 
 
 class TerminalCase(AltitudeCase):
@@ -26,6 +41,13 @@ class TerminalCase(AltitudeCase):
         make_repo(self.repo)
         self.patch(terminal, "shell_command", return_value=SHELL)
         self.setenv("PS1", "$ ")
+        if HOST == "darwin":
+            # Each macOS shell is its own launchd job: the one place the suite reaches launchd, with throwaway
+            # labels, because only a real job gives the shell a coalition of its own.
+            launchd = self.tmp / "launchd"
+            launchd.mkdir()
+            (launchd / "launchctl").symlink_to("/bin/launchctl")
+            self.setenv("PATH", f"{launchd}:{os.environ['PATH']}")
         settings = config.ROOT / "settings.json"
         saved = settings.read_text() if settings.exists() else None
         self.addCleanup(lambda: settings.write_text(saved) if saved is not None else settings.unlink(missing_ok=True))
@@ -180,13 +202,12 @@ class TestTerminalLifecycle(TerminalCase):
     def session(self, shell_pid):
         """The processes still in a terminal's session."""
         found = []
-        for entry in Path("/proc").iterdir():
+        for pid, state, _ in processes():
             try:
-                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            except (OSError, IndexError):
+                if os.getsid(pid) == shell_pid and not state.startswith("Z"):
+                    found.append(pid)
+            except OSError:
                 continue
-            if entry.name.isdigit() and int(fields[3]) == shell_pid and fields[0] != "Z":
-                found.append(int(entry.name))
         return found
 
     def test_close_stops_commands_that_ignore_the_hang_up(self):
@@ -195,7 +216,8 @@ class TestTerminalLifecycle(TerminalCase):
         self.patch(terminal, "CLOSE_GRACE_SECONDS", .3)
         self.open()
         term = self.current()
-        shell = term.proc.pid
+        self.wait(lambda: platform.terminal_leader(term.id, term.proc))
+        shell = platform.terminal_leader(term.id, term.proc)
         self.type("trap '' HUP; nohup sleep 301 >/dev/null 2>&1 & nohup sleep 302 >/dev/null 2>&1\n")
         self.wait(lambda: terminal.status(self.project, None)["busy"] == "sleep" and len(self.session(shell)) >= 3)
         terminal.close(self.project, None)
@@ -209,7 +231,7 @@ class TestTerminalLifecycle(TerminalCase):
         marker = "300.417"
         self.addCleanup(self._kill_marked, marker)
         term = self.current()
-        self.type(f"setsid sleep {marker} & sleep .2; exit 4\n")
+        self.type(f"{SETSID} sleep {marker} & sleep .2; exit 4\n")
         self.assertEqual(self.gone(term).exit_code, 4)
         self.wait(lambda: not self._marked(marker))
 
@@ -219,21 +241,15 @@ class TestTerminalLifecycle(TerminalCase):
         self.open()
         marker = "300.418"
         self.addCleanup(self._kill_marked, marker)
-        self.type(f"setsid nohup sleep {marker} >/dev/null 2>&1 &\n")
+        # macOS nohup needs a controlling terminal; an ignored hang-up is inherited all the same.
+        self.type(f"(trap '' HUP; exec {SETSID} sleep {marker}) >/dev/null 2>&1 &\n")
         self.wait(lambda: self._marked(marker))
         terminal.close(self.project, None)
         self.wait(lambda: not self._marked(marker))
 
     def _marked(self, marker):
-        found = []
-        for entry in Path("/proc").iterdir():
-            try:
-                if (entry.name.isdigit() and (entry / "cmdline").read_bytes() == f"sleep\0{marker}\0".encode()
-                        and (entry / "stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"):
-                    found.append(int(entry.name))
-            except (OSError, IndexError):
-                continue
-        return found
+        return [pid for pid, state, command in processes()
+                if command == f"sleep {marker}" and not state.startswith("Z")]
 
     def _kill_marked(self, marker):
         for pid in self._marked(marker):
@@ -324,6 +340,7 @@ class TestAgentRefusal(AltitudeCase):
         super().setUp()
         self.proc = self.tmp / "proc"
         self.patch(platform, "PROC", self.proc)
+        self.patch(platform.sys, "platform", "linux")
         self.client = platform._hex_address(*self.PEER)[0]
         self.server = platform._hex_address(*self.LOCAL)[0]
         self.altd = os.getpid()
@@ -355,7 +372,8 @@ class TestAgentRefusal(AltitudeCase):
         self.patch(terminal, "_this_host", side_effect=lambda ip: this_host(ip) if ip.is_loopback else False)
         self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
         self.assertTrue(terminal.agent_connection(("::ffff:127.0.0.1", 51000), ("::ffff:127.0.0.1", 8443)))
-        self.assertTrue(terminal.agent_connection(("127.8.9.10", 51000), ("127.0.0.1", 8443)))
+        if this_host(ipaddress.ip_address("127.8.9.10")):  # all of 127/8 on Linux; only configured addresses on macOS
+            self.assertTrue(terminal.agent_connection(("127.8.9.10", 51000), ("127.0.0.1", 8443)))
         self.assertFalse(terminal.agent_connection(("203.0.113.20", 51000), ("192.168.1.5", 8443)))
 
     def test_a_client_on_the_other_address_family_is_still_identified(self):
@@ -397,6 +415,7 @@ class TestAgentRefusal(AltitudeCase):
         self.assertTrue(terminal.agent_connection(peer, local))
 
     def test_a_real_connection_from_altd_itself_is_refused(self):
+        self.patch(platform.sys, "platform", HOST)
         self.patch(platform, "PROC", Path("/proc"))
         listener = socket.create_server(("127.0.0.1", 0))
         self.addCleanup(listener.close)
@@ -509,7 +528,7 @@ class TestTerminalHttp(TerminalCase):
             self.assertEqual(json.loads(connection.getresponse().read()), {"ok": True})
             self.assertIs(connection.sock, sock)
         self.assertEqual(self.agent.call_count, 1)  # asked once for the connection
-        self.output(until="\rkept\r\n")
+        self.output(until="\nkept\r\n")
         connection.request("GET", "/api/machine")
         response = connection.getresponse()
         response.read()

@@ -39,9 +39,6 @@ WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
 #: The environment variable every process a terminal starts inherits, so its end finds those that left its session.
 MARK = "ALTITUDE_TERMINAL"
-#: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
-#: machine commands, restarts).
-ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
 
 
 class TerminalError(Exception):
@@ -113,10 +110,6 @@ def _record(term: Terminal, action: str, **data) -> None:
         S.append_event(term.project, term.slug, "terminal", **fields)
 
 
-def _controlling_terminal() -> None:  # runs in the child between fork and exec
-    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-
-
 def _env(ident: str) -> dict[str, str]:
     return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor", MARK: ident}
 
@@ -134,8 +127,7 @@ def open_terminal(project: str, slug: str | None) -> dict:
         try:
             _winsize(master, 24, 80)
             os.set_blocking(master, False)
-            proc = subprocess.Popen(shell_command(), stdin=child, stdout=child, stderr=child, cwd=path, env=_env(ident),
-                                    start_new_session=True, preexec_fn=_controlling_terminal)
+            proc = platform.start_terminal(ident, shell_command(), child, cwd=path, env=_env(ident))
         except OSError as exc:
             os.close(master)
             raise TerminalError(f"Could not start the shell: {exc}") from exc
@@ -242,7 +234,7 @@ def _busy(term: Terminal) -> str | None:
             group = os.tcgetpgrp(term.fd)
         except OSError:
             return None
-    if group in (term.proc.pid, -1):
+    if group in (platform.terminal_leader(term.id, term.proc), -1):
         return None
     return platform.process_name(group) or "A command"
 
@@ -310,7 +302,7 @@ def _stop_session(term: Terminal, sig: int) -> None:
     """Signal every process the terminal started: those in its session (the shell, its foreground command
     and its jobs, including those that ignore a hang-up) and those that left it (`setsid`, daemons) but
     still carry its mark."""
-    platform.signal_session(term.proc.pid, f"{MARK}={term.id}".encode(), sig)
+    platform.signal_terminal(term.id, term.proc, f"{MARK}={term.id}".encode(), sig)
 
 
 def sweep() -> None:
@@ -378,10 +370,10 @@ def _this_host(ip) -> bool:
     return True
 
 
-def _owned(table: dict[int, tuple[int, list[str]]]) -> set[int]:
-    """The Altitude processes: altd, its descendants (L3 turns, terminal shells) and every process in an
-    Altitude service unit."""
-    owned = {pid for pid, (_, groups) in table.items() if any(ALTITUDE_UNIT.fullmatch(part) for part in groups)}
+def _owned(table: dict[int, tuple[int, bool]]) -> set[int]:
+    """The Altitude processes: altd, its descendants (L3 turns, terminal shells) and every process in the
+    Altitude service or one of its jobs."""
+    owned = {pid for pid, (_, altitude) in table.items() if altitude}
     children: dict[int, list[int]] = {}
     for pid, (parent, _) in table.items():
         children.setdefault(parent, []).append(pid)
