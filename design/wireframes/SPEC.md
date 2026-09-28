@@ -419,7 +419,8 @@ A compact attributed system row tracks requested/running/completed/failed/cancel
 L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
 L2 dispositions, subject, selected proposal/context IDs and exact checkpoint evidence. It starts folded;
 collapsing removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
-folded. No findings never means permission to merge. Failure keeps the request unresolved and exposes
+folded. An assessment that leaves findings open adds **N unresolved** to the row and labels each such
+finding **L2 — unresolved**; it never clears the review. No findings never means permission to merge. Failure keeps the request unresolved and exposes
 explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
 
 Empty history adds no conversation row. Loading/saving disables repeats. Unavailable explains why in

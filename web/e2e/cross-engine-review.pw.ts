@@ -74,7 +74,7 @@ test("cross-engine review stays in task chat through request, result and failure
   const snapshot = { head: "7b4a2f1", base: "43fce29", tree: "tree-for-pagination", context_hash: "brief-and-decisions-through-1026" };
   const review = { id: "review-pagination", requested_at: "2026-09-22T10:26:00Z", requested_by: "l2", state: "requested", engine_label: "Engine B", model: "Default", focus: "Check cursor expiry and pagination boundaries.", coverage: "unknown", can_cancel: false, can_withdraw: true, can_retry: false, can_review_latest: false,
     snapshot, reconciled: null as null | { head: string; base: string; tree: string; context_hash: string; reason: string }, error: null as null | string,
-    result: null as null | { text: string; findings: { id: string; severity: string; title: string; body: string }[]; limitations: string[] }, dispositions: [] as { finding_id: string; disposition: string; reason: string }[] };
+    result: null as null | { text: string; findings: { id: string; severity: string; title: string; body: string }[]; limitations: string[] }, dispositions: [] as { finding_id: string; disposition: string; reason: string }[], unresolved: [] as string[] };
   let existing = false;
   let available = true;
   let denied = false;
@@ -147,6 +147,14 @@ test("cross-engine review stays in task chat through request, result and failure
   await details.click();
   await walk.state("11-earlier-coverage-collapsed", { visible: [row.getByText(/Work changed after review/)], hidden: [row.getByText(/high · Expired/)] });
   review.coverage = "assessed"; review.reconciled = { ...snapshot, head: "91a83b2", reason: "I checked the fix and the added regression test against the final candidate." }; review.can_review_latest = false;
+  const resolved = review.dispositions;
+  review.dispositions = [{ finding_id: "expiry", disposition: "open", reason: "The expiration contract needs the storage owner's decision." }, resolved[1]!]; review.unresolved = ["expiry"];
+  await expect(row.locator(".task-review-status")).toContainText("1 unresolved");
+  await details.click();
+  await walk.state("11b-unresolved-assessment", { visible: [row.getByText(/2 findings · 1 unresolved/), row.getByText("L2 — unresolved:"), row.getByText(/needs the storage owner/)], hidden: [row.getByText("L2 — fixed:")] });
+  await details.click();
+  review.dispositions = resolved; review.unresolved = [];
+  await expect(row.locator(".task-review-status")).not.toContainText("unresolved");
   await expect(row.getByText("Reviewed an earlier revision; L2 assessed the later edits.")).toBeVisible();
   await details.click();
   await walk.state("12-findings-and-l2-dispositions", { visible: [row.getByText(/high · Expired/), row.getByText(/Added the expiration response/), row.getByText(/The agreed storage contract/), row.getByText(/L2 assessed head:/)], hidden: [row.getByRole("button", { name: "Review latest" })] });

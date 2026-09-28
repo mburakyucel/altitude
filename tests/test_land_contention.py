@@ -212,7 +212,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
         return first, second
 
-    def reviewed(self, slug, *, assess=True, proposal=False):
+    def reviewed(self, slug, *, assess=True, proposal=False, findings=()):
         worktree, _ = self.owners[slug]
         git('commit', '-qm', 'Review checkpoint', cwd=worktree)
         task = S.load_task(self.project, slug)
@@ -223,7 +223,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                   'allowance_known': True}
         def provider(prompt, **kwargs):
             self.assertTrue(kwargs['on_start']({'unit': 'fixture-review', 'pid': 12345, 'started_ticks': '1'}))
-            return {'termination_confirmed': True, 'text': 'No findings', 'findings': [], 'limitations': []}
+            return {'termination_confirmed': True, 'text': 'Review result', 'findings': list(findings), 'limitations': []}
         with mock.patch.object(route, 'pick_review', return_value=choice), \
                 mock.patch.object(engines, 'review', side_effect=provider) as engine:
             if proposal:
@@ -449,6 +449,22 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertIn("receive the owner's dispositions", self.finish(first)['error'])
         self.assertNotIn('waiting for owner assessment', (first[1] / 'notes').read_text())
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
+    def test_unresolved_findings_refuse_merge_until_owner_resolves_them(self):
+        finding = {'id': 'F1', 'severity': 'high', 'title': 'Untested path', 'body': 'The fallback lacks coverage.'}
+        self.reviewed('first', assess=False, findings=[finding])
+        reviews.assess(self.project, 'first', 'review-first', actor='l2', expected_attempt=1,
+                       dispositions=[{'finding_id': 'F1', 'disposition': 'open', 'reason': 'Needs a separate experiment.'}],
+                       reason='Recorded the finding honestly; it remains unresolved.')
+        first = self.start('first', wait=20)
+        self.assertIn('has unresolved findings: F1', self.finish(first)['error'])
+        self.assertNotIn('waiting for owner assessment', (first[1] / 'notes').read_text())
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        reviews.assess(self.project, 'first', 'review-first', actor='l2', expected_attempt=1,
+                       dispositions=[{'finding_id': 'F1', 'disposition': 'fixed', 'reason': 'Added the fallback test.'}],
+                       reason='Checked the fix against the complete candidate.')
+        self.release('first')
+        self.merged('first', self.finish(self.start('first')))
 
     def test_external_main_change_during_assessment_refuses_and_releases_turn(self):
         self.stale_review()

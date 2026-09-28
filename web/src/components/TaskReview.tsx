@@ -11,7 +11,7 @@ export function reviewStatus(review: Review): string {
   switch (review.state) {
     case "requested": return `${review.requested_by === "l2" ? "L2" : "You"} requested ${review.subject} review · waiting for L2`;
     case "running": return `${engine} is reviewing ${review.subject}`;
-    case "completed": return `${engine} ${review.subject} review complete · ${count == null ? "result unavailable" : count ? `${count} ${count === 1 ? "finding" : "findings"}` : "no findings"}${review.reconciled ? "" : " · awaiting L2"}`;
+    case "completed": return `${engine} ${review.subject} review complete · ${count == null ? "result unavailable" : count ? `${count} ${count === 1 ? "finding" : "findings"}` : "no findings"}${!review.reconciled ? " · awaiting L2" : review.unresolved.length ? ` · ${review.unresolved.length} unresolved` : ""}`;
     case "failed": return `${review.subject === "proposal" ? "Proposal" : "Changes"} review failed · request still needs a decision`;
     case "cancelled": return "Review cancelled · request still needs a decision";
     case "withdrawn": return "Review request withdrawn";
@@ -119,7 +119,7 @@ export function ReviewRow({ review, controls, availability, onRead }: { review: 
           return <div className="task-review-finding" key={finding.id}>
             <p><strong>{finding.severity} · {finding.title}</strong></p><p><InlineProse text={finding.body} /></p>
             {finding.path ? <p className="text-meta"><InlineProse text={`${finding.path}${finding.line ? `:${finding.line}` : ""}`} /></p> : null}
-            <p>{disposition ? <><strong>L2 — {disposition.disposition}:</strong> <InlineProse text={disposition.reason} /></> : "Awaiting L2’s response."}</p>
+            <p>{disposition ? <><strong>L2 — {disposition.disposition === "open" ? "unresolved" : disposition.disposition}:</strong> <InlineProse text={disposition.reason} /></> : "Awaiting L2’s response."}</p>
           </div>;
         })}
         {review.result?.limitations?.length ? <p><strong>Limitations:</strong> <InlineProse text={review.result.limitations.join("\n")} /></p> : null}

@@ -671,6 +671,56 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_open_findings_record_honestly_but_never_clear_merge(self):
+        result = self.run_review()
+        assess = lambda disposition, reason="Evidence", actor="l2", attempt=1: reviews.assess(
+            self.project, self.slug, result["id"], actor=actor, expected_attempt=attempt, reason="Checked candidate",
+            dispositions=[{"finding_id": "f1", "disposition": disposition, "reason": reason}])
+        for disposition, reason, actor, attempt in (("open", "", "l2", 1), ("pending", "Evidence", "l2", 1),
+                                                    ("open", "Evidence", T.OPERATOR_MESSAGE_ROLE, None), ("open", "Evidence", "l2", 2)):
+            with self.subTest(disposition=disposition, actor=actor, attempt=attempt), self.assertRaises(T.TransitionError):
+                assess(disposition, reason, actor, attempt)
+        recorded = assess("open", "Needs a live experiment outside this task.")
+        self.assertEqual(recorded["unresolved"], ["f1"])
+        self.assertEqual(recorded["reconciled"]["reason"], "Checked candidate")
+        self.assertEqual(recorded["result"]["findings"][0]["id"], "f1")
+        with self.assertRaises(T.TransitionError) as refused:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertNotIsInstance(refused.exception, reviews.AssessmentRequired)
+        self.assertIn("unresolved findings: f1", str(refused.exception))
+        # Code changes still leave the open finding refusing merge rather than asking for reassessment only.
+        self.commit("value.py", "VALUE = 2\n")
+        with self.assertRaises(T.TransitionError) as refused:
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertIn("unresolved findings", str(refused.exception))
+        latest = reviews.view(self.project, self.slug)["latest"]
+        self.assertFalse(latest["can_review_latest"] or latest["can_review_again"])
+        resolved = assess("fixed", "Added the fallback and its regression test.")
+        self.assertEqual(resolved["unresolved"], [])
+        reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["result"], recorded["result"])
+
+    def test_open_findings_keep_an_operator_request_owner_unwaivable(self):
+        result = self.run_review(self.request(actor=T.OPERATOR_MESSAGE_ROLE))
+        reviews.assess(self.project, self.slug, result["id"], actor="l2", expected_attempt=1, reason="Checked candidate",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Unresolved design risk."}])
+        with self.assertRaises(T.TransitionError):
+            reviews.withdraw(self.project, self.slug, result["id"], actor="l2", expected_attempt=1, reason="Skip")
+        # A replacement that finds nothing cannot launder the known open finding out of the merge gate.
+        for actor in ("l2", T.OPERATOR_MESSAGE_ROLE):
+            with self.subTest(actor=actor), self.assertRaisesRegex(T.TransitionError, "open findings"):
+                self.request(actor=actor, previous=result["id"])
+        with self.assertRaises(T.TransitionError):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.engine.side_effect = lambda prompt, **kwargs: (kwargs["on_start"]({"unit": "u", "pid": 1, "started_ticks": "1"}) and
+                                                            {"termination_confirmed": True, "text": "No findings", "findings": []})
+        reviews.assess(self.project, self.slug, result["id"], actor="l2", expected_attempt=1, reason="Checked candidate",
+                       dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Added the fallback."}])
+        replacement = self.run_review(self.request(previous=result["id"]))
+        self.assertEqual(replacement["requested_by"], T.OPERATOR_MESSAGE_ROLE)
+        with self.assertRaises(T.TransitionError):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
     def test_new_code_context_or_merge_pair_invalidates_assessment(self):
         result = self.run_review()
         self.assess(result)
