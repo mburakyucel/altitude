@@ -73,7 +73,12 @@ export function ProjectSetup({ name }: { name: string }) {
   return <>
     {noticed || kept ? <button type="button" className="setup-trigger" data-status={stale ? "unknown" : data?.status}
       aria-label={`Setup: ${label}`} aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => { setKept(true); show(); }} onBlur={() => { if (!open) setKept(false); }}>
+      onClick={(event) => {
+        // WebKit does not focus a clicked button; the checklist returns focus to its opener.
+        event.currentTarget.focus();
+        setKept(true);
+        show();
+      }} onBlur={() => { if (!open) setKept(false); }}>
       <span className="setup-dot" aria-hidden />
       <span>Setup<span className="setup-trigger-status"><span className="setup-separator"> · </span>{label}</span></span>
     </button> : null}

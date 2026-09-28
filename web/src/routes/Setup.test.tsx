@@ -1,4 +1,4 @@
-import { screen, within, waitFor } from "@testing-library/react";
+import { fireEvent, screen, within, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { Setup } from "../data/api";
@@ -167,6 +167,20 @@ describe("Project setup", () => {
     await waitFor(() => expect(within(panel).getByRole("status")).toHaveTextContent("Ready"));
     // Opened from the header, the status stays until the checklist closes and focus returns to it.
     expect(screen.getByRole("button", { name: "Setup: Ready" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Setup: Ready" })).toHaveFocus();
+    await user.click(screen.getByRole("textbox"));
+    expect(screen.queryByRole("button", { name: /^Setup:/ })).toBeNull();
+  });
+
+  it("returns focus to the header status after a click that does not focus it, then leaves with focus", async () => {
+    mockSetup({ ...healthy, status: "attention", steps: [{ id: "guards", label: "Git guards", status: "input_needed", detail: "Git guards are not installed.", action: "repair" }] });
+    const { user } = renderApp({ route: "/projects/atlas" });
+    // Safari does not focus a clicked button; fireEvent.click leaves focus where it was.
+    fireEvent.click(await screen.findByRole("button", { name: "Setup: Needs attention" }));
+    const panel = screen.getByRole("dialog", { name: "Project setup" });
+    await user.click(within(panel).getByRole("button", { name: "Repair" }));
+    await waitFor(() => expect(within(panel).getByRole("status")).toHaveTextContent("Ready"));
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "Setup: Ready" })).toHaveFocus();
     await user.click(screen.getByRole("textbox"));
