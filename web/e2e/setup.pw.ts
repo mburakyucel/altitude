@@ -5,6 +5,8 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "project-setup-service.py" });
 test.setTimeout(60_000);
 const setupPanel = (page: import("@playwright/test").Page) => page.getByRole("dialog", { name: "Project setup" });
+const summary = (panel: Locator, text: string) => panel.getByRole("status").filter({ hasText: new RegExp(`^${text}$`) });
+const headerSetup = (page: import("@playwright/test").Page) => page.getByRole("button", { name: /^Setup:/ });
 const step = (panel: Locator, label: string) => panel.getByRole("listitem").filter({ has: panel.page().getByRole("heading", { name: label, exact: true }) });
 
 test("fresh registration shows real automatic progress, survives refresh and completes", async ({ page, request, service }, info) => {
@@ -23,10 +25,10 @@ test("fresh registration shows real automatic progress, survives refresh and com
   await page.reload();
   await walk.state("03-reconnected-progress", { visible: [panel, coordinator.getByText("In progress", { exact: true })], hidden: [] });
   await request.post(`${service}/fixture/release-intro`);
-  await expect(page.getByRole("button", { name: "Setup: Ready" })).toBeVisible();
+  await expect(summary(panel, "Ready")).toBeVisible();
   await walk.state("04-verified-ready", { visible: [coordinator.getByText("Complete", { exact: true }), step(panel, "Project instructions").getByText("Using AGENTS.md; its contents are unchanged.")], hidden: [coordinator.getByText("In progress", { exact: true })] });
   await panel.getByRole("button", { name: "Open conversation" }).click();
-  await walk.state("05-conversation", { visible: [page.getByText("The project conversation is ready."), page.getByRole("textbox", { name: "Message L3 about new-project" })], hidden: [panel] });
+  await walk.state("05-conversation-quiet-header", { visible: [page.getByText("The project conversation is ready."), page.getByRole("textbox", { name: "Message L3 about new-project" })], hidden: [panel, headerSetup(page)] });
   const current = await (await request.get(`${service}/api/setup/new-project`)).json();
   expect(current.status).toBe("ready");
   const evidence = await (await request.get(`${service}/fixture/evidence`)).json();
@@ -39,26 +41,37 @@ test("existing projects expose new missing requirements and repair stale guards 
   await walk.open(`${service}/projects/atlas`);
   const composer = page.getByRole("textbox", { name: "Message L3 about atlas" });
   await composer.fill("Keep this draft while I inspect setup");
-  const trigger = page.getByRole("button", { name: "Setup: Ready" });
-  await trigger.click();
+  const more = page.getByRole("button", { name: "More actions" });
   const panel = setupPanel(page);
-  await walk.state("01-healthy-existing", { visible: [panel, step(panel, "Coordinator").getByText(/Using the existing conversation/)], hidden: [panel.getByRole("button", { name: "Repair", exact: true })] });
+  await walk.state("01-healthy-quiet-header", { visible: [composer, more], hidden: [headerSetup(page)] });
+  await more.click();
+  const item = page.getByRole("menuitem", { name: "Setup: Ready" });
+  await walk.state("02-setup-in-project-menu", { visible: [item], hidden: [headerSetup(page)] });
+  await item.click();
+  await walk.state("03-healthy-existing", { visible: [panel, summary(panel, "Ready"), step(panel, "Coordinator").getByText(/Using the existing conversation/)], hidden: [panel.getByRole("button", { name: "Repair", exact: true })] });
   await page.keyboard.press("Escape");
-  await expect(trigger).toBeFocused();
+  await expect(more).toBeFocused();
   await expect(composer).toHaveValue("Keep this draft while I inspect setup");
   await request.post(`${service}/fixture/prepare/missing`);
-  // Polling may already have replaced Ready with the new observed setup status.
-  await page.getByRole("button", { name: /^Setup:/ }).click();
+  // Returning to the app rereads setup; an update's new requirement then asks for attention in the header.
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  const attention = page.getByRole("button", { name: "Setup: Needs attention" });
+  await walk.state("04-new-requirement-in-header", { visible: [attention, composer], hidden: [panel] });
+  await attention.click();
   const guards = step(panel, "Git guards");
-  await walk.state("02-new-missing-requirement", { visible: [guards.getByText("Git guards are not installed."), guards.getByRole("button", { name: "Repair" })], hidden: [] });
+  await walk.state("05-new-missing-requirement", { visible: [guards.getByText("Git guards are not installed."), guards.getByRole("button", { name: "Repair" })], hidden: [] });
   await guards.getByRole("button", { name: "Repair" }).click();
-  await walk.state("03-missing-repaired", { visible: [guards.getByText(/Installed and verified/)], hidden: [guards.getByRole("button", { name: "Repair" })] });
+  await walk.state("06-missing-repaired", { visible: [guards.getByText(/Installed and verified/)], hidden: [guards.getByRole("button", { name: "Repair" })] });
   await request.post(`${service}/fixture/prepare/stale`);
   await panel.getByRole("button", { name: "Check again" }).click();
-  await walk.state("04-stale-source-guards", { visible: [guards.getByText("Git guards need an update."), guards.getByRole("button", { name: "Repair" })], hidden: [] });
+  await walk.state("07-stale-source-guards", { visible: [guards.getByText("Git guards need an update."), guards.getByRole("button", { name: "Repair" })], hidden: [] });
   await guards.getByRole("button", { name: "Repair" }).click();
-  await walk.state("05-stale-guards-updated", { visible: [guards.getByText(/Updated and verified/)], hidden: [guards.getByRole("button", { name: "Repair" })] });
-  await panel.getByRole("button", { name: "Open conversation" }).click();
+  await walk.state("08-stale-guards-updated", { visible: [guards.getByText(/Updated and verified/), summary(panel, "Ready")], hidden: [guards.getByRole("button", { name: "Repair" })] });
+  await page.keyboard.press("Escape");
+  // Focus returns to the header status it was opened from; it leaves with focus.
+  await expect(page.getByRole("button", { name: "Setup: Ready" })).toBeFocused();
+  await composer.click();
+  await walk.state("09-resolved-quiet-header", { visible: [composer], hidden: [panel, headerSetup(page)] });
   await expect(composer).toHaveValue("Keep this draft while I inspect setup");
   const after = await (await request.get(`${service}/fixture/evidence`)).json();
   expect(after.hooks.status).toBe("ready");
@@ -114,6 +127,7 @@ test("failed and interrupted setup retries safely; a denied request preserves th
   const beforeDiscuss = await (await request.get(`${service}/api/chat/atlas`)).json();
   await panel.getByRole("button", { name: "Discuss with L3", exact: true }).click();
   await walk.state("05-discussion-preserves-conversation", { visible: [page.getByText("Saved project history."), page.getByRole("textbox", { name: "Message L3 about atlas" })], hidden: [panel] });
+  await expect(page.getByRole("button", { name: "Setup: Needs attention" })).toBeVisible();
   expect((await (await request.get(`${service}/api/chat/atlas`)).json()).history).toEqual(beforeDiscuss.history);
   await page.getByRole("button", { name: "Setup: Needs attention" }).click();
   await guards.getByRole("button", { name: "Retry", exact: true }).click();
@@ -129,24 +143,27 @@ test("loading, empty discovery, offline saved results and reconnection remain ac
   const panel = setupPanel(page);
   await walk.state("01-loading-setup", { visible: [panel.getByLabel("Loading setup")], hidden: [panel.getByRole("button", { name: "Repair" })] });
   release();
-  await expect(page.getByRole("button", { name: "Setup: Ready" })).toBeVisible();
+  await expect(summary(panel, "Ready")).toBeVisible();
   await panel.getByRole("button", { name: "Close setup" }).click();
+  await expect(headerSetup(page)).toBeHidden();
   const failRead = (route: import("@playwright/test").Route) => route.abort("connectionfailed");
   await page.route("**/api/setup/atlas", failRead);
-  await page.getByRole("button", { name: "Setup: Ready" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Setup: Ready" }).click();
   // The production query retries its read before declaring the saved observation stale.
   await expect(panel.getByText("Showing saved results. Current setup could not be checked.")).toBeVisible({ timeout: 15_000 });
-  await walk.state("02-offline-saved-results", { visible: [panel.getByText("Showing saved results. Current setup could not be checked."), panel.getByRole("button", { name: "Retry connection" })], hidden: [] });
+  await walk.state("02-offline-saved-results", { visible: [panel.getByText("Showing saved results. Current setup could not be checked."), panel.getByRole("button", { name: "Retry connection" }), page.getByRole("button", { name: "Setup: Unavailable" })], hidden: [] });
   await page.unroute("**/api/setup/atlas", failRead);
   await panel.getByRole("button", { name: "Retry connection" }).click();
-  await walk.state("03-reconnected-current-results", { visible: [page.getByRole("button", { name: "Setup: Ready" })], hidden: [panel.getByRole("button", { name: "Retry connection" })] });
+  await walk.state("03-reconnected-current-results", { visible: [summary(panel, "Ready")], hidden: [panel.getByRole("button", { name: "Retry connection" })] });
   await panel.getByRole("button", { name: "Close setup" }).click();
+  await walk.state("04-reconnected-quiet-header", { visible: [page.getByRole("button", { name: "More actions" })], hidden: [panel, headerSetup(page)] });
   await request.post(`${service}/fixture/prepare/empty-discovery`);
   await page.reload();
   if (info.project.name === "phone") {
     await page.getByRole("button", { name: "atlas", exact: true }).click();
   } else await page.getByRole("button", { name: "Add a folder" }).click();
-  await walk.state("04-empty-folder-discovery", { visible: [page.getByRole("region", { name: "First run" }), page.getByRole("region", { name: "Choose a folder" })], hidden: [page.getByRole("region", { name: "First run" }).getByRole("button", { name: "Add project" })] });
+  await walk.state("05-empty-folder-discovery", { visible: [page.getByRole("region", { name: "First run" }), page.getByRole("region", { name: "Choose a folder" })], hidden: [page.getByRole("region", { name: "First run" }).getByRole("button", { name: "Add project" })] });
 });
 
 test("a failed first conversation exposes Retry and completes the existing setup", async ({ page, request, service }, info) => {
@@ -162,7 +179,7 @@ test("a failed first conversation exposes Retry and completes the existing setup
   await walk.state("01-first-conversation-failed", { visible: [coordinator.getByText("Failed", { exact: true }), coordinator.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
   await request.post(`${service}/fixture/retry-intro`);
   await coordinator.getByRole("button", { name: "Retry", exact: true }).click();
-  await walk.state("02-first-conversation-recovered", { visible: [coordinator.getByText("Complete", { exact: true }), page.getByRole("button", { name: "Setup: Ready" })], hidden: [coordinator.getByRole("button", { name: "Retry", exact: true })] });
+  await walk.state("02-first-conversation-recovered", { visible: [coordinator.getByText("Complete", { exact: true }), summary(panel, "Ready")], hidden: [coordinator.getByRole("button", { name: "Retry", exact: true })] });
   const evidence = await (await request.get(`${service}/fixture/evidence`)).json();
   expect(evidence.calls.filter((call: { project: string }) => call.project === "new-project")).toHaveLength(2);
 });
@@ -179,7 +196,7 @@ test("conversation-only folders report not-applicable checks and recover an init
   await walk.state("01-initial-read-error", { visible: [panel.getByText("Could not read project setup."), panel.getByRole("button", { name: "Retry connection" })], hidden: [panel.getByRole("heading", { name: "Git guards" })] });
   await page.unroute("**/api/setup/notes", failRead);
   await panel.getByRole("button", { name: "Retry connection" }).click();
-  await walk.state("02-conversation-only-ready", { visible: [page.getByRole("button", { name: "Setup: Conversation ready" }), step(panel, "Git repository").getByText("Not applicable", { exact: true }), step(panel, "Git guards").getByText("Not applicable", { exact: true }), step(panel, "Project instructions").getByText(/No project instructions/)], hidden: [panel.getByRole("button", { name: "Retry connection" })] });
+  await walk.state("02-conversation-only-ready", { visible: [summary(panel, "Conversation ready"), step(panel, "Git repository").getByText("Not applicable", { exact: true }), step(panel, "Git guards").getByText("Not applicable", { exact: true }), step(panel, "Project instructions").getByText(/No project instructions/)], hidden: [panel.getByRole("button", { name: "Retry connection" })] });
   const view = await (await request.get(`${service}/api/setup/notes`)).json();
   expect(view.status).toBe("conversation_ready");
   await step(panel, "Project instructions").getByRole("button", { name: "Discuss with L3" }).click();
