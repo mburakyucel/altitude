@@ -79,6 +79,17 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertIn("reboot-install|reboot-verify", result.stderr)
         self.assertFalse((self.tmp / "results").exists())
 
+    def test_shell_entry_accepts_each_phase_and_still_requires_root(self):
+        for phase in ("bootstrap", "reboot-install", "reboot-verify"):
+            with self.subTest(phase=phase):
+                result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
+                                         "b", "c", str(self.tmp / "results"), "a" * 40, phase],
+                                        capture_output=True, text=True, timeout=10,
+                                        env={k: v for k, v in os.environ.items() if k != "ALTITUDE_ACTOR"})
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn("Usage", result.stderr)
+                self.assertFalse((self.tmp / "results").exists())
+
     def test_reboot_verify_refuses_when_the_machine_did_not_restart(self):
         results = self.tmp / "results"
         results.mkdir()

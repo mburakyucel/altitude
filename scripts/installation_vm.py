@@ -8,8 +8,9 @@ signature-checked Ubuntu cloud image is cached; each run boots a copy-on-write o
 deleted afterwards. The guest has two network cards: one is online only while cloud-init installs
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
 forward, so during the tests the guest reaches neither the internet nor this host's services.
-After the lifecycle passes, a second disposable account installs the baseline, the VM restarts and
-the harness checks that the service came back on its own before removing it.
+After the lifecycle passes, another disposable account installs through the built install.sh from a
+release server inside the guest; then a third installs the baseline, the VM restarts and the harness
+checks that the service came back on its own before removing it.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations
@@ -281,7 +282,7 @@ def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path
         # Each phase creates, uses and deletes its own disposable account inside the guest.
         exits = record["harness_exit"] = {}
         try:
-            for phase in ("all", "reboot-install"):
+            for phase in ("all", "bootstrap", "reboot-install"):
                 note(f"running the {phase} phase")
                 exits[phase] = harness(machine, commit, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
                 if exits[phase]:
@@ -301,7 +302,7 @@ def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        record["passed"] = list(exits.values()) == [0, 0, 0] and "uncopied_results" not in record
+        record["passed"] = list(exits.values()) == [0, 0, 0, 0] and "uncopied_results" not in record
     finally:
         try:
             if machine:
