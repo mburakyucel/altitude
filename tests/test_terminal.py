@@ -523,12 +523,12 @@ class TestTerminalHttp(TerminalCase):
         opened = json.loads(response.read())
         self.assertEqual(response.version, 11)
         sock = connection.sock
-        for key in "echo kept\n":
+        for key in "echo ke''pt\n":  # the echoed input never reads as the output
             post(f"{base}/input", {"id": opened["id"], "data": key})
             self.assertEqual(json.loads(connection.getresponse().read()), {"ok": True})
             self.assertIs(connection.sock, sock)
         self.assertEqual(self.agent.call_count, 1)  # asked once for the connection
-        self.output(until="\nkept\r\n")
+        self.output(until="kept\r\n")
         connection.request("GET", "/api/machine")
         response = connection.getresponse()
         response.read()

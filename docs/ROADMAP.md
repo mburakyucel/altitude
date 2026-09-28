@@ -77,9 +77,10 @@ platform change ships for both behind `altitude/platform.py` or names its macOS 
 [AGENTS.md](../AGENTS.md#seams)). Task `macos-support-native-runtime-behind-the` owns #225's audit,
 the launchd and confinement proposal held for operator review, and the runtime increments. #527 moved
 host mechanisms into the seam; the macOS host behind it is implemented. Two operator decisions of
-September 27, 2026 shape it: machine-grant commands run outside Seatbelt, because launchd refuses
-service control to every sandboxed process, and terminal shells run as launchd jobs, because macOS
-hides the environment of its own binaries from the mark that finds what a terminal started. The
+September 28, 2026 shape it: machine-grant commands run unsandboxed, as on Linux, because launchd
+refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
+job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
+started. The
 operator runs each increment's native validation on their own Apple silicon Mac; that
 evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
 authorized. Native probes make no provider calls or model downloads.

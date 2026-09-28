@@ -228,7 +228,9 @@ status and removes its own job; while the command runs it holds an idle-sleep as
 still sleeps). A caller's input and output reach the job as `systemd-run --pipe` passes
 them: a regular file or device by path, a pipe through a relayed FIFO, and piped input (always a whole
 prompt) through a private file. Stop signals every coalition member, checking each one's start time and
-coalition again right before the signal since macOS has no process handle, until none is left. The seam
+coalition again right before the signal since macOS has no process handle, until none is left. A member
+that outlives the stop, or cannot be read, keeps the job's record, so the job stays active, as a unit whose
+processes have not ended does, until they have gone. The seam
 reads processes and sockets through libproc and sysctl, finds Homebrew's libraries, and replaces
 `RLIMIT_AS`, which macOS rejects, with a watcher that kills a command past its memory footprint. The L3
 service-inspection shims remain Linux-specific outside it, and `platform.source_service()` keeps the
@@ -331,7 +333,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
 | Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
-| Machine-grant commands | outside the worker sandbox, user bus reachable | outside any sandbox, launchd reachable | Isolation and landing |
+| Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the session plus processes carrying the terminal's environment mark | the shell is its own launchd job, and Close kills its coalition (Apple's binaries hide their environment) | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
@@ -921,8 +923,10 @@ workspace runs only under a recorded machine grant: the operator's answer to the
 question, recorded by L3 or the operator and verified mechanically against that question revision,
 opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
 executes the command in a job of its own through `engines.machine_command`, with the service manager
-reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`; the
-unit appends output and exit status to the task folder itself, and altd completes `machine.jsonl`
+reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
+the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches
+the service manager, it can also stop or reconfigure its own job: the time limit bounds an ordinary command,
+not one that works against it. The unit appends output and exit status to the task folder itself, and altd completes `machine.jsonl`
 and adds a task event and a project event per command. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,

@@ -1,5 +1,6 @@
 """The macOS side of the platform seam against fixtures: a fake launchctl, fixture process tables, coalitions and
 sockets. It runs on any host; scripts/platform_probe.py exercises the same mechanisms natively on a Mac."""
+import ctypes.util
 import json
 import os
 import plistlib
@@ -10,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import platform, terminal
+from altitude import platform, server, terminal  # noqa: F401 server loads urllib before a test pretends to be darwin
 
 
 def described(label: str, *, state="running", pid=4242, exited="(never exited)", coalition=900, path=None) -> str:
@@ -237,6 +238,43 @@ class Jobs(DarwinCase):
         self.assertIn(["bootout", f"gui/{os.getuid()}/{label}"], self.launchd.commands)
         self.assertFalse((platform._jobs() / label).exists())
 
+    def test_the_launcher_leaves_a_record_kept_for_survivors(self):
+        job = platform._jobs() / "dev.altitude.job.altitude-machine-p-1"
+        self.patch(platform, "_bsd", return_value=platform._BSDInfo(start_sec=1))
+        for survivors in (False, True):
+            with self.subTest(survivors=survivors):
+                def supervised(argv, **kwargs):  # the supervisor's side, done by the time bootstrap returns
+                    if argv[1] == "bootstrap":
+                        for name in ("coalition", "started", "status") + (("survivors",) if survivors else ()):
+                            (job / name).write_text("0")
+                    return self.launchd(argv, **kwargs)
+                self.patch(platform.subprocess, "run", side_effect=supervised)
+                spec = {"label": job.name, "mode": "logged", "log": str(self.tmp / "machine.log"), "command": ["true"],
+                        "env": {}}
+                self.assertEqual(platform._launch(spec), 0)
+                self.assertEqual(job.exists(), survivors)
+
+    def test_a_stop_that_leaves_survivors_keeps_the_job_active_until_they_have_gone(self):
+        label, name = "dev.altitude.job.altitude-codex-w2", "altitude-codex-w2.service"
+        self.launchd.jobs[label] = described(label, coalition=32)
+        stopped = self.patch(platform, "_stop_members", return_value=False)
+        members = self.patch(platform, "_members", return_value=[(321, "1")])
+        platform.job_stop(name, {}, timeout=15)
+        self.assertNotIn(label, self.launchd.jobs)  # launchd has forgotten the job; its survivor has not gone
+        self.assertEqual((platform._jobs() / label / "coalition").read_text(), "32")
+        self.assertTrue(platform.job_active(name, {}))
+        members.assert_called_with(32)
+        self.assertFalse(platform._collect(label))  # a new job of this name waits, as for a unit still deactivating
+        stopped.side_effect = OSError("unreadable")
+        platform.job_stop(name, {}, timeout=15)
+        self.assertTrue((platform._jobs() / label / "survivors").exists())
+        members.return_value = []
+        self.assertFalse(platform.job_active(name, {}))
+        self.assertTrue(platform._collect(label))
+        self.assertFalse((platform._jobs() / label).exists())
+        (platform._jobs() / label).mkdir()  # another launcher's job that is starting is not collected
+        self.assertFalse(platform._collect(label))
+
 
 class Processes(DarwinCase):
     """A fixture process table: pid -> (parent, start, coalition, session, environment, name)."""
@@ -310,6 +348,32 @@ class Processes(DarwinCase):
         clock = iter([0, 0, 61])
         self.patch(platform.time, "monotonic", side_effect=lambda: next(clock))
         self.assertFalse(platform._stop_members(9, limit=60))
+        self.assertEqual(self.killed, [])
+
+    def test_an_unreadable_process_is_not_read_as_absent(self):
+        self.add(20, coalition=9)
+        self.add(21, coalition=3)
+        self.add(22, coalition=9)
+        coalition_of = platform._coalition_of.side_effect
+
+        def read(pid):
+            if pid == 22:
+                raise FileNotFoundError(3, "exited while being read")
+            if pid == 21 and unreadable:
+                raise PermissionError(1, "not permitted")
+            return coalition_of(pid)
+        self.patch(platform, "_coalition_of", side_effect=read)
+        unreadable = False
+        self.assertEqual([pid for pid, _ in platform._members(9)], [20])
+        unreadable = True
+        with self.assertRaises(PermissionError):
+            platform._members(9)
+        self.assertFalse(platform._confirm_stopped(9))
+        self.assertEqual(self.killed, [])
+        job = platform._jobs() / "dev.altitude.job.altitude-terminal-t1"
+        job.mkdir(parents=True)
+        (job / "coalition").write_text("9")
+        platform.signal_terminal("t1", mock.Mock(pid=5), b"ALTITUDE_TERMINAL=t1", signal.SIGHUP)  # best effort
         self.assertEqual(self.killed, [])
 
     def test_session_signal_reaches_the_session_and_marked_processes_only(self):
@@ -432,6 +496,13 @@ class Supervisor(DarwinCase):
             return True
         self.stopped.side_effect = stop
         self.assertEqual(self.supervise(["/bin/sleep", "30"], runtime_max=0.2), 128 + signal.SIGTERM)
+
+    def test_survivors_keep_the_record_after_the_supervisor_has_gone(self):
+        self.stopped.return_value = False
+        platform._running.return_value = False  # nor does a launcher remain to read the status
+        self.assertEqual(self.supervise(["/usr/bin/true"]), 0)
+        self.assertEqual((self.job / "coalition").read_text(), "44")
+        self.assertTrue((self.job / "survivors").exists())
 
     def test_a_command_that_cannot_start_reads_as_127(self):
         self.assertEqual(self.supervise([str(self.tmp / "missing")]), 127)
