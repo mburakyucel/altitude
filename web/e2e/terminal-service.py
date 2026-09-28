@@ -1,5 +1,5 @@
 """Real terminals over the real API: a plain bash on a real pseudo-terminal in a fictional task worktree
-and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Two
+and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Three
 things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
 and the shell (no profile files, a fixed prompt) and its job, which the service manager runs in production.
 Routes under /fixture/ drive the lifecycle events a walkthrough cannot cause from the page: a lost stream,
