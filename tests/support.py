@@ -107,7 +107,7 @@ def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arg
 
 os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
 sys.path.insert(0, str(REPO))
-from altitude import config, engines, incidents, monitor  # noqa: E402
+from altitude import access, config, engines, incidents, monitor  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
 
@@ -308,11 +308,16 @@ def add_worktree(repo: Path, slug: str) -> Path:
 
 
 class AltitudeCase(unittest.TestCase):
-    """A private project per test case in the shared runtime home, gone again afterwards."""
+    """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
+    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`."""
+
+    gated = False
 
     def setUp(self) -> None:
         super().setUp()
         config.ensure_root()
+        if not self.gated:
+            self.patch(access, "is_machine", return_value=True)
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = self.tmp / "repo"

@@ -4,8 +4,8 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, readVoiceSettings, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useMachine, useOverview } from "../data/api";
-import type { Overview, Update } from "../data/api";
+import { ApiError, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import type { Device, Overview, PairingCode, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -172,12 +172,79 @@ function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
   return <div className="settings-row settings-switch-row">
     <label htmlFor="terminal-switch">
       <strong>Terminal</strong>{" "}
-      <small>Anyone who can open Altitude can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
+      <small>Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
       {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
     </label>
     <input id="terminal-switch" type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
       disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
   </div>;
+}
+
+/** A date without its time: a device's last use is recorded at most daily. */
+const day = (at: string) => new Date(at).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+
+/** One paired device; Remove asks once before it signs the device out. */
+function DeviceRow({ device, current, onRemoved }: { device: Device; current: boolean; onRemoved: () => void }) {
+  const [state, setState] = useState<{ status: "idle" | "confirm" | "removing" } | { status: "failed"; error: Error }>({ status: "idle" });
+  const remove = async () => {
+    setState({ status: "removing" });
+    try {
+      await revokeDevice(device.id);
+      onRemoved();
+    } catch (error) {
+      setState({ status: "failed", error: error as Error });
+    }
+  };
+  return <li className="device-row">
+    <span className="device-name"><span className="device-title"><strong>{device.name}</strong>{current ? <span className="device-current">This device</span> : null}</span>
+      <small>Paired {day(device.paired)} · last used {day(device.used)}</small>
+      {state.status === "confirm" ? <small className="device-confirm">{current ? "This browser will need a new code to open Altitude again." : "It will need a new code to open Altitude again."}</small> : null}
+      {state.status === "failed" ? <small role="alert" className="text-danger">{state.error.message}</small> : null}
+    </span>
+    {state.status === "confirm" || state.status === "removing" ? <span className="device-actions">
+      <button type="button" className="btn" disabled={state.status === "removing"} onClick={() => setState({ status: "idle" })}>Cancel</button>
+      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}>{state.status === "removing" ? "Removing…" : "Remove"}</button>
+    </span> : <button type="button" className="btn" onClick={() => setState({ status: "confirm" })}>Remove</button>}
+  </li>;
+}
+
+/** Paired devices with Remove, and a one-time code for pairing another one. */
+function DevicesPage() {
+  const client = useQueryClient();
+  const devices = useDevices();
+  const [code, setCode] = useState<{ status: "idle" | "making" } | { status: "made"; code: PairingCode } | { status: "failed"; error: Error }>({ status: "idle" });
+  const make = async () => {
+    setCode({ status: "making" });
+    try {
+      setCode({ status: "made", code: await makePairingCode() });
+    } catch (error) {
+      setCode({ status: "failed", error: error as Error });
+    }
+  };
+  const link = code.status === "made" ? `${window.location.origin}/pair?code=${code.code.code}` : "";
+  return <>
+    <p className="text-meta text-muted">Browsers that can open Altitude. Each pairs once with a one-time code and stays paired until you remove it here. Removing a device signs it out at once.</p>
+    {devices.isPending ? <p role="status">Loading devices…</p>
+      : devices.isError ? <p role="alert" className="text-danger">Could not load devices. <button className="link" onClick={() => void devices.refetch()}>Retry</button></p>
+        : <ul className="settings-card device-list" aria-label="Paired devices">
+          {devices.data.devices.map((device) => <DeviceRow key={device.id} device={device} current={device.id === devices.data.current}
+            onRemoved={() => void client.invalidateQueries({ queryKey: ["devices"] })} />)}
+          {devices.data.devices.length === 0 ? <li className="text-muted">No browser is paired. This page is open through this computer’s own key.</li> : null}
+        </ul>}
+    <section className="settings-card device-pair" aria-label="Pair another device">
+      <h2>Pair another device</h2>
+      {code.status === "made" ? <>
+        <p className="device-code" aria-label="Pairing code">{code.code.code}</p>
+        <p className="text-meta text-muted">Works once, for the next {code.code.minutes} minutes. On the other device, type it on the Pair this device screen, or open:</p>
+        <Command text={link} />
+        <button type="button" className="btn" onClick={() => void make()}>Make a new code</button>
+      </> : <>
+        <p className="text-meta text-muted">Make a one-time code here, or run <code>alt pair</code> on the computer running Altitude. A new code cancels the previous one.</p>
+        <button type="button" className="btn btn-primary" disabled={code.status === "making"} onClick={() => void make()}>{code.status === "making" ? "Making a code…" : "Make a pairing code"}</button>
+        {code.status === "failed" ? <p role="alert" className="text-meta text-danger">{code.error.message}</p> : null}
+      </>}
+    </section>
+  </>;
 }
 
 /** An installed copy's version, any newer release, the command that installs it and the check's switch. */
@@ -215,7 +282,7 @@ function VersionRows({ update }: { update: Update }) {
 
 const titles = {
   voice: "Voice input", "projects-folder": "Projects folder", name: "Your name",
-  prerequisites: "Prerequisites", "incident-reports": "Incident reports",
+  prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices",
 } as const;
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
@@ -248,6 +315,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const state = location.state as { settingsFrom?: string } | null;
   const voice = page === "voice";
   const machine = useMachine();
+  const devices = useDevices();
   const roots = overview.data?.roots ?? [];
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
@@ -260,6 +328,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
     <div className="page settings-page">
       {!phone ? <>{page ? back : null}<h1>{title}</h1></> : null}
       {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
+        : page === "devices" ? <DevicesPage />
         : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>
         <ProjectsFolderForm roots={roots} />
@@ -281,6 +350,9 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           </Link>
           <Link className="settings-row" to="/settings/incident-reports" state={state}>
             <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
+          </Link>
+          <Link className="settings-row" to="/settings/devices" state={state}>
+            <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
           <TerminalSwitch enabled={machine.data?.terminal} />
           {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}

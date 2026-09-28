@@ -5,6 +5,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude opens only in browsers you pair. Run `alt pair` on the computer running Altitude, locally
+  or over SSH, and type the code it prints on the device's **Pair this device** screen, or open the
+  link it prints there. **Settings → Devices** lists paired devices, removes one at once and makes a
+  code for another. After updating, every browser, including the one on that computer, pairs once;
+  the `alt` CLI keeps working without a step. Internal error details show only in paired browsers
+  and the CLI, and a connection that stays silent for thirty seconds is closed.
+
 - A command an agent needs you to run arrives in chat as a command block with **Copy** and **Open in
   terminal**. Open in terminal shows that task's or project's terminal with the command typed at the
   prompt; nothing runs until you press Enter, and you can edit or clear it first. If a program is

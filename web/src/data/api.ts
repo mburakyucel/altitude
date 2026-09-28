@@ -27,6 +27,14 @@ export class ApiError extends Error {
   }
 }
 
+/** Every API reply of 401 means this browser is not paired (any more): the pairing gate listens for it. */
+export const UNPAIRED_EVENT = "altitude:unpaired";
+
+async function failure(res: Response): Promise<ApiError> {
+  if (res.status === 401) window.dispatchEvent(new Event(UNPAIRED_EVENT));
+  return new ApiError(res.status, await errorMessage(res));
+}
+
 async function errorMessage(res: Response): Promise<string> {
   try {
     const body = (await res.json()) as { error?: unknown };
@@ -46,12 +54,47 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
       ...init?.headers,
     },
   });
-  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
 
 function post<T = unknown>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+// ---- pairing ---------------------------------------------------------------------------
+
+export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().nullish() }).passthrough();
+export type Access = z.infer<typeof AccessSchema>;
+export const DeviceSchema = z.object({ id: z.string(), name: z.string(), paired: z.string(), used: z.string() }).passthrough();
+export type Device = z.infer<typeof DeviceSchema>;
+const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.string().nullish() }).passthrough();
+export type Devices = z.infer<typeof DevicesSchema>;
+export const PairingCodeSchema = z.object({ code: z.string(), expires: z.string(), minutes: z.number() }).passthrough();
+export type PairingCode = z.infer<typeof PairingCodeSchema>;
+
+export async function readAccess(): Promise<Access> {
+  return AccessSchema.parse(await api("/api/access"));
+}
+
+/** Pair this browser with a code from `alt pair` or another device's Settings. The Home Screen app says so,
+ * because it keeps its own cookies apart from Safari's. */
+export async function pairDevice(code: string): Promise<void> {
+  const standalone = window.matchMedia?.("(display-mode: standalone)").matches
+    || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  await post("/api/pair", { code, standalone });
+}
+
+export function useDevices() {
+  return useQuery({ queryKey: ["devices"], queryFn: async () => DevicesSchema.parse(await api("/api/devices")) });
+}
+
+export async function makePairingCode(): Promise<PairingCode> {
+  return PairingCodeSchema.parse(await post("/api/devices/code", {}));
+}
+
+export async function revokeDevice(id: string): Promise<Devices> {
+  return DevicesSchema.parse(await post("/api/devices/revoke", { id }));
 }
 
 // ---- polling and the change stream -----------------------------------------------------
@@ -1215,7 +1258,7 @@ export async function streamChat(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
   });
-  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.ok) throw await failure(res);
   if (!res.body) throw new Error("no response body");
 
   const reader = res.body.getReader();

@@ -1233,8 +1233,15 @@ new folder; a failure shows the server explanation and Retry. First run reads th
 <repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
 First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
 again** only) and shows Saved. after a save.
-A **Terminal** switch row (off after install) says "Anyone who can open Altitude can run commands as
-you on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
+A **Devices** row shows how many devices are paired and opens `/settings/devices`: a list of paired
+browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "Chrome on Mac"), a
+**This device** badge beside the current one, and "Paired <date> · last used <date>". **Remove** asks
+once in the row ("It will need a new code to open Altitude again.", or "This browser will need…" for
+the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
+**Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
+minutes", the copyable `/pair?code=` link and **Make a new code**.
+A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
+on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
 An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
@@ -1298,6 +1305,30 @@ typed draft preservation, all three choices, key replacement/removal and loading
 persistence, restoring Default, the engine pin, loading/read failure and saving/denied states at both
 sizes, with the project draft preserved.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
+
+### 3.16 Pair this device
+
+An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark,
+**Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
+a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
+that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
+field (uppercase, one-time-code autofill) and a full-width **Pair** button, disabled while the field is
+empty. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+Pairing opens the route the browser asked for.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Loading | The mark alone while Altitude answers whether this browser is paired. |
+| Unreachable | "Could not reach Altitude." and Retry. |
+| Empty | The card with an empty field; Pair disabled. |
+| Pairing | Pairing… and a disabled field and button. |
+| Wrong code | "That code is not right. N tries left." under the field; typing clears it. |
+| Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |
+| Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the instructions. |
+
+Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above,
+pairing by link, Settings › Devices with a new code, Remove with Cancel, removing the current device,
+and at phone width an iPhone's Safari and Home Screen app pairing as separate devices.
 
 ## 4. Behaviour rules
 

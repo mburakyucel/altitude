@@ -22,8 +22,11 @@ rest of the UI — desktop and phone alike, with nothing to start:
 
 ```
 /design/<project>                                  redirects to
-/design/<project>/design/wireframes/index.html
+/design/<project>/<pass>/design/wireframes/index.html
 ```
+
+The pass is that browser's read pass for the project's boards, valid the day it is made and the next
+while the browser stays paired; a bookmark of `/design/<project>` keeps working.
 
 `altd` serves them read-only from the project's deployment checkout, reading each file on the
 request and sending it uncached, so the boards a merge lands are the boards the next reload draws.

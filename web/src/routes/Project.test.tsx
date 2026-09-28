@@ -384,13 +384,13 @@ describe("Project page", () => {
   // The item is present only when the project checkout has boards: it is the server's answer, not
   // a guess the page makes from the project name.
   it("offers Design boards in the overflow menu only when the project has a viewer", async () => {
-    mockFetch({ project: { ...project, design_viewer: "/design/altitude/design/wireframes/index.html" } });
+    mockFetch({ project: { ...project, design_viewer: "/design/altitude" } });
     const { user } = renderApp({ route: "/projects/altitude" });
 
     await screen.findByRole("heading", { name: "altitude" });
     await user.click(screen.getByRole("button", { name: "More actions" }));
     const link = await screen.findByRole("menuitem", { name: "Design boards" });
-    expect(link).toHaveAttribute("href", "/design/altitude/design/wireframes/index.html");
+    expect(link).toHaveAttribute("href", "/design/altitude");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
   });

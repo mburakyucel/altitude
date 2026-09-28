@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import { ToastProvider } from "./data/Toast";
 import { routes } from "./routes";
+import PairGate from "./shell/PairGate";
 import { readTheme, setTheme } from "./shell/theme";
 import "./styles.css";
 
@@ -17,7 +18,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <PairGate>
+          <RouterProvider router={router} />
+        </PairGate>
       </ToastProvider>
     </QueryClientProvider>
   </StrictMode>,

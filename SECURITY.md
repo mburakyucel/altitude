@@ -23,9 +23,11 @@ current `main` branch and the latest release receive fixes.
 
 ## Scope
 
-Altitude assumes one operator on one machine. Anyone who can reach the web server, which binds to
-localhost by default, acts as that operator; there is no separate login. Each task's worker is
-confined to its own worktree and task folder, and every code change goes through a checked PR.
+Altitude assumes one operator on one machine. The web app opens only in browsers the operator paired
+with a one-time code from `alt pair`, and the `alt` CLI proves it runs as the operator by reading a
+private key file. Processes running as the operator's account, including Altitude's own workers,
+share that account's authority. Each task's worker is confined to its own worktree and task folder,
+and every code change goes through a checked PR.
 
 In scope:
 
@@ -35,8 +37,9 @@ In scope:
   browser, or recovering what was typed or shown in it.
 - Bypassing delivery authority: merging around a hold, review or required check, forging an
   operator approval or acting with a role's authority without its credential.
-- Reaching the web server or its API from outside the documented localhost or configured private
-  network, or acting without the operator's browser session where one is required.
+- Using the web server or its API without a paired browser or the machine key: guessing or reusing a
+  pairing code, keeping access after a device is removed, or making a paired browser act for
+  another site.
 - Installer, update and archive verification: accepting a tampered archive, unsafe extraction or
   unintended file permissions.
 - Git guard weaknesses that allow protected-branch moves or deletions the guards claim to block.
@@ -52,3 +55,7 @@ Out of scope:
 - Exposure created by deliberately binding the server to an address the setup documentation
   warns against, or by disabling documented sandbox or certificate checks.
 - Resource exhaustion by the operator's own agents on the operator's own machine.
+- Reaching the terminal through a forwarder the operator runs on this machine in front of Altitude
+  (an SSH tunnel, a reverse proxy, a container's published port) while the terminal is on: the
+  terminal sees the forwarder, not the process behind it. The operations guide says to keep the
+  terminal off in that setup.
