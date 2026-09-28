@@ -1851,7 +1851,7 @@ open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
 delivery whose owner stopped in `blocked` or `reported` (#419). A held PR that Altitude has observed
-closed without merging asks for no review (#575): an L2 `block` reads the held PR's GitHub state, and a
+closed without merging asks for no review (#575): an L2 `block` reads the held PR's state from the checkout origin's repository, and a
 `CLOSED` result, like a verified `alt pr close`, appends one `pr-closed` task event. The delivery,
 `prs` history and merge hold stay recorded. A later `delivery` or `pr-adopted` event for that PR, a
 `pr-reopened` event from an owner block that reads it open again, or a new PR asks again. An

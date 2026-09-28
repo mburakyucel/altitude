@@ -2047,17 +2047,25 @@ def record_pr_state(project: str, slug: str, number: int, state: str, *, by: str
 
 
 def observe_held_pr(project: str, slug: str, *, by: str) -> str | None:
-    """Read the held PR's GitHub state as its owner stops; an unreadable state leaves the recorded review as is."""
-    from . import verify
+    """Read the held PR's GitHub state as its owner stops; an unreadable state leaves the recorded review as is.
+    The read names the checkout origin's repository and checks the returned identity, so an inherited
+    GH_REPO or a same-numbered PR elsewhere cannot record a closure (review of #575)."""
+    from . import github_intake, verify
     task = S.load_task(project, slug)
     number = (task.get("prs") or [None])[-1]
     if not (number and task.get("hold_merge")):
         return None
     try:
-        state = (verify.gh(["pr", "view", str(number), "--json", "state"], config.project_path(project)) or {}).get("state")
-    except (verify.VerifierFault, KeyError) as exc:
+        owner, repo = github_intake.project_repo(project)
+        info = verify.gh(["pr", "view", str(number), "--repo", f"{owner}/{repo}", "--json", "number,url,state"],
+                         config.project_path(project))
+    except (verify.VerifierFault, github_intake.IssueIntakeError, KeyError) as exc:
         return f"PR #{number} state unavailable: {exc}"
-    record_pr_state(project, slug, number, str(state), by=by)
+    url = f"https://github.com/{owner}/{repo}/pull/{number}"
+    if not (isinstance(info, dict) and info.get("number") == number and str(info.get("url", "")).lower() == url.lower()
+            and info.get("state") in ("OPEN", "CLOSED", "MERGED")):
+        return f"PR #{number} state unavailable: GitHub returned no matching record"
+    record_pr_state(project, slug, number, info["state"], by=by)
     return None
 
 

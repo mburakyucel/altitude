@@ -1112,7 +1112,7 @@ unchanged re-parking retains the response. Independent unanswered members remain
 An open operator question linking or naming the held PR replaces its generated review card,
 including a freeform question and one with a submitted response awaiting owner interpretation.
 After resolution the fallback returns if merge approval is still needed. A held PR closed without
-merging asks for no review: `alt task block` by the owner reads the PR's state and records the closure
+merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
 as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
 still lands, the review stays shown and stderr says the state was unavailable. This display rule neither
 classifies the answer as approval nor changes the quick-option requirement for a changes review.

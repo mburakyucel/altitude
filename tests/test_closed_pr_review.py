@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, git, make_repo
 from altitude import config, server, state as S, tasks as T
 
 
@@ -16,6 +16,8 @@ class TestClosedPrReview(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
+        make_repo(self.repo)
+        git("remote", "set-url", "origin", "git@github.com:team/project.git", cwd=self.repo)
         self.gh = self.fake_gh()
         task = T.new(self.project, "Runtime port", "Port it.", actor="burak", hold_merge="Operator review before merge")
         self.slug, self.name = task["slug"], config.operator_label()
@@ -27,7 +29,8 @@ class TestClosedPrReview(AltitudeCase):
 
     def pr(self, number: int, state: str) -> None:
         prs = json.loads((self.gh / "prs.json").read_text()) if (self.gh / "prs.json").exists() else {}
-        S.write_json(self.gh / "prs.json", {**prs, str(number): {"number": number, "state": state}})
+        S.write_json(self.gh / "prs.json", {**prs, str(number): {
+            "number": number, "state": state, "url": f"https://github.com/team/project/pull/{number}"}})
 
     def owner_block(self, *args: str):
         out = self.alt("--project", self.project, "task", "block", self.slug, *args,
@@ -97,9 +100,22 @@ class TestClosedPrReview(AltitudeCase):
         self.assertEqual([e["kind"] for e in S.read_events(self.project, self.slug) if e["kind"].startswith("pr-")],
                          ["pr-closed", "pr-reopened", "pr-closed"])
 
-    def test_an_unreadable_pr_state_keeps_the_recorded_review_and_says_so(self):
-        (self.gh / "view_error.txt").write_text("gh: authentication required")
-        out = self.owner_block("--reason", "Waiting on the Mac agent's push.")
-        self.assertIn("PR #42 state unavailable", out.stderr)
-        self.assertEqual(S.load_task(self.project, self.slug)["state"], "blocked", "the block itself still lands")
-        self.assertEqual((self.kinds(), self.closures()), (["review"], []), "no closure is invented")
+    def test_an_unreadable_or_foreign_pr_state_keeps_the_recorded_review_and_says_so(self):
+        closed = {"number": 42, "state": "CLOSED", "url": "https://github.com/team/project/pull/42"}
+        cases = {"gh failure": ("view_error.txt", "gh: authentication required"),
+                 "missing PR": ("prs.json", "{}"),
+                 "not an object": ("prs.json", json.dumps({"42": ["CLOSED"]})),
+                 "unknown state": ("prs.json", json.dumps({"42": {**closed, "state": "DRAFT"}})),
+                 "another repository": ("prs.json", json.dumps({"42": {**closed, "url": "https://github.com/other/project/pull/42"}}))}
+        self.setenv("GH_REPO", "other/project")
+        for case, (name, body) in cases.items():
+            with self.subTest(case=case):
+                (self.gh / "prs.json").unlink(missing_ok=True)
+                (self.gh / "view_error.txt").unlink(missing_ok=True)
+                (self.gh / name).write_text(body)
+                out = self.owner_block("--reason", "Waiting on the Mac agent's push.")
+                self.assertIn("PR #42 state unavailable", out.stderr)
+                self.assertEqual(S.load_task(self.project, self.slug)["state"], "blocked", "the block itself lands")
+                self.assertEqual((self.kinds(), self.closures()), (["review"], []), "no closure is invented")
+                T.resume(self.project, self.slug)
+        self.assertTrue(all(args[3:5] == ["--repo", "team/project"] for args in self.gh_log()), self.gh_log())
