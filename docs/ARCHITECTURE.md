@@ -1382,6 +1382,13 @@ slow 4G the page appears in about 1.7 seconds instead of 4.4. The punctuation mo
 barely compress and travel as stored. Opening requests no dictation asset; `web/e2e/first-open.pw.ts`
 walks cold, warm and slow opens with dictation assets failing.
 
+A page keeps running the build it opened with. Activation replaces `web/dist`, so a file that page
+loads later, such as the terminal's code (the app's one lazy module), is gone and altd answers 404.
+The terminal view then says whether the served page names another app script, meaning Altitude was
+updated, or Altitude could not be reached, and offers Reload. It does not reload by itself, and says
+that a reload clears unsent typed text, which lives in the page's memory. The browser keeps a failed
+module import for the page's lifetime, so only a reload recovers. Earlier builds are not retained.
+
 ### Conversations and navigation
 
 The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch

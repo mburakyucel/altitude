@@ -2,10 +2,14 @@
 and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Two
 things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
 and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
-walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart."""
+walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart, an
+update that replaces the built app under an open page."""
 import os
+import shutil
 import socket
+import tempfile
 import threading
+from pathlib import Path
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
@@ -14,6 +18,13 @@ from altitude import config, l3, server, state as S, tasks as T, terminal
 
 def main():
     configure()
+    # The page is served from hard links to this checkout's build, beside it in the ignored artifacts
+    # folder, so an update can replace files without touching the build other walkthroughs read.
+    artifacts = config.WEB_DIST.parent / "ui-artifacts"
+    artifacts.mkdir(exist_ok=True)
+    dist = Path(tempfile.mkdtemp(prefix="dist-", dir=artifacts))
+    shutil.copytree(config.WEB_DIST, dist, copy_function=os.link, dirs_exist_ok=True)
+    config.WEB_DIST = dist
     os.environ.update({"PS1": r"\W $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
     agent = threading.Event()
@@ -66,6 +77,22 @@ def main():
             if self.path == "/fixture/agent":
                 agent.set() if self._body().get("on") else agent.clear()
                 return self._json({"ok": True})
+            if self.path == "/fixture/update":  # activation swaps the build: new names, the old files gone
+                assets = dist / "assets"
+                renames = {path.name: path.name.replace("-", "-updated-", 1)
+                           for path in [*assets.glob("TerminalScreen-*.js"), *assets.glob("index-*.js")]}
+                for old, new in renames.items():
+                    text = (assets / old).read_bytes()
+                    for before, after in renames.items():
+                        text = text.replace(before.encode(), after.encode())
+                    (assets / old).unlink()
+                    (assets / new).write_bytes(text)
+                page = (dist / "index.html").read_text()
+                for before, after in renames.items():
+                    page = page.replace(before, after)
+                (dist / "index.html").unlink()
+                (dist / "index.html").write_text(page)
+                return self._json({"ok": True})
             if self.path == "/fixture/restart":  # altd stops without a word to the page and a new one starts
                 held.set()
                 for stream in list(streams):
@@ -78,7 +105,11 @@ def main():
                 return self._json({"ok": True})
             return super().do_POST()
 
-    serve(Handler, release=terminal.close_all)
+    def release():
+        terminal.close_all()
+        shutil.rmtree(dist)
+
+    serve(Handler, release=release)
 
 
 if __name__ == "__main__":
