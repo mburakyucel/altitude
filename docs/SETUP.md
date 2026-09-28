@@ -343,9 +343,11 @@ alt --project example chat "Describe this project and suggest one small improvem
 ## Project setup and repair
 
 **Altitude performs routine setup automatically. If a step fails, L3 helps investigate, and
-Altitude checks the result before marking it complete.** The project header's permanent **Setup**
-status opens its checklist on phone and desktop. It shows the latest observations, with **Check
-again** for a fresh check and relevant actions on incomplete rows.
+Altitude checks the result before marking it complete.** **Setup…** in the project's ⋯ menu opens
+the checklist on phone and desktop at any time. The project header shows a **Setup** status only while
+setup needs attention: it is running, a current requirement is missing or failed, or setup could not
+be read. A ready project's header stays quiet. The checklist shows the latest observations, with
+**Check again** for a fresh check and relevant actions on incomplete rows.
 
 | Step | What happens |
 | --- | --- |
@@ -361,7 +363,7 @@ Ready describes these project checks, not every future remote operation or model
 Setup never initializes Git. Optional capabilities such as voice do not prevent readiness.
 
 Existing projects receive the same current checks as new projects. Missing requirements introduced
-by an update appear without detach/reattach or repeating healthy work. Routine maintenance and
+by an update appear in the project header without detach/reattach or repeating healthy work. Routine maintenance and
 launch checks refresh recognized owned guard paths to the active source; saved task-worktree
 overrides receive the same checks. Failed or interrupted introductory
 agent calls wait for an explicit Retry; routine maintenance does not repeat them. Refresh, reconnection

@@ -950,6 +950,12 @@
 .menu-item:hover {
   background: var(--hairline);
 }
+.menu-item-meta {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+}
 .menu-confirm {
   display: flex;
   flex-direction: column;

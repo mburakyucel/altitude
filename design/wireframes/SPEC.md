@@ -174,7 +174,7 @@ hard-codes one, and one configured engine means one row.
 
 ### 3.2 Project header
 
-Desktop anatomy: project name (18px, 600); status line; actions: permanent **Setup** status (§3.12),
+Desktop anatomy: project name (18px, 600); status line; actions: **Setup** status while setup needs attention (§3.12),
 **Terminal** (pressed while the project terminal shows, §3.10), work-panel toggle (tinted when the panel is
 open, hidden at ≥ 1280 where the panel is inline), overflow menu. On phone **Terminal** is an icon
 button before the three dots.
@@ -190,10 +190,12 @@ single 54px shell header. The project name opens the switcher; a non-Auto pin st
 compact status. There is no second status row. The three dots open the same project actions menu as
 desktop, above any keyboard. The engine pin, the last L3 turn and model/effort defaults live on the
 project's Settings page (§3.15).
-**Setup** remains discoverable in the project header on phone and desktop, including healthy
-projects. It opens the same configuration checklist without replacing the conversation or draft.
+A healthy project's header holds no Setup control. **Setup…** in the overflow menu always opens the
+configuration checklist without replacing the conversation or draft; the header shows Setup only
+while setup needs attention (§3.12).
 
-Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
+Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Setup…** with
+the current setup status in muted text (§3.12), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
 reports a design URL; opens in a new tab).
 
@@ -1081,8 +1083,13 @@ For a removed project with retained history, `POST /api/project/add` reports `re
 Its conversation and saved queue remain; setup reuses healthy configuration. Historical replies
 or errors do not determine a new first conversation's outcome.
 
-**Setup** stays in the project header with **Checking**, **Ready** or **Needs attention**; unavailable
-reads say **Unavailable**, and non-Git projects say **Conversation ready**. It opens
+**Setup…** in the project menu reads **Checking**, **Ready** or **Needs attention**; unavailable reads say
+**Unavailable**, and non-Git projects say **Conversation ready**. The header shows the same status as a
+**Setup · <status>** control only while setup needs attention: setup is running, a current requirement
+is missing or failed (including one an update introduces), or the read failed. A first read that is
+still loading and a ready project keep the header quiet. Opened from the header, the control stays
+until focus leaves it, so closing the checklist returns focus there; after resolution it then
+disappears. There is no dismissal or seen-state: the current checks alone decide. Both open
 a focused desktop overlay or full-height phone sheet with folder, repository, instructions, Git
 guards and coordinator rows. Problems appear before healthy checks. Text and icons distinguish
 pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
@@ -1106,10 +1113,11 @@ completion, with **Open conversation** available.
 
 Walkthrough states at phone and desktop: fresh registration, healthy/reused project, newly missing
 requirement, stale guards, custom-hook review, active progress, interruption, failed/denied repair
-and successful retry. Also cover empty folder discovery, initial loading, failed read with Retry,
+and successful retry. Also cover the quiet healthy header, menu access, the header appearing for a new
+requirement and leaving after repair, empty folder discovery, initial loading, failed read with Retry,
 offline observations and non-Git outcomes. Status changes use a polite live region, errors an alert,
 and controls 44px targets. The sheet contains focus and scrolling, closes with Escape/Back, and
-restores focus to Setup. Conversation/draft and reading position survive. Listening belongs to
+restores focus to the Setup control or menu button it was opened from. Conversation/draft and reading position survive. Listening belongs to
 the existing conversation opened by **Discuss with L3**, including its recording/cancel/error states.
 
 ### 3.13 Restart banner

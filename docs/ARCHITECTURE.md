@@ -332,7 +332,9 @@ claim without consuming the authorized request, restoring its message batch ahea
 The existing daemon scheduler retries the same request after release and rechecks guards, worktree
 provenance and lifecycle fences before launching. Actual setup/provenance errors retain their fault path.
 
-The permanent **Setup** control opens these results and actions. Programmatic repair installs or
+**Setup…** in the project menu opens these results and actions; the header shows a Setup status only
+while the current observation needs attention (running, unmet or unreadable), with no stored
+dismissal. Programmatic repair installs or
 refreshes owned guards and establishes the coordinator command connection. **Retry** requests that
 same bounded work. Configuration faults notify the existing L3; **Discuss with L3** opens its conversation
 without sending a message or launching another repair agent. L3 investigates with its existing
@@ -975,8 +977,9 @@ pseudo-terminal; the user service manager starts the login shell on it as a tran
 `altitude-terminal-<id>.service` job (`platform.terminal_job`), as the operator and outside every worker
 sandbox. The job is created by the manager rather than by altd, so the shell does not inherit altd's
 `NoNewPrivileges=yes` and `sudo` asks for the operator's password in the terminal as it does in a desktop
-terminal. altd, workers and reviews keep that hardening. The job is `PartOf` Altitude's service, so the shell
-and its children live only as long as altd: there is no multiplexer and no persistence. A launcher that cannot
+terminal. altd keeps that hardening; worker and review jobs are confined by their own sandbox. The job is
+`PartOf` Altitude's service, so the shell and its children live only as long as altd: there is no multiplexer
+and no persistence. A launcher that cannot
 start the job (no reachable user manager) ends the terminal as `failed` with the launcher's error, which the page
 shows. The
 macOS runtime is not implemented, so this path has no native macOS evidence. A task terminal opens in the task's worktree while the

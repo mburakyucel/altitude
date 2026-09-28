@@ -21,12 +21,30 @@ function summary(setup?: Setup) {
   }
 }
 
+/**
+ * The current reading of project setup. It needs attention while setup runs, a current requirement is
+ * unmet or the reading failed; a healthy or still-loading reading stays quiet.
+ */
+export function useSetupReading(name: string) {
+  const setup = useSetup(name);
+  const [, setSearch] = useSearchParams();
+  const label = setup.isPending ? "Checking" : setup.isError ? "Unavailable" : summary(setup.data);
+  const healthy = setup.data?.status === "ready" || setup.data?.status === "conversation_ready";
+  const open = () => {
+    void setup.refetch();
+    setSearch((current) => { const next = new URLSearchParams(current); next.set("setup", "1"); return next; });
+  };
+  return { setup, label, attention: !setup.isPending && (setup.isError || !healthy), open };
+}
+
 /** Setup is an observation of project state. Only accepted server work changes a row's progress. */
 export function ProjectSetup({ name }: { name: string }) {
-  const setup = useSetup(name);
+  const { setup, label, attention: noticed, open: show } = useSetupReading(name);
   const action = useSetupAction(name);
   const [search, setSearch] = useSearchParams();
   const [integration, setIntegration] = useState<string | null>(null);
+  // Opened from the header, the status stays there until focus leaves it, so closing can return focus.
+  const [kept, setKept] = useState(false);
   const client = useQueryClient();
   const open = search.get("setup") === "1";
   const close = (conversation = false) => {
@@ -45,7 +63,6 @@ export function ProjectSetup({ name }: { name: string }) {
   const awaitingObservation = action.isError && !refused && (setup.isFetching || setup.dataUpdatedAt < action.submittedAt);
   const busy = action.isPending || awaitingObservation || data?.status === "checking";
   const stale = setup.isError;
-  const label = setup.isPending ? "Checking" : stale ? "Unavailable" : summary(data);
   const steps = [...(data?.steps ?? [])].sort((a, b) => Number(attention(b.status)) - Number(attention(a.status)));
   const failed = data?.steps.some((step) => step.status === "failed" || step.status === "unknown");
   const run = (kind: "check" | "repair" | "combine", expected?: string) => {
@@ -54,15 +71,17 @@ export function ProjectSetup({ name }: { name: string }) {
   };
 
   return <>
-    <button type="button" className="setup-trigger" data-status={stale ? "unknown" : data?.status}
+    {noticed || kept ? <button type="button" className="setup-trigger" data-status={stale ? "unknown" : data?.status}
       aria-label={`Setup: ${label}`} aria-haspopup="dialog" aria-expanded={open}
-      onClick={() => {
-        void setup.refetch();
-        setSearch((current) => { const next = new URLSearchParams(current); next.set("setup", "1"); return next; });
-      }}>
+      onClick={(event) => {
+        // WebKit does not focus a clicked button; the checklist returns focus to its opener.
+        event.currentTarget.focus();
+        setKept(true);
+        show();
+      }} onBlur={() => { if (!open) setKept(false); }}>
       <span className="setup-dot" aria-hidden />
       <span>Setup<span className="setup-trigger-status"><span className="setup-separator"> · </span>{label}</span></span>
-    </button>
+    </button> : null}
     {open ? <Overlay label="Project setup" side="right" onClose={() => close()}>
       <section className="setup-panel">
         <header className="setup-heading">
@@ -70,7 +89,7 @@ export function ProjectSetup({ name }: { name: string }) {
           <button type="button" className="icon-btn" aria-label="Close setup" onClick={() => close()}>✕</button>
         </header>
         <div className="setup-intro">
-          <p className="setup-summary" data-status={data?.status} role="status">{label}</p>
+          <p className="setup-summary" data-status={stale ? "unknown" : data?.status} role="status">{label}</p>
           <p className="text-muted">Setup runs automatically. If a step fails, L3 can help.</p>
         </div>
         {stale ? <div className="setup-notice" role="alert">

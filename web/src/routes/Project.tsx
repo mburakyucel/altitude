@@ -12,7 +12,7 @@ import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import { decisionsFor, managedProjects } from "../shell/projects";
-import { ProjectSetup } from "./Setup";
+import { ProjectSetup, useSetupReading } from "./Setup";
 import Conversation from "./Conversation";
 import FirstRun from "./FirstRun";
 import Terminal from "../components/Terminal";
@@ -160,6 +160,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const queryClient = useQueryClient();
   const reset = useL3Reset(name);
   const remove = useProjectRemove();
+  const setup = useSetupReading(name);
   const pending = reset.isPending || remove.isPending || starting;
 
   const close = useCallback((refocus = false) => {
@@ -235,6 +236,9 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
   const menu = (
         <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
           <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate("/settings", { state: { settingsFrom: window.location.pathname + window.location.search } })}>Settings…</button>
+          <button type="button" role="menuitem" className="menu-item" data-action="setup" aria-label={`Setup: ${setup.label}`} aria-haspopup="dialog" disabled={pending} onClick={() => { close(true); setup.open(); }}>
+            Setup…<span className="menu-item-meta">{setup.label}</span>
+          </button>
           {confirm === "reset" ? (
             confirmRow(
               "Reset the L3 conversation?",
