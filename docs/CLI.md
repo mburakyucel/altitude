@@ -315,6 +315,8 @@ state; no mutation retry loop runs. A confirmed closed state establishes the res
 concurrent actor caused it. Confirmed calls record a `pr-close` project event with actor and the
 result fields; failed or unconfirmed calls record no success. Branches, checkout archives, task
 ownership and merge holds remain intact. Closure alone proves neither delivery nor activation.
+A verified `CLOSED` state also appends one `pr-closed` event to each task whose current PR it is,
+so that task stops asking for merge review; its delivery record and hold stay unchanged.
 
 ## GitHub issues
 
@@ -1110,7 +1112,10 @@ creates a new revision and restores its answer field even when wording is unchan
 unchanged re-parking retains the response. Independent unanswered members remain available.
 An open operator question linking or naming the held PR replaces its generated review card,
 including a freeform question and one with a submitted response awaiting owner interpretation.
-After resolution the fallback returns if merge approval is still needed. This display rule neither
+After resolution the fallback returns if merge approval is still needed. A held PR closed without
+merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
+as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
+still lands, the review stays shown and stderr says the state was unavailable. This display rule neither
 classifies the answer as approval nor changes the quick-option requirement for a changes review.
 One typed reply can answer several members. Its saved question references name what the operator
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.

@@ -955,7 +955,8 @@ fail without a success event. Confirmed calls append actor, number, URL, state a
 existing `pr-close` project log. Repeated calls read current state; no registry or automatic retry runs.
 L3 judges authorization and superseding delivery from the existing evidence; the command does not
 prove replacement equivalence or select cleanup targets. L2 hands that evidence to L3 and gains no
-PR-close authority. Task state, archives and merge holds retain their own lifecycle.
+PR-close authority. Task state, archives and merge holds retain their own lifecycle; a closed PR that
+is a task's current PR gains a `pr-closed` task event, which retires its held-review card.
 The [L3 persona](../personas/l3.md) directs capability-gap recommendations and authorized remediation;
 that guidance grants no permission expansion by itself.
 
@@ -1876,8 +1877,13 @@ anchor. `task_view` projects `question_group` with member records, `question` as
 open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
-delivery whose owner stopped in `blocked` or `reported` (#419). Any operator message or quick answer
-hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
+delivery whose owner stopped in `blocked` or `reported` (#419). A held PR that Altitude has observed
+closed without merging asks for no review (#575): an L2 `block` reads the held PR's state from the checkout origin's repository, and a
+`CLOSED` result, like a verified `alt pr close`, appends one `pr-closed` task event. The delivery,
+`prs` history and merge hold stay recorded. A later `delivery` or `pr-adopted` event for that PR, a
+`pr-reopened` event from an owner block that reads it open again, or a new PR asks again. An
+unreadable state leaves the recorded review shown and says so on stderr. Any operator message or
+quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
 restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
 `paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question

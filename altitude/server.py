@@ -2729,6 +2729,9 @@ def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:
               "outcome": "merged" if after == "MERGED" else "already-closed" if before == "CLOSED" else "closed"}
     with S.project_lock(project):
         S.project_log(project, "pr-close", actor=actor, **result)
+    if after == "CLOSED":
+        for task in S.list_tasks(project):
+            T.record_pr_state(project, task["slug"], number, after, by=actor)
     return result
 
 
