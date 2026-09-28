@@ -950,12 +950,13 @@ class UpdateRequests(NoticeCase):
             connection.close()
 
     def test_cross_site_pages_and_agents_cannot_start_an_update(self):
-        for headers in ({"Origin": "https://elsewhere.example"}, {"Sec-Fetch-Site": "cross-site"}, {"Content-Type": "text/plain"}):
+        # Every action refuses another site and a rebound host before routing; the update also needs JSON.
+        for headers, error in (({"Origin": "https://elsewhere.example"}, "Requests must come from Altitude's own page."),
+                               ({"Sec-Fetch-Site": "cross-site"}, "Requests must come from Altitude's own page."),
+                               ({"Host": "rebound.example"}, "Over plain HTTP, open Altitude at its address or localhost."),
+                               ({"Content-Type": "text/plain"}, "Update requests must come from Altitude's own page.")):
             with self.subTest(headers=headers):
-                self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403, headers=headers)["error"],
-                                 "Update requests must come from Altitude's own page.")
-        self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403, headers={"Host": "rebound.example"})["error"],
-                         "Over plain HTTP, update from Altitude's address or localhost.")
+                self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403, headers=headers)["error"], error)
         self.agent.return_value = True
         self.assertEqual(self.post("/api/update", {"version": "v0.2.0"}, status=403)["error"],
                          "Update requests from Altitude's own agents are refused.")
