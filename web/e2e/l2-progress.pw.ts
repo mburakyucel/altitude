@@ -198,7 +198,7 @@ test("Continue preserves an unsent draft; denied Stop and scoped Escape remain h
   expect((await task()).session_id).toBe(saved.session_id);
 });
 
-test("loading, compact activity, unconfirmed delivery and voice keep worker steering separate", async ({ page, request }, info) => {
+test("loading, compact activity, unconfirmed delivery and voice keep worker steering separate", { tag: "@chromium" }, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const initial = (await (await request.get("/fixture/status")).json()).tasks[0];
   const slug = initial.slug;
@@ -322,7 +322,7 @@ for (const index of [0, 1]) {
   });
 }
 
-test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", async ({ page, request }, info) => {
+test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", { tag: "@chromium" }, async ({ page, request }, info) => {
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);

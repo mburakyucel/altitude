@@ -201,7 +201,7 @@ for (const scope of ["project", "task"] as const) {
     await expect(page.locator(".bubble").filter({ hasText: caption })).toBeVisible();
   });
 
-  test(`${scope}: image selection survives voice cancel, transcription and send`, async ({ page }, info) => {
+  test(`${scope}: image selection survives voice cancel, transcription and send`, { tag: "@chromium" }, async ({ page }, info) => {
     await page.addInitScript(STALLED_PLAYBACK);
     const walk = walkthrough(page, info);
     await open(page, scope, info);
@@ -256,7 +256,7 @@ for (const scope of ["project", "task"] as const) {
     await expect(page.locator(".bubble").filter({ hasText: "Plain text still works." })).toBeVisible();
   });
 
-  test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, async ({ page, request }, info) => {
+  test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, { tag: "@chromium" }, async ({ page, request }, info) => {
     await page.addInitScript(STALLED_PLAYBACK);
     const walk = walkthrough(page, info);
     await open(page, scope, info);

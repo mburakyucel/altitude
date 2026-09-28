@@ -32,7 +32,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
   const design = route.includes("/design/");
   const file = route.endsWith("/file");
   test.use({ serviceScript: design ? "task-design-service.py" : file ? "file-references-service.py" : "" });
-  test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }, info) => {
+  test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     if (design) expect(task?.question?.design_url, "The fixture supplies a real saved proposal").toBeTruthy();
@@ -187,8 +187,11 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
         await owner.evaluate((node) => { node.scrollTop = 0; });
         await owner.evaluate((node) => { node.scrollTop = node.scrollHeight; });
         await expect.poll(() => owner.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
-        await owner.hover();
-        await page.mouse.wheel(0, 900);
+        // Mobile WebKit has no wheel input; its lane keeps the scroll-extent and fixed-shell checks.
+        if (browserName === "chromium") {
+          await owner.hover();
+          await page.mouse.wheel(0, 900);
+        }
       }
       await walkthrough(page, info).state("phone-shell-is-fixed-only-inner-containe-scrolled-to-end", {
         visible: [fixed.first(), owners.first()], hidden: [],

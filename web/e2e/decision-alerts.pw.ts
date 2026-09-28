@@ -34,7 +34,7 @@ const fakePushService = (page: Page) =>
     PushManager.prototype.getSubscription = () => Promise.resolve(subscription as unknown as PushSubscription);
   });
 
-test("the switch walks its states and alerts once for each new decision", async ({ page, context, request }, info) => {
+test("the switch walks its states and alerts once for each new decision", { tag: "@chromium" }, async ({ page, context, request }, info) => {
   test.setTimeout(90_000);
   const walk = walkthrough(page, info);
   const decision = async (project: string, title: string, question: string, escalated = true) => {
@@ -126,7 +126,7 @@ test("a browser without notifications keeps every decision usable", async ({ pag
   await expect(offer).toBeDisabled();
 });
 
-test("a device that cannot be woken keeps alerting while Altitude is open, and says so", async ({ page, context }, info) => {
+test("a device that cannot be woken keeps alerting while Altitude is open, and says so", { tag: "@chromium" }, async ({ page, context }, info) => {
   const walk = walkthrough(page, info);
   await recordAlerts(page);
   await context.grantPermissions(["notifications"]);

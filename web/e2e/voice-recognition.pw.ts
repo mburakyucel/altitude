@@ -388,7 +388,7 @@ test.describe("recognizer text as heard", () => {
     expect(posts).toHaveLength(1);
   });
 
-  test("browser recognition: repeated Cancel and restart; a cancelled recognizer's late end, words and refusal leave the new capture alone", async ({ page, request }, info) => {
+  test("browser recognition: repeated Cancel and restart; a cancelled recognizer's late end, words and refusal leave the new capture alone", { tag: "@chromium" }, async ({ page, request }, info) => {
     const project = await fixtureProject(request);
     const walk = walkthrough(page, info);
     const v = views(page, info);

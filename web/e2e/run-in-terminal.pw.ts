@@ -23,7 +23,7 @@ async function settled(page: Page) {
   await page.waitForTimeout(1_000);
 }
 
-test("a task's chat command opens its terminal typed, and runs only on Enter", async ({ page, request, context }, info) => {
+test("a task's chat command opens its terminal typed, and runs only on Enter", { tag: "@chromium" }, async ({ page, request, context }, info) => {
   test.setTimeout(90_000);
   const phone = info.project.name === "phone";
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -114,7 +114,7 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", a
   });
 });
 
-test("a project chat command opens the project terminal; other blocks copy only", async ({ page, request, context }, info) => {
+test("a project chat command opens the project terminal; other blocks copy only", { tag: "@chromium" }, async ({ page, request, context }, info) => {
   test.setTimeout(60_000);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await terminalAccess(request, true);

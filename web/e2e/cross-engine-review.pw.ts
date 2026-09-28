@@ -173,7 +173,7 @@ test("cross-engine review stays in task chat through request, result and failure
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
-test("review loading and uncertain receipt preserve listening and draft", async ({ page, request }, info) => {
+test("review loading and uncertain receipt preserve listening and draft", { tag: "@chromium" }, async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const task = await fixtureTask(request, project.name);
   await page.addInitScript("AudioContext.prototype.resume = () => new Promise(() => {});");

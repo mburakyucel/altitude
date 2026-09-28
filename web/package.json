@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "ui": "PLAYWRIGHT_BROWSERS_PATH=\"${PLAYWRIGHT_BROWSERS_PATH:-${ALTITUDE_HOME:-$HOME/.altitude}/browsers}\" playwright test",
+    "ui:ios": "PLAYWRIGHT_BROWSERS_PATH=\"${PLAYWRIGHT_BROWSERS_PATH:-${ALTITUDE_HOME:-$HOME/.altitude}/browsers}\" playwright test -c playwright.ios.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
