@@ -60,7 +60,7 @@ class TerminalCase(AltitudeCase):
             time.sleep(.02)
 
     def gone(self, term):
-        """Wait for `term` to end: it is dropped at once, so its page's stream is what reads how it ended."""
+        """Wait for `term` to end: it leaves the status at once, and only a stream naming it reads how it ended."""
         self.wait(lambda: term.ended and terminal._terminals.get((term.project, term.slug)) is not term)
         self.assertEqual(terminal.status(term.project, term.slug)["state"], "none")
         return term

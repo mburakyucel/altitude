@@ -193,13 +193,14 @@ def _read(term: Terminal) -> None:
         if failure and not term.reason:
             term.reason, term.error = "failed", failure[-500:]
         term.reason = term.reason or "exited"
-        term.ended = True
-        term.cond.notify_all()
+    _record(term, "closed", reason=term.reason, exit_code=code)  # recorded before anyone sees the end
     with _lock:
         if _terminals.get((term.project, term.slug)) is term:
             del _terminals[(term.project, term.slug)]
             _ended[(term.project, term.slug)] = term
-    _record(term, "closed", reason=term.reason, exit_code=code)
+    with term.cond:
+        term.ended = True
+        term.cond.notify_all()
 
 
 def _drain(term: Terminal, wait: float) -> bytes:
