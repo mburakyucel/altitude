@@ -735,7 +735,10 @@ def _jobs() -> Path:
 
 def _user_temp() -> str:
     """The user's private temporary directory, whatever TMPDIR says (launchd jobs get none)."""
-    return os.confstr(65537) or "/tmp"  # _CS_DARWIN_USER_TEMP_DIR
+    try:
+        return os.confstr(65537) or "/tmp"  # _CS_DARWIN_USER_TEMP_DIR
+    except (OSError, ValueError):  # not a Mac
+        return "/tmp"
 
 
 def _login_env() -> dict[str, str]:
@@ -769,13 +772,19 @@ def _fd_path(fd: int) -> str | None:
 
 def seatbelt_profile(writable: list[str]) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
-    write only under `writable`, the user's temporary and cache directories, /private/tmp and devices. Seatbelt
-    matches resolved paths. launchd refuses service control to every sandboxed process."""
+    write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
+    cache directories, /private/tmp and devices. Seatbelt matches resolved paths. launchd refuses service control to
+    every sandboxed process."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
-    roots = dict.fromkeys(os.path.realpath(root) for root in (*writable, user, "/private/tmp", "/private/var/tmp", "/dev"))
-    quoted = " ".join('(subpath "' + root.replace("\\", "\\\\").replace('"', '\\"') + '")' for root in roots)
+    rules = []
+    for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
+        if root.endswith("*"):
+            prefix = os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1])
+            rules.append('(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")')
+        else:
+            rules.append('(subpath "' + os.path.realpath(root).replace("\\", "\\\\").replace('"', '\\"') + '")')
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
-            f"(deny file-write*)(allow file-write* {quoted})")
+            f"(deny file-write*)(allow file-write* {' '.join(rules)})")
 
 
 def job_main(argv: list[str]) -> None:
@@ -836,6 +845,7 @@ def _launch(spec: dict) -> int:
         if not _await(job, "status", label):
             print(f"Job {label} ended without an exit status.", file=sys.stderr)
             return 1
+        _await_removal(label)  # as systemd-run --wait returns once the unit has gone
         return int((job / "status").read_text())
     finally:
         for source in relays:
@@ -858,6 +868,18 @@ def _await(job: Path, name: str, label: str) -> bool:
                 return False
         time.sleep(0.02)
     return True
+
+
+def _await_removal(label: str, timeout: float = 10) -> None:
+    """Wait while the supervisor removes its launchd job after recording the status."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if _print(label) is None:
+                return
+        except RuntimeError:
+            return
+        time.sleep(0.02)
 
 
 def _relay(relays: dict[int, int]) -> None:
