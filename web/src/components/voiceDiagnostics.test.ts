@@ -28,6 +28,7 @@ it("bounds collection by event count and time and starts a clean report", () => 
   startVoiceDiagnostics();
   for (let n = 0; n < 300; n++) traceVoice("waveform.sample", undefined, { time: n });
   expect(events()).toHaveLength(256);
+  expect(JSON.parse(voiceDiagnosticReport()).droppedEvents).toBe(45);
   vi.advanceTimersByTime(10 * 60 * 1000);
   expect(voiceDiagnosticsActive()).toBe(false);
   const saved = voiceDiagnosticReport();
@@ -35,6 +36,7 @@ it("bounds collection by event count and time and starts a clean report", () => 
   expect(voiceDiagnosticReport()).toBe(saved);
   startVoiceDiagnostics();
   expect(events()).toHaveLength(1);
+  expect(JSON.parse(voiceDiagnosticReport()).droppedEvents).toBe(0);
 });
 
 it("records recognizer cancellation and stale callbacks without speech, draft, track identifiers or error messages", () => {

@@ -13,11 +13,11 @@ import { walkthrough } from "./walkthrough";
 const FAKE_RECOGNIZER = `
   class FixtureRecognition {
     constructor() { this.continuous = false; this.interimResults = true; this.lang = ""; this.onresult = null; this.onerror = null; this.onend = null; this.started = 0; this.ended = false; window.fixtureRecognizer = this; (window.fixtureRecognizers ??= []).push(this); }
-    start() { this.started += 1; }
+    start() { this.started += 1; this.onstart && this.onstart(); this.onaudiostart && this.onaudiostart(); }
     stop() { setTimeout(() => this.end(), 0); }
     // window.fixtureHoldAbort: Cancel's abort ends only when the test calls end(), as a recognizer still shutting down.
     abort() { if (!window.fixtureHoldAbort) setTimeout(() => this.end(), 0); }
-    end() { if (this.ended) return; this.ended = true; this.onend && this.onend(); }
+    end() { if (this.ended) return; this.ended = true; this.onaudioend && this.onaudioend(); this.onend && this.onend(); }
     hear(finals, interim) {
       const results = finals.map((transcript) => ({ isFinal: true, 0: { transcript }, length: 1 }));
       if (interim) results.push({ isFinal: false, 0: { transcript: interim }, length: 1 });
@@ -66,6 +66,17 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   await page.addInitScript(() => {
     const Native = window.AudioContext;
     let graphs = 0;
+    let streams = 0;
+    const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await getUserMedia(constraints);
+      if (++streams === 3) for (const track of stream.getAudioTracks()) {
+        // Fictional muted-input state on a real synthetic stream, separate from graph suspension.
+        track.enabled = false;
+        Object.defineProperty(track, "muted", { get: () => true });
+      }
+      return stream;
+    };
     window.AudioContext = class extends Native {
       constructor() { super(); if (++graphs === 2) void this.suspend(); }
     };
@@ -92,7 +103,7 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   await page.goBack();
   await page.goBack();
   await expect(v.field).toHaveValue("Private typed fixture draft");
-  for (let cycle = 0; cycle < 2; cycle++) {
+  for (let cycle = 0; cycle < 3; cycle++) {
     await v.mic.click();
     await expect(v.listening).toBeVisible();
     await hear(page, [], "Private spoken fixture phrase");
@@ -118,10 +129,15 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   expect(data.build).toMatch(/^index-.*\.js$/);
   expect(data.events).toEqual(expect.arrayContaining([
     expect.objectContaining({ event: "waveform.sample", state: "running" }),
-    expect.objectContaining({ event: "waveform.sample", state: "suspended", signal: false }),
+    expect.objectContaining({ event: "waveform.sample", state: "suspended" }),
+    expect.objectContaining({ event: "microphone.sample", state: "live", muted: true }),
+    expect.objectContaining({ event: "recognizer.started" }),
+    expect.objectContaining({ event: "recognizer.audio-start" }),
+    expect.objectContaining({ event: "recognizer.audio-end" }),
     expect.objectContaining({ event: "recognizer.cancel" }),
     expect.objectContaining({ event: "microphone.released", state: "ended" }),
   ]));
+  expect(data.events.find((event: { state?: string }) => event.state === "suspended")).not.toHaveProperty("signal");
   await walk.state("diagnostics-04-copy-denied-manual-fallback", {
     action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
     visible: [report, page.getByText("Could not copy. Select and copy the report above.", { exact: true })], hidden: [],

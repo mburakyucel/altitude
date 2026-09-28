@@ -7,6 +7,7 @@ type Entry = Detail & { ms: number; event: string; source?: number };
 const LIMIT = 256;
 const DURATION_MS = 10 * 60 * 1000;
 let entries: Entry[] = [];
+let dropped = 0;
 let sources = new WeakMap<object, number>();
 let nextSource = 0;
 let started = 0;
@@ -26,7 +27,7 @@ export function traceVoice(event: string, source?: object, detail: Detail = {}) 
   let id = source ? sources.get(source) : undefined;
   if (source && id === undefined) { id = ++nextSource; sources.set(source, id); }
   entries.push({ ms: Math.round(performance.now() - started), event, ...(id === undefined ? {} : { source: id }), ...detail });
-  if (entries.length > LIMIT) entries.shift();
+  if (entries.length > LIMIT) { entries.shift(); dropped++; }
 }
 
 /** Record only standardized error codes; browser exception messages can contain private content. */
@@ -53,6 +54,7 @@ export function stopVoiceDiagnostics() {
 export function clearVoiceDiagnostics() {
   stopVoiceDiagnostics();
   entries = [];
+  dropped = 0;
   sources = new WeakMap();
   nextSource = 0;
 }
@@ -75,6 +77,6 @@ export function voiceDiagnosticReport(): string {
     build: Array.from(document.scripts).map((script) => {
       try { return new URL(script.src).pathname.split("/").at(-1); } catch { return undefined; }
     }).find((name) => /^index-[\w-]+\.js$/.test(name ?? "")) ?? "development",
-    events: entries,
+    droppedEvents: dropped, events: entries,
   }, null, 2);
 }

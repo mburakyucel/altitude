@@ -273,7 +273,8 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
       const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
       if (performance.now() - lastSample >= 1000 && context) {
         lastSample = performance.now();
-        traceVoice("waveform.sample", context, { state: context.state, time: context.currentTime, signal: level > 0.01 });
+        traceVoice("waveform.sample", context, { state: context.state, time: context.currentTime,
+          signal: context.state === "running" ? level > 0.01 : undefined });
         traceVoiceTracks("microphone.sample", stream);
       }
       levels.current = [...levels.current.slice(1), level];

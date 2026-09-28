@@ -402,3 +402,7 @@ addresses. Collection is opt-in, keeps the latest 256 events in page memory, sto
 and sends nothing automatically. View report stops collection; Clear report or reloading deletes it.
 If copying is denied, the selectable report provides a manual fallback. This evidence distinguishes
 silent input from a suspended waveform graph; it does not itself prove a native-browser cause.
+Read the graph state and whether its clock advances before interpreting signal presence; signal
+is omitted while the graph is not running. State samples occur once per second while the waveform
+draws, so brief transitions or a stopped drawing loop require further investigation. A dropped-event
+count identifies truncated reports; start a fresh report and reproduce briefly when it is nonzero.
