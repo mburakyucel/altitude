@@ -11,6 +11,7 @@
  * and `unpunctuated` says why.
  */
 import { loadPunctuator, type Punctuator } from "../punctuation";
+import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
 
 type RecognitionResult = { isFinal: boolean; 0: { transcript: string } };
 type RecognitionEvent = { results: ArrayLike<RecognitionResult> };
@@ -22,6 +23,9 @@ interface Recognizer {
   onresult: ((event: RecognitionEvent) => void) | null;
   onerror: ((event: RecognitionError) => void) | null;
   onend: (() => void) | null;
+  onstart?: (() => void) | null;
+  onaudiostart?: (() => void) | null;
+  onaudioend?: (() => void) | null;
   start(): void;
   stop(): void;
   abort(): void;
@@ -104,6 +108,9 @@ export class RecognitionCapture {
     if (!Constructor) throw new Error("This browser has no speech recognition.");
     this.stream = stream;
     this.recognizer = new Constructor();
+    this.recognizer.onstart = () => traceVoice("recognizer.started", this);
+    this.recognizer.onaudiostart = () => traceVoice("recognizer.audio-start", this);
+    this.recognizer.onaudioend = () => traceVoice("recognizer.audio-end", this);
     this.recognizer.continuous = true;
     this.recognizer.interimResults = true;
     if (lang) this.recognizer.lang = lang;
@@ -117,6 +124,7 @@ export class RecognitionCapture {
       () => { this.punctuationFailed = true; },
     );
     this.recognizer.onresult = (event) => {
+      traceVoice("recognizer.result", this);
       if (this.state === "inactive" || this.aborting || this.recognizerEnded) return;
       this.finals = [];
       this.interim = "";
@@ -132,11 +140,13 @@ export class RecognitionCapture {
       this.onupdate?.(this.text);
     };
     this.recognizer.onerror = (event) => {
+      traceVoice("recognizer.error", this, { error: voiceError(event.error) });
       if (this.state === "inactive" || this.aborting || this.recognizerEnded) return;
       if (event.error === "not-allowed" || event.error === "service-not-allowed") this.failure = "denied";
       else if (event.error !== "no-speech" && event.error !== "aborted") this.failure = "failed";
     };
     this.recognizer.onend = () => {
+      traceVoice("recognizer.ended", this);
       if (this.recognizerEnded) return;
       if (this.state === "recording" && !this.ending && !this.failure) {
         // Chrome ends a continuous session after silence; keep listening with the words so far.
@@ -150,6 +160,7 @@ export class RecognitionCapture {
           try {
             this.startedAt = Date.now();
             this.recognizer.start();
+            traceVoice("recognizer.restart", this);
             this.onupdate?.(this.text);
             return;
           } catch {
@@ -230,6 +241,7 @@ export class RecognitionCapture {
     this.recognizerEnded = true;
     // The recognizer has let go: the microphone is released and the next capture may start.
     this.stream.getTracks().forEach((track) => track.stop());
+    traceVoiceTracks("microphone.released", this.stream);
     this.ended();
     if (this.ending && !this.aborting) void this.finishPunctuation();
     else this.end();
@@ -248,6 +260,7 @@ export class RecognitionCapture {
   }
 
   start() {
+    traceVoice("recognizer.start", this);
     this.state = "recording";
     this.startedAt = Date.now();
     this.recognizer.start();
@@ -255,6 +268,7 @@ export class RecognitionCapture {
 
   /** Ask for the last phrase, then end once it is punctuated; a recognizer that never answers is abandoned at SETTLE_MS. */
   stop() {
+    traceVoice("recognizer.stop", this);
     if (this.state !== "recording" || this.ending) return;
     this.ending = true;
     this.endWithin();
@@ -270,6 +284,7 @@ export class RecognitionCapture {
    * later; the capture ends with its own end, and `idle()` holds the next capture until then.
    */
   cancel() {
+    traceVoice("recognizer.cancel", this);
     if (this.state !== "recording" || this.aborting) return;
     this.ending = this.aborting = true;
     // Stopped already, only waiting for punctuation: nothing is left to abort.
@@ -292,6 +307,7 @@ export class RecognitionCapture {
     });
     RecognitionCapture.ending = ending;
     this.settleTimer = setTimeout(() => {
+      traceVoice("recognizer.end-timeout", this);
       try { this.recognizer.abort(); } catch { /* already gone */ }
       this.recognizerDone();
     }, SETTLE_MS);
