@@ -332,7 +332,9 @@ claim without consuming the authorized request, restoring its message batch ahea
 The existing daemon scheduler retries the same request after release and rechecks guards, worktree
 provenance and lifecycle fences before launching. Actual setup/provenance errors retain their fault path.
 
-The permanent **Setup** control opens these results and actions. Programmatic repair installs or
+**Setup…** in the project menu opens these results and actions; the header shows a Setup status only
+while the current observation needs attention (running, unmet or unreadable), with no stored
+dismissal. Programmatic repair installs or
 refreshes owned guards and establishes the coordinator command connection. **Retry** requests that
 same bounded work. Configuration faults notify the existing L3; **Discuss with L3** opens its conversation
 without sending a message or launching another repair agent. L3 investigates with its existing
