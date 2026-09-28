@@ -6,12 +6,14 @@ import { terminalOpen, terminalSend, terminalStatus, useOverview, useTerminalSta
 import type { TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
 import { subscribeCommands, takeCommand } from "../data/terminalCommand";
+import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 
 /** The terminal's code did not arrive; any other error inside the terminal screen is not this. */
 class ScreenLoadFailure extends Error {}
 
-// xterm.js loads only when a terminal is on screen.
+// xterm.js loads only when a terminal is on screen. Its stylesheet travels with the app's: a lazy module with a
+// stylesheet is also preloaded, and WebKit keeps a failed preload across a reload (docs/ARCHITECTURE.md#web-delivery).
 const TerminalScreen = lazy(() => import("./TerminalScreen").catch((cause: unknown) => {
   throw new ScreenLoadFailure("The terminal's code did not load", { cause });
 }));

@@ -1388,7 +1388,10 @@ The terminal view then says whether the served page names another app script, me
 updated, or Altitude could not be reached (no answer within five seconds counts as unreachable), and offers
 Reload. Only a failed load of that code shows this; an error inside a loaded terminal reaches the route's error page. It does not reload by itself, and says
 that a reload clears unsent typed text, which lives in the page's memory. The browser keeps a failed
-module import for the page's lifetime, so only a reload recovers. Earlier builds are not retained.
+module import for the page's lifetime, so only a reload recovers. The terminal's code is one script
+that its import alone requests: its stylesheet (about 1 KB compressed) travels with the app's, because
+Vite also preloads a lazy module that has a stylesheet, and WebKit keeps a failed preload across a
+reload, which would leave Reload broken. Earlier builds are not retained.
 
 Every API reply is `no-store`. The app keeps what it has read in memory only (TanStack Query, per
 project and task), re-reads a view on each open and on every change event, and drops it all on
