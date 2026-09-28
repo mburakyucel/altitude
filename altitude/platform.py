@@ -856,10 +856,12 @@ def _launch(spec: dict) -> int:
             return 0
         if not _await(job, "started", label):
             print(f"Job {label} ended before its command started.", file=sys.stderr)
+            subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=60)
             return 1
         _relay(relays)
         if not _await(job, "status", label):
             print(f"Job {label} ended without an exit status.", file=sys.stderr)
+            subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=60)
             return 1
         _await_removal(label)  # as systemd-run --wait returns once the unit has gone
         return int((job / "status").read_text())
@@ -928,9 +930,12 @@ def _supervise(job: Path) -> int:
     terminal = spec.get("terminal", False)
     status = 1
     try:
-        streams = [os.open(spec["stdin"], os.O_RDONLY)]
+        # A terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere.
+        streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
         for fd in ("1", "2"):
-            if "file" in spec[fd]:
+            if terminal:
+                streams.append(os.dup(streams[0]))
+            elif "file" in spec[fd]:
                 streams.append(os.open(spec[fd]["file"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600))
             else:  # ENXIO: the launcher has gone, so nothing reads the output
                 streams.append(os.open(spec[fd]["fifo"], os.O_WRONLY | os.O_NONBLOCK))
