@@ -171,8 +171,10 @@ It prints an eight-character code and a `/pair?code=…` link. Type the code on 
 the link there. A code works once, for ten minutes; a new code cancels the previous one and five
 wrong codes cancel it. A paired device stays paired for 400 days of disuse and renews while you use
 it. A paired device can also make a code in **Settings → Devices** for another one. On an iPhone,
-Safari and the Home Screen app keep separate cookies, so pair each of them; the Home Screen app
-appears in the list as "Home Screen app on iPhone". Clearing a browser's site data unpairs it.
+a Home Screen app added after Safari is paired may start already paired: iOS can copy Safari's
+cookies into it, and both then share one entry in **Settings → Devices**, so removing that entry
+signs out both. A Home Screen app that shows **Pair this device** pairs on its own and appears as
+"Home Screen app on iPhone". Clearing a browser's site data unpairs it.
 
 ### Home-screen app and bookmarks
 
