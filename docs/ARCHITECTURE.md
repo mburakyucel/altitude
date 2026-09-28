@@ -264,9 +264,14 @@ certificates are validated without replacement. Browser/device trust stays expli
 until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
 constraints ("No limits" when it has none), with the URL and per-platform trust steps. `alt tls-share`
-(operator only) runs in the CLI process, not in altd: for ten minutes it answers plain HTTP on the
-configured non-loopback address and an ephemeral port with `ca.crt` and nothing else, and prints the
-name and fingerprint the device checks before installing it. Remote binding and trust remain explicit;
+(operator only) runs in the CLI process, not in altd. It takes the address, port and TLS directory
+from the running service's own process environment through the platform seam
+(`platform.service_settings`), since the service manager, not the operator's shell, configures the
+service; a disagreeing shell setting is refused. It fetches `/api/health` over HTTPS trusting only
+that directory's CA and requires the answer from the service's main process. Then for ten minutes it
+answers plain HTTP on the service's non-loopback address and an ephemeral port with those `ca.crt`
+bytes and nothing else, and prints the name and fingerprint the device checks before installing it.
+`alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 

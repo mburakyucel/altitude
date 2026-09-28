@@ -146,10 +146,19 @@ On the computer running Altitude, locally or over SSH, run:
 alt tls-share
 ```
 
-For ten minutes it offers the certificate at a plain-HTTP link on the configured address
-(`ALTITUDE_HOST`, which must not be loopback) and prints the steps below with the CA's real name and
-fingerprint. It serves nothing else; Ctrl-C closes it sooner. A firewall on that computer can block
-the link's port; then use another channel.
+It reads the address, port and certificate folder from the running Altitude service itself, so
+the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
+`ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
+anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
+service's address, and offers only a certificate the service proves it serves under. For ten
+minutes it offers the certificate at a plain-HTTP link on the service's address and prints the
+steps below with the CA's real name and fingerprint. It serves nothing else; Ctrl-C closes it
+sooner. A firewall on that computer can block the link's port; then use another channel.
+
+It stops with the reason when the service is not installed or not running, serves plain HTTP,
+listens only on loopback (`ALTITUDE_HOST` must be the private-network address the phone opens,
+which takes effect when the service restarts), does not answer, or answers without proving that
+certificate. It needs the Linux user service; the native macOS service is not available yet.
 
 On an iPhone or iPad:
 
@@ -207,8 +216,9 @@ run:
 alt pair
 ```
 
-It prints an eight-character code and a `/pair?code=…` link. Type the code on the device, or open
-the link there. A code works once, for ten minutes; a new code cancels the previous one and five
+It prints an eight-character code and a `/pair?code=…` link to the running service's address.
+Type the code on the device, or open the link there; when the service cannot be found it prints the
+code with the reason instead of a link. A code works once, for ten minutes; a new code cancels the previous one and five
 wrong codes cancel it. A paired device stays paired for 400 days of disuse and renews while you use
 it. A paired device can also make a code in **Settings → Devices** for another one. On an iPhone,
 a Home Screen app added after Safari is paired may start already paired: iOS can copy Safari's

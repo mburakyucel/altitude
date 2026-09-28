@@ -56,6 +56,31 @@ def status() -> dict[str, str]:
     return values
 
 
+#: The settings that say where the service listens and which HTTPS identity it serves.
+SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
+
+
+def service_settings() -> tuple[int, dict[str, str]]:
+    """The running service's main process and the settings it started with, whichever unit, drop-in or
+    environment file supplied them. A shell's own environment does not describe the service."""
+    values = status()
+    pid = int(values.get("MainPID") or 0)
+    if values["LoadState"] != "loaded":
+        raise RuntimeError("No Altitude service is installed for this user.")
+    if values.get("ActiveState") != "active" or not pid:
+        raise RuntimeError("The Altitude service is not running. Start it, then retry.")
+    try:
+        entries = (PROC / str(pid) / "environ").read_bytes().split(b"\0")
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read the Altitude service's settings: {exc}.") from exc
+    settings = {}
+    for entry in entries:
+        key, _, value = entry.decode(errors="replace").partition("=")
+        if key in SERVICE_SETTINGS:
+            settings[key] = value
+    return pid, settings
+
+
 def control(action: str) -> str:
     require_supported()
     if action == "reload":
