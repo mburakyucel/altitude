@@ -289,7 +289,7 @@ make ui-ios
 under ignored `web/ui-artifacts/ios/`; record the WebKit version from the report with any result.
 Tests tagged `@chromium` need a harness capability this WebKit build lacks and run only in the
 required projects: `MediaRecorder` (voice upload journeys), the `Notification` API, the
-`clipboard-write` permission, a CDP session (manifest parsing, touch-drag swipes), or a replaceable
+`clipboard-write` permission, a CDP session (manifest parsing, touch-drag swipes, transfer sizes and cache hits), or a replaceable
 `navigator.mediaDevices.getUserMedia`. Give a new walkthrough that tag only for one of these
 reasons. Where only one step needs Chromium, the step checks `browserName` and the rest of the test
 still runs: route smoke omits its wheel overscroll, which mobile WebKit does not support, and brand
@@ -299,6 +299,12 @@ Two observed engine differences matter when reading voice results: this WebKit b
 `SpeechRecognition` or `MediaRecorder`, and an `AudioContext` created after an awaited microphone
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
+
+A test that WebKit fails for a reason still under investigation is marked
+`test.fail(browserName === "webkit", reason)`, so the lane stays green while the failure persists
+and reports the test once WebKit passes it. After the terminal's code fails to load, WebKit's
+Reload of that page does not request the code again, while a new page loads it; whether iOS
+Safari behaves the same needs a physical iPhone.
 
 ## Coverage and limits
 

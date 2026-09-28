@@ -74,6 +74,8 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
         // Fictional muted-input state on a real synthetic stream, separate from graph suspension.
         track.enabled = false;
         Object.defineProperty(track, "muted", { get: () => true });
+        // WebKit may collect and recreate an unreferenced track's wrapper, dropping the property above.
+        (window as unknown as { mutedTracks?: MediaStreamTrack[] }).mutedTracks = [track];
       }
       return stream;
     };
