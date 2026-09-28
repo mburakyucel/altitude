@@ -333,7 +333,7 @@ def service() -> dict:
     shell = config.network(os.environ)
     differing = [key for key, name in (("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
                                        ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir"))
-                 if key in os.environ and shell[name] != found[name]]
+                 if key in config.SHELL_SETTINGS and shell[name] != found[name]]
     if differing:
         raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
                          "Unset them in this shell, then retry.")

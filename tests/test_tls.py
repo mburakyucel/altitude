@@ -431,12 +431,14 @@ class TestServiceDiscovery(ServiceCase):
         self.assertEqual((found["url"], found["tls_dir"]), ("http://[fd00::7]:8890", config.network({})["tls_dir"]))
 
     def test_a_shell_setting_must_agree_with_the_service(self):
-        # A release installation's CLI carries the saved settings; they match the service it installed.
-        with mock.patch.dict(os.environ, {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443",
-                                          "ALTITUDE_TLS_DIR": str(self.service_tls)}):
+        shell = {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443", "ALTITUDE_TLS_DIR": str(self.service_tls)}
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset(shell)):
             self.assertEqual(tls.service()["url"], "https://10.20.30.40:9443")
-        with mock.patch.dict(os.environ, {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "8890",
-                                          "ALTITUDE_TLS_DIR": str(self.root / "other")}), \
+        shell = {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "8890", "ALTITUDE_TLS_DIR": str(self.root / "other")}
+        # Settings a release installation filled in from its saved configuration are not the shell's own.
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset()):
+            self.assertEqual(tls.service()["url"], "https://10.20.30.40:9443")
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset(shell)), \
                 self.assertRaisesRegex(tls.TLSFailure, r"^This shell sets ALTITUDE_PORT, ALTITUDE_TLS_DIR differently "
                                                         r"from the running Altitude service\. Unset them"):
             tls.service()
@@ -626,12 +628,32 @@ class TestShareCommand(unittest.TestCase):
                            f"MainPID={process.pid}\\nFragmentPath=/fictional\\nUnitFileState=enabled\\n'\n")
         manager.chmod(0o755)
 
-    def alt(self, *args: str, **shell) -> subprocess.CompletedProcess:
+    def alt(self, *args: str, entry: Path = ALT, **shell) -> subprocess.CompletedProcess:
         environment = {key: value for key, value in os.environ.items() if key not in platform.SERVICE_SETTINGS}
         environment.update({"PATH": f"{self.bin}:{os.environ['PATH']}", "ALTITUDE_HOME": str(self.root / "runtime"),
                             "ALTITUDE_ACTOR": config.OPERATOR_ACTOR, **shell})
-        return subprocess.run([sys.executable, str(ALT), *args], input="", capture_output=True, text=True,
+        return subprocess.run([sys.executable, str(entry), *args], input="", capture_output=True, text=True,
                               env=environment, timeout=60)
+
+    def test_a_release_installation_follows_the_service_over_its_saved_settings(self):
+        import shutil
+        source = self.root / "application" / "versions" / "trial-1"
+        for directory in ("altitude", "bin"):
+            shutil.copytree(ALT.parent.parent / directory, source / directory,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (source / "release.json").write_text(json.dumps({"version": "trial-1", "commit": "a" * 40}))
+        saved = self.root / "install.json"
+        saved.write_text(json.dumps({"environment": {"ALTITUDE_HOST": "10.9.9.9", "ALTITUDE_PORT": "8890",
+                                                     "ALTITUDE_TLS_DIR": str(self.root / "saved-tls")}}))
+        folder = self.root / "service-tls"
+        # A service drop-in overrides the saved settings; the shell sets none of them.
+        self.service({"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443", "ALTITUDE_TLS_DIR": str(folder)})
+        entry = source / "bin" / "alt"
+        result = self.alt("tls-share", entry=entry, ALTITUDE_CONFIG=str(saved))
+        self.assertIn(f"alt tls-share: Cannot read the Altitude service's CA certificate {folder / 'ca.crt'}",
+                      result.stderr)
+        self.assertIn("This shell sets ALTITUDE_PORT differently",
+                      self.alt("tls-share", entry=entry, ALTITUDE_CONFIG=str(saved), ALTITUDE_PORT="8890").stderr)
 
     def test_an_ordinary_shell_selects_the_services_address_and_certificate_folder(self):
         folder = self.root / "service-tls"
