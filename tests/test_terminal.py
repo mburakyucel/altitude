@@ -114,7 +114,7 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertNotIn("secret", json.dumps(rows))
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.write(self.project, None, opened["id"], "ls\n")
-        self.assertEqual(caught.exception.status, 404)
+        self.assertEqual(caught.exception.status, 410)
 
     def test_task_terminal_runs_in_the_worktree_reports_the_busy_command_and_closes_it(self):
         self.turn(True)
@@ -212,12 +212,43 @@ class TestTerminalLifecycle(TerminalCase):
         self.patch(terminal, "launch", side_effect=failing)
         ident = self.open()
         term = self.current()
-        stream = terminal.stream(self.project, None, ident)
         self.gone(term)
+        stream = terminal.stream(self.project, None, ident)  # a page attaching after the end still reads it
+        self.assertIs(stream, term)
         self.assertTrue(terminal.read(stream, 0, 0)[3])
         self.assertEqual(terminal.view(term) | {"id": None, "folder": None, "offset": None},
                          {"state": "exited", "id": None, "enabled": True, "folder": None, "offset": None, "exit_code": 1,
                           "reason": "failed", "error": "Failed to connect to bus", "busy": None})
+
+    def test_close_right_after_opening_stops_the_job_once_it_exists(self):
+        # A review found a Close reaching the manager before the job registered let the shell start afterwards.
+        self.turn(True)
+        calls = []
+        stop = terminal.stop
+        self.patch(terminal, "stop", side_effect=lambda unit: calls.append(unit) if len(calls) < 1 else stop(unit))
+        self.open()
+        term = self.current()
+        terminal.close(self.project, None)
+        self.assertEqual(self.gone(term).reason, "closed")
+        self.assertGreaterEqual(len(calls), 1)
+
+    def test_a_job_that_does_not_stop_is_reported(self):
+        self.turn(True)
+        self.patch(terminal, "STOP_SECONDS", .3)
+        self.patch(terminal, "STOP_POLL_SECONDS", .1)
+        stop = terminal.stop
+        self.patch(terminal, "stop", side_effect=lambda unit: None)
+        self.open()
+        term = self.current()
+        with self.assertRaises(terminal.TerminalError) as caught:
+            terminal.close(self.project, None)
+        self.assertEqual(caught.exception.status, 500)
+        with self.assertRaises(terminal.TerminalError):
+            terminal.close_all()
+        self.assertFalse(term.ended)
+        self.patch(terminal, "stop", side_effect=stop)
+        terminal.close(self.project, None)
+        self.gone(term)
 
     def test_input_a_program_does_not_read_gives_up_and_close_still_works(self):
         # A review found a blocked write held the terminal, so Close and turning it off stalled behind it.
@@ -590,10 +621,10 @@ class TestTerminalHttp(TerminalCase):
         self.assertIn(b"20 90", output)
         end = json.loads(next(e for e in events if e.startswith("event: end")).split("data: ", 1)[1])
         self.assertEqual((end["state"], end["exit_code"], end["reason"]), ("exited", 5, "exited"))
-        # The ended terminal is gone: nothing more reaches it and its page learns no more than "none".
-        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=404)
+        # Nothing more reaches the ended terminal; only a page naming it still reads how it ended.
+        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=410)
         self.assertEqual(self.request("GET", f"{base}?task={self.slug}")["state"], "none")
-        self.request("GET", f"{base}/stream?task={self.slug}&id={opened['id']}&offset=0", status=404)
+        self.request("GET", f"{base}/stream?task={self.slug}&id=other&offset=0", status=404)
         self.request("POST", f"{base}/forget", at, status=404)
 
     def test_typing_reuses_one_connection_and_other_replies_close_theirs(self):

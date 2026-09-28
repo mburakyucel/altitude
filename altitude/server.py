@@ -1768,7 +1768,10 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, T.TransitionError) as exc:
                 return self._json({"error": str(exc)}, 400)
             if not body["enabled"]:
-                terminal.close_all()
+                try:
+                    terminal.close_all()
+                except terminal.TerminalError as exc:
+                    return self._json({"error": f"Terminal is off, but a terminal is still running. {exc}"}, exc.status)
             return self._json(view)
         if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close"):
             return self._json({"error": "unknown api"}, 404)
@@ -2960,7 +2963,10 @@ def main(host: str | None = None, port: int | None = None) -> None:
     finally:
         srv.server_close()
         stop_l3_verb_brokers()
-        terminal.close_all()
+        try:
+            terminal.close_all()
+        except terminal.TerminalError as exc:
+            log(f"terminal: {exc}")  # each terminal's job is PartOf the service, which stops it too
 
 
 def certificate_view() -> dict | None:

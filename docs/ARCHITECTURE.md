@@ -979,7 +979,9 @@ tick's `terminal.sweep()` closes a task's terminal once the task is done, reject
 project's once it is no longer managed. Opening returns the running terminal when one exists.
 The job's control group holds every process the shell starts, including those that leave its session
 (`setsid`, daemons). Closing stops the job: SIGHUP to every process in it, then SIGKILL to whatever remains
-after two seconds, including commands that ignore the hang-up. The terminal ends when its shell exits; the
+after two seconds, including commands that ignore the hang-up. Close repeats the stop until the shell's
+launcher has exited, which also covers a job the manager had not yet registered, and reports an error when
+the job is still running ten seconds later. The terminal ends when its shell exits; the
 manager then stops the job, which kills everything the terminal started that is still running. altd holds the
 shell's side of the pseudo-terminal open for the terminal's life, so the end comes from the job, never from a
 hang-up. A process started through the user manager or a scheduler from the terminal is outside the job and
@@ -991,8 +993,9 @@ Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 bytes, the next offset and whether older output was dropped, and `end` carries the final status
 (`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
 its `error`). A
-reconnecting page resumes from its own offset. An ended terminal is dropped at once: its open streams
-still read the end, and afterwards the status is `none`. `GET /api/terminal/<project>?task=` returns
+reconnecting page resumes from its own offset. An ended terminal leaves the status at once (`none`), accepts no
+more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a
+failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
 drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,

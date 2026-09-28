@@ -36,6 +36,9 @@ READ_BYTES = 65536
 INPUT_LIMIT = 65536
 #: Seconds the job gives its processes to end after the hang-up before killing them.
 CLOSE_GRACE_SECONDS = 2
+#: How long Close keeps stopping a job whose launcher has not ended, beyond the grace period, and how often.
+STOP_SECONDS = 10
+STOP_POLL_SECONDS = 0.5
 #: How long input waits for a program that has stopped reading it before the request is refused.
 WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
@@ -79,8 +82,9 @@ class Terminal:
 
 
 _terminals: dict[tuple[str, str | None], Terminal] = {}
-#: The last ended terminal of each task, kept only for its owner to read.
-_ended: dict[tuple[str, str], Terminal] = {}
+#: The last ended terminal of each task or project: a page naming it reads how it ended, and a task's owner reads
+#: its output, until a new terminal opens there.
+_ended: dict[tuple[str, str | None], Terminal] = {}
 _lock = threading.Lock()
 
 
@@ -160,8 +164,7 @@ def open_terminal(project: str, slug: str | None) -> dict:
             raise TerminalError(f"Could not start the shell: {exc}") from exc
         term = Terminal(project, slug, path, proc, master, child, ident)
         _terminals[(project, slug)] = term
-        if slug is not None:
-            _ended.pop((project, slug), None)
+        _ended.pop((project, slug), None)
     _record(term, "opened")
     threading.Thread(target=_read, args=(term,), name=f"terminal:{project}:{slug or ''}", daemon=True).start()
     return view(term)
@@ -195,8 +198,7 @@ def _read(term: Terminal) -> None:
     with _lock:
         if _terminals.get((term.project, term.slug)) is term:
             del _terminals[(term.project, term.slug)]
-            if term.slug is not None:
-                _ended[(term.project, term.slug)] = term
+            _ended[(term.project, term.slug)] = term
     _record(term, "closed", reason=term.reason, exit_code=code)
 
 
@@ -223,17 +225,14 @@ def _keep(term: Terminal, chunk: bytes) -> None:
         term.cond.notify_all()
 
 
-def _get(project: str, slug: str | None) -> Terminal:
-    term = _terminals.get((project, slug))
-    if term is None:
-        raise TerminalError("No terminal is open here.", 404)
-    return term
-
-
 def _named(project: str, slug: str | None, ident) -> Terminal:
     """The terminal a request names. A page still showing a terminal that was replaced must not type into,
-    resize, close or read its successor."""
-    term = _get(project, slug)
+    resize, close or read its successor. A page naming the terminal that last ended here reads how it ended,
+    even when it ended before the page attached (a shell that could not start)."""
+    ended = _ended.get((project, slug))
+    term = _terminals.get((project, slug)) or (ended if ended is not None and ended.id == ident else None)
+    if term is None:
+        raise TerminalError("No terminal is open here.", 404)
     if ident != term.id:
         raise TerminalError("This terminal was replaced.", 410)
     return term
@@ -314,15 +313,24 @@ def resize(project: str, slug: str | None, ident, cols, rows) -> None:
 
 
 def close(project: str, slug: str | None, reason: str = "closed", ident=None) -> None:
-    """End the terminal by stopping its job. The reader records the close once the shell has gone. `ident`, when
-    a page asks, names the terminal it shows."""
+    """End the terminal by stopping its job; the reader records the close once the shell has gone. Close returns once
+    the job's launcher has ended, and says so when it has not. `ident`, when a page asks, names the terminal it shows."""
     term = _terminals.get((project, slug))
     if term is None or term.ended or ident is not None and ident != term.id:
         return
     with term.cond:
         term.reason = reason
         term.closing = True
-    stop(term.unit)
+    deadline = time.monotonic() + CLOSE_GRACE_SECONDS + STOP_SECONDS
+    while True:  # a Close right after opening can reach the manager before the job exists: the next stop finds it
+        stop(term.unit)
+        try:
+            term.proc.wait(STOP_POLL_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                raise TerminalError("The terminal did not stop. Close it again, or stop it from a desktop terminal.",
+                                    500) from None
 
 
 def _finished(project: str, slug: str | None) -> str | None:
@@ -343,17 +351,27 @@ def sweep() -> None:
     """Close terminals whose task finished or whose project is no longer managed, and forget their output."""
     for (project, slug), term in list(_terminals.items()):
         if not term.ended and (reason := _finished(project, slug)):
-            close(project, slug, reason)
+            try:
+                close(project, slug, reason)
+            except TerminalError:
+                continue  # the next tick tries again
     with _lock:
         for key in [key for key in _ended if _finished(*key)]:
             del _ended[key]
 
 
 def close_all() -> None:
+    """Close every terminal; one that does not stop is reported after the others have been closed."""
     with _lock:
         keys = list(_terminals)
+    failed = None
     for project, slug in keys:
-        close(project, slug, "closed")
+        try:
+            close(project, slug, "closed")
+        except TerminalError as exc:
+            failed = failed or exc
+    if failed:
+        raise failed
 
 
 def stream(project: str, slug: str | None, ident) -> Terminal:
@@ -391,15 +409,17 @@ def plain(data: bytes) -> str:
 
 
 def owner_output(project: str, slug: str) -> dict:
-    """The task terminal's output as its owner reads it: the running terminal's, else the last ended one's."""
+    """The task terminal's output as its owner reads it: the running terminal's, else the last ended one's. Project
+    terminals have no owner reader: `slug` names a task."""
     term = _terminals.get((project, slug)) or _ended.get((project, slug))
     if term is None:
         return {"state": "none", "text": "", "missed": False}
     with term.cond:
         data, missed = bytes(term.buffer), term.start > 0
         state = "exited" if term.ended else "running"
-        exit_code, reason = term.exit_code, term.reason
-    return {"state": state, "text": plain(data), "missed": missed, "exit_code": exit_code, "reason": reason}
+        exit_code, reason, error = term.exit_code, term.reason, term.error
+    return {"state": state, "text": plain(data), "missed": missed, "exit_code": exit_code, "reason": reason,
+            "error": error}
 
 
 def owner_connection(peer: tuple, local: tuple, unit: str) -> bool:
