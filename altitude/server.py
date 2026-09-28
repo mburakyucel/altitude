@@ -101,15 +101,16 @@ def _gzipped(path: Path) -> bytes:
 
 
 def _accepts_gzip(header: str | None) -> bool:
+    """Whether Accept-Encoding allows gzip: its own quality, else the wildcard's (RFC 9110 §12.5.3)."""
+    qualities = {}
     for part in (header or "").split(","):
         name, _, params = part.partition(";")
-        if name.strip().lower() == "gzip":
-            quality = params.strip().lower().removeprefix("q=")
-            try:
-                return not quality or float(quality) > 0
-            except ValueError:
-                return False
-    return False
+        quality = params.strip().lower().removeprefix("q=")
+        try:
+            qualities[name.strip().lower()] = float(quality) if quality else 1.0
+        except ValueError:
+            qualities[name.strip().lower()] = 0.0
+    return qualities.get("gzip", qualities.get("*", 0.0)) > 0
 
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording

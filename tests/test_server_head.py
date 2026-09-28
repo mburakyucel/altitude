@@ -98,7 +98,8 @@ class TestHead(AltitudeCase):
     def test_hashed_script_travels_gzip_only_to_a_browser_that_accepts_it(self):
         script = b"console.log('altitude');"
         for accept, encoded in (("gzip, deflate, br, zstd", True), ("deflate, gzip;q=0.5", True),
-                                ("gzip;q=0", False), ("br", False), (None, False)):
+                                ("gzip;q=0", False), ("br", False), (None, False),
+                                ("*;q=1, identity;q=0", True), ("*, gzip;q=0", False)):
             with self.subTest(accept=accept):
                 header = f"Accept-Encoding: {accept}\r\n" if accept else ""
                 status, headers, body = self._request("GET", "/assets/app.01234567.js", header)

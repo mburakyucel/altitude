@@ -14,7 +14,7 @@ const DICTATION = /\/assets\/(model|vocab|ort-wasm-simd|worker)-[^/]+$/;
 const SCRIPT = /\/assets\/index-[^/]+\.js$/;
 const SLOW_4G = { offline: false, latency: 150, downloadThroughput: 1.6e6 / 8, uploadThroughput: 750e3 / 8 };
 
-type Load = { url: string; encoded: number; cached: boolean; encoding?: string };
+type Load = { url: string; encoded: number; finished: boolean; cached: boolean; encoding?: string };
 
 /** A page in its own context, closed before the disposable service stops, also after a failed step. */
 const firstOpen = test.extend<{ visit: Awaited<ReturnType<typeof opener>> }>({
@@ -35,13 +35,13 @@ async function opener(browser: Browser, info: TestInfo, service: string, device:
   let fromCache = new Set<string>();
   cdp.on("Network.requestServedFromCache", ({ requestId }) => fromCache.add(requestId));
   cdp.on("Network.responseReceived", ({ requestId, response }) => loads.set(requestId, {
-    url: new URL(response.url).pathname, encoded: 0,
+    url: new URL(response.url).pathname, encoded: 0, finished: false,
     cached: fromCache.has(requestId) || Boolean(response.fromDiskCache || response.fromMemoryCache),
     encoding: Object.entries(response.headers).find(([name]) => name.toLowerCase() === "content-encoding")?.[1] as string | undefined,
   }));
   cdp.on("Network.loadingFinished", ({ requestId, encodedDataLength }) => {
     const load = loads.get(requestId);
-    if (load) load.encoded = encodedDataLength;
+    if (load) Object.assign(load, { encoded: encodedDataLength, finished: true });
   });
   return {
     page,
@@ -53,7 +53,8 @@ async function opener(browser: Browser, info: TestInfo, service: string, device:
       await page.goto(path);
       await expect(page.getByRole("main")).toBeVisible();
       const shown = Date.now() - started;
-      await page.waitForLoadState("networkidle");
+      // The change stream stays open, so the page never goes network-idle: the script it ran has finished.
+      await expect.poll(() => [...loads.values()].find((load) => SCRIPT.test(load.url))?.finished).toBe(true);
       const all = [...loads.values()];
       await info.attach(`${name}-requests.json`, { contentType: "application/json", body: JSON.stringify({ shownMs: shown, loads: all }, null, 2) });
       return all;
