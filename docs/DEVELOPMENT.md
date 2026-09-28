@@ -272,12 +272,14 @@ fictional harness exception grants no authority for another project's verificati
 Each environment establishes one kind of evidence; running more of them does not widen what any one
 proves. A result names its environment, entry point, tested revision, OS and architecture, and is
 kept with the PR or task that ran it. An environment that was not run is a missing result, not a
-pass. Only `make check` gates delivery; the others are run for the changes they cover.
+pass. Only `make check` gates delivery; the others are run for the changes they cover. Each entry
+point is one command an owner runs against its candidate, leaving pass/fail evidence; a gap names what
+blocks automating it.
 
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
-| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `scripts/installation_vm.py` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built `install.sh` through its public command against a release server inside the guest, on Ubuntu 24.04 x86_64 | Login/logout, the download from GitHub's published release, cross-release migration, other distributions | In use through an owner's machine grant |
+| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, systemd unit parsing (the image has no `systemd-analyze`, so that regression skips), native macOS, container deployment | In use |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built `install.sh` through its public command against a release server inside the guest, on Ubuntu 24.04 x86_64 | Login/logout, the download from GitHub's published release, cross-release migration, other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
@@ -470,14 +472,13 @@ this Linux evidence is partial acceptance toward #226 and does not close it or e
 
 `scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
 without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
-once by the machine's administrator) and read/write access to `/dev/kvm`. Build the two directories
-from a clean committed source, then pass them with that commit:
+once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
+synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
+files), runs every phase
+and leaves the evidence in the results directory:
 
 ```sh
-python3 scripts/build_release.py --version v0.0.0-rc.1 --output /tmp/altitude-vm/baseline
-python3 scripts/build_release.py --version v0.0.0-rc.2 --output /tmp/altitude-vm/candidate
-python3 scripts/installation_vm.py /tmp/altitude-vm/baseline /tmp/altitude-vm/candidate \
-  /tmp/altitude-vm/results "$(git rev-parse HEAD)"
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 ```
 
 The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
@@ -490,8 +491,8 @@ is restricted to the SSH forward. Before the harness starts, the runner probes t
 listener it opens on the host's loopback. Through the online card both must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
 probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap` and
-`reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence plus `vm.json` (source
-commit, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+`reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
+commit, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
 while the restarted guest waits for its unplugged card. An Altitude worker cannot
