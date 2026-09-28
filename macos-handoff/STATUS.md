@@ -57,6 +57,14 @@ Probe harness fixes: `ps` output was truncated by the 2000-character capture (co
   10-12 process tree in 0.1 s, time limit, limit after owner exit, logged, detached, confinement and tamper,
   process facts, memory limit, service lifecycle).
 - `claude --version` starts under the profile; no provider request was made.
+- Altitude itself, run from the checkout in the foreground with a throwaway home, port and TLS directory and stub
+  engines: HTTPS with a generated CA (OpenSSL 3), the built UI, `alt doctor`, project registration, a terminal as a
+  launchd job (commands run, busy command reported, Close kills a detached `setsid` process, job gone), a terminal
+  request from inside an Altitude job refused as an agent's while the operator's is allowed, clean shutdown.
+- Found while building the UI on the Mac: `VoiceDiagnostics.tsx` and `voiceDiagnostics.ts` (#552) resolve to one
+  import on a case-insensitive disk, so the web app did not build on any Mac; renamed to `voiceTrace.ts`.
+- Apple's system Python 3.9 (LibreSSL) refuses to verify Altitude's name-constrained CA ("unsupported name
+  constraint type"); macOS `curl` and Python 3.12 with OpenSSL 3 accept it. Safari and Chrome on the Mac are untested.
 
 ## Open for the owner task
 
@@ -64,7 +72,7 @@ Probe harness fixes: `ps` output was truncated by the 2000-character capture (co
 - Run B on a spare account with fake engines; real-engine turns under confinement need the separate provider decision.
 - The Claude write allowlist is unverified against a real turn.
 - L3's `journalctl` shim is Linux-only; on macOS logs are in `~/Library/Logs/altitude/`.
-- `make check-web` was not run on the Mac.
+- `make check-web`: web unit tests (607) and the build pass on the Mac; the Playwright browser walkthroughs were not run.
 - Session incident: an early draft called `/bin/launchctl` by absolute path, bypassing the suite's offline shim, and a
   test briefly bootstrapped a real `dev.altitude.altd` from a temporary home; it was booted out at once.
   `launchctl` now resolves through PATH. launchd's per-user override database keeps a harmless `enabled` entry for
