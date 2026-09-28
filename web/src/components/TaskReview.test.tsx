@@ -98,6 +98,16 @@ describe("Review in task chat", () => {
     expect(fetcher.mock.calls.some(([url]) => String(url).includes("/api/task/review"))).toBe(false);
   });
 
+  it.each([390, 1440])("keeps an assessment with open findings visibly unresolved at %i", async (width) => {
+    setViewport(width);
+    const open = ReviewSchema.parse({ ...completed, unresolved: ["one"], dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs a systemd experiment first." }, completed.dispositions[1]] });
+    const { user } = setup(withReview(open));
+    expect(await screen.findByText("Engine B changes review complete · 2 findings · 1 unresolved")).toBeVisible();
+    await user.click(screen.getByText("Review details"));
+    expect(screen.getByText("L2 — unresolved:")).toBeVisible();
+    expect(screen.getByText("Needs a systemd experiment first.")).toBeVisible();
+  });
+
   it("shows allowance before requesting, suppresses repeats while saving, and reflects authoritative L2 progress", async () => {
     let accept!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { accept = resolve; });

@@ -1410,8 +1410,12 @@ The receipt retains selected message IDs, source/candidate identities and captur
 proposal evidence also binds the original proposal message and its exact captured text.
 
 Assessment JSON contains `reason` and `dispositions`, one entry per finding:
-`{"finding_id":"F1","disposition":"fixed","reason":"Evidence for the fix"}`; `dismissed` also
-requires evidence. With no findings, use an empty array and an assessment reason. Commit fixes before
+`{"finding_id":"F1","disposition":"fixed","reason":"Evidence for the fix"}`; `dismissed` and `open`
+also require evidence. `open` records a finding the owner honestly leaves unresolved: the assessment is
+saved and shown with its unresolved findings, but it does not clear the review. Landing refuses to
+merge while any current assessment has an open finding; a later `assess` by the current owner with
+evidence-backed `fixed`/`dismissed` outcomes replaces it and then faces the ordinary freshness checks.
+With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; post the outcome explanation before assessment so it is included in the final context.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.
 This updates L2's assessment without another reviewer invocation.

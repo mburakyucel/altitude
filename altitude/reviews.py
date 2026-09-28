@@ -175,6 +175,11 @@ def _current_reviews(task):
     return [r for r in task.get("reviews", []) if r["id"] not in replaced and not r.get("merged_head")]
 
 
+def _unresolved(review):
+    """An assessment can honestly record open findings; only fixed/dismissed ones clear the review."""
+    return [d["finding_id"] for d in review.get("dispositions", []) if d["disposition"] == "open"]
+
+
 def _request_wait(task, previous=None):
     for row in _current_reviews(task):
         if row["id"] == previous or row["state"] == "withdrawn":
@@ -194,7 +199,7 @@ def _project_review(review, task, identity):
     mutable = task.get("state") in ("running", "blocked", "reported") and review in _current_reviews(task)
     latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == review.get("subject", "changes")), None)
     rerunnable = task.get("state") in ("running", "blocked", "reported") and review == latest
-    row.update(coverage=coverage, can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
+    row.update(coverage=coverage, unresolved=_unresolved(review), can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
                can_retry=mutable and review["state"] in ("failed", "cancelled"),
                can_review_latest=rerunnable and review["state"] == "completed" and bool(assessed) and coverage != "current",
@@ -545,9 +550,9 @@ def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, r
         findings = {f["id"] for f in review["result"]["findings"]}
         if (not isinstance(dispositions, list) or any(not isinstance(d, dict) for d in dispositions)
                 or {d.get("finding_id") for d in dispositions} != findings or len(dispositions) != len(findings)
-                or any(d.get("disposition") not in ("fixed", "dismissed") or not isinstance(d.get("reason"), str)
+                or any(d.get("disposition") not in ("fixed", "dismissed", "open") or not isinstance(d.get("reason"), str)
                        or not d["reason"].strip() for d in dispositions)):
-            raise T.TransitionError("Give each finding one fixed/dismissed disposition with evidence.")
+            raise T.TransitionError("Give each finding one fixed, dismissed or open disposition with evidence.")
         if review.get("subject", "changes") == "proposal":
             proposal_id = proposal_id or review["snapshot"]["proposal_id"]
         elif proposal_id:
@@ -603,6 +608,10 @@ def require_merge(project, slug, pair):
         if review["state"] != "completed" or not review.get("reconciled"):
             raise T.TransitionError(f"Adversarial review {review['id']} ({review.get('subject', 'changes')}) "
                                     "must finish and receive the owner's dispositions before merging.")
+        if unresolved := _unresolved(review):
+            raise T.TransitionError(f"Adversarial review {review['id']} ({review.get('subject', 'changes')}) "
+                                    f"has unresolved findings: {', '.join(unresolved)}. Fix or dismiss each with evidence "
+                                    "and reassess before merging.")
     stale = []
     for review in current:
         identity, _ = _identity(project, task, proposal_id=review["reconciled"].get("proposal_id"))
