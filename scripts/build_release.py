@@ -19,14 +19,15 @@ sys.path.insert(0, str(REPO))
 from altitude.installation import VERSION, metadata
 
 
-def build(version: str, output: Path) -> Path:
+def build(version: str, output: Path, source: str = "HEAD") -> Path:
     if not VERSION.fullmatch(version):
         raise ValueError("Use an immutable v0.MINOR.PATCH or v0.MINOR.PATCH-rc.N version")
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=REPO, text=True).strip()
-    if git("status", "--porcelain", "--untracked-files=no"):
+    # A named commit is exported as committed; only the checked-out HEAD can differ from what is built.
+    if source == "HEAD" and git("status", "--porcelain", "--untracked-files=no"):
         raise ValueError("Build a committed, clean release source; review and commit changes first")
-    commit = git("rev-parse", "HEAD")
+    commit = git("rev-parse", "--verify", f"{source}^{{commit}}")
     origin = git("remote", "get-url", "origin")
     from altitude.server import repository_url
     repository = repository_url(origin)
@@ -94,8 +95,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--source", default="HEAD", help="committed revision to build (default: the clean checkout)")
     parser.add_argument("--notes", type=Path, help="also write this version's CHANGELOG section here; required to publish")
     arguments = parser.parse_args()
     if arguments.notes:
         arguments.notes.write_text(notes(arguments.version, (REPO / "CHANGELOG.md").read_text()))
-    print(build(arguments.version, arguments.output))
+    print(build(arguments.version, arguments.output, arguments.source))

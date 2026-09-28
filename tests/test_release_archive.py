@@ -123,3 +123,11 @@ class ReleaseArchive(AltitudeCase):
         with mock.patch.object(build_release, "REPO", self.repo):
             with self.assertRaisesRegex(ValueError, "committed, clean"):
                 build_release.build("v0.1.1", self.tmp / "rejected")
+        # A named commit builds exactly that commit, whatever the checkout holds.
+        with mock.patch.object(build_release, "REPO", self.repo), mock.patch.object(subprocess, "run", side_effect=run):
+            named = build_release.build("v0.1.1", self.tmp / "named", expected)
+        named_package = self.tmp / "named-package"
+        named_package.mkdir()
+        release = installation.extract(named, (self.tmp / "named" / (named.name + ".sha256")).read_text().strip(), named_package)
+        self.assertEqual(release["commit"], expected)
+        self.assertNotEqual((named_package / "altitude/config.py").read_text(), "uncommitted change")

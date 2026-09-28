@@ -136,8 +136,7 @@ class TestInstallationVm(AltitudeCase):
     def test_missing_prerequisites_refuse_with_install_guidance_before_any_download(self):
         empty = self.tmp / "empty-path"
         empty.mkdir()
-        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"),
-                                 str(self.tmp), str(self.tmp), str(self.tmp / "results"), "a" * 40],
+        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"), str(self.tmp / "results")],
                                 capture_output=True, text=True, timeout=30,
                                 env={**os.environ, "PATH": str(empty)})
         self.assertEqual(result.returncode, 2)
