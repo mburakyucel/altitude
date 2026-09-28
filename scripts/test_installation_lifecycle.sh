@@ -50,7 +50,8 @@ cleanup() {
     set +e
     restore_exit=0
     if $redirected; then
-        cp -- "$scratch/hosts" /etc/hosts && sysctl -qw "net.ipv4.ip_unprivileged_port_start=$port_floor" || restore_exit=1
+        cp -- "$scratch/hosts" /etc/hosts || restore_exit=1
+        sysctl -qw "net.ipv4.ip_unprivileged_port_start=$port_floor" || restore_exit=1
     fi
     copy_exit=0
     linger_exit=0
