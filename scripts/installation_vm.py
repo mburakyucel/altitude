@@ -8,6 +8,8 @@ signature-checked Ubuntu cloud image is cached; each run boots a copy-on-write o
 deleted afterwards. The guest has two network cards: one is online only while cloud-init installs
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
 forward, so during the tests the guest reaches neither the internet nor this host's services.
+After the lifecycle passes, a second disposable account installs the baseline, the VM restarts and
+the harness checks that the service came back on its own before removing it.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations
@@ -169,6 +171,22 @@ class Machine:
             time.sleep(5)
         raise SystemExit("The VM was not ready in time; see console.log")
 
+    def boot_id(self) -> str:
+        return self.ssh("cat /proc/sys/kernel/random/boot_id", timeout=30).stdout.strip()
+
+    def reboot(self, deadline: float) -> str:
+        before = self.boot_id()
+        self.ssh("sudo systemctl reboot", check=False)
+        while time.monotonic() < deadline:
+            time.sleep(5)
+            try:
+                current = self.ssh("cat /proc/sys/kernel/random/boot_id", timeout=30, check=False)
+            except subprocess.TimeoutExpired:
+                continue
+            if current.returncode == 0 and current.stdout.strip() != before:
+                return current.stdout.strip()
+        raise SystemExit("The VM did not come back from its restart; see console.log")
+
     def unplug_online_card(self) -> None:
         with socket.socket(socket.AF_UNIX) as sock:
             sock.settimeout(10)
@@ -204,6 +222,29 @@ class Machine:
             self.log.close()
 
 
+def reachable(machine: Machine) -> dict:
+    """Which of the internet and this host the guest reaches, each probe proven able to run."""
+    with socket.socket() as listener:
+        # A listener on this host's loopback: the host probes need a service that is there to reach.
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        probes = {"internet": "curl -sS --max-time 10 -o /dev/null https://cloud-images.ubuntu.com/",
+                  "host-through-online-card": f"timeout 10 bash -c '</dev/tcp/10.0.3.2/{port}'",
+                  "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.2.2/{port}'"}
+        return {name: reached(machine.ssh(command, check=False).returncode) for name, command in probes.items()}
+
+
+def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
+    # Output is written as it runs, so a stopped run still shows how far it got.
+    with log.open("w") as stream:
+        return subprocess.run(
+            ["ssh", *machine.options("-p"), "ubuntu@127.0.0.1",
+             f"sudo bash input/test_installation_lifecycle.sh --disposable-vm input/baseline input/candidate "
+             f"results {commit} {phase}; status=$?; sudo chown -R ubuntu results; exit $status"],
+            stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
+
+
 def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path) -> int:
     results.mkdir(parents=True, exist_ok=True)
     record = {"source_commit": commit, "host": {"kernel": platform.release(), "machine": platform.machine()},
@@ -221,45 +262,46 @@ def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path
         machine.wait_ready(time.monotonic() + 900)
         note("guest provisioned; checking its network, then unplugging its online card")
         record["guest"] = machine.ssh(". /etc/os-release; echo $PRETTY_NAME $(uname -r)").stdout.strip()
-        with socket.socket() as listener:
-            # A listener on this host's loopback: the host probes need a service that is there to reach.
-            listener.bind(("127.0.0.1", 0))
-            listener.listen()
-            port = listener.getsockname()[1]
-            probes = {"internet": "curl -sS --max-time 10 -o /dev/null https://cloud-images.ubuntu.com/",
-                      "host-through-online-card": f"timeout 10 bash -c '</dev/tcp/10.0.3.2/{port}'",
-                      "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.2.2/{port}'"}
-            probe = lambda: {name: reached(machine.ssh(command, check=False).returncode)
-                             for name, command in probes.items()}
-            # The online card reaches both the internet and this host, which proves the probes work; the
-            # restricted card reaches neither. Afterwards nothing is reachable.
-            record["reachable"] = {"online": probe()}
-            if record["reachable"]["online"] != {"internet": True, "host-through-online-card": True,
-                                                 "host-through-offline-card": False}:
-                raise SystemExit(f"Unexpected guest network before isolation: {record['reachable']}")
-            machine.unplug_online_card()
-            record["reachable"]["isolated"] = probe()
+        # The online card reaches both the internet and this host, which proves the probes work; the
+        # restricted card reaches neither. Afterwards nothing is reachable.
+        record["reachable"] = {"online": reachable(machine)}
+        if record["reachable"]["online"] != {"internet": True, "host-through-online-card": True,
+                                             "host-through-offline-card": False}:
+            raise SystemExit(f"Unexpected guest network before isolation: {record['reachable']}")
+        machine.unplug_online_card()
+        record["reachable"]["isolated"] = reachable(machine)
         if any(record["reachable"]["isolated"].values()):
             raise SystemExit(f"The guest is not isolated: {record['reachable']}")
         note("guest isolated; copying the harness and archives")
         machine.ssh("mkdir -p input")
-        harness = Path(__file__).resolve().parent
-        machine.copy(*(str(harness / name) for name in HARNESS), "ubuntu@127.0.0.1:input/")
+        scripts = Path(__file__).resolve().parent
+        machine.copy(*(str(scripts / name) for name in HARNESS), "ubuntu@127.0.0.1:input/")
         machine.copy(str(baseline), "ubuntu@127.0.0.1:input/baseline")
         machine.copy(str(candidate), "ubuntu@127.0.0.1:input/candidate")
-        note("running the lifecycle harness")
-        # The harness creates, uses and deletes its own disposable account inside the guest. Its output is
-        # written as it runs, so a stopped run still shows how far it got.
-        with (results / "harness.log").open("w") as log:
-            lifecycle = subprocess.run(
-                ["ssh", *machine.options("-p"), "ubuntu@127.0.0.1",
-                 f"sudo bash input/test_installation_lifecycle.sh --disposable-vm input/baseline input/candidate "
-                 f"results {commit}; status=$?; sudo chown -R ubuntu results; exit $status"],
-                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200)
-        note(f"harness exited with {lifecycle.returncode}; copying its results")
-        machine.copy("ubuntu@127.0.0.1:results/.", str(results))
-        record["harness_exit"] = lifecycle.returncode
-        record["passed"] = lifecycle.returncode == 0
+        # Each phase creates, uses and deletes its own disposable account inside the guest.
+        exits = record["harness_exit"] = {}
+        try:
+            for phase in ("all", "reboot-install"):
+                note(f"running the {phase} phase")
+                exits[phase] = harness(machine, commit, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
+                if exits[phase]:
+                    break
+            else:
+                note("restarting the VM")
+                record["boot_id_after_restart"] = machine.reboot(time.monotonic() + 300)
+                # The online card stays unplugged across the guest's restart.
+                record["reachable"]["after_restart"] = reachable(machine)
+                if any(record["reachable"]["after_restart"].values()):
+                    raise SystemExit(f"The guest is not isolated after its restart: {record['reachable']}")
+                note("running the reboot-verify phase")
+                exits["reboot-verify"] = harness(machine, commit, "reboot-verify", results / "harness-reboot-verify.log")
+        finally:
+            note(f"harness exits {exits}; copying its results")
+            try:
+                machine.copy("ubuntu@127.0.0.1:results/.", str(results))
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                record["uncopied_results"] = str(error)
+        record["passed"] = list(exits.values()) == [0, 0, 0] and "uncopied_results" not in record
     finally:
         try:
             if machine:

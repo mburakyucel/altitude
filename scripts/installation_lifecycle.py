@@ -3,6 +3,8 @@
 
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
+The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
+its check after the VM restarts.
 """
 from __future__ import annotations
 
@@ -49,9 +51,14 @@ def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
     return output, release
 
 
+def boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
 class Lifecycle:
     def __init__(self, baseline: Path, candidate: Path, results: Path, expected_commit: str):
         self.baseline, self.candidate, self.results = baseline, candidate, results
+        self.state = results / "reboot-state.json"  # what reboot-verify needs from reboot-install
         self.expected_commit = expected_commit
         self.home = Path.home()
         self.prefix = self.home / ".local/share/altitude"
@@ -61,7 +68,7 @@ class Lifecycle:
         self.env = dict(os.environ)
         self.result = {"passed": False, "steps": [], "artifacts": [], "limits": [
             "Same-source version transition; no cross-release storage migration",
-            "No public download/bootstrap, minimal OS, reboot/login/logout or device trust acceptance",
+            "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
             "No live provider, native worker confinement or macOS acceptance",
         ]}
         self.sequence = 0
@@ -140,9 +147,13 @@ class Lifecycle:
         assert report["engines"] and all(item["available"] is None for item in report["engines"])
         assert report["engine_access"].startswith("unknown")
 
-    def exercise(self):
+    def disposable(self):
         assert os.getuid() != 0 and pwd.getpwuid(os.getuid()).pw_name.startswith("alt-install-")
         assert self.home.parent.name.startswith("altitude-installation.")
+
+    def prepare(self):
+        """Verify both archives and configure the fixture engines on a fresh disposable account."""
+        self.disposable()
         assert not self.prefix.exists() and not self.settings.exists(), "Needs a fresh disposable account"
         write_json(self.results / "environment.json", {
             "os_release": Path("/etc/os-release").read_text(), "kernel": platform.release(),
@@ -174,6 +185,10 @@ class Lifecycle:
         self.env.update({key: str(fixture) for key in keys})
         self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py",
                  "--archive", old, "--sha256", old_sha)
+        return old, old_sha, package, before, new, new_sha, new_package, after
+
+    def exercise(self):
+        old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
         # Keep projects unregistered: no task or coordinator may start in this test.
@@ -201,6 +216,10 @@ class Lifecycle:
         self.doctor("recovered", after)
         assert (self.prefix / "versions" / broken["version"]).is_dir()
         assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
+        self.uninstall(retained)
+
+    def uninstall(self, retained: dict):
+        port = int(self.env["ALTITUDE_PORT"])
         removed = json.loads(self.run("uninstall", self.alt, "uninstall"))
         assert removed["uninstalled"] and not removed["application_retained_for_project_hooks"]
         assert not self.alt.exists() and not (self.prefix / "current").exists()
@@ -215,15 +234,41 @@ class Lifecycle:
         self.result["retained_files"] = [str(path.relative_to(self.home)) for path in retained]
         self.result["passed"] = True
 
-    def execute(self):
+    def reboot_install(self):
+        """Install and leave the service running for the machine to restart."""
+        before = self.prepare()[3]
+        initial = self.healthy("installed", before)
+        self.doctor("installed", before)
+        write_json(self.state, {"env": self.env, "release": before, "pid": initial["pid"], "boot_id": boot_id()})
+        self.result["passed"] = True
+
+    def reboot_verify(self):
+        """After the restart, the user manager started the same installation without anyone logging in."""
+        self.disposable()
+        state = json.loads(self.state.read_text())
+        self.env.update(state["env"])
+        assert boot_id() != state["boot_id"], "The machine did not restart"
+        deadline = time.monotonic() + 90  # the user manager starts the service during boot, unattended
+        while time.monotonic() < deadline:
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", int(self.env["ALTITUDE_PORT"]))) == 0:
+                    break
+            time.sleep(1)
+        started = self.healthy("rebooted", state["release"])
+        assert started["pid"] != state["pid"]
+        self.doctor("rebooted", state["release"])
+        self.uninstall({})
+        self.result["passed"] = True
+
+    def execute(self, phase: str = "all"):
         try:
-            self.exercise()
+            {"all": self.exercise, "reboot-install": self.reboot_install, "reboot-verify": self.reboot_verify}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            write_json(self.results / "result.json", self.result)
+            write_json(self.results / ("result.json" if phase == "all" else f"{phase}-result.json"), self.result)
 
 
 if __name__ == "__main__":
-    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute()
+    Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute(*sys.argv[5:6])

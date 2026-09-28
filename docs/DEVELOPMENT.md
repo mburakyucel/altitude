@@ -271,7 +271,7 @@ pass. Only `make check` gates delivery; the others are run for the changes they 
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `scripts/installation_vm.py` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery and uninstall on Ubuntu 24.04 x86_64 | Reboot, the published `install.sh` download, cross-release migration, other distributions | In use through an owner's machine grant |
+| Disposable Linux VM | `scripts/installation_vm.py` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart and uninstall on Ubuntu 24.04 x86_64 | Login/logout, the published `install.sh` download, cross-release migration, other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
@@ -445,8 +445,11 @@ sudo bash scripts/test_installation_lifecycle.sh --disposable-vm \
 ```
 
 This command creates and removes a local account and its service; use only a disposable VM, never
-an operator machine or deployment. Retain its results before discarding the VM. The hosted image
-does not prove a minimal OS install, reboot or login/logout behavior, browser/device CA trust,
+an operator machine or deployment. A trailing `reboot-install` phase installs the baseline in a new
+account and leaves it running; after the VM restarts, `reboot-verify` checks that the user manager
+started the same installation without a login, then uninstalls it and removes the account. Each
+phase writes to its own subdirectory of the results. Retain its results before discarding the VM. The hosted workflow
+runs no restart and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
 public-download bootstrap, native confinement or provider compatibility. There is no browser test
 in this harness. Native macOS installation remains with `macos-support-native-runtime-behind-the`;
 this Linux evidence is partial acceptance toward #226 and does not close it or establish public readiness.
@@ -474,10 +477,12 @@ online only while cloud-init installs Git, GitHub CLI and OpenSSL, and is then u
 is restricted to the SSH forward. Before the harness starts, the runner probes the internet and a
 listener it opens on the host's loopback. Through the online card both must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
-probe that cannot run, stops the run. Results hold the harness evidence plus `vm.json` (source
-commit, image and signature, QEMU version, guest OS and kernel, probe outcomes, harness exit) and the VM console
-and QEMU logs; `harness.log` is written as the harness runs. The runner prints each stage with its
-elapsed time; after the first image download, a run takes about a minute. An Altitude worker cannot
+probe that cannot run, stops the run. After the lifecycle passes, the runner runs `reboot-install`,
+restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence plus `vm.json` (source
+commit, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+and QEMU logs; `harness.log` and the `harness-reboot-*.log` files are written as the phases run. The runner prints each stage with its
+elapsed time; after the first image download, a run takes about three and a half minutes, two of them
+while the restarted guest waits for its unplugged card. An Altitude worker cannot
 launch VMs from its sandbox; an owner runs this through a
 recorded [machine grant](CLI.md#machine-access) whose purpose names these VMs. The runner never touches the
 host's Altitude service, trust stores or network configuration.
