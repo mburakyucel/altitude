@@ -260,7 +260,10 @@ def identity(certificate: Path) -> dict:
     text = _openssl("x509", "-noout", "-subject", "-nameopt", "RFC2253", "-enddate", "-fingerprint", "-sha256",
                     "-text", "-in", certificate).stdout
     subject = re.search(r"^subject=\s*(.*)$", text, re.M).group(1).strip()
-    common = re.search(r"(?:^|,)CN=((?:[^,\\]|\\.)*)", subject)
+    # Attributes end at an unescaped comma or, within a multi-valued name, an unescaped plus.
+    common = next((value for key, _, value in (part.partition("=") for part in
+                                               re.findall(r"(?:[^,+\\]|\\.)+", subject))
+                   if key.strip().upper() == "CN"), None)
     scope, block, indent = None, None, 0
     for line in text.splitlines():
         stripped = line.strip()
@@ -273,7 +276,7 @@ def identity(certificate: Path) -> dict:
                 block = stripped[:-1].lower()
             elif block in scope:
                 scope[block].append(_subtree(stripped))
-    return {"name": _rfc2253(common.group(1) if common else subject),
+    return {"name": _rfc2253(subject if common is None else common),
             "expires": re.search(r"^notAfter=(.*)$", text, re.M).group(1).strip(),
             "sha256": re.search(r"Fingerprint=([0-9A-F:]+)", text).group(1), "scope": scope}
 

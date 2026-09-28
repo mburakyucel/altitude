@@ -218,6 +218,12 @@ class TestTLS(unittest.TestCase):
         authority = external("/CN=Addresses only", "-addext", "nameConstraints=critical,permitted;IP:10.9.0.0/255.255.0.0")
         self.assertEqual(tls.describe_scope(authority["scope"]), "Any website name; addresses in 10.9.0.0/16.")
         self.assertEqual(tls.describe_scope({"permitted": ["email:studio.example"], "excluded": []}), tls.NO_LIMITS)
+        for subject in ("/CN=Studio CA+OU=Home", "/OU=Home+CN=Studio CA"):
+            with self.subTest(subject=subject):
+                self.assertEqual(tls._openssl("req", "-x509", "-multivalue-rdn", "-newkey", "ec", "-pkeyopt",
+                                              "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", self.root / "rdn.key",
+                                              "-out", self.root / "rdn.crt", "-days", "30", "-subj", subject).returncode, 0)
+                self.assertEqual(tls.identity(self.root / "rdn.crt")["name"], "Studio CA")
         unnamed = external("/O=No common name")
         self.assertEqual((unnamed["name"], unnamed["scope"]), ("O=No common name", None))
 
