@@ -206,7 +206,8 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   // Past either end the track gives a little and never switches.
   touch = await finger(page, 90, 400);
   await touch.move(120, 0, 100);
-  expect(await offset(track)).toBeGreaterThan(0);
+  // The track applies a move on its next frame; wait for it before measuring the resistance.
+  await expect.poll(() => offset(track)).toBeGreaterThan(0);
   expect(await offset(track)).toBeLessThan(60);
   await walk.state("08-end-resistance-before-conversation", { visible: [conversation], hidden: [] });
   await touch.lift();
@@ -216,7 +217,7 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   await expect(live).toBeVisible();
   touch = await finger(page, 300, 400);
   await touch.move(-120, 0, 100);
-  expect(await offset(track)).toBeLessThan(0);
+  await expect.poll(() => offset(track)).toBeLessThan(0);
   expect(await offset(track)).toBeGreaterThan(-60);
   await walk.state("09-end-resistance-after-live", { visible: [live], hidden: [] });
   await touch.lift();
