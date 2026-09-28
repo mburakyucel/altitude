@@ -1407,11 +1407,10 @@ alt task review request --previous <waiting-id> --model <model>
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
-skipped by the operator's UI action. A proposal request can continue an owner with an approval
-question solely to prepare, run and assess review, preserving that question and its approval requirement.
-A changes request does the same while the only open question is the held PR's merge question (an operator
-question with quick options naming that PR): the question, its revision and the card stay unchanged, and the
-merge hold still needs the operator's approval. Any other open question refuses changes review until it is settled.
+skipped by the operator's UI action. Open questions do not prevent either subject: a request can continue a
+question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
+and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
+freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with

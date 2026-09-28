@@ -444,9 +444,10 @@ using judgment to keep simple work light. L2 requests through the CLI or the ope
 subject entries in the task menu. Each existing entry opens saved evidence without invoking review;
 reruns are explicit actions in details. A repeated request or source message reuses its receipt.
 The owner prepares a committed checkpoint, identifies the exact original L2 proposal message for a
-proposal review, and invokes the fixed daemon endpoint. A proposal request may continue a
-question-blocked owner solely for review while preserving the original approval question. This adds
-no implementation authority, helper queue, provider handoff, owner session or general command transport.
+proposal review, and invokes the fixed daemon endpoint. Open questions do not gate either subject: a
+request may continue a question-blocked owner solely for review while preserving every open question and
+its original authority. This adds no implementation or merge authority, helper queue, provider handoff,
+owner session or general command transport.
 
 The engine and routing seams prefer an eligible configured option different from the owner, respecting
 project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
@@ -1918,7 +1919,7 @@ including a freeform question. The generated review card stays hidden until the 
 that question, including while its submitted response waits for interpretation. This presentation
 rule supplies no merge authority: an unrelated answer mentioning the PR never counts as approval,
 and the held-review fallback returns after resolution when still needed. Independent questions and
-ordinary chat remain available. The changes-review exception still requires quick options.
+ordinary chat remain available.
 Existing stopped/fault cards link to their ordinary task controls; an operational
 pause with no open question offers Resume through the existing daemon operation.
 If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and

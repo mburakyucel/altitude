@@ -2102,11 +2102,6 @@ def _references_held_pr(task: dict, question: dict) -> bool:
                     f"{o['label']} {o['text']}" for o in question_choices(question))])))
 
 
-def asks_merge(task: dict, question: dict) -> bool:
-    """Changes review requires the held PR's explicit quick-choice question (#537)."""
-    return bool(question_choices(question) and _references_held_pr(task, question))
-
-
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
     An open operator question naming the PR supplies its single response surface, with quick choices
