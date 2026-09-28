@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
+# PHASE reboot-install keeps the installed account for the machine to restart; reboot-verify then
+# checks it and removes it. Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ $# != 5 || $1 != --disposable-vm ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|reboot-install|reboot-verify)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT [reboot-install|reboot-verify]' >&2
     exit 2
 fi
 [[ $5 =~ ^[0-9a-f]{40}$ ]] || { echo 'Supply the full selected source commit.' >&2; exit 2; }
@@ -14,15 +16,27 @@ source /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 24.04 && $(uname -m) == x86_64 ]] || {
     echo 'This acceptance harness requires Ubuntu 24.04 x86_64.' >&2; exit 2;
 }
+phase=${6:-all}
 baseline=$(realpath "$2")
 candidate=$(realpath "$3")
 mkdir -p "$4"
+kept="$(realpath "$4")/reboot-account"  # account and scratch left installed across the restart
 results=$(realpath "$4")
+[[ $phase == all ]] || { results="$results/$phase"; mkdir -p "$results"; }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-scratch=$(mktemp -d /tmp/altitude-installation.XXXXXXXX)
-account="alt-install-$$"
 created=false
+keep=false
 test_uid=''
+if [[ $phase == reboot-verify ]]; then
+    read -r account scratch < "$kept"
+    [[ $account =~ ^alt-install-[0-9]+$ && $scratch =~ ^/var/tmp/altitude-installation\.[A-Za-z0-9]+$ ]] &&
+        id "$account" >/dev/null 2>&1 || { echo 'No installed reboot-install account to verify.' >&2; exit 2; }
+    rm -f -- "$kept"
+else
+    # /var/tmp survives a restart; /tmp does not.
+    scratch=$(mktemp -d /var/tmp/altitude-installation.XXXXXXXX)
+    account="alt-install-$$"
+fi
 cleanup() {
     outcome=$?
     lifecycle_exit=$outcome
@@ -33,13 +47,18 @@ cleanup() {
     manager_exit=0
     delete_exit=0
     if $created; then
-        # Only this newly created account is in scope, even after failed install.
+        # Only this harness's account is in scope, even after failed install.
         journalctl "_UID=$test_uid" --no-pager -n 400 > "$results/journal.log" 2>&1
         if [[ -d $scratch/$account/results ]]; then
             for evidence in "$scratch/$account/results/"*.json "$scratch/$account/results/"*.log; do
                 [[ -f $evidence ]] || continue
                 install -m 644 "$evidence" "$results/" || copy_exit=1
             done
+        fi
+        if $keep && (( outcome == 0 )); then
+            printf '%s %s\n' "$account" "$scratch" > "$kept"
+            echo "Left $account installed for reboot-verify" | tee -a "$results/cleanup.log"
+            exit 0
         fi
         timeout 15 loginctl disable-linger "$account" >> "$results/cleanup.log" 2>&1
         linger_exit=$?
@@ -58,20 +77,27 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
-chmod 755 "$scratch"
-useradd --create-home --user-group --shell /bin/bash --base-dir "$scratch" "$account"
-created=true
-test_uid=$(id -u "$account")
 test_home="$scratch/$account"
-mkdir "$test_home/baseline" "$test_home/candidate" "$test_home/results"
-cp -a "$baseline/." "$test_home/baseline/"
-cp -a "$candidate/." "$test_home/candidate/"
-cp "$script_dir/installation_lifecycle.py" "$test_home/"
-chown -R "$account:$account" "$test_home"
-timeout 30 loginctl enable-linger "$account"
-timeout 30 systemctl start "user@$test_uid.service"
+if [[ $phase == reboot-verify ]]; then
+    created=true
+    test_uid=$(id -u "$account")
+else
+    chmod 755 "$scratch"
+    useradd --create-home --user-group --shell /bin/bash --base-dir "$scratch" "$account"
+    created=true
+    test_uid=$(id -u "$account")
+    mkdir "$test_home/baseline" "$test_home/candidate" "$test_home/results"
+    cp -a "$baseline/." "$test_home/baseline/"
+    cp -a "$candidate/." "$test_home/candidate/"
+    cp "$script_dir/installation_lifecycle.py" "$test_home/"
+    chown -R "$account:$account" "$test_home"
+    timeout 30 loginctl enable-linger "$account"
+    timeout 30 systemctl start "user@$test_uid.service"
+fi
 # No runner token, credentials, Python path or owner runtime enters the test.
 timeout --signal=TERM --kill-after=10s 8m runuser -u "$account" -- env -i \
     HOME="$test_home" USER="$account" LOGNAME="$account" PATH=/usr/bin:/bin \
     XDG_RUNTIME_DIR="/run/user/$test_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$test_uid/bus" \
-    /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results" "$5"
+    /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results" "$5" "$phase"
+[[ $phase == reboot-install ]] && keep=true
+exit 0
