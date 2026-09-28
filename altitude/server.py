@@ -2824,8 +2824,12 @@ def project_view(name: str) -> dict:
 
 
 def project_repository(name: str) -> str | None:
-    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
-                            capture_output=True, text=True, timeout=10)
+    """The project's GitHub page, or None when a detached, moved or unreadable checkout has none to give."""
+    try:
+        origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
+                                capture_output=True, text=True, timeout=2)
+    except (KeyError, OSError, subprocess.SubprocessError):
+        return None
     return repository_url(origin.stdout)
 
 
@@ -2852,7 +2856,7 @@ def task_view(project: str, slug: str) -> dict:
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
                     "observation": None, "delivered": [], "error": "The worker changed. Refresh this task."}
     return {**{k: v for k, v in t.items() if k not in TASK_VIEW_OMITTED},
-            "repository": project_repository(project) if project in config.load_projects() else None,
+            "repository": project_repository(project),
             "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),

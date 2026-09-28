@@ -85,6 +85,16 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(view["files"]["progress"], "Goal: small\n")
         self.assertEqual([m["text"] for m in view["messages"]], ["Keep it small."])
 
+    def test_task_api_reads_without_a_repository_link_when_the_checkout_cannot_answer(self):
+        T.message(self.project, self.slug, "burak", "Keep it small.")
+        for failure in (FileNotFoundError(2, "No such directory"), subprocess.TimeoutExpired("git", 2)):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(server.monitor, "sessions", return_value=[]), \
+                    mock.patch.object(server.subprocess, "run", side_effect=failure):
+                view = server.task_view(self.project, self.slug)
+                self.assertIsNone(view["repository"])
+                self.assertEqual([m["text"] for m in view["messages"]], ["Keep it small."])
+
     def test_l2_reply_and_task_api_show_both_sides_without_qa_log(self):
         T.message(self.project, self.slug, "burak", "Can we keep this small?")
         T.message(self.project, self.slug, "l2", "Yes. I will keep one focused PR.", by="l2", expected_attempt=1)
