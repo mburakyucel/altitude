@@ -1,11 +1,12 @@
 """The platform seam: the host's service manager and process facilities.
 
 Linux x86_64 with a systemd user manager is the implemented host. This module is the only place that names
-systemd, procfs or pidfd; engines, the terminal and the server ask it for jobs, processes and connections.
+systemd or procfs; engines, the terminal and the server ask it for jobs, processes and connections.
 The macOS runtime is not implemented yet (issue #225); `require_supported` refuses it.
 """
 from __future__ import annotations
 
+import fcntl
 import ipaddress
 import os
 from pathlib import Path
@@ -13,7 +14,6 @@ import platform as host_platform
 import re
 import shlex
 import shutil
-import signal as signals
 import struct
 import subprocess
 import sys
@@ -54,6 +54,31 @@ def status() -> dict[str, str]:
             "active", "inactive", "failed", "activating", "deactivating", "reloading"):
         raise RuntimeError("Cannot determine whether the Altitude user service is running")
     return values
+
+
+#: The settings that say where the service listens and which HTTPS identity it serves.
+SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
+
+
+def service_settings() -> tuple[int, dict[str, str]]:
+    """The running service's main process and the settings it started with, whichever unit, drop-in or
+    environment file supplied them. A shell's own environment does not describe the service."""
+    values = status()
+    pid = int(values.get("MainPID") or 0)
+    if values["LoadState"] != "loaded":
+        raise RuntimeError("No Altitude service is installed for this user.")
+    if values.get("ActiveState") != "active" or not pid:
+        raise RuntimeError("The Altitude service is not running. Start it, then retry.")
+    try:
+        entries = (PROC / str(pid) / "environ").read_bytes().split(b"\0")
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read the Altitude service's settings: {exc}.") from exc
+    settings = {}
+    for entry in entries:
+        key, _, value = entry.decode(errors="replace").partition("=")
+        if key in SERVICE_SETTINGS:
+            settings[key] = value
+    return pid, settings
 
 
 def control(action: str) -> str:
@@ -151,6 +176,33 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
             f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
             f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
             "--", *_scrub(env), "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
+
+
+def terminal_job(name: str, tty: str, command: list[str], env: dict[str, str], *, grace: int) -> list[str]:
+    """A login shell as a job of its own on the pseudo-terminal `tty`, started with the caller's working directory.
+
+    The user manager, not the hardened Altitude parent, creates the shell, so it does not inherit altd's
+    ``NoNewPrivileges=yes`` and ``sudo`` can ask for the operator's password on that terminal (issue #543). The job's
+    control group holds everything the shell starts, including processes that leave its session; stopping the job
+    sends each of them SIGHUP, then SIGKILL after `grace` seconds. ``--wait`` keeps the launcher running until the
+    shell has ended and returns its exit status. ``PartOf`` stops the job with Altitude's service. The shell starts
+    from the user manager's environment, as a desktop session's would, plus `env`, whose values appear on the
+    launcher's command line: only settings, never credentials."""
+    return [SYSTEMD_RUN, "--user", "--wait", "--collect", "--quiet", f"--unit={name}", "--same-dir",
+            "--expand-environment=no", "--property=NoNewPrivileges=no", f"--property=TTYPath={tty}",
+            "--property=StandardInput=tty", "--property=StandardOutput=tty", "--property=StandardError=tty",
+            "--property=KillMode=control-group", "--property=KillSignal=SIGHUP", "--property=SendSIGKILL=yes",
+            f"--property=TimeoutStopSec={grace}", f"--property=PartOf={SERVICE}",
+            *(f"--setenv={key}={value}" for key, value in sorted(env.items())), "--", *command]
+
+
+def terminal_session(fd: int) -> int:
+    """The session on the pseudo-terminal whose controlling side is `fd`: the shell's process id."""
+    return struct.unpack("i", fcntl.ioctl(fd, TIOCGSID, b"\0" * 4))[0]
+
+
+#: Linux's request for a terminal's session, which Python's termios module does not name.
+TIOCGSID = 0x5429
 
 
 def detached_job_command(name: str, command: list[str], *, path: str) -> list[str]:
@@ -301,27 +353,6 @@ def process_name(pid: int) -> str | None:
         return (PROC / str(int(pid)) / "comm").read_text().strip() or None
     except OSError:
         return None
-
-
-def signal_session(session: int, mark: bytes, sig: int) -> None:
-    """Signal every process in `session` and every process whose environment carries `mark` (those that left the
-    session: `setsid`, daemons). Each process is held by a pidfd before it is checked, so a pid reused by an
-    unrelated process in between is never signalled."""
-    for entry in PROC.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            handle = os.pidfd_open(int(entry.name))
-        except OSError:  # it has exited
-            continue
-        try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            if int(fields[3]) == session or mark in (entry / "environ").read_bytes().split(b"\0"):
-                signals.pidfd_send_signal(handle, sig)
-        except (OSError, IndexError, ValueError):
-            pass
-        finally:
-            os.close(handle)
 
 
 def _hex_address(address: str, port: int) -> tuple[str, str]:

@@ -1,7 +1,9 @@
 """The operator's terminal: a real shell on a real pseudo-terminal, opened through the real HTTP door.
 
-The shell is a plain `bash` without profile files so output is predictable; the agent check reads a fixture
-process table where a test needs a particular process layout, and the real one for a real connection.
+The shell is a plain `bash` without profile files so output is predictable. The service manager's part is replaced
+at the platform seam: the fixture launcher starts the shell on the terminal in a session of its own, and stopping
+its job hangs up, then kills, that session. The agent and owner checks read a fixture process table where a test
+needs a particular process layout, and the real one for a real connection.
 """
 import base64
 import http.client
@@ -10,21 +12,24 @@ import os
 import shutil
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 
-from tests.support import AltitudeCase, make_repo
-from altitude import config, platform, server, state as S, tasks as T, terminal
+from tests.support import AltitudeCase, local_terminal_launch, local_terminal_stop, make_repo, terminal_session as session
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
-
-
 class TerminalCase(AltitudeCase):
     def setUp(self):
         super().setUp()
         make_repo(self.repo)
         self.patch(terminal, "shell_command", return_value=SHELL)
+        self.patch(terminal, "launch", side_effect=local_terminal_launch)
+        self.patch(terminal, "stop", side_effect=local_terminal_stop)
+        self.addCleanup(terminal._ended.clear)
         self.setenv("PS1", "$ ")
         settings = config.ROOT / "settings.json"
         saved = settings.read_text() if settings.exists() else None
@@ -37,10 +42,9 @@ class TerminalCase(AltitudeCase):
                    worktree=str(self.worktree), branch="work")
 
     def _close_all(self):
-        for key, term in list(terminal._terminals.items()):
+        for key in list(terminal._terminals):
             if key[0] == self.project:
                 terminal.close(*key, "closed")
-                self.wait(lambda: term.ended)
                 terminal._terminals.pop(key, None)
 
     def turn(self, on: bool):
@@ -55,7 +59,7 @@ class TerminalCase(AltitudeCase):
             time.sleep(.02)
 
     def gone(self, term):
-        """Wait for `term` to end: it is dropped at once, so its page's stream is what reads how it ended."""
+        """Wait for `term` to end: it leaves the status at once, and only a stream naming it reads how it ended."""
         self.wait(lambda: term.ended and terminal._terminals.get((term.project, term.slug)) is not term)
         self.assertEqual(terminal.status(term.project, term.slug)["state"], "none")
         return term
@@ -109,7 +113,7 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertNotIn("secret", json.dumps(rows))
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.write(self.project, None, opened["id"], "ls\n")
-        self.assertEqual(caught.exception.status, 404)
+        self.assertEqual(caught.exception.status, 410)
 
     def test_task_terminal_runs_in_the_worktree_reports_the_busy_command_and_closes_it(self):
         self.turn(True)
@@ -118,8 +122,10 @@ class TestTerminalLifecycle(TerminalCase):
         self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
         term = self.current(self.slug)
         terminal.close(self.project, self.slug)
-        self.assertEqual(self.gone(term).reason, "closed")
+        # Recorded by the time Close returns: Altitude stopping or a test's folders going next loses nothing.
         rows = [row for row in S.read_events(self.project, self.slug) if row["kind"] == "terminal"]
+        self.assertTrue(term.ended)
+        self.assertEqual(self.gone(term).reason, "closed")
         self.assertEqual([(row["action"], row["folder"]) for row in rows],
                          [("opened", str(self.worktree)), ("closed", str(self.worktree))])
 
@@ -177,18 +183,6 @@ class TestTerminalLifecycle(TerminalCase):
             with term.io:
                 term.fd = fd
 
-    def session(self, shell_pid):
-        """The processes still in a terminal's session."""
-        found = []
-        for entry in Path("/proc").iterdir():
-            try:
-                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            except (OSError, IndexError):
-                continue
-            if entry.name.isdigit() and int(fields[3]) == shell_pid and fields[0] != "Z":
-                found.append(int(entry.name))
-        return found
-
     def test_close_stops_commands_that_ignore_the_hang_up(self):
         # A review found Close could leave a hang-up-ignoring command, and the terminal, running.
         self.turn(True)
@@ -197,50 +191,65 @@ class TestTerminalLifecycle(TerminalCase):
         term = self.current()
         shell = term.proc.pid
         self.type("trap '' HUP; nohup sleep 301 >/dev/null 2>&1 & nohup sleep 302 >/dev/null 2>&1\n")
-        self.wait(lambda: terminal.status(self.project, None)["busy"] == "sleep" and len(self.session(shell)) >= 3)
+        self.wait(lambda: terminal.status(self.project, None)["busy"] == "sleep" and len(session(shell)) >= 3)
         terminal.close(self.project, None)
         self.assertEqual(self.gone(term).reason, "closed")
-        self.wait(lambda: not self.session(shell))
+        self.wait(lambda: not session(shell))
 
-    def test_the_shell_exiting_ends_the_terminal_and_the_process_that_left_its_session(self):
-        # A review found a detached process still held the terminal open, then that it outlived the end.
+    def test_the_shell_exiting_ends_the_terminal_and_what_it_left_running(self):
         self.turn(True)
         self.open()
-        marker = "300.417"
-        self.addCleanup(self._kill_marked, marker)
         term = self.current()
-        self.type(f"setsid sleep {marker} & sleep .2; exit 4\n")
+        shell = term.proc.pid
+        self.type("nohup sleep 303 >/dev/null 2>&1 & sleep .2; exit 4\n")
         self.assertEqual(self.gone(term).exit_code, 4)
-        self.wait(lambda: not self._marked(marker))
+        self.wait(lambda: not session(shell))
 
-    def test_close_stops_a_process_that_left_its_session(self):
+    def test_a_shell_that_cannot_start_ends_the_terminal_saying_why(self):
         self.turn(True)
-        self.patch(terminal, "CLOSE_GRACE_SECONDS", .3)
+        failing = lambda unit, tty, path: subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.stderr.write('Failed to connect to bus\\n'); sys.exit(1)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.patch(terminal, "launch", side_effect=failing)
+        ident = self.open()
+        term = self.current()
+        self.gone(term)
+        stream = terminal.stream(self.project, None, ident)  # a page attaching after the end still reads it
+        self.assertIs(stream, term)
+        self.assertTrue(terminal.read(stream, 0, 0)[3])
+        self.assertEqual(terminal.view(term) | {"id": None, "folder": None, "offset": None},
+                         {"state": "exited", "id": None, "enabled": True, "folder": None, "offset": None, "exit_code": 1,
+                          "reason": "failed", "error": "Failed to connect to bus", "busy": None})
+
+    def test_close_right_after_opening_stops_the_job_once_it_exists(self):
+        # A review found a Close reaching the manager before the job registered let the shell start afterwards.
+        self.turn(True)
+        calls = []
+        stop = terminal.stop
+        self.patch(terminal, "stop", side_effect=lambda unit: calls.append(unit) if len(calls) < 1 else stop(unit))
         self.open()
-        marker = "300.418"
-        self.addCleanup(self._kill_marked, marker)
-        self.type(f"setsid nohup sleep {marker} >/dev/null 2>&1 &\n")
-        self.wait(lambda: self._marked(marker))
+        term = self.current()
         terminal.close(self.project, None)
-        self.wait(lambda: not self._marked(marker))
+        self.assertEqual(self.gone(term).reason, "closed")
+        self.assertGreaterEqual(len(calls), 1)
 
-    def _marked(self, marker):
-        found = []
-        for entry in Path("/proc").iterdir():
-            try:
-                if (entry.name.isdigit() and (entry / "cmdline").read_bytes() == f"sleep\0{marker}\0".encode()
-                        and (entry / "stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"):
-                    found.append(int(entry.name))
-            except (OSError, IndexError):
-                continue
-        return found
-
-    def _kill_marked(self, marker):
-        for pid in self._marked(marker):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                continue
+    def test_a_job_that_does_not_stop_is_reported(self):
+        self.turn(True)
+        self.patch(terminal, "STOP_SECONDS", .3)
+        self.patch(terminal, "STOP_POLL_SECONDS", .1)
+        stop = terminal.stop
+        self.patch(terminal, "stop", side_effect=lambda unit: None)
+        self.open()
+        term = self.current()
+        with self.assertRaises(terminal.TerminalError) as caught:
+            terminal.close(self.project, None)
+        self.assertEqual(caught.exception.status, 500)
+        with self.assertRaises(terminal.TerminalError):
+            terminal.close_all()
+        self.assertFalse(term.ended)
+        self.patch(terminal, "stop", side_effect=stop)
+        terminal.close(self.project, None)
+        self.gone(term)
 
     def test_input_a_program_does_not_read_gives_up_and_close_still_works(self):
         # A review found a blocked write held the terminal, so Close and turning it off stalled behind it.
@@ -282,7 +291,10 @@ class TestTerminalLifecycle(TerminalCase):
         self.turn(True)
         self.open()
         term = self.current()
-        terminal.close_all()
+        terminal.close_all()  # also what altd runs as it stops: every close is recorded before it returns
+        self.assertTrue(term.ended)
+        self.assertEqual([row["action"] for row in S.read_project_log(self.project) if row["kind"] == "terminal"],
+                         ["opened", "closed"])
         self.assertEqual(self.gone(term).reason, "closed")
 
     def test_an_open_racing_the_switch_going_off_starts_no_shell(self):
@@ -299,6 +311,124 @@ class TestTerminalLifecycle(TerminalCase):
             self.open()
         self.assertEqual(caught.exception.status, 403)
         self.assertNotIn((self.project, None), terminal._terminals)
+
+
+class TestOwnerOutput(TerminalCase):
+    def test_the_owner_reads_its_task_terminal_as_text_until_a_new_terminal_or_the_task_ends(self):
+        self.turn(True)
+        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "none")
+        self.open(self.slug)
+        self.type("printf '\\033[1;32mgreen\\033[0m\\n'; printf 'step 1\\rstep 2\\n'\n", self.slug)
+        self.output(self.slug, until="step 2\r\n")
+        running = terminal.owner_output(self.project, self.slug)
+        self.assertEqual((running["state"], running["missed"]), ("running", False))
+        self.assertIn("\ngreen\nstep 2\n", running["text"])
+        self.assertNotIn("\x1b", running["text"])
+        term = self.current(self.slug)
+        self.type("exit 5\n", self.slug)
+        self.gone(term)
+        ended = terminal.owner_output(self.project, self.slug)
+        self.assertEqual((ended["state"], ended["exit_code"], ended["reason"]), ("exited", 5, "exited"))
+        self.assertIn("step 2", ended["text"])
+        self.open(self.slug)  # a new terminal replaces what the owner could read
+        self.assertNotIn("step 2", terminal.owner_output(self.project, self.slug)["text"])
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "exited")
+        task = S.load_task(self.project, self.slug)
+        task.update(state="done", agent_id=None)
+        S.save_task(self.project, task)
+        terminal.sweep()
+        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "none")
+
+    def test_the_owner_learns_when_earlier_output_was_dropped_and_never_reads_the_project_terminal(self):
+        self.turn(True)
+        self.patch(terminal, "REPLAY_BYTES", 4096)
+        self.open(self.slug)
+        self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((1+1))\n", self.slug)
+        self.output(self.slug, until="done-2")
+        self.assertTrue(terminal.owner_output(self.project, self.slug)["missed"])
+        self.open()
+        self.type("echo project-only\n")
+        self.output(until="project-only")
+        self.assertNotIn("project-only", terminal.owner_output(self.project, self.slug)["text"])
+
+
+class TestOwnerHttp(TerminalCase):
+    def setUp(self):
+        super().setUp()
+        self.owner = self.patch(terminal, "owner_connection", return_value=True)
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        root = dispatch.l2_job_root(self.project, self.slug)
+        root.mkdir(parents=True, exist_ok=True)
+        self.unit = engines._claude_unit("agent")
+        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": self.unit})
+
+    def read(self, body, status=200):
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        try:
+            connection.request("POST", "/api/task/terminal", json.dumps(body), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, status, payload)
+            return payload
+        finally:
+            connection.close()
+
+    def test_only_the_running_owners_worker_reads_and_nothing_can_be_typed(self):
+        self.turn(True)
+        self.open(self.slug)
+        self.type("echo for-the-owner\n", self.slug)
+        self.output(self.slug, until="for-the-owner\r\n")
+        body = {"project": self.project, "slug": self.slug, "attempt": "1"}
+        self.assertIn("for-the-owner", self.read(body)["text"])
+        self.assertEqual(self.owner.call_args.args[2], self.unit)  # the task's current worker job
+        self.read({**body, "attempt": "2"}, status=403)
+        self.read({**body, "data": "rm -rf ~\n"}, status=400)  # a read carries no input
+        self.owner.return_value = False
+        refused = self.read(body, status=403)
+        self.assertEqual(refused["error"], "alt task terminal: only this task's owner may read its terminal")
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "blocked"
+        S.save_task(self.project, task)
+        self.owner.return_value = True
+        self.read(body, status=403)
+
+
+    def test_the_cli_reads_only_for_the_current_owner(self):
+        self.turn(True)
+        self.open(self.slug)
+        self.type("echo via-cli\n", self.slug)
+        self.output(self.slug, until="via-cli\r\n")
+        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
+                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+        result = self.alt("task", "terminal", env=owner)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith("[altitude] terminal running\n"), result.stdout)
+        self.assertIn("via-cli", result.stdout)
+        result = self.alt("task", "terminal", "other-task", env=owner)
+        self.assertIn("only the current L2 reads its own task's terminal", result.stderr)
+        result = self.alt("task", "terminal", self.slug, env={**base, "ALTITUDE_ACTOR": "l3"})
+        self.assertIn("not available to an L3", result.stderr)
+
+
+class TestTerminalJob(AltitudeCase):
+    def test_the_shell_runs_in_its_own_job_without_altds_hardening_and_ends_with_altitude(self):
+        argv = platform.terminal_job("altitude-terminal-x.service", "/dev/pts/9", ["bash", "-l"], {"TERM": "xterm"},
+                                     grace=2)
+        for flag in ("--user", "--wait", "--unit=altitude-terminal-x.service", "--property=NoNewPrivileges=no",
+                     "--property=TTYPath=/dev/pts/9", "--property=StandardInput=tty", "--property=KillMode=control-group",
+                     "--property=KillSignal=SIGHUP", "--property=TimeoutStopSec=2", "--property=PartOf=altitude.service"):
+            self.assertIn(flag, argv)
+        self.assertIn("--setenv=TERM=xterm", argv)
+        self.assertEqual(argv[argv.index("--") + 1:], ["bash", "-l"])
+        self.assertTrue(terminal.ALTITUDE_UNIT.fullmatch("altitude-terminal-x.service"))  # its processes are Altitude's
 
 
 def fake_proc(root: Path, processes: dict[int, tuple[int, str, list[int]]], connections: list[tuple[str, str, int]],
@@ -407,6 +537,15 @@ class TestAgentRefusal(AltitudeCase):
         self.assertTrue(terminal.agent_connection(peer, accepted.getsockname()))
 
 
+    def test_only_a_process_in_the_owners_worker_job_is_the_owner(self):
+        worker = "/user.slice/user-1000.slice/user@1000.service/app.slice/altitude-claude-owner.service"
+        fake_proc(self.proc, {4000: (1, worker, [777]), 4001: (1, worker.replace("owner", "other"), [778])},
+                  [(self.client, self.server, 777)])
+        self.assertTrue(terminal.owner_connection(self.PEER, self.LOCAL, "altitude-claude-owner.service"))
+        self.assertFalse(terminal.owner_connection(self.PEER, self.LOCAL, "altitude-claude-other.service"))
+        self.assertFalse(terminal.owner_connection(("127.0.0.1", 51001), self.LOCAL, "altitude-claude-owner.service"))
+
+
 class TestTerminalHttp(TerminalCase):
     def setUp(self):
         super().setUp()
@@ -486,10 +625,10 @@ class TestTerminalHttp(TerminalCase):
         self.assertIn(b"20 90", output)
         end = json.loads(next(e for e in events if e.startswith("event: end")).split("data: ", 1)[1])
         self.assertEqual((end["state"], end["exit_code"], end["reason"]), ("exited", 5, "exited"))
-        # The ended terminal is gone: nothing more reaches it and its page learns no more than "none".
-        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=404)
+        # Nothing more reaches the ended terminal; only a page naming it still reads how it ended.
+        self.request("POST", f"{base}/input", {**at, "data": "ls\n"}, status=410)
         self.assertEqual(self.request("GET", f"{base}?task={self.slug}")["state"], "none")
-        self.request("GET", f"{base}/stream?task={self.slug}&id={opened['id']}&offset=0", status=404)
+        self.request("GET", f"{base}/stream?task={self.slug}&id=other&offset=0", status=404)
         self.request("POST", f"{base}/forget", at, status=404)
 
     def test_typing_reuses_one_connection_and_other_replies_close_theirs(self):
@@ -504,6 +643,7 @@ class TestTerminalHttp(TerminalCase):
         opened = json.loads(response.read())
         self.assertEqual(response.version, 11)
         sock = connection.sock
+        self.output(until="$ ")  # the shell is reading its terminal
         for key in "echo kept\n":
             post(f"{base}/input", {"id": opened["id"], "data": key})
             self.assertEqual(json.loads(connection.getresponse().read()), {"ok": True})

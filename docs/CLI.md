@@ -613,15 +613,17 @@ including any merge hold.
 ## Device pairing
 
 `alt pair` prints a one-time code that pairs one browser with Altitude, with a `/pair?code=…` link
-for this installation's address. It writes the code straight to the private access store, so it
+to the running service's address (or the reason there is none). It writes the code straight to the private access store, so it
 works over SSH and without a browser; only the operator runs it, and L2 and L3 are refused. A code
 works once, for ten minutes; a new code cancels the previous one and five wrong codes cancel it.
 Every other `alt` command that calls altd sends the machine key from the same store. See
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
-`alt tls-share` (operator only) offers the public CA certificate to a phone for ten minutes at a
-plain-HTTP link on the configured, non-loopback `ALTITUDE_HOST`, and prints the CA's name, scope,
-expiry and SHA-256 fingerprint that the phone checks before installing it. It serves nothing else
+`alt tls-share` (operator only) reads the running service's address, port and certificate folder
+from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
+service proves its identity with that folder's CA. It then offers that public CA certificate to a
+phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
+CA's name, scope, expiry and SHA-256 fingerprint that the phone checks before installing it. It serves nothing else
 and exits when the time is up or on Ctrl-C. See [set up a phone](SETUP.md#set-up-a-phone).
 
 ## Project lifecycle
@@ -842,6 +844,7 @@ alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
+alt task terminal [<slug>] [--json]
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -1684,3 +1687,15 @@ an explicit uncertainty, never as success. `alt task status <slug> --brief` show
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
+
+### Reading the task terminal
+
+`alt task terminal` prints the current owner's own task terminal output: a status line (`terminal running`,
+or `terminal ended` with its reason and exit code, and whether earlier output was dropped), then up to the
+last 256 KB the terminal printed, as plain text. `--json` prints the record. It needs no grant and reads
+only: nothing it does types into, resizes or closes the terminal. altd answers only the running task's
+current attempt, and only a connection made from a process in that owner's own worker job, so another
+task's agent cannot read it. The last ended terminal's output stays readable until a new terminal opens
+for the task, the task finishes or Altitude restarts; after a restart the command says no output is
+available. Project terminals have no reader. Output the owner reads becomes part of its session and
+provider record; save only what the task's evidence needs.

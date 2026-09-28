@@ -58,7 +58,7 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await run(page, "echo hello-$((6*7)); basename $PWD");
   await expect(output).toContainText("hello-42");
   await walk.state("03-running", {
-    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close],
+    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close, panel.getByText("This task's owner can read this terminal's output.")],
     hidden: [panel.getByText(/L2's worktree/), panel.getByRole("button", { name: "Open terminal" }), ...(phone ? [] : [keys])],
   });
   if (phone) await expect(keys).toBeVisible();
@@ -75,6 +75,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+C");
   await expect(panel).toBeVisible();
+  // The shell turns bracketed paste back on as its new prompt starts; a paste before that would run at once.
+  await expect(output).toHaveText(/\^C\s*prepare-index-migration \$\s*$/);
 
   // Paste: the phone's Paste key reads the clipboard; on desktop the browser's paste reaches the shell.
   // Both paste as the shell asks (bracketed), so pasted lines wait for Enter.
@@ -202,7 +204,7 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   await expect(output).toContainText("atlas");
   await walk.state("12-project-running-restart-pending", {
     visible: [panel.getByText(/Altitude restarts at its next quiet point/), output.getByText("atlas").last(), close],
-    hidden: [refused, panel.getByText(/clean main/)],
+    hidden: [refused, panel.getByText(/clean main/), panel.getByText(/task's owner can read/)],
   });
   await page.locator(".terminal-screen").click();
   await page.keyboard.type("ech");
