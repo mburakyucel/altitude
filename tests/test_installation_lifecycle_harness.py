@@ -70,3 +70,42 @@ class TestLifecycleHarness(AltitudeCase):
                                 capture_output=True, text=True, timeout=10, env=os.environ.copy())
         self.assertEqual(result.returncode, 2)
         self.assertIn("--disposable-vm", result.stderr)
+
+
+class TestInstallationVm(AltitudeCase):
+    """The VM runner's guest configuration and refusal; no VM, image download or KVM access."""
+
+    def test_guest_gets_prerequisites_key_only_login_and_two_named_cards(self):
+        from scripts import installation_vm as vm
+        data = vm.user_data("ssh-ed25519 AAAA fixture")
+        self.assertTrue(data.startswith("#cloud-config\n"))
+        self.assertIn("ssh_pwauth: false", data)
+        self.assertIn("  - ssh-ed25519 AAAA fixture", data)
+        self.assertIn("packages: [git, gh, openssl]", data)
+        cards = json.loads(vm.network_config())["ethernets"]
+        self.assertEqual({name: card["match"]["macaddress"] for name, card in cards.items()},
+                         {"offline": vm.OFFLINE_MAC, "online": vm.ONLINE_MAC})
+        # Provisioning routes through the online card; once it is unplugged nothing else leaves the guest.
+        self.assertLess(cards["online"]["dhcp4-overrides"]["route-metric"],
+                        cards["offline"]["dhcp4-overrides"]["route-metric"])
+
+    def test_a_probe_that_could_not_run_stops_the_run_instead_of_proving_isolation(self):
+        from scripts import installation_vm as vm
+        self.assertTrue(vm.reached(0))
+        for blocked in (1, 7, 28, 124):  # refused, curl could not connect or timed out, timeout(1) expired
+            self.assertFalse(vm.reached(blocked))
+        for inconclusive in (126, 127, 255):  # not executable, not found, SSH failed
+            with self.assertRaises(SystemExit):
+                vm.reached(inconclusive)
+
+    def test_missing_prerequisites_refuse_with_install_guidance_before_any_download(self):
+        empty = self.tmp / "empty-path"
+        empty.mkdir()
+        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"),
+                                 str(self.tmp), str(self.tmp), str(self.tmp / "results"), "a" * 40],
+                                capture_output=True, text=True, timeout=30,
+                                env={**os.environ, "PATH": str(empty)})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("qemu-system-x86_64", result.stderr)
+        self.assertIn("sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", result.stderr)
+        self.assertFalse((self.tmp / "results").exists())

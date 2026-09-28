@@ -414,8 +414,9 @@ Inspect the failed stage and diagnostics before rerunning. Missing results, time
 user manager are unverified acceptance, not a passing lifecycle. A nonzero cleanup exit also fails
 the job even when the lifecycle assertions passed. The workflow has not executed: its first
 dispatch was refused before runner startup by the account's hosted-runner spending limit, and
-`release.yml` uses the same hosted runner type. Native lifecycle acceptance stays unverified until a
-run and its results are recorded; source tests alone do not establish it.
+`release.yml` uses the same hosted runner type. The [local VM run](#local-vm-run) executes the same
+harness without GitHub runners. Native lifecycle acceptance for a candidate needs a recorded run and
+its results; source tests alone do not establish it.
 
 On a disposable Ubuntu 24.04 VM with Python 3.12+, Git, OpenSSL, GitHub CLI and a working systemd
 user manager, use the same entry point with two release-builder output directories. Each contains
@@ -433,6 +434,37 @@ does not prove a minimal OS install, reboot or login/logout behavior, browser/de
 public-download bootstrap, native confinement or provider compatibility. There is no browser test
 in this harness. Native macOS installation remains with `macos-support-native-runtime-behind-the`;
 this Linux evidence is partial acceptance toward #226 and does not close it or establish public readiness.
+
+### Local VM run
+
+`scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
+without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
+once by the machine's administrator) and read/write access to `/dev/kvm`. Build the two directories
+from a clean committed source, then pass them with that commit:
+
+```sh
+python3 scripts/build_release.py --version v0.0.0-rc.1 --output /tmp/altitude-vm/baseline
+python3 scripts/build_release.py --version v0.0.0-rc.2 --output /tmp/altitude-vm/candidate
+python3 scripts/installation_vm.py /tmp/altitude-vm/baseline /tmp/altitude-vm/candidate \
+  /tmp/altitude-vm/results "$(git rev-parse HEAD)"
+```
+
+The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
+installed Ubuntu cloud-image keyring and caches it under `~/.cache/altitude-installation-vm`. Each
+run boots a copy-on-write overlay with 2 CPUs, 4 GiB of memory and a 12 GiB disk, logs in with a
+per-run SSH key over a loopback-only port, and deletes the overlay, key and seed afterwards, also
+when the run is stopped. The guest has two network cards on separate QEMU user networks. One is
+online only while cloud-init installs Git, GitHub CLI and OpenSSL, and is then unplugged. The other
+is restricted to the SSH forward. Before the harness starts, the runner probes the internet and a
+listener it opens on the host's loopback. Through the online card both must answer and through the
+restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
+probe that cannot run, stops the run. Results hold the harness evidence plus `vm.json` (source
+commit, image and signature, QEMU version, guest OS and kernel, probe outcomes, harness exit) and the VM console
+and QEMU logs; `harness.log` is written as the harness runs. The runner prints each stage with its
+elapsed time; after the first image download, a run takes about a minute. An Altitude worker cannot
+launch VMs from its sandbox; an owner runs this through a
+recorded [machine grant](CLI.md#machine-access) whose purpose names these VMs. The runner never touches the
+host's Altitude service, trust stores or network configuration.
 
 ## CI and candidate identity
 
