@@ -414,6 +414,8 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             raise ValueError(f"the {setting.replace('_', ' ')} setting is on or off")
         elif setting in config.DEFAULT_SETTINGS:
             config.validate_project_default(setting, value)
+        elif setting == "l2_preference":
+            config.validate_preference(value)
     except ValueError as exc:
         raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:

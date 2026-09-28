@@ -4,7 +4,8 @@ import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 type Field = { setting: string; value: string | null; default: string };
-type Defaults = { l3_engine: string | null; roles: { role: string; engines: { engine: string; label: string; model: Field; effort: Field & { choices: { value: string; label: string }[] } }[] }[] };
+type Preference = { setting: string; value: string | null; choices: { value: string; label: string }[] };
+type Defaults = { l3_engine: string | null; l2_preference: Preference; roles: { role: string; engines: { engine: string; label: string; model: Field; effort: Field & { choices: { value: string; label: string }[] } }[] }[] };
 
 async function defaults(request: APIRequestContext, name: string) {
   const response = await request.get(`/api/defaults/${encodeURIComponent(name)}`);
@@ -103,6 +104,62 @@ test("the L3 engine pin saves from Settings and reads back", async ({ page, requ
   await expect(pin).toHaveValue(engine.engine);
   await pin.selectOption("");
   await expect.poll(async () => (await defaults(request, project.name)).l3_engine).toBeNull();
+});
+
+test("L2 provider priority saves, survives reload, leaves L3 alone and restores Auto", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const main = page.getByRole("main");
+  const { l2_preference: preference } = await defaults(request, project.name);
+  const [preferred] = preference.choices;
+  const card = main.getByRole("group", { name: "L2 provider priority" });
+  const select = card.getByRole("combobox", { name: "Provider priority" });
+  const l3 = main.getByRole("combobox", { name: "L3 engine" });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let deny = false;
+  await page.route("**/api/defaults", async (route) => {
+    if (!deny) return route.fallback();
+    await gate;
+    return route.fulfill({ status: 403, json: { error: "Changing settings is denied." } });
+  });
+  try {
+    await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
+    await card.scrollIntoViewIfNeeded();
+    await walk.state("01-auto-default", { visible: [select, card.getByText(/^Auto uses the default distribution/)], hidden: [card.getByText("Saved.")] });
+    await expect(select).toHaveValue("");
+    await walk.state("02-preferred-saved", {
+      action: () => select.selectOption(preferred!.value),
+      visible: [card.getByText("Saved."), card.getByText(`Fresh tasks start on ${preferred!.label} when it is available`, { exact: false })],
+      hidden: [card.getByRole("alert")],
+    });
+    await expect.poll(async () => (await defaults(request, project.name)).l2_preference.value).toBe(preferred!.value);
+    await page.reload();
+    await card.scrollIntoViewIfNeeded();
+    await walk.state("03-persisted-after-reload", { visible: [select], hidden: [card.getByText("Saved.")] });
+    await expect(select).toHaveValue(preferred!.value);
+    await expect(l3).toHaveValue("");
+    expect((await defaults(request, project.name)).l3_engine).toBeNull();
+    deny = true;
+    await select.selectOption("");
+    await expect(select).toBeDisabled();
+    await walk.state("04-saving", { visible: [card.getByText("Saving…")], hidden: [] });
+    release();
+    await walk.state("05-denied-keeps-saved", {
+      visible: [card.getByText("Changing settings is denied."), card.getByRole("button", { name: "Retry save" })],
+      hidden: [card.getByText("Saving…"), card.getByText("Saved.")],
+    });
+    await expect(select).toHaveValue(preferred!.value);
+    expect((await defaults(request, project.name)).l2_preference.value).toBe(preferred!.value);
+    deny = false;
+    await walk.state("06-auto-restored", {
+      action: () => card.getByRole("button", { name: "Retry save" }).click(),
+      visible: [card.getByText("Saved."), card.getByText(/^Auto uses the default distribution/)], hidden: [card.getByRole("alert")],
+    });
+    await expect(select).toHaveValue("");
+    expect((await defaults(request, project.name)).l2_preference.value).toBeNull();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  } finally { release(); }
 });
 
 test("project settings loading and read failure can retry", async ({ page, request }, info) => {

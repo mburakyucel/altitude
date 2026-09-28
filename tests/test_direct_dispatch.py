@@ -130,6 +130,31 @@ class TestDirectDispatch(AltitudeCase):
         self.assertEqual(running["l2_engine"], "codex")
         self.assertIn("configured tie order", running["routing"])
 
+    def test_l2_preference_controls_fresh_dispatch_only(self):
+        fake = {"stdout": "started", "stderr": "", "returncode": 0, "agent": {"id": "agent-1", "sessionId": "session-1"}}
+        running = T.new(self.project, "Already running", "Keep going.", actor="burak")
+        running.update(state="running", l2_engine="codex", session_id="kept")
+        S.save_task(self.project, running)
+        dispatch.request_setting(self.project, "l2_preference", "claude", "Use Claude more for L2", actor="burak")
+        dispatch.run_settings(self.project)
+        task = T.new(self.project, "Preferred launch", "Dispatch it.", actor="burak")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
+             mock.patch.object(dispatch.engines, "start_l2", return_value=fake):
+            dispatch.run(self.project, task["slug"])
+        launched = S.load_task(self.project, task["slug"])
+        self.assertEqual((launched["l2_engine"], launched["launch_model"], launched["routing_pinned"]), ("claude", "opus", False))
+        self.assertIn("prefers Claude", launched["routing"])
+        self.assertEqual((S.load_task(self.project, running["slug"])["l2_engine"],
+                          S.load_task(self.project, running["slug"])["session_id"]), ("codex", "kept"))
+        l3 = dispatch.route.pick_engine("l3", project=config.project(self.project))
+        self.assertEqual(l3["engine"], "codex", "the L2 preference never switches L3")
+        dispatch.request_setting(self.project, "l2_preference", None, "Back to Auto", actor="burak")
+        dispatch.run_settings(self.project)
+        self.assertNotIn("l2_preference", config.project(self.project))
+        self.assertEqual(dispatch.route.pick_engine("l2", project=config.project(self.project))["engine"], "codex")
+
     def test_dispatch_completion_preserves_a_newer_block(self):
         task = T.new(self.project, "Block during launch", "Wait for a scope decision")
 

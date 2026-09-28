@@ -70,7 +70,7 @@ def _routed_models(engine: str) -> list[str]:
     names = []
     for project in config.load_projects().values():
         for role in ("l3", "l2"):
-            for tier in project.get("routing", config.AUTO_ROUTING):
+            for tier in config.role_routing(role, project):
                 for option in tier:
                     if option["engine"] == engine:
                         names.append(option.get("model") or config.default_model(role, engine, project))
@@ -225,7 +225,7 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
             if task.get("routing_pinned") or config.pinned_option("l2", project, engine=task.get("engine"), model=task.get("model")):
                 raise ValueError("handoff refuses an explicit task or project engine/model pin")
             tiers = [[option for option in tier if option["engine"] == task["next_engine"]]
-                     for tier in project.get("routing", config.AUTO_ROUTING)]
+                     for tier in config.role_routing("l2", project)]
             if not any(tiers):
                 raise ValueError("handoff target is not in the project's configured routing options")
             project = {**project, "routing": [tier for tier in tiers if tier]}
@@ -261,7 +261,7 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
                     "allowance_known": all(value is not None for value in _usage()[choice["engine"]]),
                     "same_engine": same_engine, "fallback_reason": "Selected for this review." if same_engine else ""}
         pin = config.pinned_option("l2", project)
-        tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
+        tiers = [[pin]] if pin else config.role_routing("l2", project)
         options = [(o["engine"], o.get("model") or config.default_model("l2", o["engine"], project))
                    for tier in tiers for o in tier]
         fallback_reason = ""
@@ -299,7 +299,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     from . import engines
     project = project or {}
     pin = config.pinned_option(role, project, engine=forced, model=model)
-    tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
+    tiers = [[pin]] if pin else config.role_routing(role, project)
+    prefer = project.get(f"{role}_preference")
     readings = _readings()
     usage = _usage(readings)
     skipped, considered = [], set()
@@ -345,7 +346,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                        (f"{lead:.1f} points extra headroom is under the {SWITCH_MARGIN:.0f}-point switch margin"
                         if lead is not None else "weekly quotas are not comparable"))
                 chosen = previous
-        prefix = "forced by task or project policy" if pin else f"Auto tier {priority}"
+        prefix = ("forced by task or project policy" if pin else f"Auto tier {priority}"
+                  + (f" (prefers {config.ENGINE_LABELS[prefer]})" if prefer in config.ENGINES else ""))
         return {**chosen, "pinned": bool(pin), "why": f"{prefix}: {option_label(chosen)}; {why}; "
                 + "installation found; model access unverified" + ("; skipped " + "; ".join(skipped) if skipped else "")}
     prefix = f"forced {option_label(pin)} is unavailable" if pin else "no configured option available"

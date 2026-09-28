@@ -36,6 +36,7 @@
 .voice-diagnostics textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); color: var(--text-primary); font-size: 16px; }
 .default-engine { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .default-engine .composer-pill-select { height: auto; min-height: 44px; min-width: 10rem; border-color: var(--border); border-radius: 8px; padding: 8px 32px 8px 12px; background-color: var(--surface); background-position: right 12px center; color: var(--text-primary); font-size: var(--text-body); }
+.provider-priority { display: flex; flex-direction: column; gap: 4px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--hairline); }
 .default-engine-row { display: grid; grid-template-columns: 6rem 1fr 1fr; gap: 12px; align-items: start; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--hairline); }
 .default-engine-row h3 { padding-top: 26px; }
 .default-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

@@ -767,6 +767,24 @@ repeats an option a higher tier already resolved, so for L2 the Codex tie is the
 `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. A project override replaces the
 whole preference list, and `--unset-routing` restores those defaults.
 
+The L2 provider priority chooses which engine fresh L2 attempts try first without pinning it:
+
+```sh
+alt project set example --l2-preference claude --reason 'Use Claude more for L2'
+alt project set example --unset-l2-preference --reason 'Back to Auto'
+```
+
+The same choice is **Provider priority** (Auto, or Prefer each engine) in the project's Settings
+page. A preference moves every option on that engine above the other options, keeping their tier
+order: with the default tiers, Prefer Claude tries Claude on Opus before Codex, and Prefer Codex
+tries Codex before Claude. The preferred engine is chosen whenever it is eligible; the other engine remains
+its fallback under the usual installation, quota and rejection handling. It applies only to fresh
+L2 attempts and their queue and Monitor explanations, which read "Auto tier N (prefers <engine>)".
+L3 keeps the tiers as written, explicit task and project pins still win, and running or resumed
+attempts keep their engine. With custom routing the preference reorders only the options that
+routing lists, and an engine it omits stays unused. Auto (unset) is the routing tiers alone: the
+Settings page says whether that is the default distribution or names the custom routing.
+
 The daemon collects account quota every five minutes without an interactive session. The native
 headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
 rows; unavailable or failed reads remain unknown. Thirty-minute-old observations are stale. Monitor

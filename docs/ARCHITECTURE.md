@@ -577,8 +577,10 @@ Auto preference tiers use the same reason-bearing operational path:
 `--unset-routing --reason '…'` to restore defaults. The operator and that project's L3 can change
 them without a PR, restart or free task slot. Altd applies the request on its next tick and records
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
-explicit pin or existing L2 attempt. [CLI examples](CLI.md#automatic-routing-preferences) cover
-single-model accounts and different orders and ties.
+explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
+Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
+above the others for fresh L2 only; L3 keeps the tiers as written. [CLI examples](CLI.md#automatic-routing-preferences) cover
+single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
 HTTP and CLI. It unregisters an idle project and ends its coordination. Queued, running, blocked

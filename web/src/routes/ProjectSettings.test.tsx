@@ -11,12 +11,16 @@ const overview = { projects: [{ name: "example", managed: true }, { name: "sampl
 const efforts = [{ value: "native", label: "Native" }, { value: "low", label: "Low" }, { value: "high", label: "High" }];
 
 /** A fictional server: settings keyed like the registry, validated and echoed as the defaults view. */
-function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null as null | { setting: string; until: Promise<void> } } = {}) {
+function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null as null | { setting: string; until: Promise<void> },
+  routing = null as string | null, l2Pin = null as string | null } = {}) {
   const saved: Record<string, string | null> = {};
   let pin: string | null = null;
   const posts: Record<string, unknown>[] = [];
   const field = (setting: string, fallback: string, choices: unknown) => ({ setting, value: saved[setting] ?? null, default: fallback, choices });
-  const view = () => ({ l3_engine: pin, roles: (["l3", "l2"] as const).map((role) => ({ role, engines: engines.map(({ engine, label }) => ({
+  const view = () => ({ l3_engine: pin,
+    l2_preference: { setting: "l2_preference", value: saved.l2_preference ?? null, pin: l2Pin, routing,
+      choices: engines.map(({ engine, label }) => ({ value: engine, label, routed: !routing || routing.includes(engine) })) },
+    roles: (["l3", "l2"] as const).map((role) => ({ role, engines: engines.map(({ engine, label }) => ({
     engine, label,
     model: field(`${role}_${engine}_model`, engine === "alpha" ? "alpha-default" : "CLI default", engine === "alpha" ? ["swift", "deep"] : []),
     effort: field(`${role}_${engine}_effort`, role === "l2" && engine === "beta" ? "High" : "Native", efforts),
@@ -121,6 +125,52 @@ describe("Project settings", () => {
     expect(await within(l3Alpha).findByRole("alert")).toHaveTextContent("does not support reasoning effort low");
     expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("");
     await user.click(within(l3Alpha).getByRole("button", { name: "Retry save" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+  });
+
+  it("prefers one provider for fresh L2 tasks, explains the fallback and restores Auto", async () => {
+    const posts = fixture();
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const priority = await group("L2 provider priority");
+    const select = within(priority).getByLabelText("Provider priority");
+    expect(select).toHaveDisplayValue("Auto");
+    expect(priority).toHaveTextContent("Auto uses the default distribution: Alpha and Beta share fresh tasks by weekly headroom.");
+    await user.selectOptions(select, "beta");
+    await within(priority).findByText("Saved.");
+    expect(posts).toEqual([{ project: "example", setting: "l2_preference", value: "beta" }]);
+    expect(select).toHaveDisplayValue("Prefer Beta");
+    expect(priority).toHaveTextContent("Fresh tasks start on Beta when it is available; Alpha takes over only when it is not.");
+    expect(screen.getByRole("combobox", { name: "L3 engine" })).toHaveDisplayValue("Auto");
+    await user.selectOptions(select, "");
+    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l2_preference", value: null }));
+    await waitFor(() => expect(select).toHaveDisplayValue("Auto"));
+  });
+
+  it("names custom routing instead of calling it the default, and a preference outside it", async () => {
+    fixture({ routing: "beta" });
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const priority = await group("L2 provider priority");
+    expect(priority).toHaveTextContent("Auto follows this project's custom routing: beta.");
+    await user.selectOptions(within(priority).getByLabelText("Provider priority"), "alpha");
+    await within(priority).findByText("Saved.");
+    expect(priority).toHaveTextContent("Alpha is not in this project's custom routing (beta), so this priority has no effect.");
+  });
+
+  it("says an L2 engine pin wins over the priority", async () => {
+    fixture({ l2Pin: "alpha" });
+    renderApp({ route: "/settings/projects/example" });
+    expect(await group("L2 provider priority")).toHaveTextContent("This project pins L2 to Alpha; the pin wins over this priority.");
+  });
+
+  it("keeps the saved priority and offers Retry save when the server refuses", async () => {
+    const posts = fixture({ refuse: "l2_preference" });
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const priority = await group("L2 provider priority");
+    await user.selectOptions(within(priority).getByLabelText("Provider priority"), "alpha");
+    expect(await within(priority).findByRole("alert")).toBeVisible();
+    expect(within(priority).getByLabelText("Provider priority")).toHaveDisplayValue("Auto");
+    expect(within(priority).queryByText("Saved.")).toBeNull();
+    await user.click(within(priority).getByRole("button", { name: "Retry save" }));
     await waitFor(() => expect(posts).toHaveLength(2));
   });
 
