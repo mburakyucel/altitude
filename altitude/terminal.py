@@ -330,7 +330,7 @@ def _follow(term: Terminal) -> None:
     now = time.monotonic()
     if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS and not any(
             map(_alive, command.get("groups", ()))):
-        _notice(term, "the command you handed the operator has finished in the task terminal")
+        _notice(term, "the command you handed the operator looks finished in the task terminal")
 
 
 def _alive(group: int) -> bool:
@@ -350,8 +350,10 @@ def _notice(term: Terminal, what: str) -> None:
         command, term.command = term.command, None
     if not command:
         return
-    text = (f"Terminal: {what}: `{command['text']}`. Read its output with `alt task terminal`, verify the actual "
-            "outcome (Altitude does not see the exit status), then continue or report the blocker.")
+    text = (f"Terminal: {what}: `{command['text']}`. This is a prompt to check, not proof: read its output with "
+            "`alt task terminal` and verify that the command actually ended and how. Altitude does not see its exit "
+            "status, and a command waiting for input, such as `read`, can look finished. Then continue or report "
+            "the blocker.")
 
     def send():
         try:

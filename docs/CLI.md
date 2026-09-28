@@ -1715,10 +1715,11 @@ available. Project terminals have no reader. Output the owner reads becomes part
 provider record; save only what the task's evidence needs.
 
 When the operator opens the owner's `run` command in the task terminal, altd tells the owner how it went
-with a Terminal notice at its next checkpoint, waking it when blocked: the command has finished (the shell
+with a Terminal notice at its next checkpoint, waking it when blocked: the command looks finished (the shell
 held the foreground again for a second after Enter on it, and no job it started is suspended or in the
 background), or the terminal ended before the command ran or finished. Only the attempt that handed the
-command hears about it. The notice names the command and carries no exit status, so the owner reads the output with
-`alt task terminal` and verifies the outcome. Ctrl+C before Enter drops the command without a notice. The
+command hears about it. The notice names the command and is a prompt to check, not proof that it ended: it
+carries no exit status, and a command waiting for input, such as `read`, can look finished. The owner reads the
+output with `alt task terminal` and verifies that the command ended and how. Ctrl+C before Enter drops the command without a notice. The
 notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
 it for its next resume.

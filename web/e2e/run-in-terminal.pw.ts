@@ -60,7 +60,7 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await walk.state("04-enter-runs", { visible: [output.getByText("ran-42", { exact: true })], hidden: [] });
   // Once the shell is back at its prompt, the task's owner is told the command it handed over has run.
   await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).notices, { timeout: 10_000 })
-    .toEqual([expect.stringContaining("has finished in the task terminal: `echo ran-$((20+22))`")]);
+    .toEqual([expect.stringContaining("looks finished in the task terminal: `echo ran-$((20+22))`")]);
 
   // A program in the foreground would receive the keystrokes, so nothing is typed.
   await page.keyboard.type("sleep 300");

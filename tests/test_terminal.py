@@ -342,7 +342,7 @@ class TestHandedCommand(TerminalCase):
         self.output(self.slug, until="slept-16")
         self.assertEqual(self.notices(), [])  # quiet while sleep holds the foreground
         text = self.notice()
-        self.assertIn("the command you handed the operator has finished in the task terminal: "
+        self.assertIn("the command you handed the operator looks finished in the task terminal: "
                       "`sleep 1.5; echo slept-$((4*4))`", text)
         self.assertIn("alt task terminal", text)
         self.assertIn("slept-16", terminal.owner_output(self.project, self.slug)["text"])
@@ -350,13 +350,13 @@ class TestHandedCommand(TerminalCase):
     def test_a_failed_command_is_reported_as_run_and_the_owner_reads_how(self):
         self.hand("ls /no-such-folder-here")
         self.type("\r", self.slug)
-        self.assertIn("has finished", self.notice())
+        self.assertIn("looks finished", self.notice())
         self.assertIn("No such file or directory", terminal.owner_output(self.project, self.slug)["text"])
 
     def test_a_shell_builtin_counts_once_the_shell_is_back(self):
         self.hand("cd /")
         self.type("\r", self.slug)
-        self.assertIn("has finished", self.notice())
+        self.assertIn("looks finished", self.notice())
 
     def test_ctrl_c_before_enter_drops_the_command_so_a_later_enter_is_not_it(self):
         self.hand("echo handed")
@@ -401,7 +401,7 @@ class TestHandedCommand(TerminalCase):
         time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # the shell holds the terminal; sleep is suspended
         self.assertEqual(self.notices(), [])
         self.type("fg\r", self.slug)
-        self.assertIn("has finished", self.notice())
+        self.assertIn("looks finished", self.notice())
 
     def test_a_notice_goes_only_to_the_attempt_that_handed_the_command(self):
         self.hand("true")
