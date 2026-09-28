@@ -89,7 +89,7 @@ export function ProjectSetup({ name }: { name: string }) {
           <button type="button" className="icon-btn" aria-label="Close setup" onClick={() => close()}>✕</button>
         </header>
         <div className="setup-intro">
-          <p className="setup-summary" data-status={data?.status} role="status">{label}</p>
+          <p className="setup-summary" data-status={stale ? "unknown" : data?.status} role="status">{label}</p>
           <p className="text-muted">Setup runs automatically. If a step fails, L3 can help.</p>
         </div>
         {stale ? <div className="setup-notice" role="alert">

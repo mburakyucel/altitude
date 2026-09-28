@@ -149,6 +149,8 @@ describe("Project setup", () => {
     expect(within(panel).getByText("Using existing conversation")).toBeInTheDocument();
     // A failed reading cannot claim health, so the header shows it.
     expect(screen.getByRole("button", { name: "Setup: Unavailable" })).toBeInTheDocument();
+    // Saved healthy results do not colour a failed reading as ready.
+    expect(within(panel).getByRole("status")).toHaveAttribute("data-status", "unknown");
     offline = false;
     await user.click(within(panel).getByRole("button", { name: "Retry connection" }));
     await waitFor(() => expect(within(panel).queryByRole("alert")).toBeNull());
