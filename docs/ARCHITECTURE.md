@@ -223,6 +223,22 @@ service-inspection shims and the source-checkout TLS setup remain Linux-specific
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance remains pending.
 
+An installed copy's daemon checks for a newer release at startup and every twelve hours, off the
+timer thread: one anonymous request to GitHub's latest-release endpoint for the repository in
+`release.json`, retried after an hour when offline. `update.json` in the runtime home keeps the
+newest stable release found and any update the app started, and the daemon, the app's request and
+the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
+overview's `update` field and `alt doctor` report the installed version and a newer one; an
+interactive `alt` command prints one line about it at most once a day from that record, never to
+agents. `POST /api/update` accepts only the exact newer version the record shows and starts
+`alt update --version` in its own transient user unit (`platform.detach`), so the update outlives
+the service restart it causes; it passes the operator terminal's request checks, and Altitude has
+no login, so anyone who can open the page can start an update to that verified release, never a
+downgrade or another build. An update that fails, or has not finished after thirty minutes, reads
+as failed until retried; the installed version keeps running or is restored by activation recovery.
+The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
+private paths, stay in the daemon log, the update unit's journal or the terminal.
+
 `source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
 The operator selects its existing certificate directory; native unit/process/listener evidence and
 a verified HTTPS handshake bind that selection to the running source deployment. Check-only shows
@@ -616,7 +632,12 @@ For a completed review whose assessment is stale, the current L2's merging invoc
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
 reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
-`FETCH_HEAD` receipt. Fresh context invalidation prompts the owner again. Missing or unfinished review, candidate
+`FETCH_HEAD` receipt. A notice names every stale review and subject with the assessed/current values
+of its changed evidence, so the owner posts explanations together before assessing each request.
+Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
+Fresh context invalidation, including during final merge validation, uses the same wait and original
+deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
+Missing or unfinished review, candidate
 movement or ownership loss refuses. No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
@@ -962,7 +983,12 @@ xterm, so a shell's bracketed paste holds pasted lines until Enter. Every reques
 named, so a page still showing a replaced terminal cannot type into, resize, close or read its
 successor. Input waits up to two seconds for a program that has stopped reading it, and gives up at
 once when Close is asked for, so a full input queue never holds Close or the setting. Input that fails
-may have arrived in part, so the page stops sending keys until the operator resumes typing. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
+may have arrived in part, so the page stops sending keys until the operator resumes typing. A chat
+message's `run` block (one line with no control, invisible-formatting or line-separator character) offers
+**Open in terminal** in its task or project conversation: the page holds the command in memory for that
+terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
+stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
+holds the foreground. It never sends Enter, and the server sees ordinary input. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
@@ -1618,6 +1644,13 @@ ignores callbacks after cancellation or its end, including while punctuation is 
 Abandoned captures do not queue inference when a pending model load completes or apply late
 punctuation output. Native-device capture and audio-session behavior require native evidence;
 scripted recognizer tests establish ordering and text isolation only. The microphone
+diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
+`voiceDiagnostics.ts` retains up to 256 metadata-only events for ten minutes, including track
+state, recognizer callbacks and one waveform state/signal-presence sample per second. It never
+records speech, drafts, raw samples or device identifiers, uploads data, or changes capture behavior.
+The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.
+The report identifies the loaded script basename and browser/Home Screen mode, without the origin
+or conversation URL. The microphone
 stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
 endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
 server whose backend or endpoint URL changed shows the server's words and reads the backend again.

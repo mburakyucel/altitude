@@ -4,12 +4,13 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
-import type { Device, PairingCode } from "../data/api";
+import { ApiError, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import type { Device, Overview, PairingCode, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
+import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = {
@@ -112,6 +113,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
       </p> : null}
     </form>
     <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings; the speech service that transcribes them controls its own retention.</p>
+    <VoiceDiagnostics />
   </>;
 }
 
@@ -245,6 +247,39 @@ function DevicesPage() {
   </>;
 }
 
+/** An installed copy's version, any newer release, the command that installs it and the check's switch. */
+function VersionRows({ update }: { update: Update }) {
+  const client = useQueryClient();
+  const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
+  const change = async (on: boolean) => {
+    setSave({ status: "saving" });
+    try {
+      const { update: status, ...machine } = await saveUpdateCheck(on);
+      client.setQueryData(["machine"], machine);
+      client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update: status });
+      setSave({ status: "idle" });
+    } catch (error) {
+      setSave({ status: "failed", error: error as Error });
+    }
+  };
+  const available = update.available;
+  return <>
+    <div className="settings-row settings-version">
+      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : update.check && update.checked ? " · Up to date" : ""}</small></span>
+      {available ? <Command text={update.command} /> : null}
+    </div>
+    <div className="settings-row settings-switch-row">
+      <label htmlFor="update-check-switch">
+        <strong>Check for new versions</strong>{" "}
+        <small>Twice a day Altitude asks GitHub for the latest release. Nothing else is sent, and nothing installs without you.</small>
+        {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
+      </label>
+      <input id="update-check-switch" type="checkbox" role="switch" className="settings-switch" checked={update.check}
+        disabled={save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+    </div>
+  </>;
+}
+
 const titles = {
   voice: "Voice input", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices",
@@ -320,6 +355,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
             <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
           <TerminalSwitch enabled={machine.data?.terminal} />
+          {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
         </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>
           <span><strong>Projects folder</strong>{" "}<small>{roots.join(" and ") || "Loading…"} · First run offers the folders directly inside it</small></span><span aria-hidden>›</span>

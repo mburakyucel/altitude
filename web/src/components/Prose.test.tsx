@@ -142,7 +142,7 @@ describe("question prose", () => {
     const { container } = render(<ProseRepository value={repository}><QuestionProse className="decision-why" text={text} /></ProseRepository>);
     const root = container.firstElementChild!;
     expect([root.tagName, root.className]).toEqual(["DIV", "decision-why"]);
-    expect([...root.querySelectorAll(".session-prose > *")].map((node) => node.tagName)).toEqual(["P", "UL", "PRE", "P"]);
+    expect([...root.querySelectorAll(".session-prose > *")].map((node) => node.tagName)).toEqual(["P", "UL", "DIV", "P"]);
     expect(root.querySelector("ul")?.textContent).toBe("keeps alt on PATHone copy");
     expect(root.querySelector("pre.session-code")?.textContent).toBe("sudo make install");
     expect(destinations()).toEqual([["docs", "https://example.org/install"]]);

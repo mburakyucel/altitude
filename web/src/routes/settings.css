@@ -29,6 +29,11 @@
 .settings-card > [role] { margin-top: 12px; }
 .settings-section { display: flex; flex-direction: column; gap: 14px; }
 .settings-card h3 { font-weight: 600; }
+.voice-diagnostics { flex-shrink: 0; }
+.voice-diagnostics summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--accent-text); }
+.voice-diagnostics p, .voice-diagnostics .onboarding-nav { margin-bottom: 12px; }
+.voice-diagnostics label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.voice-diagnostics textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); color: var(--text-primary); font-size: 16px; }
 .default-engine { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .default-engine .composer-pill-select { height: auto; min-height: 44px; min-width: 10rem; border-color: var(--border); border-radius: 8px; padding: 8px 32px 8px 12px; background-color: var(--surface); background-position: right 12px center; color: var(--text-primary); font-size: var(--text-body); }
 .default-engine-row { display: grid; grid-template-columns: 6rem 1fr 1fr; gap: 12px; align-items: start; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--hairline); }
@@ -63,3 +68,5 @@
 .device-code { font-family: var(--font-mono); font-size: 1.75rem; font-weight: 500; letter-spacing: .12em; }
 .shell[data-phone] .device-row { flex-wrap: wrap; }
 .device-row .btn-danger { background: var(--danger); border-color: var(--danger); color: var(--on-accent); font-weight: 600; }
+.settings-version { flex-wrap: wrap; }
+.settings-version .onboarding-command { margin-top: 0; }

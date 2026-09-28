@@ -12,6 +12,15 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   the `alt` CLI keeps working without a step. Internal error details show only in paired browsers
   and the CLI, and a connection that stays silent for thirty seconds is closed.
 
+- A command an agent needs you to run arrives in chat as a command block with **Copy** and **Open in
+  terminal**. Open in terminal shows that task's or project's terminal with the command typed at the
+  prompt; nothing runs until you press Enter, and you can edit or clear it first. If a program is
+  running in the terminal, nothing is typed and you get Copy instead. Agents mark these commands with a
+  `run` code fence holding one line; every other code block now has a Copy button and is never an action.
+
+- Reopening a terminal right after it closed shows the new shell instead of sometimes staying on
+  "Loading the terminal…".
+
 - English dictation gets sentence punctuation and capitals in any browser that runs WebAssembly
   in a worker. A small model bundled with Altitude runs on the device's CPU, adds only punctuation and
   capitals, and never changes your words. Each device downloads it (about 23 MB) from your Altitude
@@ -233,3 +242,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   does nothing when the installed version is current. `--version` installs a named newer release;
   `--archive` with `--sha256` still installs a local archive. Registered projects keep current Git
   guards and dispatch on the updated version.
+
+- An installed Altitude tells you when a newer stable release is published. The daemon asks GitHub
+  twice a day (one anonymous request; **Check for new versions** in Settings turns it off). The app
+  shows a dismissible notice with What’s new and **Update**, which after a confirm installs exactly
+  that version through the same verified `alt update`, restoring the running version if it fails.
+  Settings › This machine shows the version and the `alt update` command, `alt doctor` reports it,
+  and a terminal `alt` command mentions it at most once a day. Nothing updates on its own.

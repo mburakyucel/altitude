@@ -13,11 +13,11 @@ import { walkthrough } from "./walkthrough";
 const FAKE_RECOGNIZER = `
   class FixtureRecognition {
     constructor() { this.continuous = false; this.interimResults = true; this.lang = ""; this.onresult = null; this.onerror = null; this.onend = null; this.started = 0; this.ended = false; window.fixtureRecognizer = this; (window.fixtureRecognizers ??= []).push(this); }
-    start() { this.started += 1; }
+    start() { this.started += 1; this.onstart && this.onstart(); this.onaudiostart && this.onaudiostart(); }
     stop() { setTimeout(() => this.end(), 0); }
     // window.fixtureHoldAbort: Cancel's abort ends only when the test calls end(), as a recognizer still shutting down.
     abort() { if (!window.fixtureHoldAbort) setTimeout(() => this.end(), 0); }
-    end() { if (this.ended) return; this.ended = true; this.onend && this.onend(); }
+    end() { if (this.ended) return; this.ended = true; this.onaudioend && this.onaudioend(); this.onend && this.onend(); }
     hear(finals, interim) {
       const results = finals.map((transcript) => ({ isFinal: true, 0: { transcript }, length: 1 }));
       if (interim) results.push({ isFinal: false, 0: { transcript: interim }, length: 1 });
@@ -56,6 +56,112 @@ const PUNCTUATED_STOP = "So I think we should merge the PR today. Then look at t
 const PUNCTUATED_LISTENING = "Can you check why the CI job failed on the main branch? it looks like";
 
 const hear = (page: Page, finals: string[], interim = "") => page.evaluate(([f, i]) => (window as unknown as { fixtureRecognizer: { hear(f: string[], i: string): void } }).fixtureRecognizer.hear(f, i), [finals, interim] as const);
+
+test("voice diagnostics: opt-in report distinguishes suspended restart and excludes conversation content", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await browserBackend(page);
+  await page.addInitScript(FAKE_RECOGNIZER);
+  await page.addInitScript(() => {
+    const Native = window.AudioContext;
+    let graphs = 0;
+    let streams = 0;
+    const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await getUserMedia(constraints);
+      if (++streams === 3) for (const track of stream.getAudioTracks()) {
+        // Fictional muted-input state on a real synthetic stream, separate from graph suspension.
+        track.enabled = false;
+        Object.defineProperty(track, "muted", { get: () => true });
+      }
+      return stream;
+    };
+    window.AudioContext = class extends Native {
+      constructor() { super(); if (++graphs === 2) void this.suspend(); }
+    };
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("fixture denial")) } });
+  });
+  const settings = async () => {
+    await page.getByRole("button", { name: "More actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+    await page.getByRole("link", { name: "Voice input Browser recognition", exact: true }).click();
+    await page.getByText("Voice troubleshooting", { exact: true }).click();
+    await page.getByText("Collect microphone states, errors, timing and browser version", { exact: false }).scrollIntoViewIfNeeded();
+    await expect(page.getByText("Collect microphone states, errors, timing and browser version", { exact: false })).toBeInViewport();
+  };
+  const start = page.getByRole("button", { name: "Start diagnostics", exact: true });
+  const report = page.getByRole("textbox", { name: "Voice diagnostic report", exact: true });
+  await walk.open(project.path);
+  await v.field.fill("Private typed fixture draft");
+  await settings();
+  await walk.state("diagnostics-01-off", { visible: [start], hidden: [report] });
+  await walk.state("diagnostics-02-collecting", {
+    action: () => start.click(),
+    visible: [page.getByRole("button", { name: "Stop diagnostics", exact: true }), page.getByText("Collecting on this device. Return here after reproducing.", { exact: true })], hidden: [report],
+  });
+  await page.goBack();
+  await page.goBack();
+  await expect(v.field).toHaveValue("Private typed fixture draft");
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await v.mic.click();
+    await expect(v.listening).toBeVisible();
+    await hear(page, [], "Private spoken fixture phrase");
+    // Let the real graph draw/sample; the second graph is deliberately suspended, not a native claim.
+    await expect.poll(() => page.evaluate(() => document.querySelectorAll(".composer-wave").length)).toBe(1);
+    await page.waitForTimeout(1100);
+    await v.cancel.click();
+    await expect(v.field).toHaveValue("Private typed fixture draft");
+  }
+  await settings();
+  await walk.state("diagnostics-03-report", {
+    action: async () => {
+      await page.getByRole("button", { name: "View report", exact: true }).click();
+      await report.scrollIntoViewIfNeeded();
+    },
+    visible: [report, page.getByRole("button", { name: "Copy report", exact: true }), start],
+    hidden: [page.getByRole("button", { name: "Stop diagnostics", exact: true })],
+  });
+  const text = await report.inputValue();
+  expect(text).not.toContain("Private");
+  expect(text).not.toContain(project.path);
+  const data = JSON.parse(text);
+  expect(data.build).toMatch(/^index-.*\.js$/);
+  expect(data.events).toEqual(expect.arrayContaining([
+    expect.objectContaining({ event: "waveform.sample", state: "running" }),
+    expect.objectContaining({ event: "waveform.sample", state: "suspended" }),
+    expect.objectContaining({ event: "microphone.sample", state: "live", muted: true }),
+    expect.objectContaining({ event: "recognizer.started" }),
+    expect.objectContaining({ event: "recognizer.audio-start" }),
+    expect.objectContaining({ event: "recognizer.audio-end" }),
+    expect.objectContaining({ event: "recognizer.cancel" }),
+    expect.objectContaining({ event: "microphone.released", state: "ended" }),
+  ]));
+  expect(data.events.find((event: { state?: string }) => event.state === "suspended")).not.toHaveProperty("signal");
+  await walk.state("diagnostics-04-copy-denied-manual-fallback", {
+    action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
+    visible: [report, page.getByText("Could not copy. Select and copy the report above.", { exact: true })], hidden: [],
+  });
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async (value) => { (window as unknown as { copiedReport: string }).copiedReport = value; };
+  });
+  await walk.state("diagnostics-04b-copied", {
+    action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
+    visible: [report, page.getByText("Copied. Paste it into the task conversation.", { exact: true })],
+    hidden: [page.getByText("Could not copy. Select and copy the report above.", { exact: true })],
+  });
+  expect(await page.evaluate(() => (window as unknown as { copiedReport: string }).copiedReport)).toBe(text);
+  await walk.state("diagnostics-05-cleared", {
+    action: () => page.getByRole("button", { name: "Clear report", exact: true }).click(),
+    visible: [start, page.getByText("Cleared.", { exact: true })], hidden: [report],
+  });
+  await start.click();
+  await page.reload();
+  await page.getByText("Voice troubleshooting", { exact: true }).click();
+  await expect(start).toBeVisible();
+  await page.getByRole("button", { name: "View report", exact: true }).click();
+  expect(JSON.parse(await report.inputValue()).events).toEqual([]);
+});
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });

@@ -239,6 +239,9 @@ is released only after termination is confirmed; uncertain termination follows t
 recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
 on the task, separate from native-helper usage attribution. Later proposal/code/base/context changes
 show their relevant staleness; L2 reconciliation does not claim the reviewer examined later revisions.
+Landing lists all stale subjects and changed evidence together. The owner explains their dispositions
+before assessing each request; late context changes during final validation retain the repository
+turn and original assessment deadline. Proposal findings and assessments remain independently required.
 The run neither switches engines after launch nor retries automatically.
 See [commands and evidence](CLI.md#cross-engine-review).
 
@@ -675,6 +678,10 @@ three seconds), followed by the waveform audio context's asynchronous close (at 
 seconds), before acquiring audio. An unanswered close does not prevent later attempts.
 Cancel during either wait restores editing and prevents that attempt from acquiring audio later.
 Cancelled model loads and late recognition or punctuation callbacks cannot change the draft.
+Optional voice troubleshooting retains bounded event metadata in page memory across conversation
+and Settings navigation. It stops on View report or after ten minutes, resets on Start diagnostics,
+and clears on Clear report or reload. It creates no server record; only an explicit copy and chat
+submission shares the report with the task owner.
 After a denial, the next tap asks the browser
 again. Navigation cancels ordinary unsent voice input. An explicit Send
 retains its original conversation, text and images while transcription completes; leaving a project

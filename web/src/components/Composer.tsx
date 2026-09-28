@@ -6,6 +6,7 @@ import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
 import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
+import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -31,13 +32,16 @@ const WAVEFORM_CLOSE_MS = 3000;
 let waveformClosing: Promise<void> | null = null;
 
 function closeWaveform(context: AudioContext) {
+  traceVoice("waveform.close-wait", context, { state: context.state });
   // Read after React's synchronous cleanup pass: the capture cleanup calls cancel() synchronously,
   // publishing idle() before this microtask even if waveform cleanup ran first (navigation test).
   const closing = Promise.resolve().then(() => RecognitionCapture.idle())
     .then(() => new Promise<void>((resolve) => {
       // A browser that never acknowledges close must not disable voice until a page reload.
-      const timer = setTimeout(resolve, WAVEFORM_CLOSE_MS);
-      void Promise.resolve().then(() => context.close()).catch(() => undefined).finally(() => {
+      const timer = setTimeout(() => { traceVoice("waveform.close-timeout", context); resolve(); }, WAVEFORM_CLOSE_MS);
+      void Promise.resolve().then(() => { traceVoice("waveform.close", context); return context.close(); })
+        .catch((error) => traceVoice("waveform.close-error", context, { error: voiceError(error) })).finally(() => {
+        traceVoice("waveform.close-settled", context, { state: context.state });
         clearTimeout(timer);
         resolve();
       });
@@ -238,14 +242,17 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
     let analyser: AnalyserNode | null = null;
     try {
       context = new AudioContext();
+      traceVoice("waveform.created", context, { state: context.state });
       analyser = context.createAnalyser();
       analyser.fftSize = 512;
       context.createMediaStreamSource(stream).connect(analyser);
-    } catch {
+    } catch (error) {
+      traceVoice("waveform.setup-error", undefined, { error: voiceError(error) });
       if (context) closeWaveform(context);
       return;
     }
     const data = new Uint8Array(analyser.fftSize);
+    let lastSample = -Infinity;
     const node = canvas.current;
     const draw = () => {
       if (!analyser || !node) return;
@@ -264,6 +271,12 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
         sum += v * v;
       }
       const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+      if (performance.now() - lastSample >= 1000 && context) {
+        lastSample = performance.now();
+        traceVoice("waveform.sample", context, { state: context.state, time: context.currentTime,
+          signal: context.state === "running" ? level > 0.01 : undefined });
+        traceVoiceTracks("microphone.sample", stream);
+      }
       levels.current = [...levels.current.slice(1), level];
       const ctx = node.getContext("2d");
       if (ctx) {
@@ -731,17 +744,22 @@ export default function Composer({
     chunks.current = [];
     setPhase("starting");
     const opening = new AbortController();
+    traceVoice("capture.open", opening, { backend: backend ?? undefined });
     abort.current = opening;
     const ending = RecognitionCapture.idle();
     if (ending || waveformClosing) {
+      traceVoice("capture.wait-for-release", opening);
       await Promise.all([ending, waveformClosing]);
+      traceVoice("capture.release-ready", opening);
       if (!mounted.current || opening.signal.aborted) return;
     }
     let opened: MediaStream | null = null;
     try {
       // Every backend opens the microphone: the waveform draws from it, and the browser backend's
       // recognizer needs the same permission.
+      traceVoice("microphone.request", opening);
       opened = await navigator.mediaDevices.getUserMedia({ audio: true });
+      traceVoiceTracks("microphone.opened", opened);
       if (!mounted.current || opening.signal.aborted) {
         opened.getTracks().forEach((track) => track.stop());
         return;
@@ -775,6 +793,7 @@ export default function Composer({
       }
       recorder.current = active;
       active.start();
+      traceVoice("capture.listening", active);
       startedAt.current = Date.now();
       setStream(opened);
       setPhase("listening");
@@ -786,6 +805,7 @@ export default function Composer({
         }
       }, MAX_RECORDING_MS);
     } catch (cause) {
+      traceVoice("capture.open-error", opening, { error: voiceError(cause) });
       opened?.getTracks().forEach((track) => track.stop());
       if (!mounted.current || opening.signal.aborted) return;
       releaseStream(null);
@@ -799,6 +819,7 @@ export default function Composer({
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback((refocus: "field" | "mic" = "field") => {
+    traceVoice("capture.cancel");
     focusAfterCancel.current = visible.current ? refocus : null;
     const sending = voiceSends.get(conversation);
     if (sending) { sending.cancel(); return; }

@@ -13,6 +13,7 @@ import { Rail } from "./Rail";
 import { RestartBanner } from "./RestartBanner";
 import { setSelectedProject, useSelectedProject } from "./scope";
 import { TabBar } from "./TabBar";
+import { UpdateNotice } from "./UpdateNotice";
 
 /** Layout route: rail beside the main pane on desktop; header, content, tab bar on the phone (SPEC.md §2.2). */
 export default function AppShell() {
@@ -89,13 +90,14 @@ export default function AppShell() {
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />
+          <UpdateNotice update={overview.data?.update} />
           {((!projectPage && !taskPage && !taskLive && !taskTerminal && !projectTerminal) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
         </>
       ) : (
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />
       )}
       <main className="shell-main">
-        {phone ? null : <RestartBanner restart={overview.data?.restart} />}
+        {phone ? null : <><RestartBanner restart={overview.data?.restart} /><UpdateNotice update={overview.data?.update} /></>}
         {missingProject ? (
           <div className="page first-run-page">
             {projects.length ? <>

@@ -55,6 +55,11 @@ time and tokens. The CLI reference covers [routing preferences](CLI.md#automatic
 [model defaults](CLI.md#default-models) and [effort selection](CLI.md#task-reasoning-effort),
 including the same settings from the terminal.
 
+A step only the operator can take arrives in chat as a command block. **Open in terminal** types it at
+the prompt of that task's or project's terminal without pressing Enter; read it, then press Enter, edit
+it or clear it. A plain code block (a command for another machine) has Copy only. If a program is
+running in the terminal, nothing is typed and a notice offers Copy instead.
+
 L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
 PR closing links; when an already merged delivery lacks its link, L3 verifies the issue's full
@@ -139,6 +144,13 @@ alt service status
 alt service logs
 alt update
 ```
+
+The daemon makes the same lookup at startup and every twelve hours and records what it finds.
+`alt doctor`, Settings › This machine and a notice in the app show a newer stable release, and an
+`alt` command you run in a terminal prints one line about it at most once a day. The app's
+**Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
+in its own user unit so the update survives the restart. **Check for new versions** in Settings
+turns the lookup off. Nothing updates on its own.
 
 `alt update` asks GitHub for the newest stable release of the repository the installed release
 was built from (one anonymous request to `api.github.com`) and does nothing when the installed
@@ -395,3 +407,17 @@ one reload and repeat: this distinguishes the loaded client from the currently s
 reload is a diagnostic comparison, not successful restart acceptance. Native success requires
 repeated capture and transcription on the affected device without further reloads; Chromium's
 scripted recognition and synthetic audio do not establish that result.
+
+For a silent restart, **Settings → Voice input → Voice troubleshooting** offers **Start diagnostics**.
+Return to the conversation without reloading, reproduce once, then return to **View report** and
+**Copy report**. Paste the report into the owning task conversation. It includes the loaded asset
+name, browser version, Home Screen mode, microphone track states, recognizer events and waveform
+audio-context state/timing. It contains no recordings, speech, drafts, device identifiers or server
+addresses. Collection is opt-in, keeps the latest 256 events in page memory, stops after ten minutes,
+and sends nothing automatically. View report stops collection; Clear report or reloading deletes it.
+If copying is denied, the selectable report provides a manual fallback. This evidence distinguishes
+silent input from a suspended waveform graph; it does not itself prove a native-browser cause.
+Read the graph state and whether its clock advances before interpreting signal presence; signal
+is omitted while the graph is not running. State samples occur once per second while the waveform
+draws, so brief transitions or a stopped drawing loop require further investigation. A dropped-event
+count identifies truncated reports; start a fresh report and reproduce briefly when it is nonzero.

@@ -37,3 +37,8 @@
 .terminal-close-icon { width: 36px; min-width: 36px; flex: none; align-self: center; color: var(--text-secondary); }
 .terminal-page { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .terminal-page .phone-header .btn { min-height: 44px; }
+
+/* A chat command that was not typed (SPEC.md §3.3): why, with Copy and a dismiss. */
+.terminal-held { display: flex; flex: none; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-secondary); font-size: var(--text-meta); }
+.terminal-held p { min-width: 0; flex: 1; }
+.task-page[data-phone] .terminal-held, .terminal-page .terminal-held { margin: 8px 12px 0; }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { imageSendRefused, sendImageChat, streamChat, useChatDequeue } from "../data/api";
 import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
+import { ProseTerminal } from "../components/CodeBlock";
+import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -181,6 +183,14 @@ export default function Conversation({
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
   const { phone } = useViewport();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // A `run` block in project chat opens the project folder's terminal with its command typed (SPEC.md §3.3).
+  const runTarget = useMemo(() => ({ open: (command: string) => {
+    const path = `/projects/${name}/terminal`;
+    requestCommand(name, undefined, command);
+    if (location.pathname !== path) void navigate(path);
+  } }), [name, location.pathname, navigate]);
 
   const view = chat.data;
   const activeId = view?.active?.id ?? null;
@@ -356,6 +366,7 @@ export default function Conversation({
 
   return (
     <ProseScope project={name} repository={project.data?.repository}>
+    <ProseTerminal value={runTarget}>
     <section className="convo" aria-label="Conversation">
       <div
         className="convo-scroll"
@@ -415,6 +426,7 @@ export default function Conversation({
         />
       </div>
     </section>
+    </ProseTerminal>
     </ProseScope>
   );
 }

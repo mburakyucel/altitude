@@ -255,6 +255,37 @@ from `GET /api/project/<name>`, and each Needs you card uses its own project.
 Phone (390×844) and desktop (1440×900) evidence: `web/e2e/prose-references.pw.ts` uses
 `walkthrough.ts` and a disposable real service, with named metadata failure/delay overlays.
 
+#### Chat commands
+
+A step only the operator can take (handing over private files, an admin step needing their password)
+arrives as a command: a fence whose info string is exactly `run`, holding one line. Its block shows
+the whole command in monospace, wrapped and never shortened, over a row with **Copy** and **Open in
+terminal** (primary, terminal icon). Open in terminal shows the terminal of the conversation the message
+is in — the task's terminal on a task page (phone Terminal tab, desktop panel's Terminal view), the
+project folder's terminal from project chat — and types the command at its prompt with the cursor at the
+end. It never presses Enter: the operator runs, edits or clears the line. The command reaches the terminal
+only through page memory, never the URL or history, so a link, reload, Back or Forward types nothing.
+Every other fence (`sh`, bare) is code with **Copy** at its top right and is never an action; a command
+for another machine uses one. Inline code is unchanged. Only conversation replies and question cards in
+a task or project conversation offer Open in terminal; elsewhere (Live session, Needs you, reports) a
+`run` block has Copy only. The file reader's documents keep plain code with no controls.
+
+| State | What appears and what actions do |
+| --- | --- |
+| Command | The block with Copy and Open in terminal. |
+| Plain code block | Code with Copy; no action. |
+| Copied / refused | Copy reads "Copied" for two seconds; a browser that refuses it reads "Couldn't copy", and the text stays selectable. |
+| Not one safe line | A `run` fence with more than one line, or a control, invisible-formatting or line-separator character (tab, escape, zero-width, direction override): shown verbatim with Copy and "Not offered for the terminal: <reason>." |
+| No terminal here | A task that is finished, rejected or has no worktree: Copy and "This task has no terminal now." |
+| Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
+| Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
+| A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
+| Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
+| Enter | Only the operator's Enter runs it. |
+
+Phone (390×844) and desktop (1440×900) evidence: `web/e2e/run-in-terminal.pw.ts` walks these states
+against real shells from saved task and project messages.
+
 File references use ordinary accent-coloured underlined links, with no chip, icon, border or
 background. Preserve the supplied absolute path, `file:///` URI or Markdown link label. Hover
 exposes the full target; opening exposes it on both viewports. References outside code open a
@@ -978,6 +1009,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Closed elsewhere (another tab or device, or the setting turned off) | The view returns; toast "The terminal was closed elsewhere." |
 | Task finished / project unmanaged | The view returns; toast "The task finished, so its terminal closed." / "The project is no longer managed, so its terminal closed." The task's Terminal tab disappears. |
 | Ended while disconnected (an Altitude restart) | The view returns; toast "The terminal closed while the connection was lost." |
+| Chat command | Opened from a `run` block in its conversation: the command typed at the prompt, not run; or a notice with Copy when a program holds the foreground (§3.3 Chat commands). |
 | Could not read, start or refused | "Couldn't read the terminal" or "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**, shown at once. |
 
 Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as
@@ -1106,6 +1138,21 @@ and use normal page scrolling on both viewports. Pending, waiting, restarting, a
 request denial, loading, read error, empty, dismissed and new-event states are walked on phone
 and desktop in `web/e2e/restart-banner.pw.ts`, including removals after actions.
 
+**New version (installed copies).** When the overview's `update` names a newer stable release, the
+same compact row in the same place reads **Altitude <version> is available. What’s new · Update ·
+×**; What’s new opens the release page. Update turns the row into a confirm: "Install Altitude
+<version>? Altitude checks the download, then restarts. If <version> does not start, <current>
+comes back." with **Install <version>** and **Cancel**. Install shows Starting…, then the row reads
+**Installing Altitude <version>… Altitude restarts when it is ready.** with no actions until the
+new version answers and the row leaves. A refused request keeps the confirm and shows the server's
+reason. A failed update reads "The update to <version> did not finish. <reason> Altitude <current>
+keeps running." with **Try again** and ×. Close (**Dismiss new version notice**) hides that version,
+or that failure, in this browser until a newer version or a new failure appears. Source deployments
+never show it. Data: `GET /api/overview` `update`; Install requests `POST /api/update` with the
+version. Source deployment, available, confirm, refused, installing, failed, dismissed failure,
+dismissed version, newer version and updated states are walked on phone and desktop in
+`web/e2e/update-notice.pw.ts`.
+
 All banner notices and toasts offer an accessible close control. Toast timers, hover/focus pause
 and action controls remain available. Inline form/transport errors, task faults, task questions
 and conversation navigation are contextual state or actions, not dismissible banner notices;
@@ -1162,6 +1209,14 @@ breakdown on their task/report pages rather than appearing as live Monitor sessi
 
 ### 3.15 Settings and Voice input
 
+Voice input includes a collapsed **Voice troubleshooting** disclosure. It explains metadata-only,
+on-device collection and the Start → reproduce → View report flow. Start diagnostics opts in for
+up to ten minutes; Stop diagnostics freezes collection. View report stops collection and shows a
+labelled read-only text area with Copy report; clipboard denial leaves the text selectable. Clear
+report deletes the in-memory evidence. No audio or conversation text is collected or automatically
+sent. Collection survives in-app navigation and ends on reload. Controls and report work at both
+phone and desktop widths.
+
 Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
 or the desktop rail's operator row. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
@@ -1189,6 +1244,11 @@ A **Terminal** switch row (off after install) says "Every paired browser can run
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
+An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
+or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
+new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
+release. Nothing else is sent, and nothing installs without you." It saves on change like Terminal;
+off hides the Version row's newer release and the notice. Source deployments show neither row.
 The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays

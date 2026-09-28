@@ -5,6 +5,7 @@ This file is also the standalone installer distributed alongside the release arc
 from __future__ import annotations
 
 import argparse
+import contextlib
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -134,8 +135,130 @@ def latest_release(repository: str) -> dict:
     return {"version": version, "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
+UPDATE_CHECK_SECONDS = 12 * 3600
+UPDATE_RETRY_SECONDS = 3600
+UPDATE_STALE_SECONDS = 1800
+# The page shows only this next step; the cause stays in the terminal or the update unit's log.
+UPDATE_FAILED = "Run alt update in a terminal to see why."
+
+
+def _update_record() -> tuple[Path, dict]:
+    from . import config, state as S
+    path = config.ROOT / "update.json"
+    return path, S.read_json(path, {})
+
+
+@contextmanager
+def _changing_update_record():
+    """The daemon, the app's request and the detached update each change update.json under one lock."""
+    from . import state as S
+    path, _ = _update_record()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with (path.parent / "update.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        record = S.read_json(path, {})
+        yield record
+        S.write_json(path, record)
+
+
+def check_for_update(now: float | None = None) -> None:
+    """The daemon's release lookup: at startup, then every 12 hours; offline retries after an hour."""
+    from . import config
+    if config.RELEASE is None or config.machine_settings().get("update_check") is False:
+        return
+    now = time.time() if now is None else now
+    _, record = _update_record()
+    if now < record.get("next", 0):
+        return
+    try:
+        found = {"latest": latest_release(release_repository()), "checked": now, "next": now + UPDATE_CHECK_SECONDS}
+    except (OSError, ValueError, RuntimeError):
+        found = {"next": now + UPDATE_RETRY_SECONDS}
+    with _changing_update_record() as record:
+        record.update(found)
+
+
+def update_status() -> dict | None:
+    """What the app, `alt doctor` and the CLI notice show; None for a source deployment."""
+    from . import config
+    if config.RELEASE is None:
+        return None
+    current = config.RELEASE["version"]
+    _, record = _update_record()
+    check = config.machine_settings().get("update_check") is not False
+    latest = record.get("latest") if check else None
+    newer = bool(latest) and VERSION.fullmatch(latest.get("version", "")) and version_key(latest["version"]) > version_key(current)
+    attempt = record.get("attempt") if (record.get("attempt") or {}).get("version") != current else None
+    if attempt and attempt["state"] == "running" and time.time() - attempt["started"] > UPDATE_STALE_SECONDS:
+        attempt = {**attempt, "state": "failed", "error": UPDATE_FAILED}
+    return {"current": current, "available": latest if newer else None, "check": check, "command": "alt update",
+            "checked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["checked"])) if record.get("checked") else None,
+            "attempt": attempt}
+
+
+def update_notice() -> str | None:
+    """The terminal's once-a-day line about a newer release, read from the daemon's last check; no network."""
+    from . import config
+    status = update_status()
+    marker = config.ROOT / "update-notice"
+    if not status or not status["available"] or marker.exists() and time.time() - marker.stat().st_mtime < 86400:
+        return None
+    try:
+        marker.touch()
+    except OSError:
+        return None
+    version = status["available"]["version"]
+    return (f"Altitude {version} is available: run alt update "
+            f"(notes: {config.RELEASE['repository']}/releases/tag/{version})")
+
+
+class UpdateRefused(ValueError):
+    """A request the page may explain: its message names no path or internal state."""
+
+
+def request_update(version: str) -> dict:
+    """The app's Update button: the exact newer release it showed, run as `alt update --version` in its own unit."""
+    from . import platform
+    # One locked step checks and records the attempt, so a second click cannot start a second update, and the
+    # attempt exists before the detached update starts, so that update's own failure always finds it.
+    with _changing_update_record() as record:
+        status = update_status()
+        if not status or not status["available"] or status["available"]["version"] != version:
+            raise UpdateRefused("Only the newer release Altitude is showing can be installed from the app")
+        if (status["attempt"] or {}).get("state") == "running" and status["attempt"]["version"] == version:
+            return status
+        record["attempt"] = {"version": version, "state": "running", "started": time.time()}
+    try:
+        saved = json.loads(_settings().read_text())
+        platform.detach(f"altitude-update-{version}",
+                        [saved["python"], "-B", str(_prefix() / "current/bin/alt"), "update", "--version", version],
+                        {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1"})
+    except (OSError, ValueError, RuntimeError):
+        with contextlib.suppress(OSError, ValueError):
+            _fail_attempt(version)
+        raise
+    return update_status()
+
+
+def _fail_attempt(version: str) -> None:
+    """Mark this version's running attempt failed; the details stay in the terminal or the update unit's log."""
+    with _changing_update_record() as record:
+        attempt = record.get("attempt") or {}
+        if attempt.get("state") == "running" and attempt.get("version") == version:
+            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_FAILED}
+
+
 def update(version: str | None = None) -> dict:
     """Install the named or latest published release through the same verification and activation."""
+    try:
+        return _update(version)
+    except (OSError, ValueError, RuntimeError):
+        if version:
+            _fail_attempt(version)
+        raise
+
+
+def _update(version: str | None) -> dict:
     from . import config
     repository = release_repository()
     current = config.RELEASE["version"]
@@ -304,7 +427,7 @@ def doctor() -> dict:
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
-    return {"version": (config.RELEASE or {}).get("version"), "checks": checks, "engines": seats,
+    return {"version": (config.RELEASE or {}).get("version"), "update": update_status(), "checks": checks, "engines": seats,
             "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 

@@ -1,6 +1,7 @@
 """Real terminals over the real API: a plain bash on a real pseudo-terminal in a fictional task worktree
-and project folder. Two things are fixtures: the agent check (service_support passes every request;
-/fixture/agent refuses them) and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
+and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Two
+things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
+and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
 walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart."""
 import os
 import socket
@@ -8,7 +9,7 @@ import threading
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
-from altitude import config, server, state as S, tasks as T, terminal
+from altitude import config, l3, server, state as S, tasks as T, terminal
 
 
 def main():
@@ -25,6 +26,12 @@ def main():
     worktree = add_worktree(repo, slug)
     T.dispatch("atlas", slug, attempt=1, session_id=f"fixture-{slug}", agent_id=f"fixture-{slug}",
                worktree=str(worktree), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
+    T.message("atlas", slug, "l2", "Only you can take this step. Nothing runs until you press Enter:\n\n"
+              "```run\necho ran-$((20+22))\n```")
+    l3.save_info("atlas", {"session_id": "fixture-atlas", "engine_last": config.ENGINES[0], "turns": 1})
+    l3.chat_log("atlas", "assistant", "This one is yours to run here:\n\n```run\necho project-$((5*5))\n```\n\n"
+                "Run this one on the other machine:\n\n~~~sh\nuname -a\n~~~\n\n"
+                "```run\ncd /tmp\nls\n```", trigger="chat", turn_id="saved-chat")
     streams = set()
     held = threading.Event()
 

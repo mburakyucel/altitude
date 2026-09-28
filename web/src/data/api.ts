@@ -318,6 +318,19 @@ export const EngineReadoutSchema = z
   })
   .passthrough();
 
+/**
+ * An installed copy's version and the newer stable release its daemon last found (null for a source
+ * deployment). `attempt` is an update started from the app that has not reached its version yet.
+ */
+export const UpdateSchema = z.object({
+  current: z.string(),
+  available: z.object({ version: z.string(), notes: z.string() }).nullish(),
+  check: z.boolean(),
+  command: z.string(),
+  checked: z.string().nullish(),
+  attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
+});
+
 export const OverviewSchema = z
   .object({
     projects: z.array(ProjectRowSchema),
@@ -330,6 +343,7 @@ export const OverviewSchema = z
     /** The operator's name (saved, ALTITUDE_OPERATOR or Git's user.name), shown in the rail's operator row; absent reads “You”. */
     operator: z.string().nullish(),
     restart: RestartSchema.nullish(),
+    update: UpdateSchema.nullish(),
     now: z.string().nullish(),
   })
   .passthrough();
@@ -641,6 +655,7 @@ export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
 export type EngineReadout = z.infer<typeof EngineReadoutSchema>;
 export type Restart = z.infer<typeof RestartSchema>;
+export type Update = z.infer<typeof UpdateSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
@@ -699,7 +714,7 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 
 const MachineSchema = z.object({
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
-  terminal: z.boolean().default(false),
+  terminal: z.boolean().default(false), update_check: z.boolean().default(true),
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
@@ -721,6 +736,16 @@ export async function saveIncidentReports(repository: string | null): Promise<Ma
 /** Turn the operator's terminal on or off for this computer; off also closes every open terminal. */
 export async function saveTerminalAccess(enabled: boolean): Promise<Machine> {
   return MachineSchema.parse(await post("/api/terminal-access", { enabled }));
+}
+
+/** Turn the daemon's twice-daily check for a newer release on or off; off also hides the notice. */
+export async function saveUpdateCheck(enabled: boolean): Promise<Machine & { update: Update | null }> {
+  return MachineSchema.extend({ update: UpdateSchema.nullable() }).parse(await post("/api/update-check", { enabled }));
+}
+
+/** Install exactly the newer release the notice shows, through the same verified `alt update`. */
+export async function startUpdate(version: string): Promise<Update> {
+  return z.object({ update: UpdateSchema }).parse(await post("/api/update", { version })).update;
 }
 
 // ---- the operator's terminal -----------------------------------------------------------
