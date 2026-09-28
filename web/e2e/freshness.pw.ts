@@ -17,7 +17,8 @@ test("decisions and task transitions arrive during an open chat stream and after
   const walk = walkthrough(page, info);
   const start = Date.now();
   await page.clock.install({ time: start });
-  await page.clock.pauseAt(start + 10);
+  // The installed clock runs until paused; a busy host can carry it past any fixed offset from start.
+  await page.clock.pauseAt(Date.now() + 1000);
   const fixture = async (path: string, data: object = {}) => {
     const response = await request.post(`/fixture/${path}`, { data });
     expect(response.ok()).toBe(true);

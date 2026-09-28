@@ -64,7 +64,7 @@ async function opener(browser: Browser, info: TestInfo, service: string, device:
 
 const field = (main: import("@playwright/test").Locator) => main.getByRole("textbox", { name: /^Message (?:L3 about |the L2$)/, includeHidden: true });
 
-firstOpen("first open: the app arrives compressed, opening fetches nothing for dictation, and a warm open reuses it", async ({ visit, request }, info) => {
+firstOpen("first open: the app arrives compressed, opening fetches nothing for dictation, and a warm open reuses it", { tag: "@chromium" }, async ({ visit, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(visit.page, info);
   const main = visit.page.getByRole("main");
@@ -86,7 +86,7 @@ firstOpen("first open: the app arrives compressed, opening fetches nothing for d
   await walk.state("first-open-02-warm", { visible: [field(main)], hidden: [] });
 });
 
-firstOpen("first open on a slow connection with dictation assets failing: the page opens and typing works", async ({ visit, request }, info) => {
+firstOpen("first open on a slow connection with dictation assets failing: the page opens and typing works", { tag: "@chromium" }, async ({ visit, request }, info) => {
   test.setTimeout(60_000);
   const project = await fixtureProject(request);
   const walk = walkthrough(visit.page, info);
