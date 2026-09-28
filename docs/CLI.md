@@ -315,6 +315,8 @@ state; no mutation retry loop runs. A confirmed closed state establishes the res
 concurrent actor caused it. Confirmed calls record a `pr-close` project event with actor and the
 result fields; failed or unconfirmed calls record no success. Branches, checkout archives, task
 ownership and merge holds remain intact. Closure alone proves neither delivery nor activation.
+A verified `CLOSED` state also appends one `pr-closed` event to each task whose current PR it is,
+so that task stops asking for merge review; its delivery record and hold stay unchanged.
 
 ## GitHub issues
 
@@ -842,6 +844,7 @@ alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
+alt task terminal [<slug>] [--json]
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -1111,7 +1114,10 @@ creates a new revision and restores its answer field even when wording is unchan
 unchanged re-parking retains the response. Independent unanswered members remain available.
 An open operator question linking or naming the held PR replaces its generated review card,
 including a freeform question and one with a submitted response awaiting owner interpretation.
-After resolution the fallback returns if merge approval is still needed. This display rule neither
+After resolution the fallback returns if merge approval is still needed. A held PR closed without
+merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
+as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
+still lands, the review stays shown and stderr says the state was unavailable. This display rule neither
 classifies the answer as approval nor changes the quick-option requirement for a changes review.
 One typed reply can answer several members. Its saved question references name what the operator
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
@@ -1681,3 +1687,15 @@ an explicit uncertainty, never as success. `alt task status <slug> --brief` show
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
+
+### Reading the task terminal
+
+`alt task terminal` prints the current owner's own task terminal output: a status line (`terminal running`,
+or `terminal ended` with its reason and exit code, and whether earlier output was dropped), then up to the
+last 256 KB the terminal printed, as plain text. `--json` prints the record. It needs no grant and reads
+only: nothing it does types into, resizes or closes the terminal. altd answers only the running task's
+current attempt, and only a connection made from a process in that owner's own worker job, so another
+task's agent cannot read it. The last ended terminal's output stays readable until a new terminal opens
+for the task, the task finishes or Altitude restarts; after a restart the command says no output is
+available. Project terminals have no reader. Output the owner reads becomes part of its session and
+provider record; save only what the task's evidence needs.

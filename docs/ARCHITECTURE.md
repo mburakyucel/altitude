@@ -960,7 +960,8 @@ fail without a success event. Confirmed calls append actor, number, URL, state a
 existing `pr-close` project log. Repeated calls read current state; no registry or automatic retry runs.
 L3 judges authorization and superseding delivery from the existing evidence; the command does not
 prove replacement equivalence or select cleanup targets. L2 hands that evidence to L3 and gains no
-PR-close authority. Task state, archives and merge holds retain their own lifecycle.
+PR-close authority. Task state, archives and merge holds retain their own lifecycle; a closed PR that
+is a task's current PR gains a `pr-closed` task event, which retires its held-review card.
 The [L3 persona](../personas/l3.md) directs capability-gap recommendations and authorized remediation;
 that guidance grants no permission expansion by itself.
 
@@ -969,27 +970,38 @@ that guidance grants no permission expansion by itself.
 `terminal.py` gives the operator one login shell per task worktree or project folder. It is off until
 the operator turns on the `terminal` machine setting (`POST /api/terminal-access`, which uses the
 same request and `machine-set` event as the other machine settings; turning it off closes every
-open terminal, and an open in progress either registers before that or is refused). altd starts the shell on a pseudo-terminal in a session of its own, as the operator
-and outside every worker sandbox. The shell and its children live only as long as altd: there is no
-multiplexer and no persistence. A task terminal opens in the task's worktree while the
+open terminal, and an open in progress either registers before that or is refused). altd owns the
+pseudo-terminal; the user service manager starts the login shell on it as a transient
+`altitude-terminal-<id>.service` job (`platform.terminal_job`), as the operator and outside every worker
+sandbox. The job is created by the manager rather than by altd, so the shell does not inherit altd's
+`NoNewPrivileges=yes` and `sudo` asks for the operator's password in the terminal as it does in a desktop
+terminal. altd, workers and reviews keep that hardening. The job is `PartOf` Altitude's service, so the shell
+and its children live only as long as altd: there is no multiplexer and no persistence. A launcher that cannot
+start the job (no reachable user manager) ends the terminal as `failed` with the launcher's error, which the page
+shows. The
+macOS runtime is not implemented, so this path has no native macOS evidence. A task terminal opens in the task's worktree while the
 task is neither done nor rejected; a project terminal opens in the registered project folder. The
 tick's `terminal.sweep()` closes a task's terminal once the task is done, rejected or gone, and a
 project's once it is no longer managed. Opening returns the running terminal when one exists.
-Every process the shell starts inherits `ALTITUDE_TERMINAL=<terminal id>`. Closing sends SIGHUP to
-every process in the terminal's session or carrying its mark, including those that left the session
-(`setsid`, daemons), then SIGKILL to whatever remains after two seconds, including commands that
-ignore the hang-up. A process that clears its environment and leaves the session escapes. Each
-process is held by a pidfd before it is checked, so a reused pid is never signalled. The terminal
-ends when its shell exits, even while a process that left its session still holds the
-pseudo-terminal; the end kills everything the terminal started that is still running. The status names the foreground command when it is not the
-shell, so the page can confirm before stopping it.
+The job's control group holds every process the shell starts, including those that leave its session
+(`setsid`, daemons). Closing stops the job: SIGHUP to every process in it, then SIGKILL to whatever remains
+after two seconds, including commands that ignore the hang-up. Close repeats the stop until the terminal
+has ended and its close is recorded, which also covers a job the manager had not yet registered and leaves
+nothing unrecorded when altd stops next, and reports an error when the job is still running ten seconds later. The terminal ends when its shell exits; the
+manager then stops the job, which kills everything the terminal started that is still running. altd holds the
+shell's side of the pseudo-terminal open for the terminal's life, so the end comes from the job, never from a
+hang-up. A process started through the user manager or a scheduler from the terminal is outside the job and
+escapes. The status names the foreground command when it is not the shell, so the page can confirm before
+stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 /api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
 bytes, the next offset and whether older output was dropped, and `end` carries the final status
-(`exited`, exit code and end reason: `exited`, `closed`, `task-finished` or `project-removed`). A
-reconnecting page resumes from its own offset. An ended terminal is dropped at once: its open streams
-still read the end, and afterwards the status is `none`. `GET /api/terminal/<project>?task=` returns
+(`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
+its `error`). A
+reconnecting page resumes from its own offset. An ended terminal leaves the status at once (`none`), accepts no
+more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a
+failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
 drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
@@ -1010,6 +1022,19 @@ holds the foreground. It never sends Enter, and the server sees ordinary input. 
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
+A task's running owner reads its task terminal's output with `alt task terminal` (`POST /api/task/terminal`
+with the task, project and attempt). The reply is the replay buffer as plain text (escape sequences removed,
+each line as its last carriage return left it), whether earlier output was dropped, and the terminal's state:
+`running`, `exited` with its exit code and reason, or `none`. altd answers only the task's current attempt
+while it runs, and only when the client end of the connection is held by a process in that owner's worker job
+(`terminal.owner_connection`, from the same process and socket facts as the agent check), so another agent that
+holds this machine's key cannot read it. There is no owner path to input, resize, close or stream. The last
+ended task terminal's output stays readable in altd's memory until a new terminal opens for the task, the task
+finishes (the tick's sweep forgets it) or altd stops; nothing is written to disk. Project terminals have no
+reader. The task terminal says "This task's owner can read this terminal's output." Anything the terminal
+prints can reach the owner, its session record and its provider, where it stays after Altitude forgets it.
+A password typed at a prompt that does not echo, such as `sudo`'s, is not in the output.
+
 Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
 not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see
 [Responsibilities](#responsibilities)), and its POST bodies must be `application/json`. This stops
@@ -1020,7 +1045,8 @@ connection in
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds
 that socket and none of altd, anything altd started (a Claude L3 turn runs as altd's child in altd's
-own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands) does.
+own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands, terminal
+shells) does.
 A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
@@ -1033,8 +1059,10 @@ looks like the operator's browser, so the operator keeps the terminal off while 
 Claude L2 workers have no OS sandbox, so they can already change the
 operator's files directly. Reading the process table is Linux-specific. Every paired browser can use the terminal once it is
 on. That is the same trust as its other
-operator controls, and the Settings copy says so. Altitude stores nothing typed; the operator's own
-shell keeps its history as it does in any terminal.
+operator controls, and the Settings copy says so. That includes `sudo`: a paired browser whose user knows
+the operator's password, or that uses a terminal while `sudo` still remembers an authentication there, can act
+as root. A password travels from the browser over TLS to altd and into the pseudo-terminal like any other input;
+Altitude stores nothing typed, and the operator's own shell keeps its history as it does in any terminal.
 
 ## Faults
 
@@ -1854,8 +1882,13 @@ anchor. `task_view` projects `question_group` with member records, `question` as
 open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
-delivery whose owner stopped in `blocked` or `reported` (#419). Any operator message or quick answer
-hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
+delivery whose owner stopped in `blocked` or `reported` (#419). A held PR that Altitude has observed
+closed without merging asks for no review (#575): an L2 `block` reads the held PR's state from the checkout origin's repository, and a
+`CLOSED` result, like a verified `alt pr close`, appends one `pr-closed` task event. The delivery,
+`prs` history and merge hold stay recorded. A later `delivery` or `pr-adopted` event for that PR, a
+`pr-reopened` event from an owner block that reads it open again, or a new PR asks again. An
+unreadable state leaves the recorded review shown and says so on stderr. Any operator message or
+quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
 restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
 `paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question

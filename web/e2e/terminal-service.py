@@ -1,9 +1,10 @@
 """Real terminals over the real API: a plain bash on a real pseudo-terminal in a fictional task worktree
-and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Two
+and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Three
 things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
-and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
-walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart, an
-update that replaces the built app under an open page, the app's files out of reach."""
+and the shell (no profile files, a fixed prompt) and its job, which the service manager runs in production.
+Routes under /fixture/ drive the lifecycle events a walkthrough cannot cause from the page: a lost stream,
+a finished task, an agent request, a restart, an update that replaces the built app under an open page, the
+app's files out of reach."""
 import os
 import shutil
 import socket
@@ -12,7 +13,7 @@ import threading
 from pathlib import Path
 
 from service_support import configure, serve
-from tests.support import add_worktree, make_repo
+from tests.support import add_worktree, local_terminal_launch, local_terminal_stop, make_repo
 from altitude import config, l3, server, state as S, tasks as T, terminal
 
 
@@ -27,6 +28,7 @@ def main():
     config.WEB_DIST = dist
     os.environ.update({"PS1": r"\W $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
+    terminal.launch, terminal.stop = local_terminal_launch, local_terminal_stop
     agent = threading.Event()
     terminal.agent_connection = lambda _peer, _local: agent.is_set()
 
@@ -109,10 +111,8 @@ def main():
                 held.set()
                 for stream in list(streams):
                     stream.connection.shutdown(socket.SHUT_RDWR)
-                for key, term in list(terminal._terminals.items()):
+                for key in list(terminal._terminals):
                     terminal.close(*key)
-                    with term.cond:
-                        term.cond.wait_for(lambda: term.ended, 5)
                 held.clear()
                 return self._json({"ok": True})
             return super().do_POST()
