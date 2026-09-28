@@ -22,7 +22,7 @@ export const subscribeVoiceDiagnostics = (listener: () => void) => {
 };
 
 export function traceVoice(event: string, source?: object, detail: Detail = {}) {
-  if (!active) return;
+  if (!active || performance.now() - started >= DURATION_MS) return;
   let id = source ? sources.get(source) : undefined;
   if (source && id === undefined) { id = ++nextSource; sources.set(source, id); }
   entries.push({ ms: Math.round(performance.now() - started), event, ...(id === undefined ? {} : { source: id }), ...detail });

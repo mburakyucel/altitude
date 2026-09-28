@@ -5,7 +5,7 @@ export default function VoiceDiagnostics() {
   const active = useSyncExternalStore(subscribeVoiceDiagnostics, voiceDiagnosticsActive);
   const [report, setReport] = useState("");
   const [copied, setCopied] = useState("");
-  return <details className="settings-card">
+  return <details className="settings-card voice-diagnostics">
     <summary>Voice troubleshooting</summary>
     <p className="text-meta text-muted">Collect microphone states, errors, timing and browser version on this device for up to ten minutes. No audio, dictated words or drafts. Nothing is sent automatically. Reloading clears the report.</p>
     <p className="text-meta">Start, return to your conversation and reproduce the problem. Then come back here to view and copy the report.</p>
@@ -17,7 +17,7 @@ export default function VoiceDiagnostics() {
     </div>
     {active ? <p role="status" className="text-meta">Collecting on this device. Return here after reproducing.</p> : null}
     {report ? <>
-      <label>Voice diagnostic report<textarea readOnly rows={8} value={report} style={{ width: "100%" }} /></label>
+      <label>Voice diagnostic report<textarea readOnly rows={8} value={report} /></label>
       <button type="button" className="btn" onClick={() => {
         void navigator.clipboard?.writeText(report).then(() => setCopied("Copied. Paste it into the task conversation."), () => setCopied("Could not copy. Select and copy the report above."));
         if (!navigator.clipboard) setCopied("Could not copy. Select and copy the report above.");

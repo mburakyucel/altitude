@@ -41,7 +41,7 @@ function closeWaveform(context: AudioContext) {
       const timer = setTimeout(() => { traceVoice("waveform.close-timeout", context); resolve(); }, WAVEFORM_CLOSE_MS);
       void Promise.resolve().then(() => { traceVoice("waveform.close", context); return context.close(); })
         .catch((error) => traceVoice("waveform.close-error", context, { error: voiceError(error) })).finally(() => {
-        traceVoice("waveform.closed", context, { state: context.state });
+        traceVoice("waveform.close-settled", context, { state: context.state });
         clearTimeout(timer);
         resolve();
       });

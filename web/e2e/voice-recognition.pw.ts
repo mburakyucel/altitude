@@ -76,6 +76,8 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
     await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await page.getByRole("link", { name: "Voice input Browser recognition", exact: true }).click();
     await page.getByText("Voice troubleshooting", { exact: true }).click();
+    await page.getByText("Collect microphone states, errors, timing and browser version", { exact: false }).scrollIntoViewIfNeeded();
+    await expect(page.getByText("Collect microphone states, errors, timing and browser version", { exact: false })).toBeInViewport();
   };
   const start = page.getByRole("button", { name: "Start diagnostics", exact: true });
   const report = page.getByRole("textbox", { name: "Voice diagnostic report", exact: true });
@@ -102,7 +104,10 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   }
   await settings();
   await walk.state("diagnostics-03-report", {
-    action: () => page.getByRole("button", { name: "View report", exact: true }).click(),
+    action: async () => {
+      await page.getByRole("button", { name: "View report", exact: true }).click();
+      await report.scrollIntoViewIfNeeded();
+    },
     visible: [report, page.getByRole("button", { name: "Copy report", exact: true }), start],
     hidden: [page.getByRole("button", { name: "Stop diagnostics", exact: true })],
   });
@@ -121,6 +126,15 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
     action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
     visible: [report, page.getByText("Could not copy. Select and copy the report above.", { exact: true })], hidden: [],
   });
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async (value) => { (window as unknown as { copiedReport: string }).copiedReport = value; };
+  });
+  await walk.state("diagnostics-04b-copied", {
+    action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
+    visible: [report, page.getByText("Copied. Paste it into the task conversation.", { exact: true })],
+    hidden: [page.getByText("Could not copy. Select and copy the report above.", { exact: true })],
+  });
+  expect(await page.evaluate(() => (window as unknown as { copiedReport: string }).copiedReport)).toBe(text);
   await walk.state("diagnostics-05-cleared", {
     action: () => page.getByRole("button", { name: "Clear report", exact: true }).click(),
     visible: [start, page.getByText("Cleared.", { exact: true })], hidden: [report],
