@@ -199,6 +199,25 @@ class TestProjectEffortHTTP(AltitudeCase):
             self.assertTrue(view["error"])
         self.assertEqual(self.call("GET", "/api/defaults/not-managed")[0], 404)
 
+    def test_l2_preference_api_saves_reloads_refuses_and_names_custom_routing(self):
+        status, view = self.call("GET", f"/api/defaults/{self.project}")
+        self.assertEqual(view["l2_preference"], {"setting": "l2_preference", "value": None, "pin": None, "routing": None,
+                                                 "choices": [{"value": e, "label": config.ENGINE_LABELS[e], "routed": True}
+                                                             for e in config.ENGINES]})
+        engine = config.ENGINES[0]
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": engine})
+        self.assertEqual((status, view["l2_preference"]["value"]), (200, engine))
+        self.assertEqual(self.call("GET", f"/api/defaults/{self.project}")[1]["l2_preference"]["value"], engine)
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": "other"})
+        self.assertEqual(status, 400); self.assertIn("provider preference", view["error"])
+        self.assertEqual(config.project(self.project)["l2_preference"], engine)
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": None})
+        self.assertEqual((status, view["l2_preference"]["value"]), (200, None))
+        self.register(self.project, routing=config.parse_routing(f"{engine}:chosen"), l2_engine=engine)
+        preference = self.call("GET", f"/api/defaults/{self.project}")[1]["l2_preference"]
+        self.assertEqual((preference["routing"], preference["pin"]), (f"{engine}:chosen", engine))
+        self.assertEqual([c["routed"] for c in preference["choices"]], [e == engine for e in config.ENGINES])
+
     def test_pending_cli_setting_is_not_overwritten_by_a_different_ui_choice(self):
         dispatch.request_setting(self.project, "l3_effort", "high", "CLI setting", actor="burak")
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_effort", "value": "low"})

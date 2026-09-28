@@ -1164,6 +1164,10 @@ const DefaultFieldSchema = z.object({
 });
 const ProjectDefaultsSchema = z.object({
   l3_engine: z.string().nullish(),
+  l2_preference: z.object({
+    setting: z.string(), value: z.string().nullable(), pin: z.string().nullish(), routing: z.string().nullable(),
+    choices: z.array(z.object({ value: z.string(), label: z.string(), routed: z.boolean() })),
+  }),
   roles: z.array(z.object({
     role: z.enum(["l3", "l2"]),
     engines: z.array(z.object({
@@ -1194,6 +1198,7 @@ export function useSetDefault(project: string) {
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
+      if (setting === result.l2_preference.setting) return { ...old, l2_preference: result.l2_preference };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
         ...e,

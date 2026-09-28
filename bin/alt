@@ -278,6 +278,8 @@ def main(argv=None) -> None:
     routing = x.add_mutually_exclusive_group(required=True)
     routing.add_argument("--routing", help="ordered engine[:model] tiers: comma ties, > lower priority")
     routing.add_argument("--unset-routing", action="store_true")
+    routing.add_argument("--l2-preference", choices=config.ENGINES, help="engine fresh L2 routing tries first; the other stays its fallback")
+    routing.add_argument("--unset-l2-preference", action="store_true", help="restore Auto: the routing tiers alone")
     for key, (role, engine, kind) in config.DEFAULT_SETTINGS.items():
         flag, where = key.replace("_", "-"), f"{role.upper()} on {config.ENGINE_LABELS[engine]}"
         if kind == "model":

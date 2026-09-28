@@ -68,6 +68,46 @@ class TestPickEngine(AltitudeCase):
         self.claude = {"known": True, "seven_day": 99}
         self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
 
+    def test_l2_preference_outranks_headroom_falls_back_and_leaves_l3_and_pins_alone(self):
+        self.claude = {"known": True, "seven_day": 90}
+        self.codex = codex(0)
+        project = {"l2_preference": "claude"}
+        self.assertEqual(config.role_routing("l2", project),
+                         [[{"engine": "claude", "model": None}], [{"engine": "claude", "model": "opus"}],
+                          [{"engine": "codex", "model": None}]])
+        choice = route.pick_engine("l2", project=project)
+        self.assertEqual((choice["engine"], choice["model"], choice["pinned"]), ("claude", "opus", False))
+        self.assertIn("Auto tier 1 (prefers Claude)", choice["why"])
+        self.assertEqual(route.pick_engine("l3", project=project)["engine"], "codex", "the L2 preference never reaches L3")
+        self.assertEqual(route.pick_engine("l2", forced="codex", project=project)["engine"], "codex")
+        self.assertEqual(route.pick_engine("l2", project={**project, "l2_engine": "codex"})["engine"], "codex")
+        self.claude = {"known": True, "five_hour": 100, "seven_day": 90}
+        choice = route.pick_engine("l2", project=project)
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude:opus unavailable", choice["why"])
+        self.claude = {"known": True, "seven_day": 0}
+        self.codex = codex(90)
+        self.assertEqual(route.pick_engine("l2", project={"l2_preference": "codex"})["engine"], "codex")
+        self.assertEqual(route.pick_engine("l2")["engine"], "claude", "Auto keeps weekly headroom")
+
+    def test_l2_preference_yields_to_rejection_missing_install_and_handoff(self):
+        project = {"l2_preference": "claude"}
+        route.note_rejection({"engine": "claude", "model": "opus"}, {"scope": "model", "why": "model not accessible"})
+        self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
+        self.installation.side_effect = lambda engine: {"available": False if engine == "claude" else None, "why": "executable missing"}
+        self.assertEqual(route.pick_engine("l2", project={"l2_preference": "claude", "routing": config.parse_routing("claude:fable,codex")})["engine"], "codex")
+        self.installation.side_effect = None
+        handoff = route.pick_task({"l2_preference": "claude"}, {"next_engine": "codex"})
+        self.assertEqual(handoff["engine"], "codex", "a recorded handoff target outranks the preference")
+
+    def test_l2_preference_reorders_custom_routing_without_adding_options(self):
+        routing = config.parse_routing("claude:fable,codex>claude:opus")
+        self.assertEqual(config.role_routing("l2", {"routing": routing, "l2_preference": "codex"}),
+                         [[{"engine": "codex", "model": None}],
+                          [{"engine": "claude", "model": "fable"}], [{"engine": "claude", "model": "opus"}]])
+        only = config.parse_routing("claude:opus")
+        self.assertEqual(config.role_routing("l2", {"routing": only, "l2_preference": "codex"}), only)
+        self.assertEqual(config.role_routing("l3", {"routing": routing, "l2_preference": "codex"}), routing)
+
     def test_model_rejection_excludes_only_that_model_and_expires(self):
         project = {"routing": config.parse_routing("claude:fable>claude:opus")}
         option = {"engine": "claude", "model": "fable"}

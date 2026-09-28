@@ -1280,6 +1280,12 @@ Under **This project**, opened from a project, one row names that project and op
 The project page has a labelled **Settings** back button and three cards. **L3 engine** holds the
 Auto/engine pin (the same pin as the desktop composer pill) and the last L3 turn: engine, observed
 model, requested effort and the effort the engine reported, each saying "not reported" when unknown.
+**L2 · task owners** opens with **Provider priority**, a select offering Auto and Prefer <engine>
+for each engine, saved on choice with its own status. The line below it says what the saved choice
+does: Auto with the default tiers names the default distribution by weekly headroom; Auto with
+custom routing names that routing; a preference says fresh tasks start on that engine when it is
+available and which engine takes over when it is not, or that the custom routing omits it; a project
+L2 engine pin says the pin wins. The L3 engine is unaffected.
 **L3 · project conversation** and **L2 · task owners** each hold one row per engine with **Model**
 and **Effort**: the model is free text with alias suggestions and a "Default: <model>" placeholder,
 saved on Enter or leaving the field, restored by Escape and cleared to Default when empty; effort
@@ -1302,8 +1308,9 @@ Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings an
 Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,
 typed draft preservation, all three choices, key replacement/removal and loading/saving/failure.
 `web/e2e/project-settings.pw.ts` walks the menu entry, This project row, independent saves, reload
-persistence, restoring Default, the engine pin, loading/read failure and saving/denied states at both
-sizes, with the project draft preserved.
+persistence, restoring Default, the engine pin, the L2 provider priority (Auto, a preference, reload
+persistence, L3 unchanged, saving, denied save and restoring Auto), loading/read failure and
+saving/denied states at both sizes, with the project draft preserved.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
 ### 3.16 Pair this device
