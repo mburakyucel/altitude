@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { ApiError, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
-import type { Device, Overview, PairingCode, Update } from "../data/api";
+import type { Certificate, Device, Overview, PairingCode, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -244,7 +244,32 @@ function DevicesPage() {
         {code.status === "failed" ? <p role="alert" className="text-meta text-danger">{code.error.message}</p> : null}
       </>}
     </section>
+    {devices.data?.certificate ? <CertificateCard certificate={devices.data.certificate} /> : null}
   </>;
+}
+
+/** The CA devices trust (SPEC.md §3.15): what a phone must match before installing it, and how to offer it. */
+function CertificateCard({ certificate }: { certificate: Certificate }) {
+  if ("error" in certificate) {
+    return <section className="settings-card device-certificate" aria-label="Certificate">
+      <h2>Certificate</h2>
+      <p role="alert" className="text-meta text-danger">Could not read the certificate: {certificate.error}</p>
+    </section>;
+  }
+  const pairs = certificate.sha256.split(":");
+  const rows = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
+  return <section className="settings-card device-certificate" aria-label="Certificate">
+    <h2>Certificate</h2>
+    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. To add a phone, run this on the computer running Altitude; it gives a ten-minute link and the steps:</p>
+    <Command text="alt tls-share" />
+    <p className="text-meta text-muted">Before installing it on the phone, check that its name and SHA-256 match these.</p>
+    <dl className="settings-network">
+      <dt>Name</dt><dd>{certificate.name}</dd>
+      <dt>SHA-256</dt><dd className="certificate-fingerprint">{rows.join("\n")}</dd>
+      <dt>Trusting it allows</dt><dd>{certificate.scope}</dd>
+      <dt>Expires</dt><dd>{certificate.expires}</dd>
+    </dl>
+  </section>;
 }
 
 /** An installed copy's version, any newer release, the command that installs it and the check's switch. */
