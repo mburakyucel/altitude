@@ -359,7 +359,6 @@ export default function Composer({
   /** Browser recognition: the draft plus the words recognized so far, shown while listening. */
   const [live, setLive] = useState<string | null>(null);
   const displayedDraft = voiceSend?.text ?? live ?? value;
-  const [stream, setStream] = useState<MediaStream | null>(null);
   const waveform = useRef<Waveform | null>(null);
   const releaseWaveform = useCallback(() => {
     const graph = waveform.current;
@@ -520,7 +519,6 @@ export default function Composer({
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());
     releaseWaveform();
-    setStream(null);
   }, [releaseWaveform]);
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
@@ -740,13 +738,13 @@ export default function Composer({
     setPhase("transcribing");
     try {
       if (active.state !== "inactive") active.stop();
-      else void finish(active, stream);
+      else void finish(active, active.stream);
     } catch {
-      void finish(active, stream);
+      void finish(active, active.stream);
     } finally {
       releaseWaveform();
     }
-  }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, releaseWaveform, sendDisabled, stream]);
+  }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, releaseWaveform, sendDisabled]);
 
   const start = useCallback(async () => {
     if (unavailable || disabled || admitting.current || phase !== "idle") return;
@@ -816,17 +814,8 @@ export default function Composer({
       active.start();
       traceVoice("capture.listening", active);
       startedAt.current = Date.now();
-      setStream(opened);
       setPhase("listening");
-      capTimer.current = setTimeout(() => {
-        try {
-          if (active.state !== "inactive") active.stop();
-        } catch {
-          void finish(active, used);
-        } finally {
-          releaseWaveform();
-        }
-      }, MAX_RECORDING_MS);
+      capTimer.current = setTimeout(() => stop(), MAX_RECORDING_MS);
     } catch (cause) {
       traceVoice("capture.open-error", opening, { error: voiceError(cause) });
       const failed = recorder.current;
@@ -843,7 +832,7 @@ export default function Composer({
       else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
-  }, [backend, voice, disabled, finish, focusField, phase, releaseStream, releaseWaveform, unavailable]);
+  }, [backend, voice, disabled, finish, focusField, phase, releaseStream, stop, unavailable]);
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback((refocus: "field" | "mic" = "field") => {
@@ -862,7 +851,6 @@ export default function Composer({
       recorder.current = null;
       discardRecognition(active);
       releaseWaveform();
-      setStream(null);
       setPhase("idle");
       focusField();
       return;

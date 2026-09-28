@@ -421,7 +421,7 @@ Read the graph state and whether its clock advances before interpreting signal p
 is omitted while the graph is not running. State samples occur once per second while the waveform
 draws, so brief transitions or a stopped drawing loop require further investigation. A dropped-event
 count identifies truncated reports; start a fresh report and reproduce briefly when it is nonzero.
-The `waveform.connected` event precedes `recognizer.start` on every capture; graph setup errors are
-reported separately. A silent restart with that ordering, an advancing graph clock and live unmuted
+For browser recognition with successful graph setup, `waveform.connected` precedes `recognizer.start`;
+graph setup errors are reported separately. A silent restart with that ordering, an advancing graph clock and live unmuted
 tracks still needs native capture investigation; successful scripted ordering checks do not prove
 device recovery. Compare both signal and recognized words across repeated restarts.

@@ -1075,6 +1075,7 @@ describe("Composer", () => {
       try { await act(async () => { await vi.advanceTimersByTimeAsync(595_000); }); }
       finally { vi.useRealTimers(); }
       expect(recognizer.stopped).toBe(1);
+      expect(screen.getByText("Transcribing…")).toBeInTheDocument();
     } else if (action === "navigation") source.unmount();
     else await source.user.click(screen.getByRole("button", { name: action === "Send" ? "Send" : `${action} voice input` }));
     // The graph must stay alive until native recognition releases the microphone.
@@ -1096,13 +1097,15 @@ describe("Composer", () => {
     await destination.user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(destination.field).toHaveValue(action === "Stop" || action === "recording cap" ? "Typed draft spoken words restart works" : action === "Send" ? "restart works" : action === "navigation" ? "Other draft restart works" : "Typed draft restart works"));
     await act(async () => closed());
+    expect(close).toHaveBeenCalledTimes(2);
     expect(onSubmit).toHaveBeenCalledTimes(action === "Send" ? 1 : 0);
   });
 
   it.each(["browser", "endpoint"] as const)("%s microphone can retry after a waveform close never answers", async (backend) => {
     const { getUserMedia } = installVoiceBrowser({ backend });
     if (backend === "endpoint") stubTranscribe("new words");
-    const close = vi.fn().mockImplementationOnce(() => new Promise<void>(() => undefined)).mockResolvedValue(undefined);
+    let lateClose!: () => void;
+    const close = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { lateClose = resolve; })).mockResolvedValue(undefined);
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.stubGlobal("AudioContext", class {
@@ -1128,6 +1131,11 @@ describe("Composer", () => {
       await act(async () => screen.getByRole("button", { name: "Start voice input" }).click());
       expect(getUserMedia).toHaveBeenCalledTimes(2);
     } finally { vi.useRealTimers(); }
+    // The old graph can settle after its timeout and after a new graph is already listening.
+    // It must not close the new graph or change this capture's phase.
+    await act(async () => lateClose());
+    expect(close).toHaveBeenCalledOnce();
+    expect(screen.getByText("Listening… Stop to add text, or Send.")).toBeInTheDocument();
     if (backend === "browser") act(() => FakeSpeechRecognition.instances[1]!.hear(["new words"]));
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Draft new words"));
