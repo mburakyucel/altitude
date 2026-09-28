@@ -7,6 +7,7 @@ update that replaces the built app under an open page, the app's files out of re
 import os
 import shutil
 import socket
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -27,6 +28,13 @@ def main():
     config.WEB_DIST = dist
     os.environ.update({"PS1": r"\W $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
+    if sys.platform == "darwin":
+        # Each macOS shell is its own launchd job; the offline guard's launchctl stub would refuse it.
+        launchd = config.ROOT / "launchd"
+        launchd.mkdir(parents=True, exist_ok=True)
+        (launchd / "launchctl").unlink(missing_ok=True)
+        (launchd / "launchctl").symlink_to("/bin/launchctl")
+        os.environ["PATH"] = f"{launchd}:{os.environ['PATH']}"
     agent = threading.Event()
     terminal.agent_connection = lambda _peer, _local: agent.is_set()
 

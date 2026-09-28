@@ -72,7 +72,10 @@ Probe harness fixes: `ps` output was truncated by the 2000-character capture (co
 - Run B on a spare account with fake engines; real-engine turns under confinement need the separate provider decision.
 - The Claude write allowlist is unverified against a real turn.
 - L3's `journalctl` shim is Linux-only; on macOS logs are in `~/Library/Logs/altitude/`.
-- `make check-web`: web unit tests (607) and the build pass on the Mac; the Playwright browser walkthroughs were not run.
+- Nothing further on `make check-web`: web unit tests (607), the build and all browser walkthroughs (473 passed, 1 skip,
+  phone and desktop) pass on the Mac. The walkthroughs needed: the terminal service's launchd opt-in, platform editing
+  keys (`ControlOrMeta`), macOS's end-of-line key, a wait for the shell's prompt before pasting (a race the extra
+  supervisor hop exposed), and Homebrew's bash (bash 3.2 has no bracketed paste).
 - Session incident: an early draft called `/bin/launchctl` by absolute path, bypassing the suite's offline shim, and a
   test briefly bootstrapped a real `dev.altitude.altd` from a temporary home; it was booted out at once.
   `launchctl` now resolves through PATH. launchd's per-user override database keeps a harmless `enabled` entry for
