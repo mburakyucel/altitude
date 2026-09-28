@@ -1,13 +1,15 @@
-"""The operator's terminal: one login shell per task worktree or project folder, run by altd.
+"""The operator's terminal: one login shell per task worktree or project folder, started for altd by the user manager.
 
-A terminal is a shell on a pseudo-terminal owned by altd, in a session of its own. It ends when the
-operator closes it, when the shell exits, when its task finishes, or when altd stops: nothing keeps it
-alive beyond altd's own process, and its end stops every process still in its session. A bounded replay buffer lets a reconnecting page resume where it left off; nothing typed or
-printed is stored anywhere, and an ended terminal is dropped at once: its open streams read how it ended.
-Only opening and closing are recorded, on the task or project log.
+A terminal is a shell on a pseudo-terminal altd owns, run as a job of its own (`platform.terminal_job`) so that it
+does not inherit altd's service hardening and `sudo` works in it. It ends when the operator closes it, when the shell
+exits, when its task finishes, or when altd stops; its end stops every process the shell started. A bounded replay
+buffer lets a reconnecting page resume where it left off; nothing typed or printed is written anywhere. Only opening
+and closing are recorded, on the task or project log.
 
-Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full
-command access as the operator, outside every worker sandbox and the machine-grant approval flow.
+Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full command access
+as the operator, outside every worker sandbox and the machine-grant approval flow. A task's own owner may read its
+task terminal's output (`owner_output`, `owner_connection`), never type into or control it; the last output of an
+ended task terminal stays readable in memory until a new terminal opens there, the task finishes or altd stops.
 """
 from __future__ import annotations
 
@@ -17,7 +19,6 @@ import os
 import pwd
 import re
 import select
-import signal
 import socket
 import struct
 import subprocess
@@ -33,14 +34,13 @@ from . import config, platform, state as S
 REPLAY_BYTES = 256 * 1024
 READ_BYTES = 65536
 INPUT_LIMIT = 65536
-CLOSE_GRACE_SECONDS = 2.0
+#: Seconds the job gives its processes to end after the hang-up before killing them.
+CLOSE_GRACE_SECONDS = 2
 #: How long input waits for a program that has stopped reading it before the request is refused.
 WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
-#: The environment variable every process a terminal starts inherits, so its end finds those that left its session.
-MARK = "ALTITUDE_TERMINAL"
 #: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
-#: machine commands, restarts).
+#: machine commands, terminals, restarts).
 ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
 
 
@@ -55,13 +55,15 @@ class Terminal:
     project: str
     slug: str | None
     folder: Path
-    proc: subprocess.Popen
+    proc: subprocess.Popen  # the launcher, which runs until the shell's job has ended
     fd: int
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)  # every request names it: a replaced terminal refuses
+    tty: int  # altd's own descriptor for the shell's side, held so the shell can open it whenever its job starts
+    id: str  # every request names it: a replaced terminal refuses
     buffer: bytearray = field(default_factory=bytearray)
     start: int = 0  # absolute output offset of buffer[0]
     exit_code: int | None = None
-    reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed
+    reason: str | None = None  # why it ended: exited, closed, task-finished, project-removed, failed
+    error: str | None = None  # why a shell that failed could not run, in the launcher's words
     ended: bool = False
     cond: threading.Condition = field(default_factory=threading.Condition)  # output and ending
     io: threading.Lock = field(default_factory=threading.Lock)  # the descriptor: held to use it or close it
@@ -71,8 +73,14 @@ class Terminal:
     def end(self) -> int:
         return self.start + len(self.buffer)
 
+    @property
+    def unit(self) -> str:
+        return f"altitude-terminal-{self.id}.service"
+
 
 _terminals: dict[tuple[str, str | None], Terminal] = {}
+#: The last ended terminal of each task, kept only for its owner to read.
+_ended: dict[tuple[str, str], Terminal] = {}
 _lock = threading.Lock()
 
 
@@ -113,12 +121,23 @@ def _record(term: Terminal, action: str, **data) -> None:
         S.append_event(term.project, term.slug, "terminal", **fields)
 
 
-def _controlling_terminal() -> None:  # runs in the child between fork and exec
-    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+def shell_env() -> dict[str, str]:
+    """What the shell adds to its session's environment: the screen's capabilities, and Altitude's settings and
+    PATH so that `alt` typed in the terminal reaches this Altitude."""
+    env = {key: value for key, value in os.environ.items() if key == "PATH" or key.startswith("ALTITUDE_")}
+    return {**env, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
 
 
-def _env(ident: str) -> dict[str, str]:
-    return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor", MARK: ident}
+def launch(unit: str, tty: str, path: Path) -> subprocess.Popen:
+    """Start the shell's job on `tty`; the launcher's error output says why a job could not start."""
+    return subprocess.Popen(platform.terminal_job(unit, tty, shell_command(), shell_env(), grace=CLOSE_GRACE_SECONDS),
+                            cwd=path, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            env=platform.manager_env(dict(os.environ)), start_new_session=True)
+
+
+def stop(unit: str) -> None:
+    """Stop the shell's job: every process in it is hung up, then killed after the grace period."""
+    platform.job_stop(unit, platform.manager_env(dict(os.environ)), timeout=CLOSE_GRACE_SECONDS + 30)
 
 
 def open_terminal(project: str, slug: str | None) -> dict:
@@ -134,62 +153,67 @@ def open_terminal(project: str, slug: str | None) -> dict:
         try:
             _winsize(master, 24, 80)
             os.set_blocking(master, False)
-            proc = subprocess.Popen(shell_command(), stdin=child, stdout=child, stderr=child, cwd=path, env=_env(ident),
-                                    start_new_session=True, preexec_fn=_controlling_terminal)
+            proc = launch(f"altitude-terminal-{ident}.service", os.ttyname(child), path)
         except OSError as exc:
             os.close(master)
-            raise TerminalError(f"Could not start the shell: {exc}") from exc
-        finally:
             os.close(child)
-        term = Terminal(project, slug, path, proc, master, ident)
+            raise TerminalError(f"Could not start the shell: {exc}") from exc
+        term = Terminal(project, slug, path, proc, master, child, ident)
         _terminals[(project, slug)] = term
+        if slug is not None:
+            _ended.pop((project, slug), None)
     _record(term, "opened")
     threading.Thread(target=_read, args=(term,), name=f"terminal:{project}:{slug or ''}", daemon=True).start()
     return view(term)
 
 
 def _read(term: Terminal) -> None:
-    """Collect output until the shell has exited and its last output is read. The shell's exit ends the
-    terminal even while a process that left the session still holds the pseudo-terminal open."""
+    """Collect output until the shell's job has ended, then its last output. A launcher that could not start the
+    job ends the terminal as `failed`, with its reason."""
     while term.proc.poll() is None:
-        chunk = _drain(term, POLL_SECONDS)
-        if chunk is None:
-            break
-        _keep(term, chunk)
-    _stop_session(term, signal.SIGKILL)
+        _keep(term, _drain(term, POLL_SECONDS))
+    stop(term.unit)  # nothing of the job outlives a launcher that ended for any other reason
     for _ in range(REPLAY_BYTES // READ_BYTES):  # what was written before the end, bounded
         chunk = _drain(term, 0)
         if not chunk:
             break
         _keep(term, chunk)
     code = term.proc.wait()
+    with term.proc.stderr:
+        failure = term.proc.stderr.read().decode(errors="replace").strip()
     with term.io:
         os.close(term.fd)
+        os.close(term.tty)
         term.fd = -1
     with term.cond:
         term.exit_code = code
+        if failure and not term.reason:
+            term.reason, term.error = "failed", failure[-500:]
         term.reason = term.reason or "exited"
         term.ended = True
         term.cond.notify_all()
     with _lock:
         if _terminals.get((term.project, term.slug)) is term:
             del _terminals[(term.project, term.slug)]
+            if term.slug is not None:
+                _ended[(term.project, term.slug)] = term
     _record(term, "closed", reason=term.reason, exit_code=code)
 
 
-def _drain(term: Terminal, wait: float) -> bytes | None:
-    """Output ready within `wait` seconds: b"" when there is none, None once nothing holds the terminal."""
+def _drain(term: Terminal, wait: float) -> bytes:
+    """Output ready within `wait` seconds, b"" when there is none. altd holds the shell's side open, so the
+    terminal never reads as hung up while its job runs."""
     if not select.select([term.fd], [], [], wait)[0]:
         return b""
     try:
-        return os.read(term.fd, READ_BYTES) or None
-    except BlockingIOError:
+        return os.read(term.fd, READ_BYTES)
+    except (BlockingIOError, OSError):
         return b""
-    except OSError:  # EIO: every process holding the terminal has gone
-        return None
 
 
 def _keep(term: Terminal, chunk: bytes) -> None:
+    if not chunk:
+        return
     with term.cond:
         term.buffer += chunk
         if len(term.buffer) > REPLAY_BYTES:
@@ -228,7 +252,7 @@ def view(term: Terminal | None) -> dict:
     with term.cond:
         return {"state": "exited" if term.ended else "running", "id": term.id, "enabled": enabled(),
                 "folder": str(term.folder), "offset": term.end, "exit_code": term.exit_code,
-                "reason": term.reason, "busy": None if term.ended else _busy(term)}
+                "reason": term.reason, "error": term.error, "busy": None if term.ended else _busy(term)}
 
 
 def status(project: str, slug: str | None) -> dict:
@@ -240,9 +264,10 @@ def _busy(term: Terminal) -> str | None:
     with term.io:
         try:
             group = os.tcgetpgrp(term.fd)
+            shell = platform.terminal_session(term.fd)
         except OSError:
             return None
-    if group in (term.proc.pid, -1):
+    if group in (shell, -1, 0) or shell <= 0:
         return None
     return platform.process_name(group) or "A command"
 
@@ -289,44 +314,39 @@ def resize(project: str, slug: str | None, ident, cols, rows) -> None:
 
 
 def close(project: str, slug: str | None, reason: str = "closed", ident=None) -> None:
-    """End the terminal: hang up every process in its session, then kill whatever outlasts the grace
-    period. The reader records the close once the shell has gone. `ident`, when a page asks, names the
-    terminal it shows."""
+    """End the terminal by stopping its job. The reader records the close once the shell has gone. `ident`, when
+    a page asks, names the terminal it shows."""
     term = _terminals.get((project, slug))
     if term is None or term.ended or ident is not None and ident != term.id:
         return
     with term.cond:
         term.reason = reason
         term.closing = True
-    _stop_session(term, signal.SIGHUP)
-    try:
-        term.proc.wait(CLOSE_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        pass
-    _stop_session(term, signal.SIGKILL)
+    stop(term.unit)
 
 
-def _stop_session(term: Terminal, sig: int) -> None:
-    """Signal every process the terminal started: those in its session (the shell, its foreground command
-    and its jobs, including those that ignore a hang-up) and those that left it (`setsid`, daemons) but
-    still carry its mark."""
-    platform.signal_session(term.proc.pid, f"{MARK}={term.id}".encode(), sig)
+def _finished(project: str, slug: str | None) -> str | None:
+    """Why a terminal here must end: its project is no longer managed or its task has finished."""
+    if not config.is_managed(project):
+        return "project-removed"
+    if slug is not None:
+        try:
+            state = S.load_task(project, slug).get("state")
+        except S.TaskNotFound:
+            state = None
+        if state in (None, "done", "rejected"):
+            return "task-finished"
+    return None
 
 
 def sweep() -> None:
-    """Close terminals whose task finished or whose project is no longer managed."""
+    """Close terminals whose task finished or whose project is no longer managed, and forget their output."""
     for (project, slug), term in list(_terminals.items()):
-        if term.ended:
-            continue
-        if not config.is_managed(project):
-            close(project, slug, "project-removed")
-        elif slug is not None:
-            try:
-                state = S.load_task(project, slug).get("state")
-            except S.TaskNotFound:
-                state = None
-            if state in (None, "done", "rejected"):
-                close(project, slug, "task-finished")
+        if not term.ended and (reason := _finished(project, slug)):
+            close(project, slug, reason)
+    with _lock:
+        for key in [key for key in _ended if _finished(*key)]:
+            del _ended[key]
 
 
 def close_all() -> None:
@@ -351,6 +371,48 @@ def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bo
         begin = max(offset, term.start)
         data = bytes(term.buffer[begin - term.start:])
         return data, term.end, missed, term.ended and begin + len(data) >= term.end
+
+
+# --- The owner's read-only view -----------------------------------------------------------------------------------
+
+#: Escape sequences: operating-system commands (titles, links), control sequences (colour, cursor) and the rest.
+_ESCAPES = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]*[0-~]")
+_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def plain(data: bytes) -> str:
+    """Terminal output as text: escape sequences removed, and each line as its last carriage return left it."""
+    text = _ESCAPES.sub(b"", data).decode(errors="replace").replace("\r\n", "\n")
+    lines = []
+    for line in text.split("\n"):
+        parts = [part for part in line.split("\r") if part]
+        lines.append(_CONTROLS.sub("", parts[-1] if parts else ""))
+    return "\n".join(lines)
+
+
+def owner_output(project: str, slug: str) -> dict:
+    """The task terminal's output as its owner reads it: the running terminal's, else the last ended one's."""
+    term = _terminals.get((project, slug)) or _ended.get((project, slug))
+    if term is None:
+        return {"state": "none", "text": "", "missed": False}
+    with term.cond:
+        data, missed = bytes(term.buffer), term.start > 0
+        state = "exited" if term.ended else "running"
+        exit_code, reason = term.exit_code, term.reason
+    return {"state": state, "text": plain(data), "missed": missed, "exit_code": exit_code, "reason": reason}
+
+
+def owner_connection(peer: tuple, local: tuple, unit: str) -> bool:
+    """Whether this connection's client end is held by a process in `unit`, the task's current worker job. The
+    process and socket facts come from the platform seam; a connection that cannot be traced is not the owner's."""
+    try:
+        target = platform.client_socket(_spellings(_address(peer[0])), peer[1], _spellings(_address(local[0])), local[1])
+        if target is None:
+            return False
+        table = platform.process_table()
+        return any(unit in groups and platform.holds(pid, target) for pid, (_, groups) in table.items())
+    except (OSError, ValueError):
+        return False
 
 
 # --- Refusing Altitude's own agents -------------------------------------------------------------------
@@ -379,8 +441,8 @@ def _this_host(ip) -> bool:
 
 
 def _owned(table: dict[int, tuple[int, list[str]]]) -> set[int]:
-    """The Altitude processes: altd, its descendants (L3 turns, terminal shells) and every process in an
-    Altitude service unit."""
+    """The Altitude processes: altd, its descendants (L3 turns) and every process in an Altitude service unit
+    (workers, terminal shells)."""
     owned = {pid for pid, (_, groups) in table.items() if any(ALTITUDE_UNIT.fullmatch(part) for part in groups)}
     children: dict[int, list[int]] = {}
     for pid, (parent, _) in table.items():

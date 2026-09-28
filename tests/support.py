@@ -391,3 +391,51 @@ class AltitudeCase(unittest.TestCase):
         """Run `bin/alt` with empty input against this runtime home."""
         merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), **(env or {})}
         return subprocess.run([sys.executable, str(ALT), *args], input="", capture_output=True, text=True, env=merged)
+
+
+# --- The operator terminal's job, without a service manager --------------------------------------------------------
+
+#: The job's start: the shell's terminal becomes its controlling terminal and its input and output.
+TERMINAL_LAUNCHER = ("import os, sys\nfd = os.open(sys.argv[1], os.O_RDWR)\nfor n in (0, 1, 2):\n    os.dup2(fd, n)\n"
+                     "os.close(fd)\nos.execvp(sys.argv[2], sys.argv[2:])\n")
+
+
+def terminal_session(leader: int) -> list[int]:
+    """The processes still in a terminal's session."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if entry.name.isdigit() and int(fields[3]) == leader and fields[0] != "Z":
+            found.append(int(entry.name))
+    return found
+
+
+def local_terminal_launch(unit: str, tty: str, path: Path) -> subprocess.Popen:
+    """`terminal.launch` at the platform seam: the shell on `tty` in a session of its own, as its job runs it."""
+    from altitude import terminal
+    return subprocess.Popen([sys.executable, "-c", TERMINAL_LAUNCHER, tty, *terminal.shell_command()], cwd=path,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            env={**os.environ, **terminal.shell_env()}, start_new_session=True)
+
+
+def local_terminal_stop(unit: str) -> None:
+    """`terminal.stop`: hang up every process in the shell's session, then kill what remains after the grace period.
+    The service manager's job also holds processes that leave the session; a session cannot."""
+    import signal
+    import time
+    from altitude import terminal
+    term = next((t for t in list(terminal._terminals.values()) if t.unit == unit), None)
+    if term is None:
+        return
+    for sig in (signal.SIGHUP, signal.SIGKILL):
+        for pid in terminal_session(term.proc.pid):
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                continue
+        deadline = time.monotonic() + terminal.CLOSE_GRACE_SECONDS
+        while terminal_session(term.proc.pid) and time.monotonic() < deadline:
+            time.sleep(.02)

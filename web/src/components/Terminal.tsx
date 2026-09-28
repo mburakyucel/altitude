@@ -56,6 +56,7 @@ function Card({ title, children, action, tone }: { title?: string; children?: Re
 /** What the operator is told after a terminal ends without their Close here; nothing for a clean exit. */
 function endNotice(status: TerminalStatus): string | null {
   if (status.state !== "exited") return "The terminal closed while the connection was lost.";
+  if (status.reason === "failed") return `The terminal could not start: ${status.error ?? "no reason was given."}`;
   if (status.reason === "task-finished") return "The task finished, so its terminal closed.";
   if (status.reason === "project-removed") return "The project is no longer managed, so its terminal closed.";
   if (status.reason === "closed") return "The terminal was closed elsewhere.";
@@ -153,7 +154,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     left.current = true;
     attempted.current = true;
     const notice = closing.current ? null : endNotice(ended);
-    if (notice) toast.show({ message: notice, severity: "info" });
+    if (notice) toast.show({ message: notice, severity: ended.reason === "failed" ? "failure" : "info" });
     client.setQueryData(queryKey, { state: "none", enabled: ended.enabled });
     onLeave();
   };
@@ -219,6 +220,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
         <button type="button" className="btn" onClick={() => setConfirm(null)}>Cancel</button>
       </>}>{`${confirm} is still running and will be stopped.`}</Card> : null}
       {closeError ? <p role="alert" className="text-meta text-danger">{closeError}</p> : null}
+      {task ? <p className="terminal-note">This task's owner can read this terminal's output.</p> : null}
       {restart && !restart.failed ? <p className="terminal-note" role="status">Altitude restarts at its next quiet point to apply an update. This terminal will close then.</p> : null}
       <ScreenBoundary onError={screenFailed}>
         <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>

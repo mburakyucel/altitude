@@ -140,6 +140,7 @@ describe("Project terminal", () => {
     for (const [ended, notice] of [
       [{ ...running(), state: "exited", reason: "closed", exit_code: 129 }, "The terminal was closed elsewhere."],
       [{ ...running(), state: "exited", reason: "project-removed", exit_code: 129 }, "The project is no longer managed, so its terminal closed."],
+      [{ ...running(), state: "exited", reason: "failed", error: "Failed to connect to bus: No medium found", exit_code: 1 }, "The terminal could not start: Failed to connect to bus: No medium found"],
       [none(), "The terminal closed while the connection was lost."],
     ] as const) {
       const posts = fixture(running());

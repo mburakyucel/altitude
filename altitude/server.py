@@ -2051,6 +2051,16 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as exc:  # #298: a durable request survives an immediate wake failure.
                     log(f"[{project}/{slug}] review wake deferred: {exc}")
                 return self._json({"ok": True, "review": review})
+            if parts == ["api", "task", "terminal"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt"}:
+                        raise ValueError("alt task terminal: unsupported fields")
+                    return self._json(owner_terminal_output(o["project"], o["slug"], o.get("attempt"),
+                                                            self.client_address, self.connection.getsockname()))
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command"}:
@@ -2655,6 +2665,19 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
     S.project_log(project, "machine-run", slug=slug, command=command, unit=row["unit"], exit=row["exit"],
                   timed_out=row["timed_out"])
     return {**result, "n": sequence}
+
+
+def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
+    """The task terminal's output for the task's running owner: read-only, and only to a connection from a process in
+    that owner's current worker job, so another agent holding this machine's key cannot read it."""
+    S.require_task_slug(slug)
+    task = S.load_task(project, slug)
+    if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
+        raise PermissionError("alt task terminal: only the running owner's current attempt may read its terminal")
+    unit = engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug))
+    if not terminal.owner_connection(peer, local, unit):
+        raise PermissionError("alt task terminal: only this task's owner may read its terminal")
+    return terminal.owner_output(project, slug)
 
 
 def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:

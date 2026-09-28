@@ -840,6 +840,7 @@ alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
+alt task terminal [<slug>] [--json]
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -1679,3 +1680,15 @@ an explicit uncertainty, never as success. `alt task status <slug> --brief` show
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
+
+### Reading the task terminal
+
+`alt task terminal` prints the current owner's own task terminal output: a status line (`terminal running`,
+or `terminal ended` with its reason and exit code, and whether earlier output was dropped), then up to the
+last 256 KB the terminal printed, as plain text. `--json` prints the record. It needs no grant and reads
+only: nothing it does types into, resizes or closes the terminal. altd answers only the running task's
+current attempt, and only a connection made from a process in that owner's own worker job, so another
+task's agent cannot read it. The last ended terminal's output stays readable until a new terminal opens
+for the task, the task finishes or Altitude restarts; after a restart the command says no output is
+available. Project terminals have no reader. Output the owner reads becomes part of its session and
+provider record; save only what the task's evidence needs.
