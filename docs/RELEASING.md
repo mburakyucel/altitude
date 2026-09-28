@@ -163,8 +163,9 @@ For reproducible Linux installation evidence, dispatch the
 the selected source SHA as `source_ref`, or run the same harness in a
 [local VM](DEVELOPMENT.md#local-vm-run) with archives built from that SHA. It builds two synthetic version labels from that same
 commit and exercises real installation, service activation, HTTPS, update, failed activation recovery
-and retained-data uninstall. This establishes no cross-release data migration or public-download
-bootstrap. Record its run URL or `vm.json`, runner environment, artifact hashes and actual results separately
+and retained-data uninstall; the local VM also runs the built `install.sh` against a release server
+inside the guest. This establishes no cross-release data migration or download from the published
+GitHub release. Record its run URL or `vm.json`, runner environment, artifact hashes and actual results separately
 from required candidate checks. Availability of either entry point alone is not executed acceptance
 or a new release gate.
 

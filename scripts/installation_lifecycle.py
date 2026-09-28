@@ -4,11 +4,14 @@
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
 The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
-its check after the VM restarts.
+its check after the VM restarts. `bootstrap` runs the built install.sh through its public curl | sh
+command against a release server on this machine's loopback, whose name the root wrapper points here.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -21,7 +24,9 @@ import ssl
 import subprocess
 import sys
 import tarfile
+import threading
 import time
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 
@@ -183,12 +188,14 @@ class Lifecycle:
             "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
         assert keys, "Package exposes no engine executable settings"
         self.env.update({key: str(fixture) for key in keys})
-        self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py",
-                 "--archive", old, "--sha256", old_sha)
         return old, old_sha, package, before, new, new_sha, new_package, after
+
+    def install(self, archive: Path, checksum: str):
+        self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", archive, "--sha256", checksum)
 
     def exercise(self):
         old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
+        self.install(old, old_sha)
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
         # Keep projects unregistered: no task or coordinator may start in this test.
@@ -236,7 +243,8 @@ class Lifecycle:
 
     def reboot_install(self):
         """Install and leave the service running for the machine to restart."""
-        before = self.prepare()[3]
+        old, old_sha, _, before, *_ = self.prepare()
+        self.install(old, old_sha)
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
         write_json(self.state, {"env": self.env, "release": before, "pid": initial["pid"], "boot_id": boot_id()})
@@ -260,9 +268,72 @@ class Lifecycle:
         self.uninstall({})
         self.result["passed"] = True
 
+    def bootstrap(self):
+        """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
+        old, old_sha, _, before, *_ = self.prepare()
+        script = self.baseline / "install.sh"
+        repository = re.search(r"^REPOSITORY='([^']+)'$", script.read_text(), re.M).group(1)
+        address = urlsplit(repository)
+        assert address.scheme == "https" and not address.port
+        sums = dict(reversed(line.split()) for line in (self.baseline / "SHA256SUMS").read_text().splitlines())
+        assert digest(script) == sums["install.sh"], "install.sh differs from the release's SHA256SUMS"
+        # A throwaway authority that only this test's curl trusts; the machine's trust store is untouched.
+        server = self.home / "release-server"
+        server.mkdir()
+        self.run("server-authority", "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                 "-subj", "/CN=Lifecycle test release authority", "-keyout", server / "ca.key", "-out", server / "ca.crt")
+        self.run("server-request", "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", f"/CN={address.hostname}",
+                 "-keyout", server / "server.key", "-out", server / "server.csr")
+        (server / "names").write_text(f"subjectAltName=DNS:{address.hostname}\n")
+        self.run("server-certificate", "openssl", "x509", "-req", "-in", server / "server.csr", "-CA", server / "ca.crt",
+                 "-CAkey", server / "ca.key", "-CAcreateserial", "-days", "1", "-extfile", server / "names",
+                 "-out", server / "server.crt")
+        root = server / "root"
+        releases = root / address.path.strip("/") / "releases"
+        (releases / "latest/download").mkdir(parents=True)
+        (releases / "download" / before["version"]).mkdir(parents=True)
+        (releases / "latest/download/install.sh").write_bytes(script.read_bytes())
+        (releases / "download" / before["version"] / "install.py").write_bytes((self.baseline / "install.py").read_bytes())
+        served = releases / "download" / before["version"] / old.name
+        requests = []
+
+        class Handler(SimpleHTTPRequestHandler):
+            def log_message(self, format, *args):
+                requests.append(" ".join(map(str, args)))
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 443), functools.partial(Handler, directory=str(root)))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(server / "server.crt", server / "server.key")
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.env["CURL_CA_BUNDLE"] = str(server / "ca.crt")
+        command = f"curl --proto '=https' --tlsv1.2 -fsSL {repository}/releases/latest/download/install.sh | sh"
+        try:
+            # A download that does not match the checksum built into install.sh runs nothing.
+            tampered = bytearray(old.read_bytes())
+            tampered[-1] ^= 1
+            served.write_bytes(tampered)
+            refused = self.run("bootstrap-tampered", "sh", "-c", command, success=False, timeout=120)
+            assert "does not match the checksum" in refused, refused
+            assert not self.prefix.exists() and not self.alt.exists(), "A refused download installed something"
+            served.write_bytes(old.read_bytes())
+            installed = self.run("bootstrap", "sh", "-c", command, timeout=300)
+            assert f"Altitude {before['version']} is installed" in installed, installed
+        finally:
+            httpd.shutdown()
+            write_json(self.results / "bootstrap-requests.json", requests)
+            del self.env["CURL_CA_BUNDLE"]
+        assert sum(f"GET /{address.path.strip('/')}/releases/download/{before['version']}/{old.name} " in line
+                   for line in requests) == 2, requests
+        self.healthy("bootstrapped", before)
+        self.doctor("bootstrapped", before)
+        self.uninstall({})
+        self.result["passed"] = True
+
     def execute(self, phase: str = "all"):
         try:
-            {"all": self.exercise, "reboot-install": self.reboot_install, "reboot-verify": self.reboot_verify}[phase]()
+            {"all": self.exercise, "bootstrap": self.bootstrap, "reboot-install": self.reboot_install,
+             "reboot-verify": self.reboot_verify}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise

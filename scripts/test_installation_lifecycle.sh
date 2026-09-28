@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
 # PHASE reboot-install keeps the installed account for the machine to restart; reboot-verify then
-# checks it and removes it. Each phase writes to RESULTS_DIR/PHASE.
+# checks it and removes it. PHASE bootstrap points the release host at this machine's loopback for the
+# duration of the test. Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|reboot-install|reboot-verify)$ ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT [reboot-install|reboot-verify]' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|reboot-install|reboot-verify)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT [bootstrap|reboot-install|reboot-verify]' >&2
     exit 2
 fi
 [[ $5 =~ ^[0-9a-f]{40}$ ]] || { echo 'Supply the full selected source commit.' >&2; exit 2; }
@@ -24,6 +25,7 @@ results=$(realpath "$4")
 [[ $phase == all ]] || { results="$results/$phase"; mkdir -p "$results"; }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 created=false
+redirected=false
 keep=false
 test_uid=''
 # The account left installed across the restart; only root can write it.
@@ -46,6 +48,11 @@ cleanup() {
     lifecycle_exit=$outcome
     trap - EXIT
     set +e
+    restore_exit=0
+    if $redirected; then
+        cp -- "$scratch/hosts" /etc/hosts || restore_exit=1
+        sysctl -qw "net.ipv4.ip_unprivileged_port_start=$port_floor" || restore_exit=1
+    fi
     copy_exit=0
     linger_exit=0
     manager_exit=0
@@ -71,12 +78,12 @@ cleanup() {
         manager_exit=$?
         timeout 15 userdel --remove "$account" >> "$results/cleanup.log" 2>&1
         delete_exit=$?
-        if (( copy_exit || linger_exit || manager_exit || delete_exit )); then outcome=1; fi
+        if (( copy_exit || linger_exit || manager_exit || delete_exit || restore_exit )); then outcome=1; fi
         if id "$account" >/dev/null 2>&1; then outcome=1; fi
     fi
     rm -rf -- "$scratch"
-    printf '{"lifecycle_exit": %s, "copy_evidence_exit": %s, "disable_linger_exit": %s, "stop_manager_exit": %s, "delete_account_exit": %s, "final_exit": %s}\n' \
-        "$lifecycle_exit" "$copy_exit" "$linger_exit" "$manager_exit" "$delete_exit" "$outcome" > "$results/cleanup.json"
+    printf '{"lifecycle_exit": %s, "restore_redirect_exit": %s, "copy_evidence_exit": %s, "disable_linger_exit": %s, "stop_manager_exit": %s, "delete_account_exit": %s, "final_exit": %s}\n' \
+        "$lifecycle_exit" "$restore_exit" "$copy_exit" "$linger_exit" "$manager_exit" "$delete_exit" "$outcome" > "$results/cleanup.json"
     echo "Harness and cleanup exit status: $outcome" | tee -a "$results/cleanup.log"
     exit "$outcome"
 }
@@ -98,6 +105,16 @@ else
     chown -R "$account:$account" "$test_home"
     timeout 30 loginctl enable-linger "$account"
     timeout 30 systemctl start "user@$test_uid.service"
+fi
+if [[ $phase == bootstrap ]]; then
+    # The test account serves the release over HTTPS on 127.0.0.1:443 under the release's own host name.
+    host=$(sed -n "s|^REPOSITORY='https://\([^/':]*\)/.*|\1|p" "$test_home/baseline/install.sh")
+    [[ $host =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'The baseline install.sh names no release host.' >&2; exit 2; }
+    port_floor=$(sysctl -n net.ipv4.ip_unprivileged_port_start)
+    cp -- /etc/hosts "$scratch/hosts"
+    redirected=true
+    printf '127.0.0.1 %s\n' "$host" >> /etc/hosts
+    sysctl -qw net.ipv4.ip_unprivileged_port_start=443
 fi
 # No runner token, credentials, Python path or owner runtime enters the test.
 timeout --signal=TERM --kill-after=10s 8m runuser -u "$account" -- env -i \

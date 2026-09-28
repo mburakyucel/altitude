@@ -9,7 +9,8 @@ exercises the packaged application on disposable Ubuntu 24.04 GitHub runners wit
 and fixture engines. It has not executed on GitHub; the same harness runs in a
 [local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
 installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention (the local VM
-also checks the service starts again after a restart),
+also checks the service starts again after a restart and runs the built `install.sh` against a
+release server inside the VM),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
