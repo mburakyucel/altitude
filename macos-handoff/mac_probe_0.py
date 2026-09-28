@@ -136,9 +136,9 @@ def advancing(name):
 
 
 def all_pids():
-    out = sh("/bin/ps", "-Ao", "pid=,ppid=,pgid=,command=")
+    out = subprocess.run(["/bin/ps", "-Ao", "pid=,ppid=,pgid=,command="], capture_output=True, text=True).stdout
     rows = []
-    for line in out.get("out", "").splitlines():
+    for line in out.splitlines():
         bits = line.split(None, 3)
         if len(bits) == 4:
             rows.append((int(bits[0]), int(bits[1]), int(bits[2]), bits[3]))
