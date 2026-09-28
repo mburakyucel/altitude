@@ -6,8 +6,10 @@ import { requestCommand } from "../data/terminalCommand";
 
 // The xterm screen needs a real canvas; here it only reports how its terminal ended.
 const screenEnd: { current?: (status: TerminalStatus) => void } = {};
+const screenThrows: { current?: Error } = {};
 vi.mock("./TerminalScreen", () => ({
   default: ({ id, command, onEnd }: { id: string; command?: { text: string } | null; onEnd: (status: TerminalStatus) => void }) => {
+    if (screenThrows.current) throw screenThrows.current;
     screenEnd.current = onEnd;
     return <div data-testid="terminal-screen" data-command={command?.text}>{id}</div>;
   },
@@ -46,6 +48,21 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response | Prom
 }
 
 describe("Project terminal", () => {
+  it("leaves an error inside a loaded terminal screen to the route instead of calling it an update", async () => {
+    fixture(running());
+    screenThrows.current = new Error("xterm could not start");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      renderApp({ route: "/projects/demo/terminal" });
+      expect((await screen.findAllByText(/xterm could not start/)).length).toBeGreaterThan(0);
+      expect(screen.queryByText("Altitude was updated")).toBeNull();
+      expect(screen.queryByText("Couldn't load the terminal")).toBeNull();
+      expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).not.toContain("/");
+    } finally {
+      screenThrows.current = undefined;
+    }
+  });
+
   it("reopens after it ended even when a status read from before the open answers after it", async () => {
     let answer!: (status: TerminalStatus) => void;
     const posts = fixture(none(), { status: () => new Promise((resolve) => { answer = resolve; }) });

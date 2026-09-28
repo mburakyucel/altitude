@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,8 +8,40 @@ import { useToast } from "../data/Toast";
 import { subscribeCommands, takeCommand } from "../data/terminalCommand";
 import "./terminal.css";
 
+/** The terminal's code did not arrive; any other error inside the terminal screen is not this. */
+class ScreenLoadFailure extends Error {}
+
 // xterm.js loads only when a terminal is on screen.
-const TerminalScreen = lazy(() => import("./TerminalScreen"));
+const TerminalScreen = lazy(() => import("./TerminalScreen").catch((cause: unknown) => {
+  throw new ScreenLoadFailure("The terminal's code did not load", { cause });
+}));
+
+/**
+ * Why the terminal's code did not arrive. An update replaces the hashed files a page opened before it
+ * would load (the operator's 2026-09-28 "Failed to fetch dynamically imported module"): the served page
+ * then names another app script than this one. Otherwise Altitude is out of reach or the load failed.
+ * Either way only a reload loads it: the browser keeps a failed module import for the page's lifetime.
+ */
+async function screenFailure(): Promise<"updated" | "failed"> {
+  try {
+    // Bounded, so a stalled connection still reaches the Reload card.
+    const page = await fetch("/", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    return page.ok && !(await page.text()).includes(new URL(import.meta.url).pathname) ? "updated" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
+/** Keeps a failed load of the terminal's code inside the terminal view; other errors reach the route's error page. */
+class ScreenBoundary extends Component<{ onError: () => void; children: ReactNode }, { error: unknown }> {
+  state: { error: unknown } = { error: null };
+  static getDerivedStateFromError(error: unknown) { return { error }; }
+  componentDidCatch(error: unknown) { if (error instanceof ScreenLoadFailure) this.props.onError(); }
+  render() {
+    if (this.state.error && !(this.state.error instanceof ScreenLoadFailure)) throw this.state.error;
+    return this.state.error ? null : this.props.children;
+  }
+}
 
 function Card({ title, children, action, tone }: { title?: string; children?: ReactNode; action?: ReactNode; tone?: "danger" }) {
   return <div className="terminal-card" role={tone === "danger" ? "alert" : "status"}>
@@ -141,6 +173,12 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     }
   };
 
+  const [screenError, setScreenError] = useState<"checking" | "updated" | "failed" | null>(null);
+  const screenFailed = () => {
+    setScreenError("checking");
+    void screenFailure().then(setScreenError);
+  };
+
   const running = data?.state === "running" && (shown.current === null || shown.current === data.id);
   const closeButton = running ? closeIcon
     ? <button type="button" className="icon-btn terminal-close-icon" aria-label="Close terminal" onClick={() => void close(false)}>
@@ -160,7 +198,14 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
     content = <Card tone="danger" title="Couldn't open a terminal" action={<button type="button" className="btn" onClick={() => void open()}>Retry</button>}>{openError}</Card>;
   } else if (off) {
     content = <Card title="Terminal is off" action={<Link className="btn" to="/settings" state={{ settingsFrom: `${location.pathname}${location.search}` }}>Open Settings</Link>}>A terminal runs any command as you on this computer. Turn it on for this computer in Settings.</Card>;
-  } else if (!running) {
+  } else if (screenError === "updated" || screenError === "failed") {
+    const updated = screenError === "updated";
+    content = <Card tone={updated ? undefined : "danger"} title={updated ? "Altitude was updated" : "Couldn't load the terminal"}
+      action={<button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>Reload</button>}>
+      {updated ? "This page is from the earlier version. Reload to open the terminal." : "Check the connection to Altitude, then reload."}
+      {" "}The shell keeps running. Reloading clears text you have typed but not sent.
+    </Card>;
+  } else if (!running || screenError === "checking") {
     content = <div className="terminal-card" role="status" aria-label="Starting the terminal">
       <div className="skeleton h-4 w-2/3" /><div className="skeleton h-4 w-1/3" />
       <p className="text-muted">{opening ? "Starting the terminal…" : "Loading the terminal…"}</p>
@@ -173,11 +218,13 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
       </>}>{`${confirm} is still running and will be stopped.`}</Card> : null}
       {closeError ? <p role="alert" className="text-meta text-danger">{closeError}</p> : null}
       {restart && !restart.failed ? <p className="terminal-note" role="status">Altitude restarts at its next quiet point to apply an update. This terminal will close then.</p> : null}
-      <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>
-        <TerminalScreen key={data.id} project={project} task={task} id={data.id!} keys={keys} reconnecting={reconnecting}
-          intro={`Runs as you in ${data.folder}`} command={command} onCommand={() => setCommand(null)}
-          onEnd={leave} onReconnecting={setReconnecting} />
-      </Suspense>
+      <ScreenBoundary onError={screenFailed}>
+        <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>
+          <TerminalScreen key={data.id} project={project} task={task} id={data.id!} keys={keys} reconnecting={reconnecting}
+            intro={`Runs as you in ${data.folder}`} command={command} onCommand={() => setCommand(null)}
+            onEnd={leave} onReconnecting={setReconnecting} />
+        </Suspense>
+      </ScreenBoundary>
     </>;
   }
 
