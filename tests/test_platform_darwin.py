@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import platform, terminal
+from altitude import platform, server, terminal  # server (urllib.request) is imported before a test pretends to be darwin
 
 
 def described(label: str, *, state="running", pid=4242, exited="(never exited)", coalition=900, path=None) -> str:
@@ -239,6 +239,22 @@ class Jobs(DarwinCase):
         self.assertFalse((platform._jobs() / label).exists())
 
 
+    def test_a_stop_that_leaves_survivors_keeps_the_job_active(self):
+        label = "dev.altitude.job.altitude-codex-w2"
+        self.launchd.jobs[label] = described(label, coalition=32)
+        self.patch(platform, "_stop_members", return_value=False)
+        members = self.patch(platform, "_members", return_value=[(321, "1")])
+        platform.job_stop("altitude-codex-w2.service", {}, timeout=15)
+        self.assertIn(["bootout", f"gui/{os.getuid()}/{label}"], self.launchd.commands)
+        self.assertNotIn(label, self.launchd.jobs)  # launchd has forgotten the job; its survivor has not gone
+        self.assertEqual((platform._jobs() / label / "coalition").read_text(), "32")
+        self.assertTrue(platform.job_active("altitude-codex-w2.service", {}))
+        members.assert_called_with(32)
+        platform._stop_members.side_effect = OSError("unreadable")
+        platform.job_stop("altitude-codex-w2.service", {}, timeout=15)
+        self.assertTrue((platform._jobs() / label / "coalition").exists())
+
+
 class Processes(DarwinCase):
     """A fixture process table: pid -> (parent, start, coalition, session, environment, name)."""
 
@@ -312,6 +328,26 @@ class Processes(DarwinCase):
         self.patch(platform.time, "monotonic", side_effect=lambda: next(clock))
         self.assertFalse(platform._stop_members(9, limit=60))
         self.assertEqual(self.killed, [])
+
+    def test_an_unreadable_process_of_this_user_is_not_read_as_absent(self):
+        self.add(20, coalition=9)
+        self.add(21, coalition=3)
+        coalition_of = platform._coalition_of.side_effect
+        def unreadable(pid):
+            if pid == 21:
+                raise PermissionError(1, "not permitted")
+            return coalition_of(pid)
+        self.patch(platform, "_coalition_of", side_effect=unreadable)
+        bsd = self.bsd
+        self.patch(platform, "_bsd", side_effect=lambda pid: platform._BSDInfo(**{
+            **{name: getattr(bsd(pid), name) for name in ("ppid", "start_sec", "start_usec", "status")},
+            "uid": 0 if foreign else os.getuid()}))
+        foreign = True  # another user's process cannot be in this user's job
+        self.assertEqual([pid for pid, _ in platform._members(9)], [20])
+        foreign = False
+        with self.assertRaises(OSError):
+            platform._members(9)
+        self.assertFalse(platform._confirm_stopped(9))
 
     def test_session_signal_reaches_the_session_and_marked_processes_only(self):
         self.add(70, session=70)

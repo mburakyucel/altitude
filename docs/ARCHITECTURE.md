@@ -331,7 +331,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
 | Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
-| Machine-grant commands | outside the worker sandbox, user bus reachable | outside any sandbox, launchd reachable | Isolation and landing |
+| Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the session plus processes carrying the terminal's environment mark | the shell is its own launchd job, and Close kills its coalition (Apple's binaries hide their environment) | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |

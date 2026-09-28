@@ -470,7 +470,11 @@ def signal_terminal(ident: str, proc: subprocess.Popen, mark: bytes, sig: int) -
         supervisor = None
     if not coalition:
         return
-    for pid, start in _members(coalition):
+    try:
+        members = _members(coalition)
+    except OSError:  # best effort, as on Linux: Close reports the shell's end, not every descendant's
+        return
+    for pid, start in members:
         try:
             if pid != supervisor and _coalition_of(pid) == coalition and _started(_bsd(pid)) == start:
                 os.kill(pid, sig)
@@ -684,7 +688,7 @@ def _launchd_control(action: str) -> str:
     if job:
         # bootout ends the main process group; like KillMode=control-group, nothing else the service started stays.
         run(LAUNCHCTL, "bootout", target)
-        if job["coalition"] and not _stop_members(job["coalition"]):
+        if job["coalition"] and not _confirm_stopped(job["coalition"]):
             raise RuntimeError("Native user service failed: processes the service started are still running")
     if action == "stop":
         return ""
@@ -967,16 +971,17 @@ def _supervise(job: Path) -> int:
             try:
                 code = child.wait(timeout=spec.get("runtime_max")) if not terminal else _hold(child, spec["launcher"])
             except subprocess.TimeoutExpired:
-                _stop_members(coalition, spare=own)
+                _confirm_stopped(coalition, spare=own)
                 code = child.wait()
             status = code if code >= 0 else 128 - code
     except OSError as exc:
         print(f"{spec['label']}: {exc}", file=sys.stderr)
     finally:
-        _stop_members(coalition, spare=own)
+        # A survivor keeps the job's record, so the job still reads as active until something stops it.
+        stopped = _confirm_stopped(coalition, spare=own)
         _write_private(job / "status", str(status))
         launcher = spec.get("launcher")
-        if launcher is None or not _running(*launcher):
+        if stopped and (launcher is None or not _running(*launcher)):
             shutil.rmtree(job, ignore_errors=True)
         os.execv(LAUNCHCTL, [LAUNCHCTL, "remove", spec["label"]])
     return status
@@ -1018,10 +1023,13 @@ def _launchd_job_stop(name: str, timeout: int) -> None:
     except RuntimeError:
         job = None
     coalition = _recorded_coalition(label) or (job or {}).get("coalition")
-    if coalition:
-        _stop_members(coalition, limit=timeout)
+    stopped = not coalition or _confirm_stopped(coalition, limit=timeout)
     subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=timeout)
-    shutil.rmtree(_jobs() / label, ignore_errors=True)
+    if stopped:  # otherwise the record keeps the survivors visible to job_active
+        shutil.rmtree(_jobs() / label, ignore_errors=True)
+    elif not _recorded_coalition(label):
+        (_jobs() / label).mkdir(parents=True, exist_ok=True)
+        _write_private(_jobs() / label / "coalition", str(coalition))
 
 
 def _altitude_coalitions() -> set[int]:
@@ -1140,15 +1148,37 @@ def _coalition_of(pid: int) -> int:
 
 
 def _members(coalition: int) -> list[tuple[int, str]]:
-    """(pid, start) of each readable process in the coalition."""
+    """(pid, start) of each process in the coalition. A process that exits while being read is not a member; one
+    of this user's that cannot be read may be, so it raises OSError rather than reading as absent."""
     members = []
     for pid in _pids():
         try:
             if _coalition_of(pid) == coalition:
                 members.append((pid, _started(_bsd(pid))))
-        except OSError:
+        except FileNotFoundError:
             continue
+        except OSError:
+            if not _foreign(pid):
+                raise
     return members
+
+
+def _foreign(pid: int) -> bool:
+    """Whether the process belongs to another user (or has exited): no job of this user's can be it."""
+    try:
+        return _bsd(pid).uid != os.getuid()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+def _confirm_stopped(coalition: int, **stop) -> bool:
+    """Stop the coalition's members; False unless every member is confirmed gone."""
+    try:
+        return _stop_members(coalition, **stop)
+    except OSError:
+        return False
 
 
 def _stop_members(coalition: int, *, spare: int | None = None, grace: float = 5, limit: float = 60) -> bool:

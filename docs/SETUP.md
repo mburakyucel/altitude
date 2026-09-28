@@ -43,9 +43,10 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with a systemd user manager, or macOS 15 or newer on Apple silicon, with Python 3.12
-or newer, one command installs a published release as the account that will use Altitude. The
-preview has no stable release yet, so install the newest release candidate from its own tag:
+On Linux x86_64 with a systemd user manager, or macOS 15 or newer on Apple silicon from the first
+release that includes the macOS runtime (v0.1.0-rc.1 does not), with Python 3.12 or newer, one
+command installs a published release as the account that will use Altitude. The preview has no
+stable release yet, so install the newest release candidate from its own tag:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
