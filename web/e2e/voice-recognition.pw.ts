@@ -408,11 +408,27 @@ test.describe("recognizer text as heard", () => {
       const NativeAudioContext = window.AudioContext;
       window.fixtureStreams = [];
       window.fixtureWaveforms = [];
+      window.fixtureStartupOrder = [];
+      const startRecognition = window.SpeechRecognition.prototype.start;
+      window.SpeechRecognition.prototype.start = function () {
+        window.fixtureStartupOrder.push("start");
+        return startRecognition.call(this);
+      };
       window.AudioContext = class extends NativeAudioContext {
         constructor(...args) {
           super(...args);
           this.fixtureCloseCalled = false;
           window.fixtureWaveforms.push(this);
+        }
+        createMediaStreamSource(stream) {
+          const source = super.createMediaStreamSource(stream);
+          const connect = source.connect.bind(source);
+          source.connect = (...args) => {
+            const result = connect(...args);
+            window.fixtureStartupOrder.push("connected");
+            return result;
+          };
+          return source;
         }
         close() {
           this.fixtureCloseCalled = true;
@@ -458,6 +474,10 @@ test.describe("recognizer text as heard", () => {
       await v.mic.click();
       await expect(v.listening).toBeVisible();
       await expect(v.wave).toBeVisible();
+      // This proves application ordering, not an emulation of the native silent-stream failure.
+      expect(await page.evaluate("window.fixtureStartupOrder")).toEqual(
+        Array.from({ length: cycle + 1 }, () => ["connected", "start"]).flat(),
+      );
       await expect.poll(() => page.evaluate(`window.fixtureStreams[${cycle}].getAudioTracks().every(track => track.readyState === "live" && track.enabled && !track.muted)`)).toBe(true);
       await expect.poll(loudest).toBeGreaterThan(0.5);
       await hear(page, [`discard ${cycle}`], "more");

@@ -1613,6 +1613,10 @@ transcription service or server-side audio queue.
 The composer reads the installation's voice backend and destination identity from `GET /api/voice` and
 shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
 browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event).
+After the previous capture's shutdown gate and microphone acquisition, the composer synchronously
+creates and connects the waveform graph before starting either recognizer or recorder. React only
+draws the prepared analyser. The composer closes each graph once on capture exit, including partial
+setup and failed startup, without awaiting graph activation or `AudioContext.resume()`.
 For English recognition it punctuates on the device: `web/src/punctuation` loads a bundled
 punctuation and true-casing model (1-800-BAD-CODE `punctuation_fullstop_truecase_english`,
 Apache-2.0, reduced to a 16k English vocabulary with 4-bit weights) on a minimal single-threaded

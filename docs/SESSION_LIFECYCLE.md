@@ -690,6 +690,8 @@ Cancel and timeout restore editing. Cancel discards recognized words at once wit
 phone keyboard. The next microphone tap waits in its opening state for recognizer shutdown (at most
 three seconds), followed by the waveform audio context's asynchronous close (at most three more
 seconds), before acquiring audio. An unanswered close does not prevent later attempts.
+The acquired stream's waveform graph connects synchronously before capture starts; graph activation
+adds no wait. Capture exit closes the composer-owned graph, including failed startup and navigation.
 Cancel during either wait restores editing and prevents that attempt from acquiring audio later.
 Cancelled model loads and late recognition or punctuation callbacks cannot change the draft.
 Optional voice troubleshooting retains bounded event metadata in page memory across conversation
