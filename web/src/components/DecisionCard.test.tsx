@@ -22,7 +22,7 @@ describe("question and review text", () => {
     const { container } = mount(<QuestionSet decisions={[decision]} chat={chat} />);
     const question = container.querySelector(".decision-question")!;
     expect(question.tagName).toBe("DIV");
-    expect([...question.querySelectorAll(":scope > .session-prose > *")].map((node) => node.tagName)).toEqual(["P", "P", "PRE", "P"]);
+    expect([...question.querySelectorAll(":scope > .session-prose > *")].map((node) => node.tagName)).toEqual(["P", "P", "DIV", "P"]);
     expect(question.querySelector("pre.session-code")?.textContent).toBe("sudo install -d /srv/reports\nalt ci reports --root /srv/reports");
     expect(question.querySelector("p code")?.textContent).toBe("alt task recheck-ci");
     expect(screen.getByRole("link", { name: "PR #12" })).toHaveAttribute("href", "https://github.com/example/atlas/pull/12");

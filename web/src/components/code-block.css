@@ -1,0 +1,12 @@
+/* Code and command blocks in prose (SPEC.md §3.3). */
+.code-block { position: relative; }
+.code-block > .session-code { padding-right: 104px; }
+.code-block > .code-copy { position: absolute; top: 4px; right: 4px; }
+.code-copy { min-height: 36px; padding: 0 10px; gap: 6px; border-color: transparent; background: transparent; color: var(--text-secondary); font-size: var(--text-meta); }
+.code-copy:hover { background: var(--bubble); color: var(--text-primary); }
+
+.command-block { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
+.command-block > .session-code { max-height: none; border: 0; border-radius: 0; background: var(--bubble); color: var(--text-primary); }
+.command-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 8px; border-top: 1px solid var(--border); }
+.command-actions > .btn-primary { min-height: 36px; padding: 0 12px; gap: 6px; font-size: var(--text-meta); }
+.command-note { min-width: 0; flex: 1 1 12rem; padding-left: 4px; color: var(--text-muted); font-size: var(--text-meta); }

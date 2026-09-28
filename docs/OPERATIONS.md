@@ -55,6 +55,11 @@ time and tokens. The CLI reference covers [routing preferences](CLI.md#automatic
 [model defaults](CLI.md#default-models) and [effort selection](CLI.md#task-reasoning-effort),
 including the same settings from the terminal.
 
+A step only the operator can take arrives in chat as a command block. **Open in terminal** types it at
+the prompt of that task's or project's terminal without pressing Enter; read it, then press Enter, edit
+it or clear it. A plain code block (a command for another machine) has Copy only. If a program is
+running in the terminal, nothing is typed and a notice offers Copy instead.
+
 L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
 PR closing links; when an already merged delivery lacks its link, L3 verifies the issue's full

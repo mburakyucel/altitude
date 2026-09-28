@@ -2,13 +2,14 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { TerminalStatus } from "../data/api";
+import { requestCommand } from "../data/terminalCommand";
 
 // The xterm screen needs a real canvas; here it only reports how its terminal ended.
 const screenEnd: { current?: (status: TerminalStatus) => void } = {};
 vi.mock("./TerminalScreen", () => ({
-  default: ({ id, onEnd }: { id: string; onEnd: (status: TerminalStatus) => void }) => {
+  default: ({ id, command, onEnd }: { id: string; command?: { text: string } | null; onEnd: (status: TerminalStatus) => void }) => {
     screenEnd.current = onEnd;
-    return <div data-testid="terminal-screen">{id}</div>;
+    return <div data-testid="terminal-screen" data-command={command?.text}>{id}</div>;
   },
 }));
 
@@ -17,7 +18,7 @@ const overview = { projects: [{ name: "demo", managed: true, counts: {} }], queu
 const none = (enabled = true): TerminalStatus => ({ state: "none", enabled });
 const running = (busy: string | null = null): TerminalStatus => ({ state: "running", id: "t1", enabled: true, folder: "/home/fixture/demo", offset: 0, exit_code: null, reason: null, busy });
 
-function fixture(status: TerminalStatus, answers: { open?: () => Response; status?: () => TerminalStatus } = {}) {
+function fixture(status: TerminalStatus, answers: { open?: () => Response | Promise<Response>; status?: () => TerminalStatus | Promise<TerminalStatus> } = {}) {
   let current = status;
   const posts: [string, unknown][] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -38,13 +39,52 @@ function fixture(status: TerminalStatus, answers: { open?: () => Response; statu
       }
       return json({ ok: true });
     }
-    if (url === "/api/terminal/demo") return json(answers.status?.() ?? current);
+    if (url === "/api/terminal/demo") return json(await (answers.status?.() ?? current));
     return json({ error: "not in this fixture" }, 404);
   }));
   return posts;
 }
 
 describe("Project terminal", () => {
+  it("reopens after it ended even when a status read from before the open answers after it", async () => {
+    let answer!: (status: TerminalStatus) => void;
+    const posts = fixture(none(), { status: () => new Promise((resolve) => { answer = resolve; }) });
+    const { router, queryClient } = renderApp({ route: "/projects/demo" });
+    queryClient.setQueryData(["terminal", "demo", null], none());
+    await act(() => router.navigate("/projects/demo/terminal"));
+    await waitFor(() => expect(posts.map(([url]) => url)).toContain("/api/terminal/demo/open"));
+    expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
+    await act(async () => {
+      answer(none());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(queryClient.getQueryData(["terminal", "demo", null])).toMatchObject({ id: "t1" });
+    expect(screen.getByTestId("terminal-screen")).toHaveTextContent("t1");
+    expect(router.state.location.pathname).toBe("/projects/demo/terminal");
+  });
+
+  it("ignores an open answered after its view went away", async () => {
+    let answerOpen!: (response: Response) => void;
+    let status: TerminalStatus = none();
+    let opens = 0;
+    fixture(none(), {
+      open: () => (opens++ ? json(status) : new Promise((resolve) => { answerOpen = resolve; })),
+      status: () => status,
+    });
+    const { router } = renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByText("Starting the terminal…")).toBeVisible();
+    await act(() => router.navigate("/projects/demo"));
+    status = { ...running(), id: "t2" };
+    await act(() => router.navigate("/projects/demo/terminal"));
+    expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t2");
+    await act(async () => {
+      answerOpen(json(running()));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId("terminal-screen")).toHaveTextContent("t2");
+    expect(router.state.location.pathname).toBe("/projects/demo/terminal");
+  });
+
   it("says the terminal is off and links to Settings", async () => {
     const posts = fixture(none(false));
     renderApp({ route: "/projects/demo/terminal" });
@@ -141,6 +181,27 @@ describe("Project terminal", () => {
     await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Retry" }));
     expect(await screen.findByTestId("terminal-screen")).toBeVisible();
     expect(posts.filter(([url]) => url.endsWith("/open"))).toHaveLength(2);
+  });
+
+  it("hands its own chat command to the screen, taken once", async () => {
+    fixture(running());
+    requestCommand("demo", "other-task", "echo not-mine");
+    requestCommand("demo", undefined, "echo mine");
+    const { unmount } = renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).toHaveAttribute("data-command", "echo mine");
+    unmount();
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).not.toHaveAttribute("data-command");
+  });
+
+  it("drops a chat command when the terminal is off", async () => {
+    fixture(none(false));
+    requestCommand("demo", undefined, "echo off");
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByText("Terminal is off")).toBeVisible();
+    fixture(running());
+    renderApp({ route: "/projects/demo/terminal" });
+    expect(await screen.findByTestId("terminal-screen")).not.toHaveAttribute("data-command");
   });
 
   it("opens full screen on phone with Back and Close", async () => {

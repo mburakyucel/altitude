@@ -963,7 +963,12 @@ xterm, so a shell's bracketed paste holds pasted lines until Enter. Every reques
 named, so a page still showing a replaced terminal cannot type into, resize, close or read its
 successor. Input waits up to two seconds for a program that has stopped reading it, and gives up at
 once when Close is asked for, so a full input queue never holds Close or the setting. Input that fails
-may have arrived in part, so the page stops sending keys until the operator resumes typing. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
+may have arrived in part, so the page stops sending keys until the operator resumes typing. A chat
+message's `run` block (one line with no control, invisible-formatting or line-separator character) offers
+**Open in terminal** in its task or project conversation: the page holds the command in memory for that
+terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
+stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
+holds the foreground. It never sends Enter, and the server sees ordinary input. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 

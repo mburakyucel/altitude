@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -6,6 +6,8 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
+import { ProseTerminal } from "../components/CodeBlock";
+import { requestCommand } from "../data/terminalCommand";
 import { agoText, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
@@ -711,7 +713,14 @@ function TaskPage({
     onLeave={() => void navigate(`${base}/live${location.search}`, { replace: true, state: location.state })}
     head={phone ? tabs : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
   const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
-  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseScope>;
+  // A `run` block in this conversation opens the task's terminal with its command typed (SPEC.md §3.3).
+  const runTarget = useMemo(() => Boolean(task.worktree) && task.state !== "done" && task.state !== "rejected"
+    ? { open: (command: string) => {
+      requestCommand(project, task.slug, command);
+      void navigate(`${base}/terminal${location.search}`, { replace: true, state: location.state });
+    } }
+    : { unavailable: "This task has no terminal now." }, [task.worktree, task.state, task.slug, project, base, location.search, location.state, navigate]);
+  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
 
   if (phone) {
     return (
