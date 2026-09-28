@@ -235,23 +235,28 @@ def check(host: str | None = None, *, renew: bool = True,
 
 
 def _subtree(entry: str) -> str:
-    """One name-constraint entry as a person reads it: a DNS name, or an address range with its prefix length."""
+    """One name-constraint entry, typed, with an address range written with its prefix length."""
     kind, _, value = entry.partition(":")
-    if kind == "DNS":
-        return value
     if kind == "IP" and "/" in value:
         address, mask = value.lower().split("/", 1)
         try:
             prefix = bin(int(ipaddress.ip_address(mask))).count("1")
-            return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+            return f"IP:{ipaddress.ip_network(f'{address}/{prefix}', strict=False)}"
         except ValueError:
             pass
     return entry
 
 
+def _rfc2253(value: str) -> str:
+    """An RFC 2253 attribute value as written: `\\,` is the character, `\\C3\\A9` its UTF-8 bytes."""
+    data = re.sub(rb"\\([0-9A-Fa-f]{2})|\\(.)", lambda m: bytes.fromhex(m[1].decode()) if m[1] else m[2],
+                  value.encode(), flags=re.S)
+    return data.decode("utf-8", "replace")
+
+
 def identity(certificate: Path) -> dict:
-    """What a device shows and trusts: the CA's display name, expiry, SHA-256 and name constraints, read from
-    the certificate itself. `scope` is None when the CA has no constraints and can vouch for any website."""
+    """What a device shows and trusts: the CA's display name, expiry, SHA-256 and typed name constraints,
+    read from the certificate itself. `scope` is None when the CA has no constraints."""
     text = _openssl("x509", "-noout", "-subject", "-nameopt", "RFC2253", "-enddate", "-fingerprint", "-sha256",
                     "-text", "-in", certificate).stdout
     subject = re.search(r"^subject=\s*(.*)$", text, re.M).group(1).strip()
@@ -268,20 +273,30 @@ def identity(certificate: Path) -> dict:
                 block = stripped[:-1].lower()
             elif block in scope:
                 scope[block].append(_subtree(stripped))
-    return {"name": re.sub(r"\\(.)", r"\1", common.group(1)) if common else subject,
+    return {"name": _rfc2253(common.group(1) if common else subject),
             "expires": re.search(r"^notAfter=(.*)$", text, re.M).group(1).strip(),
             "sha256": re.search(r"Fingerprint=([0-9A-F:]+)", text).group(1), "scope": scope}
 
 
+NO_LIMITS = ("No limits: this CA can vouch for any website, so whoever holds its key could impersonate "
+             "any site to a device that trusts it.")
+
+
 def describe_scope(scope: dict | None) -> str:
-    """The authority a device grants by trusting the CA, in one sentence."""
+    """The authority a device grants by trusting the CA. Constraints limit each name type separately, so a
+    type the CA does not restrict is stated as unrestricted."""
     if scope is None:
-        return ("No limits: this CA can vouch for any website, so whoever holds its key could impersonate "
-                "any site to a device that trusts it.")
-    if not scope["permitted"]:
-        return "Any website" + (f" except {', '.join(scope['excluded'])}" if scope["excluded"] else "") + "."
-    text = "Only " + ", ".join(scope["permitted"]) + ", each name with its subdomains"
-    return text + (f", except {', '.join(scope['excluded'])}" if scope["excluded"] else "") + "."
+        return NO_LIMITS
+    parts = []
+    for kind, limited, anything in (("DNS", "Names under {} and their subdomains", "Any website name"),
+                                    ("IP", "addresses in {}", "any IP address")):
+        allowed, barred = ([entry.split(":", 1)[1] for entry in scope[block] if entry.startswith(f"{kind}:")]
+                           for block in ("permitted", "excluded"))
+        parts.append((limited.format(", ".join(allowed)) if allowed else anything)
+                     + (f" except {', '.join(barred)}" if barred else ""))
+    if parts == ["Any website name", "any IP address"]:
+        return NO_LIMITS
+    return f"{parts[0]}; {parts[1]}."
 
 
 def info(host: str | None = None) -> dict:
@@ -318,6 +333,7 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
     before installing it, and nothing else is served."""
     import http.server
     import socket
+    import threading
     import time
 
     kind, name = _phone_host()
@@ -327,12 +343,22 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
     except OSError as exc:
         raise TLSFailure(f"Cannot read the CA certificate {ca}: {exc}. Run alt doctor.") from exc
     authority = identity(ca)
+    deadline = time.monotonic() + minutes * 60
+    connections: set[socket.socket] = set()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         timeout = 10
 
+        def setup(self) -> None:
+            super().setup()
+            connections.add(self.connection)
+
+        def finish(self) -> None:
+            connections.discard(self.connection)
+            super().finish()
+
         def do_GET(self) -> None:
-            if self.path != "/ca.crt":
+            if self.path != "/ca.crt" or time.monotonic() >= deadline:
                 self.send_error(404)
                 return
             self.send_response(200)
@@ -349,15 +375,15 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
         def log_message(self, *args) -> None:
             pass
 
-    class Server(http.server.HTTPServer):
+    class Server(http.server.ThreadingHTTPServer):
         address_family = socket.AF_INET6 if kind == "IP" and ":" in name else socket.AF_INET
+        block_on_close = False  # expiry closes open connections below instead of waiting for them
 
     try:
         server = Server((name, 0), Handler)
     except OSError as exc:
         raise TLSFailure(f"Cannot listen on {name} for the phone: {exc}.") from exc
     with server:
-        server.timeout = 1
         host = f"[{name}]" if server.address_family == socket.AF_INET6 else name
         pairs = authority["sha256"].split(":")
         out(f"For the next {minutes} minutes, on the phone open this link in Safari and tap Allow:\n"
@@ -374,10 +400,17 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
             "Android: install the file under Settings > Security > Encryption & credentials > "
             "Install a certificate > CA certificate.\n"
             "Ctrl-C closes the link sooner.")
-        deadline = time.monotonic() + minutes * 60
+        serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
+        serving.start()
         try:
-            while time.monotonic() < deadline:
-                server.handle_request()
+            threading.Event().wait(max(0.0, deadline - time.monotonic()))
         except KeyboardInterrupt:
             pass
+        finally:
+            server.shutdown()
+            for connection in list(connections):  # a slow or stalled client ends with the link
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
     out("The link is closed.")

@@ -5,7 +5,7 @@ import { walkthrough } from "./walkthrough";
 // The suite's service runs without HTTPS, so each state overlays the certificate on the real device list.
 const FINGERPRINT = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, "0")).join(":");
 const LIMITED = { name: "Altitude local CA", expires: "Sep 25 04:00:00 2036 GMT", sha256: FINGERPRINT,
-  scope: "Only localhost, local, internal, home.arpa, 127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16, each name with its subdomains." };
+  scope: "Names under localhost, local, internal, home.arpa and their subdomains; addresses in 127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16." };
 const UNLIMITED = { name: "mkcert studio@example", expires: "Jan 2 00:00:00 2034 GMT", sha256: FINGERPRINT,
   scope: "No limits: this CA can vouch for any website, so whoever holds its key could impersonate any site to a device that trusts it." };
 
@@ -35,7 +35,7 @@ test("Settings › Devices names the certificate a phone must match and how to o
   await walk.state("02-generated-ca", {
     action: () => reload(page),
     visible: [card.getByText("Altitude local CA"), card.getByText("alt tls-share", { exact: true }),
-      card.getByText(/^10 17 1E 25 2C 33 3A 41/), card.getByText(/each name with its subdomains/)],
+      card.getByText(/^10 17 1E 25 2C 33 3A 41/), card.getByText(/^Names under localhost/)],
     hidden: [card.getByRole("alert")],
   });
   await certificate(page, UNLIMITED);

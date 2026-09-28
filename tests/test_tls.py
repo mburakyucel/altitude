@@ -188,27 +188,38 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(f"sha256 Fingerprint={authority['sha256']}", tls.info("trial.example")["ca_sha256"])
         self.assertRegex(authority["sha256"], r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
         self.assertEqual(authority["scope"]["excluded"], [])
-        for entry in ("localhost", "home.arpa", "trial.example", "10.0.0.0/8", "100.64.0.0/10", "::1/128", "fc00::/7"):
+        for entry in ("DNS:localhost", "DNS:home.arpa", "DNS:trial.example", "IP:10.0.0.0/8", "IP:100.64.0.0/10",
+                      "IP:::1/128", "IP:fc00::/7"):
             self.assertIn(entry, authority["scope"]["permitted"])
         described = tls.describe_scope(authority["scope"])
-        self.assertTrue(described.startswith("Only localhost, local, internal, home.arpa, 127.0.0.0/8"), described)
+        self.assertTrue(described.startswith("Names under localhost, local, internal, home.arpa, trial.example and "
+                                             "their subdomains; addresses in 127.0.0.0/8, 10.0.0.0/8"), described)
         self.assertIn("trial.example", described, "a configured, possibly public, name is part of the scope")
         info = tls.info("trial.example")
         self.assertEqual((info["ca_name"], info["ca_scope"]), ("Altitude local CA", described))
         self.assertIn("SHA-256", " ".join(info["trust_steps"]))
 
     def test_identity_of_an_external_ca_keeps_its_own_name_and_limits(self):
-        key, certificate = self.root / "external.key", self.root / "external.crt"
-        tls._openssl("req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                     "-keyout", key, "-out", certificate, "-days", "30", "-subj", "/O=Home\\, Inc./CN=mkcert studio@example",
-                     "-addext", "nameConstraints=critical,permitted;DNS:studio.example,excluded;IP:10.9.0.0/255.255.0.0")
-        authority = tls.identity(certificate)
-        self.assertEqual(authority["name"], "mkcert studio@example")
-        self.assertEqual(authority["scope"], {"permitted": ["studio.example"], "excluded": ["10.9.0.0/16"]})
+        def external(subject, *extensions):
+            certificate = self.root / f"external-{len(extensions)}.crt"
+            tls._openssl("req", "-x509", "-utf8", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                         "-keyout", self.root / "external.key", "-out", certificate, "-days", "30", "-subj", subject,
+                         *extensions)
+            return tls.identity(certificate)
+
+        # iOS lists the CA by this name, so escaped punctuation and non-ASCII letters read as written.
+        authority = external("/O=Home\\, Inc./CN=Café studio\\, CA", "-addext",
+                             "nameConstraints=critical,permitted;DNS:studio.example,excluded;IP:10.9.0.0/255.255.0.0")
+        self.assertEqual(authority["name"], "Café studio, CA")
+        self.assertEqual(authority["scope"], {"permitted": ["DNS:studio.example"], "excluded": ["IP:10.9.0.0/16"]})
+        # Constraints limit each name type on its own: limiting names leaves every other IP address.
         self.assertEqual(tls.describe_scope(authority["scope"]),
-                         "Only studio.example, each name with its subdomains, except 10.9.0.0/16.")
-        self.assertEqual(tls.describe_scope({"permitted": [], "excluded": ["studio.example"]}),
-                         "Any website except studio.example.")
+                         "Names under studio.example and their subdomains; any IP address except 10.9.0.0/16.")
+        authority = external("/CN=Addresses only", "-addext", "nameConstraints=critical,permitted;IP:10.9.0.0/255.255.0.0")
+        self.assertEqual(tls.describe_scope(authority["scope"]), "Any website name; addresses in 10.9.0.0/16.")
+        self.assertEqual(tls.describe_scope({"permitted": ["email:studio.example"], "excluded": []}), tls.NO_LIMITS)
+        unnamed = external("/O=No common name")
+        self.assertEqual((unnamed["name"], unnamed["scope"]), ("O=No common name", None))
 
     def test_leaf_renewal_keeps_ca_and_key_and_reloads_existing_context(self):
         self.create()
@@ -420,3 +431,28 @@ class TestShare(unittest.TestCase):
         self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
         self.assertIn(f"open {tls.url()} in a new Private tab", steps)
         self.assertEqual(lines[1:], ["Sent the certificate to 127.0.0.1.", "The link is closed."])
+
+    def test_a_stalled_client_neither_blocks_the_phone_nor_outlives_the_link(self):
+        import socket
+        import threading
+        import urllib.request
+        lines, printed = [], threading.Event()
+
+        def out(line):
+            lines.append(line)
+            printed.set()
+
+        with mock.patch.object(tls, "_phone_host", return_value=("IP", "127.0.0.1")):
+            sharing = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
+            sharing.start()
+            self.assertTrue(printed.wait(10))
+            link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", lines[0]).group(0)
+            port = int(link.split(":")[2].split("/")[0])
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as stalled:
+                stalled.sendall(b"GET /ca.crt HTTP/1.1\r\n")  # headers never finish
+                with urllib.request.urlopen(link, timeout=5) as response:
+                    self.assertEqual(response.read(), (config.TLS_DIR / "ca.crt").read_bytes())
+                sharing.join(15)
+                self.assertFalse(sharing.is_alive(), "the link closes on time despite the open request")
+                self.assertEqual(stalled.recv(1024), b"", "the stalled request never receives the certificate")
+        self.assertEqual(lines[-1], "The link is closed.")

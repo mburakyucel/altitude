@@ -130,8 +130,9 @@ A CA that Altitude generates covers only loopback, private-network addresses (10
 `home.arpa`, and a DNS name configured when it was created, including that name's subdomains. It
 cannot vouch for other public websites; if its key leaked it could still impersonate other
 private-network devices, such as a router page, or names under a configured public domain. A CA
-created without these limits, or supplied externally, keeps its original scope, and Altitude shows
-it as "No limits".
+created without these limits, or supplied externally, keeps its original scope. Altitude shows that
+scope as read from the certificate: "No limits" when it has none, and "Any website name" or "any IP
+address" for a type of name its limits leave open.
 
 #### Set up a phone
 
