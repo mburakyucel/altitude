@@ -49,38 +49,49 @@ test("an update between opening the page and the first terminal: the view says s
   expect(chunks.at(-1), "The new build's terminal code").toMatch(/^200 \/assets\/TerminalScreen-updated-/);
 });
 
-test("the terminal's code cannot be fetched: the view says so without reloading, and Reload opens it once Altitude answers", async ({ page, request, browserName }, info) => {
+test("the terminal's code cannot be fetched: the view says so without reloading, and Reload opens it once Altitude answers", async ({ browser, altitude, request }, info) => {
   test.setTimeout(90_000);
-  // WebKit's reload does not request the failed code again; a new page loads it. Unknown on iOS Safari.
-  test.fail(browserName === "webkit", "WebKit reload reuses the failed terminal code load");
-  const phone = info.project.name === "phone";
-  const walk = walkthrough(page, info);
-  const panel = page.getByRole("region", { name: "Terminal" });
-  const views = phone ? page.getByRole("navigation", { name: "Task views" }) : page.getByRole("navigation", { name: "Panel view" });
-  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+  // Altitude itself drops the connection for the terminal's code and the page's check of the current page, in
+  // a context of its own: the shared context's request interception turns the browser's cache off, and the
+  // browser must not keep the failure for the reload (WebKit keeps a failed script preload).
+  const context = await browser.newContext({ ...info.project.use, baseURL: altitude.url });
+  await context.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
+  const page = await context.newPage();
+  try {
+    const phone = info.project.name === "phone";
+    const walk = walkthrough(page, info);
+    const panel = page.getByRole("region", { name: "Terminal" });
+    const views = phone ? page.getByRole("navigation", { name: "Task views" }) : page.getByRole("navigation", { name: "Panel view" });
+    expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
 
-  await walk.open(TASK);
-  let loads = 0;
-  page.on("load", () => { loads += 1; });
-  // The connection drops for the page's own files and its check of the current page.
-  const offline = (url: URL) => url.pathname.startsWith("/assets/TerminalScreen-") || url.pathname === "/";
-  await page.route(offline, (route) => route.abort("internetdisconnected"));
-  await views.getByRole("link", { name: "Terminal" }).click();
-  const reload = panel.getByRole("button", { name: "Reload" });
-  await walk.state("update-03-terminal-code-unreachable", {
-    visible: [panel.getByText("Couldn't load the terminal"), panel.getByText(/Check the connection to Altitude, then reload\./), reload],
-    hidden: [page.getByText("Unexpected Application Error!"), page.locator(".terminal-screen"), panel.getByText("Altitude was updated")],
-  });
-  await page.waitForTimeout(1000);
-  expect(loads, "Nothing reloads by itself").toBe(0);
+    await walk.open(TASK);
+    let loads = 0;
+    page.on("load", () => { loads += 1; });
+    const chunks: string[] = [];
+    page.on("request", (sent) => { if (/\/assets\/TerminalScreen-/.test(sent.url())) chunks.push(new URL(sent.url()).pathname); });
+    await fixture(request, "unreachable");
+    await views.getByRole("link", { name: "Terminal" }).click();
+    const reload = panel.getByRole("button", { name: "Reload" });
+    await walk.state("update-03-terminal-code-unreachable", {
+      visible: [panel.getByText("Couldn't load the terminal"), panel.getByText(/Check the connection to Altitude, then reload\./), reload],
+      hidden: [page.getByText("Unexpected Application Error!"), page.locator(".terminal-screen"), panel.getByText("Altitude was updated")],
+    });
+    await page.waitForTimeout(1000);
+    expect(loads, "Nothing reloads by itself").toBe(0);
+    expect(chunks, "The terminal's code is one script").toHaveLength(1);
+    await expect(page.locator('link[rel="modulepreload"]'), "Its import alone loads it, never a script preload").toHaveCount(0);
 
-  await page.unroute(offline);
-  await reload.click();
-  await walk.state("update-04-reloaded-after-outage", {
-    visible: [page.locator(".terminal-screen .xterm-rows")],
-    hidden: [panel.getByText("Couldn't load the terminal")],
-  });
-  await expect(page.locator(".terminal-screen .xterm-rows")).toContainText("$");
+    await fixture(request, "back");
+    await reload.click();
+    await walk.state("update-04-reloaded-after-outage", {
+      visible: [page.locator(".terminal-screen .xterm-rows")],
+      hidden: [panel.getByText("Couldn't load the terminal")],
+    });
+    await expect(page.locator(".terminal-screen .xterm-rows")).toContainText("$");
+    expect(chunks, "The reloaded page asks Altitude for the same code again").toEqual([chunks[0], chunks[0]]);
+  } finally {
+    await context.close();
+  }
 });
 
 test("the check of the served page stalls: the Reload card still appears", async ({ page, request }, info) => {

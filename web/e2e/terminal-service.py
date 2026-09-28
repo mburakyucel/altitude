@@ -3,7 +3,7 @@ and project folder, whose saved conversations hold chat commands (`run` blocks) 
 things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
 and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
 walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart, an
-update that replaces the built app under an open page."""
+update that replaces the built app under an open page, the app's files out of reach."""
 import os
 import shutil
 import socket
@@ -45,6 +45,7 @@ def main():
                 "```run\ncd /tmp\nls\n```", trigger="chat", turn_id="saved-chat")
     streams = set()
     held = threading.Event()
+    unreachable = threading.Event()
 
     class Handler(server.Handler):
         def _terminal_stream(self, *args):
@@ -53,6 +54,13 @@ def main():
                 return super()._terminal_stream(*args)
             finally:
                 streams.discard(self)
+
+        def _static(self, raw_path):
+            if unreachable.is_set() and (raw_path == "/" or raw_path.startswith("/assets/TerminalScreen-")):
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return None
+            return super()._static(raw_path)
 
         def _terminal_get(self, parts, q):
             if held.is_set():
@@ -67,6 +75,10 @@ def main():
                 return self._json({"ok": True})
             if self.path == "/fixture/back":
                 held.clear()
+                unreachable.clear()
+                return self._json({"ok": True})
+            if self.path == "/fixture/unreachable":  # the connection drops for the terminal's code and the page
+                unreachable.set()
                 return self._json({"ok": True})
             if self.path == "/fixture/finish":  # the task finishes; altd's next tick closes its terminal
                 row = S.load_task("atlas", slug)
