@@ -415,3 +415,28 @@ def holds(pid: int, handle: str) -> bool:
     except OSError:
         return False
     return False
+
+
+# --- Host speech -------------------------------------------------------------------------------------------------
+
+def speech_runtime() -> tuple[str | None, str]:
+    """The pinned speech runtime this host and interpreter can run (`linux-x86_64-cp312`), or None and why not.
+    The runtime's wheels need glibc 2.28. macOS is not verified (issue #225)."""
+    if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
+        return None, "voice runs on Linux x86_64 only for now"
+    libc = (os.confstr("CS_GNU_LIBC_VERSION") or "") if hasattr(os, "confstr") else ""
+    match = re.fullmatch(r"glibc (\d+)\.(\d+).*", libc)
+    if not match or (int(match[1]), int(match[2])) < (2, 28):
+        return None, "voice needs glibc 2.28 or newer"
+    return f"linux-x86_64-cp{sys.version_info.major}{sys.version_info.minor}", ""
+
+
+def available_memory() -> int | None:
+    """Bytes of memory available without swapping, or None when the host does not say."""
+    try:
+        for line in (PROC / "meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None

@@ -1,0 +1,228 @@
+import { test } from "./fixtures";
+import { expect, type Page, type Route, type TestInfo } from "@playwright/test";
+import { fixtureProject } from "./fixture-data";
+import { walkthrough } from "./walkthrough";
+
+/*
+ * Host voice (SPEC.md §3.6 and §3.15), walked at 390 and 1440. The page's real audio worklet turns the
+ * browser's fake microphone into 16 kHz samples; the host is a page-level fixture that answers each
+ * chunk with how many samples it has heard, so no model runs and nothing leaves the page. Its setup
+ * states come from an overlaid /api/voice.
+ */
+
+type HostState = Record<string, unknown>;
+const READY = { state: "ready", download_bytes: 698435338 };
+
+/** Hold the worklet until the test releases it, so Starting voice stays on screen. */
+const HOLD_WORKLET = `
+  const add = AudioWorklet.prototype.addModule;
+  AudioWorklet.prototype.addModule = async function (...args) {
+    if (window.fixtureWorkletGate) await window.fixtureWorkletGate;
+    return add.apply(this, args);
+  };
+  window.fixtureHoldWorklet = () => { window.fixtureWorkletGate = new Promise((resolve) => { window.fixtureReleaseWorklet = resolve; }); };
+`;
+
+function views(page: Page, info: TestInfo) {
+  const main = page.getByRole("main");
+  return {
+    phone: info.project.name === "phone",
+    main,
+    field: main.getByRole("textbox", { name: /^Message L3 about /, includeHidden: true }),
+    send: main.getByRole("button", { name: "Send", exact: true }),
+    mic: main.getByRole("button", { name: "Start voice input", exact: true }),
+    stop: main.getByRole("button", { name: "Stop voice input", exact: true }),
+    cancel: main.getByRole("button", { name: "Cancel voice input", exact: true }),
+    hint: main.locator(".composer-hint"),
+    wave: main.locator(".composer-wave"),
+    listening: main.locator('.composer[data-phase="listening"]'),
+    transcribing: main.getByText("Transcribing…", { exact: true }),
+  };
+}
+
+/** The fixture host: settings, setup actions and live recordings. */
+async function fixtureHost(page: Page, initial: HostState = READY) {
+  const host = {
+    state: initial,
+    backend: "host",
+    samples: 0,
+    chunks: [] as number[],
+    requests: [] as string[],
+    refuse: null as null | { status: number; error: string },
+    failAudio: null as null | { status: number; error: string },
+    holdFinal: null as null | Promise<void>,
+  };
+  const settings = () => ({ backend: host.backend, url: "", model: "", key_set: false, selection: `fixture-${host.backend}`, host: host.state });
+  await page.route((url) => url.pathname === "/api/voice", async (route: Route) => {
+    if (route.request().method() === "POST") host.backend = JSON.parse(route.request().postData() ?? "{}").backend;
+    await route.fulfill({ json: settings() });
+  });
+  await page.route((url) => url.pathname === "/api/voice/host", async (route) => {
+    const { action } = JSON.parse(route.request().postData() ?? "{}");
+    host.requests.push(action);
+    host.state = action === "setup" ? { state: "setting-up", download_bytes: 698435338, done_bytes: 0 } : { state: "absent", download_bytes: 698435338 };
+    await route.fulfill({ json: settings() });
+  });
+  await page.route((url) => url.pathname.startsWith("/api/voice/live"), async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    host.requests.push(path.replace(/^\/api\/voice\/live/, "live"));
+    if (path === "/api/voice/live") {
+      host.samples = 0;
+      host.chunks = [];
+      return host.refuse ? route.fulfill({ status: host.refuse.status, json: { error: host.refuse.error } }) : route.fulfill({ json: { id: "fixture" } });
+    }
+    if (path.endsWith("/cancel")) return route.fulfill({ json: { ok: true } });
+    if (host.failAudio) return route.fulfill({ status: host.failAudio.status, json: { error: host.failAudio.error } });
+    const samples = (route.request().postDataBuffer()?.length ?? 0) / 2;
+    host.samples += samples;
+    host.chunks.push(samples);
+    const final = new URL(route.request().url()).searchParams.get("final") === "1";
+    if (final) {
+      await host.holdFinal;
+      return route.fulfill({ json: { text: `Heard ${host.chunks.length} chunks.`, final: true } });
+    }
+    return route.fulfill({ json: { text: host.chunks.length > 1 ? "check the build" : "check" } });
+  });
+  return host;
+}
+
+test("host voice: Starting voice, live words, Transcribing, landed; Cancel and Send", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const host = await fixtureHost(page);
+  await page.addInitScript(HOLD_WORKLET);
+  await walk.open(project.path);
+  await v.field.fill("Please");
+  await page.evaluate(() => (window as unknown as { fixtureHoldWorklet(): void }).fixtureHoldWorklet());
+
+  await walk.state("host-voice-01-starting", {
+    action: () => v.mic.click(),
+    visible: [v.stop, v.cancel, v.main.getByText("Starting voice…", { exact: true })],
+    hidden: [v.mic, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+  });
+  await walk.state("host-voice-02-listening", {
+    action: () => page.evaluate(() => (window as unknown as { fixtureReleaseWorklet(): void }).fixtureReleaseWorklet()),
+    visible: [v.listening, v.wave, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+    hidden: [v.main.getByText("Starting voice…", { exact: true })],
+  });
+  await expect(v.field).toHaveValue("Please check the build", { timeout: 5000 });
+  await expect(v.field).toHaveAttribute("readonly", "");
+  // The worklet sends 16 kHz samples: about half a second per request, one request at a time.
+  expect(host.chunks[0]).toBeGreaterThanOrEqual(8000);
+  expect(host.chunks[0]).toBeLessThan(16000);
+
+  let release = () => {};
+  host.holdFinal = new Promise((resolve) => { release = resolve; });
+  await walk.state("host-voice-03-transcribing", {
+    action: () => v.stop.click(),
+    visible: [v.transcribing],
+    hidden: [v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+  });
+  await walk.state("host-voice-04-landed", {
+    action: async () => { release(); await expect(v.field).toHaveValue(/^Please Heard \d+ chunks\.$/); },
+    visible: [v.mic, v.field],
+    hidden: [v.transcribing, v.stop, v.cancel, v.wave, v.hint.filter({ hasText: /Transcribing|Listening|Voice stopped/ })],
+  });
+  await expect(v.field).not.toHaveAttribute("readonly", "");
+  host.holdFinal = null;
+
+  await v.mic.click();
+  await expect(v.field).toHaveValue(/^Please Heard \d+ chunks\. check/, { timeout: 5000 });
+  await walk.state("host-voice-05-cancelled", {
+    action: () => v.cancel.click(),
+    visible: [v.mic],
+    hidden: [v.listening, v.wave, v.stop],
+  });
+  await expect(v.field).toHaveValue(/^Please Heard \d+ chunks\.$/);
+  await expect.poll(() => host.requests.at(-1)).toBe("live/fixture/cancel");
+
+  const sent: string[] = [];
+  await page.route((url) => url.pathname === "/api/chat", async (route) => {
+    sent.push(JSON.parse(route.request().postData() ?? "{}").text);
+    await route.fulfill({ json: { ok: true } });
+  });
+  await v.field.fill("Send this");
+  await v.mic.click();
+  await expect(v.listening).toBeVisible();
+  await expect(v.field).toHaveValue(/^Send this check/, { timeout: 5000 });
+  await v.send.click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toMatch(/^Send this Heard \d+ chunks\.$/);
+});
+
+test("host voice: a stopped recording keeps its words and says why; busy says so", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const host = await fixtureHost(page);
+  await walk.open(project.path);
+  await v.mic.click();
+  await expect(v.field).toHaveValue("check", { timeout: 5000 });
+  host.failAudio = { status: 503, error: "Voice stopped: the speech process stopped." };
+  await walk.state("host-voice-06-stopped", {
+    visible: [v.main.getByText("Voice stopped: the speech process stopped. Typing works.", { exact: true }), v.mic],
+    hidden: [v.listening, v.wave, v.stop],
+  });
+  await expect(v.field).toHaveValue("check");
+  await expect(v.field).not.toHaveAttribute("readonly", "");
+
+  host.failAudio = null;
+  host.refuse = { status: 429, error: "Voice is busy on another device." };
+  await walk.state("host-voice-07-busy", {
+    action: () => v.mic.click(),
+    visible: [v.main.getByText("Voice is busy on another device. Typing works.", { exact: true }), v.mic],
+    hidden: [v.listening, v.stop],
+  });
+  await expect(v.field).toHaveValue("check");
+});
+
+test("host voice not set up: the mic points to Settings, which sets it up with progress", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
+  await walk.open(project.path);
+  const setUp = v.main.getByRole("link", { name: "Set up voice", exact: true });
+  await walk.state("host-voice-08-needs-setup", {
+    action: () => v.mic.click(),
+    visible: [v.main.getByText("Voice needs a one-time download on this computer.", { exact: false }), setUp, v.mic],
+    hidden: [v.listening, v.stop],
+  });
+  expect(host.requests).toEqual([]);
+  await setUp.click();
+  const button = page.getByRole("button", { name: "Set up voice", exact: true });
+  await walk.state("host-voice-09-settings-absent", {
+    visible: [page.getByRole("radio", { name: "This computer — live text", exact: true }), button,
+      page.getByText("Needs a one-time download of about 698 MB, checked against this release.", { exact: true }),
+      page.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.", { exact: true })],
+    hidden: [page.getByRole("progressbar")],
+  });
+  await expect(page.getByRole("radio", { name: "This computer — live text", exact: true })).toBeChecked();
+  await walk.state("host-voice-10-setting-up", {
+    action: () => button.click(),
+    visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByText("Setting up… 0 MB of 698 MB", { exact: true }),
+      page.getByRole("button", { name: "Cancel setup", exact: true })],
+    hidden: [button],
+  });
+  host.state = { state: "setting-up", download_bytes: 698435338, done_bytes: 420000000 };
+  await expect(page.getByText("Setting up… 420 MB of 698 MB", { exact: true })).toBeVisible({ timeout: 5000 });
+  host.state = READY;
+  await walk.state("host-voice-11-ready", {
+    visible: [page.getByText("Ready on this computer.", { exact: false }), page.getByRole("button", { name: "Remove voice (698 MB)", exact: true })],
+    hidden: [page.getByRole("progressbar"), page.getByRole("button", { name: "Cancel setup", exact: true })],
+  });
+  expect(host.requests).toEqual(["setup"]);
+});
+
+test("host voice that cannot run here hides the mic and says why", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await fixtureHost(page, { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" });
+  await walk.open(project.path);
+  await walk.state("host-voice-12-unavailable", {
+    visible: [v.main.getByText("Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works.", { exact: true }), v.field],
+    hidden: [v.mic],
+  });
+});

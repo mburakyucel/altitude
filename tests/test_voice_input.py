@@ -297,7 +297,7 @@ class TestVoiceEndpoint(AltitudeCase):
     def test_settings_saves_and_redacts_endpoint_key_through_durable_operator_request(self):
         status, setting = self.save(backend="endpoint", url="https://voice.example/transcribe", key="secret-fixture")
         self.assertEqual(status, 200)
-        self.assertEqual({key: value for key, value in setting.items() if key != "selection"},
+        self.assertEqual({key: value for key, value in setting.items() if key not in ("selection", "host")},
                          {"backend": "endpoint", "url": "https://voice.example/transcribe",
                           "model": config.VOICE_DEFAULT_MODEL, "key_set": True})
         self.assertNotIn("secret-fixture", json.dumps(setting))

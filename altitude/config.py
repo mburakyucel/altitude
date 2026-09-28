@@ -286,24 +286,25 @@ def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
 
 
-# The capability seam for speech: the browser's own recognition needs nothing installed; the
-# machine's own speech service is one OpenAI-compatible `audio/transcriptions` URL it chooses.
+# The capability seam for speech: the browser's own recognition needs nothing installed; host voice runs the
+# pinned speech model on this computer (`altitude/speech.py`); the machine's own speech service is one
+# OpenAI-compatible `audio/transcriptions` URL it chooses.
 VOICE_DEFAULT_MODEL = "whisper-1"
 
 
 def voice_setting() -> dict:
-    """The transcription backend: browser recognition (default) or the machine's speech service."""
+    """The transcription backend: browser recognition (default), host voice or the machine's speech service."""
     value = machine_settings().get("voice")
     if isinstance(value, dict):
         return {"backend": "endpoint", "model": VOICE_DEFAULT_MODEL, **value}
-    return {"backend": "browser"}
+    return {"backend": "host" if value == "host" else "browser"}
 
 
 def validate_voice(value) -> None:
-    if value is None or value == "browser":
+    if value is None or value in ("browser", "host"):
         return
     if not isinstance(value, dict) or not value or set(value) - {"url", "model", "key"}:
-        raise ValueError("voice must be browser or the URL of your speech service")
+        raise ValueError("voice must be browser, host or the URL of your speech service")
     url = value.get("url")
     parts = urlsplit(url) if isinstance(url, str) else None
     if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:

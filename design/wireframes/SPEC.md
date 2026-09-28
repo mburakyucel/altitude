@@ -495,6 +495,7 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195). When English punctuation did not finish, the words land as heard and a muted hint stays until the next capture or send: "Added without punctuation: still loading. Next time it will be ready." while the model is still downloading, otherwise "Added without punctuation: this browser could not run it." | the operator edits or sends as with a typed draft |
 | Denied | mic stays available; hint reads "Microphone blocked in the browser. Typing works." (microphone or recognizer refused) | the hint stays until the next tap, which asks the browser again; a lasting block shows the hint again |
 | Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, "This browser has no speech recognition. Typing works." when the browser backend has no recognizer, or nothing when a server backend's browser lacks recording; no mic until the installation's backend is known | typing unaffected |
+| Host voice | Starting: "Starting voice…" with the spinner until the microphone delivers audio; then Listening as above, with words from this computer appearing about a second behind speech (the last words may still change). Stop or the arrow: Transcribing for about half a second while the host finishes. Not set up: the mic stays; a tap shows "Voice needs a one-time download on this computer. **Set up voice**" (or "an update"), linking to Settings → Voice input; while setting up, "Voice is being set up on this computer. Typing works."; after a failed setup, "Voice setup did not finish. **Retry in Settings**. Typing works." Cannot run here: mic hidden, "Voice isn't available on this computer: <reason>. Typing works." | a recording that stops early (connection lost, speech process stopped, microphone interrupted or silent, busy on another device) keeps the words already shown, restores editing and says "Voice stopped: <reason>. Typing works." |
 | Engine pin | Auto, or an engine name | `POST /api/chat` carries the pin; it covers chat and system turns alike and stays until changed |
 
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
@@ -502,8 +503,9 @@ The timer turns `--danger` in the last minute. Audio never becomes part of task 
 
 The installation's voice backend (`GET /api/voice`, set with `alt machine set --voice`) decides how
 words arrive: `browser` (the default, no setup) runs the browser's own speech recognition and shows
-words while speaking; `local` and an OpenAI-compatible endpoint upload the recording after Stop or
-Send and show Transcribing. Words are never simulated: only recognition that produces them
+words while speaking; `host` streams the microphone to this computer, which transcribes it with its
+own speech model and shows words while speaking; an OpenAI-compatible endpoint receives the recording
+after Stop or Send and shows Transcribing. Words are never simulated: only recognition that produces them
 progressively shows them progressively. `VoiceStates.html` shows each state at desktop and phone width.
 Browser recognition of English is punctuated on the device by a bundled model that adds only
 `.` `,` `?` and capitals; dictated words are never rewritten. Other languages keep the recognizer's
@@ -1265,8 +1267,15 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers Browser recognition (default) and Your speech service. Descriptions state
-where audio goes and any setup or charges. Browser saves immediately; Your speech service opens a
+The voice page offers Browser recognition (default), This computer — live text, and Your speech
+service. Descriptions state where audio goes and any setup or charges. Browser and This computer save
+immediately. This computer shows its setup below the choice: "Needs a one-time download of about
+698 MB, checked against this release." with **Set up voice**; while setting up, a progress bar,
+"Setting up… X MB of Y MB" and **Cancel setup**; when ready, "Ready on this computer. While you
+dictate, the speech process uses about 2 GB of memory." and **Remove voice (698 MB)**; a failed setup
+shows its reason with **Retry**; an outdated runtime asks for an update with the same button; the
+model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When this computer cannot
+run it, the choice is disabled and says why. Your speech service Your speech service opens a
 **Service URL** form with **Save service**, a line naming the OpenAI-compatible
 `/v1/audio/transcriptions` endpoint and a **How to run one** link to the setup docs. Model and key
 stay behind **Hosted provider? Add a key or model** and are shown directly once a key or a
@@ -1281,6 +1290,7 @@ and refuse a changed selection before forwarding audio. The overview row names t
 | Loading | Loading settings…; no selected default or editable controls. |
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
 | Saved browser | Chosen radio, Saved.; service form absent. |
+| Saved host | Chosen radio, Saved. and the setup panel in its current state; while setting up, progress refreshes every second without resetting other edits. The overview reads This computer — live text, with " · not set up" until ready. |
 | Service editing | URL required; hosted link reveals optional model/key; explicit save; overview still reflects persisted choice. |
 | Saving | Saving… and disabled controls until the request answers. |
 | Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
@@ -1436,6 +1446,7 @@ retain phone/desktop state verification and accessible review evidence.
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
 | Composer voice | `POST /api/transcribe` | none; audio is deleted after transcription |
+| Host voice | `POST /api/voice/host` (setup, cancel, remove), `POST /api/voice/live`, `/api/voice/live/<id>/audio`, `/cancel` | the speech model under `~/.altitude/speech`; audio stays in memory for the recording only |
 | Monitor | `GET /api/monitor` | none |
 
 The shell's one `GET /api/changes` stream refetches the mounted overview, monitor, project and task reads

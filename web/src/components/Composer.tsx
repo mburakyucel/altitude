@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { ApiError, imageSendRefused, transcribeVoice } from "../data/api";
-import type { VoiceBackend } from "../data/api";
+import type { VoiceSettings } from "../data/api";
+import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
+import { HostCapture } from "./hostCapture";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
 import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
@@ -15,8 +17,9 @@ import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
  * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
  * The installation's voice backend decides the capture: browser recognition shows words while
- * listening and never uploads; the local service and a configured endpoint record and upload on
- * Stop or Send. Both run the same recorder-shaped state machine.
+ * listening and never uploads; host voice streams to this computer's speech model and shows its words
+ * while listening; a configured endpoint records and uploads on Stop or Send. All run the same
+ * recorder-shaped state machine.
  */
 
 /** Recordings stop five seconds under ten minutes, absorbing timer delay and container padding. */
@@ -52,7 +55,10 @@ function closeWaveform(context: AudioContext) {
 }
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
-type Capture = MediaRecorder | RecognitionCapture;
+type Capture = MediaRecorder | RecognitionCapture | HostCapture;
+/** Captures whose words arrive while listening, rather than from an upload after Stop. */
+type LiveCapture = RecognitionCapture | HostCapture;
+const isLive = (capture: Capture | null): capture is LiveCapture => capture instanceof RecognitionCapture || capture instanceof HostCapture;
 type SendFailure = "refused" | "unconfirmed" | "transcription" | null;
 type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
@@ -149,17 +155,32 @@ export function combineDraft(draft: string, transcript: string): string {
 
 /**
  * Why voice is unavailable: "insecure" (the hint says so), "unrecognized" (the browser backend has
- * no speech recognition; the hint says so), "unsupported" (the mic simply hides), "pending" while the
- * backend is still being read (the mic hides), or null.
+ * no speech recognition; the hint says so), "host" (host voice cannot run on this computer, or its setup
+ * failed; the hint says why), "unsupported" (the mic simply hides), "pending" while the backend is still
+ * being read (the mic hides), or null.
  */
-export function voiceUnavailable(backend: VoiceBackend | null): "insecure" | "unrecognized" | "unsupported" | "pending" | null {
+export function voiceUnavailable(voice: VoiceSettings | null): "insecure" | "unrecognized" | "host" | "unsupported" | "pending" | null {
   if (typeof window === "undefined" || typeof navigator === "undefined") return "unsupported";
   if (window.isSecureContext === false) return "insecure";
-  if (backend === null) return "pending";
+  if (voice === null) return "pending";
   if (typeof navigator.mediaDevices?.getUserMedia !== "function") return "unsupported";
-  if (backend === "browser") return recognitionAvailable() ? null : "unrecognized";
+  if (voice.backend === "browser") return recognitionAvailable() ? null : "unrecognized";
+  if (voice.backend === "host") {
+    if (voice.host.state === "unavailable" || voice.host.state === "failed") return "host";
+    return typeof AudioWorkletNode === "undefined" ? "unsupported" : null;
+  }
   if (typeof MediaRecorder === "undefined") return "unsupported";
   return null;
+}
+
+/** What the hint says when host voice cannot run here; the Settings link offers setup or Retry. */
+function hostVoiceHint(voice: VoiceSettings): ReactNode {
+  const host = voice.host;
+  if (host.state === "unavailable") return `Voice isn't available on this computer: ${host.reason}. Typing works.`;
+  if (host.state === "failed") return <>Voice setup did not finish. <Link className="link" to="/settings/voice">Retry in Settings</Link>. Typing works.</>;
+  if (host.state === "setting-up") return "Voice is being set up on this computer. Typing works.";
+  return <>{host.state === "outdated" ? "Voice needs an update on this computer." : "Voice needs a one-time download on this computer."}{" "}
+    <Link className="link" to="/settings/voice">Set up voice</Link></>;
 }
 
 function recordingMimeType(): string {
@@ -176,11 +197,11 @@ function recordingMimeType(): string {
 }
 
 /**
- * Discard a recognition capture without waiting for its last phrase. Its recognizer lets go of the
- * microphone later; the capture releases the stream then, and the next capture waits for that
- * (`RecognitionCapture.idle`) instead of starting on top of it.
+ * Discard a live capture without waiting for its last words. A recognizer lets go of the microphone
+ * later; the capture releases the stream then, and the next capture waits for that
+ * (`RecognitionCapture.idle`) instead of starting on top of it. Host voice lets go at once.
  */
-function discardRecognition(capture: RecognitionCapture) {
+function discardRecognition(capture: LiveCapture) {
   capture.onupdate = null;
   capture.onstop = null;
   capture.cancel();
@@ -368,6 +389,10 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
+  /** Host voice was asked for before this computer finished its setup: the hint offers Settings. */
+  const [setupNeeded, setSetupNeeded] = useState(false);
+  /** Host voice: the microphone is open and the first samples are awaited. */
+  const [startingVoice, setStartingVoice] = useState(false);
   /** Browser dictation landed without punctuation: the bundled model could not run in this browser. */
   const [unpunctuated, setUnpunctuated] = useState<"loading" | "failed" | null>(null);
   const [sendFailure, setSendFailure] = useState<SendFailure>(null);
@@ -377,7 +402,7 @@ export default function Composer({
   const voice = useVoiceBackend();
   const backend = voice?.backend ?? null;
   const captureSelection = useRef("");
-  const unavailable = voiceUnavailable(backend);
+  const unavailable = voiceUnavailable(voice);
   const canvas = useWaveform(waveform.current, phase === "listening");
 
   useLayoutEffect(() => {
@@ -424,7 +449,7 @@ export default function Composer({
       if (!retained) abort.current?.abort();
       const active = recorder.current;
       if (!retained) recorder.current = null;
-      if (!retained && active instanceof RecognitionCapture && active.state !== "inactive") {
+      if (!retained && isLive(active) && active.state !== "inactive") {
         discardRecognition(active);
         return;
       }
@@ -543,7 +568,7 @@ export default function Composer({
       }
       if (!preserveDraft) { failure.current = null; setSendFailure(null); }
       setRecoveryUnavailable(false); setRefusalReason("");
-      setVoiceFailure(""); setUnpunctuated(null); images.setError("");
+      setVoiceFailure(""); setSetupNeeded(false); setUnpunctuated(null); images.setError("");
       if (withImages) { admitting.current = true; setAdmission("sending"); }
       if (!preserveDraft) { draft.current = ""; onChange(""); }
       let accepted = false;
@@ -626,10 +651,12 @@ export default function Composer({
         if (!cancelled.current || focusAfterCancel.current) focusField();
         return;
       }
-      if (finished instanceof RecognitionCapture) {
-        // Browser recognition: the words are already here; nothing is uploaded. Words shown before a
-        // recognizer error still land in the draft; only a refusal discards them.
+      if (isLive(finished)) {
+        // Browser recognition and host voice: the words are already here. Words shown before an error
+        // still land in the draft; only a refusal discards them.
         const text = finished.failure === "denied" ? "" : finished.text;
+        // The host refused the page's setting or setup: read them again.
+        if (finished instanceof HostCapture && finished.outdated) refreshVoiceBackend();
         if (sending) {
           if (finished.failure) {
             sending.text = combineDraft(sending.text, text);
@@ -645,6 +672,7 @@ export default function Composer({
         }
         setPhase("idle");
         if (finished.failure === "denied") setDenied(true);
+        else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(`${finished.reason} Typing works.`);
         else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
         if (text.trim()) setUnpunctuated(finished.unpunctuated);
         if (text.trim()) {
@@ -718,7 +746,7 @@ export default function Composer({
         cancel: () => {
           sending.controller.abort();
           if (recorder.current === active) { recorder.current = null; chunks.current = []; }
-          if (active instanceof RecognitionCapture && active.state !== "inactive") discardRecognition(active);
+          if (isLive(active) && active.state !== "inactive") discardRecognition(active);
           else active.stream.getTracks().forEach((track) => track.stop());
           releaseWaveform();
           setLive(null);
@@ -748,9 +776,17 @@ export default function Composer({
 
   const start = useCallback(async () => {
     if (unavailable || disabled || admitting.current || phase !== "idle") return;
+    if (voice?.backend === "host" && voice.host.state !== "ready") {
+      // Setup may have finished since this page read it: read again, and the next tap starts.
+      setSetupNeeded(true);
+      refreshVoiceBackend();
+      return;
+    }
     captureSelection.current = voice?.selection ?? "";
     focusAfterCancel.current = null;
     setVoiceFailure("");
+    setSetupNeeded(false);
+    setStartingVoice(false);
     setUnpunctuated(null);
     setDenied(false);
     setElapsed(0);
@@ -785,7 +821,23 @@ export default function Composer({
       // waveform first, after the old capture's release gate, with no await before start().
       waveform.current = openWaveform(opened);
       let active: Capture;
-      if (backend === "browser") {
+      if (backend === "host") {
+        const host = new HostCapture(opened, captureSelection.current);
+        host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+        host.onstop = () => void finish(host, used);
+        host.onlistening = () => {
+          if (recorder.current !== host) return;
+          traceVoice("capture.listening", host);
+          startedAt.current = Date.now();
+          setStartingVoice(false);
+          setPhase("listening");
+          capTimer.current = setTimeout(() => stop(), MAX_RECORDING_MS);
+        };
+        recorder.current = host;
+        setStartingVoice(true);
+        host.start();
+        return;
+      } else if (backend === "browser") {
         const recognition = new RecognitionCapture(opened, { before: draft.current });
         recognition.onupdate = (text) => { if (recorder.current === recognition && !cancelled.current) setLive(combineDraft(draft.current, text)); };
         recognition.onstop = () => void finish(recognition, used);
@@ -821,7 +873,7 @@ export default function Composer({
       const failed = recorder.current;
       if (failed?.stream === opened) {
         recorder.current = null;
-        if (failed instanceof RecognitionCapture) discardRecognition(failed);
+        if (isLive(failed)) discardRecognition(failed);
       }
       opened?.getTracks().forEach((track) => track.stop());
       if (!mounted.current || opening.signal.aborted) return;
@@ -847,7 +899,7 @@ export default function Composer({
     abort.current?.abort();
     abort.current = null;
     const active = recorder.current;
-    if (active instanceof RecognitionCapture && active.state !== "inactive") {
+    if (isLive(active) && active.state !== "inactive") {
       recorder.current = null;
       discardRecognition(active);
       releaseWaveform();
@@ -934,7 +986,7 @@ export default function Composer({
     hintText = "Transcribing…";
   } else if (listening) {
     hintRole = "status";
-    hintText = phase === "starting" ? "Opening microphone…" : "Listening… Stop to add text, or Send.";
+    hintText = phase === "starting" ? startingVoice ? "Starting voice…" : "Opening microphone…" : "Listening… Stop to add text, or Send.";
   } else if (admission === "uncertain") {
     hintTone = "danger";
     hintRole = "alert";
@@ -982,6 +1034,9 @@ export default function Composer({
     hintText = "Voice needs HTTPS";
   } else if (unavailable === "unrecognized") {
     hintText = "This browser has no speech recognition. Typing works.";
+  } else if (voice?.backend === "host" && (unavailable === "host" || setupNeeded)) {
+    hintRole = setupNeeded ? "status" : undefined;
+    hintText = hostVoiceHint(voice);
   } else {
     routineHint = true;
     if (busy) {

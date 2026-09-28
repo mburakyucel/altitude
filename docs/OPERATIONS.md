@@ -282,10 +282,12 @@ setting selects the backend; typing is never affected.
 | `alt machine set --voice …` | How it works | Words appear | Where audio goes | Needs |
 | --- | --- | --- | --- | --- |
 | `browser` (default) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
+| `host` | [Host voice](#host-voice): the browser streams the microphone to this computer, which transcribes it with its own speech model after a one-time setup. | while you speak, with punctuation and capitals; the last words may still change | to this computer only, over Altitude's own connection; kept in memory for the recording, never stored | `alt voice setup`, Linux x86_64 with Python 3.12 or 3.13, about 2.5 GB free memory while dictating |
 | a service URL | The browser records; Altitude posts the recording unchanged to [your speech service](#your-speech-service) as an OpenAI-compatible `audio/transcriptions` request and returns its `text`. `--voice-model` names the model (default `whisper-1`) and `--voice-key-file` supplies the bearer key from a file or stdin; both matter only to hosted providers. A redirecting service is refused so the key never follows it. | after Stop or Send | to that URL only: this computer, another machine on your network, or a hosted provider | a running service |
 
 ```sh
 alt machine show
+alt machine set --voice host --reason 'Transcribe on this computer'
 alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'My speech server'
 alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
 alt machine set --unset-voice --reason 'Back to browser recognition'
@@ -293,8 +295,8 @@ alt machine set --unset-voice --reason 'Back to browser recognition'
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request;
 the key stays in that file and the request file, and `alt machine show` and the event log show it
-only as `set`. **Settings → Voice input** edits the same setting: Browser recognition saves
-immediately, and **Your speech service** asks for its URL and uses **Save service**; model and key
+only as `set`. **Settings → Voice input** edits the same setting: Browser recognition and **This
+computer — live text** save immediately, and **Your speech service** asks for its URL and uses **Save service**; model and key
 sit behind **Hosted provider? Add a key or model**. The stored key is never returned to the page; it
 is retained only for an unchanged URL. **Replace** with a blank field removes it. Back discards
 unsaved edits. The overview row names the service's host. Settings also shows read-only connection
@@ -308,7 +310,44 @@ names the configured URL (never the key) so you can fix it; your draft stays.
 A Settings read or save updates the next capture in that browser document. Other documents and CLI changes
 are picked up when opening Settings, on reload or after a stale upload is refused. Recordings identify their selected backend
 and destination; changing either cannot silently reroute unfinished audio. Altitude keeps no
-recordings; the speech service that transcribes them controls its own retention.
+recordings; a speech service elsewhere controls its own retention.
+
+### Host voice
+
+Host voice runs NVIDIA's Parakeet TDT 0.6B v2 speech model (English, CC-BY-4.0) on this computer's
+CPU. Set it up once, from **Settings → Voice input → This computer — live text → Set up voice** or:
+
+```sh
+alt voice setup    # downloads about 698 MB once, checks every file, then reports "ready"
+alt voice status   # unavailable (with why), absent, setting-up, ready, failed (with why) or outdated
+alt voice remove   # stops dictation and frees the disk space
+alt machine set --voice host --reason 'Transcribe on this computer'
+```
+
+Setup downloads the model from Hugging Face and its runtime (onnxruntime, numpy and the onnx-asr
+decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude/speech`. Nothing is
+installed elsewhere and Altitude's own Python stays standard-library only. Settings shows progress and
+**Cancel setup**; a failed setup shows its reason and **Retry**. An Altitude release that pins a new
+runtime shows "Voice needs an update" with the same button. Only the operator runs `alt voice setup`
+and `alt voice remove`; Altitude's agents cannot.
+
+The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
+you dictate it uses about 1.5–2 GB of memory and under one CPU core; it exits after fifteen minutes
+without voice. It needs about 2.5 GB of free memory to start, and says so when there is less. Words
+appear about a second behind speech; Stop or Send lands the final text in about half a second. The
+phone sends about 1.9 MB of audio per minute of speech. Host voice runs on Linux x86_64 with glibc 2.28
+or newer and Python 3.12 or 3.13; elsewhere, including macOS for now, Settings and the composer say it
+is not available and why. At most two recordings run at once; a third device is told voice is busy.
+
+When a recording stops early (the connection drops, the speech process fails, the microphone is
+interrupted or gives no audio), the words already shown stay in the draft and the composer says
+"Voice stopped: <reason>. Typing works." The speech process's own errors go to
+`~/.altitude/speech/worker.log`, and starts, stops and their reasons to altd's log.
+
+For a device check, dictate on the iPhone in Safari and as a Home Screen app, and on a desktop
+browser: a first capture, repeated Cancel and restart, Stop, Send, and a screen lock or call during a
+recording; then quiet speech, background noise and one long minute without pausing, checking that no
+words are lost where the text commits.
 
 ### Your speech service
 
@@ -397,7 +436,7 @@ audio is never part of task or chat state. Either way a recording becomes text t
 sending at once (queued while L3 is busy). **Cancel** (Esc) discards it. An empty transcript or a
 transcription failure sends nothing and preserves the draft.
 
-For a manual Safari check, open each of a project conversation, a task conversation, and a project
+For a manual Safari check with browser recognition or your speech service, open each of a project conversation, a task conversation, and a project
 task's **Message L2** panel; record and stop; confirm the transcript is appended to the existing
 draft and nothing else appears; record again and use the arrow to transcribe and send or queue at once;
 then cancel a recording and deny microphone access once and confirm the

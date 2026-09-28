@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
-import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser, punctuationFixture, sentence } from "./voiceTest";
+import { FakeMediaRecorder, FakeSpeechRecognition, hostMicrophone, installVoiceBrowser, punctuationFixture, sentence } from "./voiceTest";
+import { MemoryRouter } from "react-router";
 import { presetVoiceBackend, updateVoiceSettings } from "./voiceBackend";
 
 /*
@@ -761,6 +762,121 @@ describe("Composer", () => {
     expect(FakeMediaRecorder.instances[0]?.stopCalls).toBe(1);
   });
 
+  // ---- host voice: the microphone streams to this computer, whose words appear while listening ----
+  /** The host's answers: each chunk is answered with how many samples it has heard. */
+  function stubHost(options: { refuse?: string } = {}) {
+    let heard = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/voice") return jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
+      if (path === "/api/voice/live") return options.refuse ? jsonResponse({ error: options.refuse }, 429) : jsonResponse({ id: "rec" });
+      if (path.endsWith("/cancel")) return jsonResponse({ ok: true });
+      heard += (init?.body as Int16Array).length;
+      return jsonResponse(path.includes("final=1") ? { text: `Heard ${heard} samples.`, final: true } : { text: `heard ${heard}` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("host voice: Starting voice until samples arrive, words while listening, Stop lands the final words", async () => {
+    installVoiceBrowser({ backend: "host" });
+    const fetchMock = stubHost();
+    const { user, field } = mount({ initial: "Note:" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Starting voice…");
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    expect(await screen.findByText("Listening… Stop to add text, or Send.")).toBeInTheDocument();
+    await waitFor(() => expect(field).toHaveValue("Note: heard 8000"));
+    expect(field).toHaveAttribute("readonly");
+    act(() => hostMicrophone.speak(2000));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Note: Heard 10000 samples."));
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/voice/live", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-host" }) }));
+    expect(fetchMock.mock.calls.map(([path]) => String(path))).not.toContain("/api/transcribe");
+  });
+
+  it("host voice: Send while listening sends the draft with the final words", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost();
+    const onSubmit = vi.fn((_text: string, accepted: () => void) => accepted());
+    const { user } = mount({ initial: "Please", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await screen.findByText("Listening… Stop to add text, or Send.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Please Heard 8000 samples.", expect.any(Function)));
+  });
+
+  it("host voice: a stopped recording keeps the words shown and says why", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost();
+    const { user, field } = mount();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await waitFor(() => expect(field).toHaveValue("heard 8000"));
+    stubHost({ refuse: "unused" });
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "Voice stopped: the speech process stopped." }, 503)));
+    act(() => hostMicrophone.speak(8000));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice stopped: the speech process stopped. Typing works.");
+    expect(field).toHaveValue("heard 8000");
+    expect(field).not.toHaveAttribute("readonly");
+  });
+
+  it("host voice: a refused start says why and opens nothing more", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost({ refuse: "Voice is busy on another device." });
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice is busy on another device. Typing works.");
+    expect(field).toHaveValue("Draft");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("host voice: Cancel discards the words on screen and the recording on the host", async () => {
+    installVoiceBrowser({ backend: "host" });
+    const fetchMock = stubHost();
+    const { user, field } = mount({ initial: "Keep" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await waitFor(() => expect(field).toHaveValue("Keep heard 8000"));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Keep");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/voice/live/rec/cancel", expect.anything()));
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it.each([
+    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer. Set up voice"],
+    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer. Set up voice"],
+    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works."],
+  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint) => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "host", host });
+    const fetchMock = vi.fn(async () => jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText(hint.split(" Set up voice")[0]!, { exact: false })).toBeInTheDocument();
+    if (hint.endsWith("Set up voice")) expect(await screen.findByRole("link", { name: "Set up voice" })).toHaveAttribute("href", "/settings/voice");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" }, "Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works."],
+    [{ state: "failed", download_bytes: 698_000_000, reason: "a download failed" }, "Voice setup did not finish. Retry in Settings. Typing works."],
+  ] as const)("host voice that cannot run here (%o) hides the mic and says why", async (host, hint) => {
+    installVoiceBrowser({ backend: "host", host });
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Start voice input" })).toBeNull();
+    expect(screen.getByText((_, node) => node?.classList.contains("composer-hint") === true && node.textContent === hint)).toBeInTheDocument();
+  });
+
   // ---- browser recognition: the default backend shows words while listening and uploads nothing ----
   it("browser recognition: words appear while listening, the last phrase may change, Stop lands them and nothing else appears", async () => {
     installVoiceBrowser({ backend: "browser" });
@@ -1366,7 +1482,7 @@ describe("Composer", () => {
   it("upload backend: a 409 from a changed installation shows the server's words and reads the backend again", async () => {
     installVoiceBrowser({ backend: "endpoint", recognition: true });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser", selection: "fixture-browser", url: "", model: "", key_set: false });
+      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser", selection: "fixture-browser", url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
       if (String(input).includes("/api/transcribe")) return jsonResponse({ error: "Voice now runs in the browser on this installation. Try again." }, 409);
       return jsonResponse({ error: "not found" }, 404);
     }));
@@ -1399,7 +1515,7 @@ describe("Composer", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (!String(input).endsWith("/api/voice")) return jsonResponse({ error: "not found" }, 404);
       const backend = await new Promise<string>((resolve) => (answer = resolve));
-      return jsonResponse({ backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false });
+      return jsonResponse({ backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
     }));
     presetVoiceBackend(null);
     render(<Harness />);
@@ -1416,7 +1532,7 @@ describe("Composer", () => {
     const { user, field } = mount({ initial: "Keep this" });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     await screen.findByRole("button", { name: "Stop voice input" });
-    act(() => updateVoiceSettings({ backend: "endpoint", selection: "new-destination", url: "https://speech.example.test", model: "", key_set: false }));
+    act(() => updateVoiceSettings({ backend: "endpoint", selection: "new-destination", url: "https://speech.example.test", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } }));
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Keep this spoken"));
     expect(fetchMock).toHaveBeenCalledWith("/api/transcribe", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-endpoint" }) }));

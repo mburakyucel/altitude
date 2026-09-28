@@ -1,6 +1,6 @@
 /** Opt-in, page-memory evidence for native capture failures. Never accepts speech or draft text. */
 type Detail = {
-  state?: string; error?: string; backend?: "browser" | "endpoint";
+  state?: string; error?: string; backend?: "browser" | "host" | "endpoint";
   muted?: boolean; enabled?: boolean; signal?: boolean; time?: number;
 };
 type Entry = Detail & { ms: number; event: string; source?: number };

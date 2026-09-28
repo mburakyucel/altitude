@@ -4,20 +4,21 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import { ApiError, changeHostVoice, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
-import type { VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
+import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = {
-  browser: "Browser recognition", endpoint: "Your speech service",
+  browser: "Browser recognition", host: "This computer — live text", endpoint: "Your speech service",
 };
 const explanations: Record<VoiceBackend, string> = {
   browser: "No setup in supported browsers. Words appear as you speak; English gets punctuation and capitals on this device. Your browser may send audio to its speech service; that service’s privacy policy applies.",
+  host: "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service.",
   endpoint: "After you stop, Altitude sends the recording to a speech-to-text service you run or choose, using the standard OpenAI transcription API. It can run on this computer, on another machine on your network, or be a hosted provider. Audio goes only to that address; its storage policy and any charges apply.",
 };
 const queryKey = ["voice-settings"];
@@ -29,9 +30,54 @@ const hostedFields = (settings: VoiceSettings) => settings.key_set || (settings.
 /** Where recordings go, as the overview row names it: the service's host, never its key. */
 function voiceSummary(settings: VoiceSettings) {
   if (settings.backend === "browser") return labels.browser;
+  if (settings.backend === "host") return settings.host.state === "ready" ? labels.host : `${labels.host} · not set up`;
   try { return `${labels.endpoint} · ${new URL(settings.url).host}`; } catch { return labels.endpoint; }
 }
 type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; value: VoiceUpdate; error: Error };
+
+const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
+
+/** Host voice's one-time setup on this computer: its state, progress and the one action that fits. */
+function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value: VoiceSettings) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const act = async (action: "setup" | "cancel" | "remove") => {
+    setBusy(true);
+    setError("");
+    try {
+      onChange(await changeHostVoice(action));
+    } catch (failure) {
+      setError((failure as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (host.state === "unavailable") return <p className="text-meta text-danger">Not available on this computer: {host.reason}.</p>;
+  const size = megabytes(host.download_bytes);
+  return <div className="voice-host">
+    {host.state === "setting-up" ? <>
+      <progress max={host.download_bytes} value={host.done_bytes ?? 0} aria-label="Voice setup" />
+      <p role="status" className="text-meta text-muted">Setting up… {megabytes(host.done_bytes ?? 0)} of {size}</p>
+      <button type="button" className="btn" disabled={busy} onClick={() => void act("cancel")}>Cancel setup</button>
+    </> : host.state === "ready" ? <>
+      <p className="text-meta text-muted">Ready on this computer. While you dictate, the speech process uses about 2 GB of memory.</p>
+      <button type="button" className="btn" disabled={busy} onClick={() => void act("remove")}>Remove voice ({size})</button>
+    </> : <>
+      <p className={`text-meta ${host.state === "failed" ? "text-danger" : "text-muted"}`} role={host.state === "failed" ? "alert" : undefined}>
+        {host.state === "failed" ? `Setup did not finish. ${host.reason ?? ""}`
+          : host.state === "outdated" ? `Voice needs an update: a one-time download of about ${size}.`
+            : `Needs a one-time download of about ${size}, checked against this release.`}
+      </p>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void act("setup")}>{host.state === "failed" ? "Retry" : "Set up voice"}</button>
+    </>}
+    {error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}
+    <p className="text-meta text-muted">Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.</p>
+  </div>;
+}
+
+/** Whether two readings differ only in host voice's setup state, which never resets an edit. */
+const sameChoice = (a: VoiceSettings, b: VoiceSettings) =>
+  a.backend === b.backend && a.selection === b.selection && a.url === b.url && a.model === b.model && a.key_set === b.key_set;
 
 function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload: () => void; repository?: string }) {
   const client = useQueryClient();
@@ -44,7 +90,9 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
   const [hosted, setHosted] = useState(hostedFields(saved));
   useEffect(() => {
     if (saved === committed.current) return;
+    const unchanged = sameChoice(saved, committed.current);
     committed.current = saved;
+    if (unchanged) return;
     setChoice(saved.backend);
     setUrl(saved.url);
     setModel(saved.model);
@@ -83,16 +131,22 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
     ...(keepKey ? { keep_key: true } : { key }),
   });
   const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
+  const hostChanged = (value: VoiceSettings) => {
+    committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
+    updateVoiceSettings(value);
+  };
   return <>
     <form className="settings-card" onSubmit={(event) => { event.preventDefault(); void submit(endpoint()); }}>
       <fieldset disabled={save.status === "saving"}>
         <legend>Transcription</legend>
-        {(["browser", "endpoint"] as const).map((backend) => <div className="voice-option" key={backend}>
+        {(["browser", "host", "endpoint"] as const).map((backend) => <div className="voice-option" key={backend}>
           <label className="voice-choice">
-            <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)} />
+            <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)}
+              disabled={backend === "host" && saved.host.state === "unavailable" && choice !== "host"} />
             <span>{labels[backend]}</span>
           </label>
           <p className="text-muted text-meta">{explanations[backend]}</p>
+          {backend === "host" && (choice === "host" || saved.host.state !== "absent") ? <HostVoicePanel host={saved.host} onChange={hostChanged} /> : null}
           {backend === "endpoint" && choice === "endpoint" ? <div className="voice-endpoint">
             <label>Service URL<input type="url" required value={url} placeholder="http://127.0.0.1:8080/v1/audio/transcriptions" onChange={(event) => { setUrl(event.target.value); setKeepKey(false); reset(); }} /></label>
             <p className="text-meta text-muted">The full address of its <code>/v1/audio/transcriptions</code> endpoint.{repository ? <>{" "}<a href={`https://github.com/${repository}/blob/main/docs/OPERATIONS.md#your-speech-service`} target="_blank" rel="noopener noreferrer">How to run one</a></> : null}</p>
@@ -112,7 +166,7 @@ function VoiceForm({ saved, reload, repository }: { saved: VoiceSettings; reload
         <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
-    <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings; the speech service that transcribes them controls its own retention.</p>
+    <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings; a speech service elsewhere controls its own retention.</p>
     <VoiceDiagnostics />
   </>;
 }
@@ -335,7 +389,9 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const location = useLocation();
   const navigate = useNavigate();
   const overview = useOverview();
-  const settings = useQuery({ queryKey, queryFn: readVoiceSettings, refetchOnWindowFocus: false });
+  // While host voice sets up, its progress is read every second.
+  const settings = useQuery({ queryKey, queryFn: readVoiceSettings, refetchOnWindowFocus: false,
+    refetchInterval: (query) => query.state.data?.host.state === "setting-up" ? 1000 : false });
   const [reloadKey, setReloadKey] = useState(0);
   const state = location.state as { settingsFrom?: string } | null;
   const voice = page === "voice";
