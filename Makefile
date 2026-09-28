@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui audit-history restart install-service
+.PHONY: run test check check-python check-web web ui ui-ios audit-history restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -18,6 +18,8 @@ web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
 ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first)
 	cd web && pnpm ui $(UI_ARGS)
+ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first)
+	cd web && pnpm ui:ios $(UI_ARGS)
 audit-history:  ## scan reachable Git history for unpublishable material; exact matches stay in AUDIT_FINDINGS (AUDIT_SINCE=previous findings file, AUDIT_WORDS=private word list)
 	@python3 scripts/audit_history.py --findings "$${AUDIT_FINDINGS:-$${ALTITUDE_HOME:-$$HOME/.altitude}/altitude/history-audit/$$(date -u +%Y%m%dT%H%M%SZ).json}" $(if $(AUDIT_SINCE),--since "$(AUDIT_SINCE)") $(if $(AUDIT_WORDS),--words "$(AUDIT_WORDS)")
 restart:        ## safely rebuild the SPA, restart the user service, and verify the app

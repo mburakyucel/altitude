@@ -251,6 +251,45 @@ nor verification outside worker confinement. Recovery requires evidence in the i
 without it, retain the capability block and present the exact remaining decision. Altitude's local
 fictional harness exception grants no authority for another project's verification.
 
+## Device evidence
+
+Device results name their evidence class; a result in one class never stands in for another.
+
+| Class | Runs | Establishes | Does not establish |
+| --- | --- | --- | --- |
+| Chromium phone/desktop | `make check` (required) | Application behavior, layouts and interaction states on both viewports | Any Safari or iOS behavior |
+| Emulated iPhone WebKit | `make ui-ios` (opt-in) | The same walkthroughs in Playwright's WebKit engine with iPhone metrics, touch and user agent | iOS Safari, Home Screen mode, real microphone/speech, icon selection or certificate trust |
+| iOS Simulator on a Mac | Not set up | Safari tab and Home Screen behavior, icon choice, separate Safari/Home Screen storage | Real audio capture, device certificate trust |
+| Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
+
+Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home
+Screen metadata or phone layout. It is outside `make check` and PR gates. Install WebKit into the
+same browser cache as Chromium; on Linux it also needs WebKit's system libraries, which
+`playwright install-deps webkit` installs with administrator rights (Ubuntu 24.04 desktop
+typically lacks only `libevent-2.1-7t64` and `libavif16`). Workers cannot install them.
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH="${ALTITUDE_HOME:-$HOME/.altitude}/browsers" pnpm --dir web exec playwright install webkit
+pnpm --dir web build
+make ui-ios
+```
+
+`web/playwright.ios.config.ts` runs one project named `phone`, so specs keep their phone layout and
+`@phone-only` walkthroughs, with WebKit's mock microphone granted. Results and the HTML report stay
+under ignored `web/ui-artifacts/ios/`; record the WebKit version from the report with any result.
+Tests tagged `@chromium` need a harness capability this WebKit build lacks and run only in the
+required projects: `MediaRecorder` (voice upload journeys), the `Notification` API, the
+`clipboard-write` permission, a CDP session (manifest parsing, touch-drag swipes), or a replaceable
+`navigator.mediaDevices.getUserMedia`. Give a new walkthrough that tag only for one of these
+reasons. Where only one step needs Chromium, the step checks `browserName` and the rest of the test
+still runs: route smoke omits its wheel overscroll, which mobile WebKit does not support, and brand
+metadata omits Chromium's manifest parser.
+
+Two observed engine differences matter when reading voice results: this WebKit build has no
+`SpeechRecognition` or `MediaRecorder`, and an `AudioContext` created after an awaited microphone
+request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
+iOS results.
+
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number
@@ -276,7 +315,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Merge approval | `test_recorded_merge_approval.py`, `test_merge_approval_journey.py`: original task/project/UI authority, intervening discussion, Git integration and scoped follow-up delivery; invalid sources, renewed holds and wrong PR identity refuse. | Scope, revocation and conditions are explicit coordinator judgments in fixtures; these tests do not establish live model interpretation. |
 | Isolation | `test_isolation.py`, `test_codex_door.py`, `test_l3_privilege.py`, `test_service_lifecycle.py`: isolated storage, ownership, denied paths and simulated restart/adoption. | Test guards prevent accidental external effects; they are not a security sandbox for hostile test code. Actual OS confinement/service restart is separate host evidence. |
 | API/UI streaming and projects | `project-isolation.pw.ts`, `project-lifecycle.pw.ts`: concurrent streams in both completion orders, accepted/refused errors and retry, queue/history, cross-project ownership and reattachment/session retention. | External engine output is deterministic. |
-| Phone/desktop states | `smoke.pw.ts`, task/navigation, work/decision, conversation, monitor, usage and restart specs: empty/loading/failed/denied/pending/terminal states, scrolling/navigation and visible removals. | Some states use explicit HTTP overlays. Chromium phone emulation is not physical Safari/microphone validation; restart banner assertions do not restart a service. |
+| Phone/desktop states | `smoke.pw.ts`, task/navigation, work/decision, conversation, monitor, usage and restart specs: empty/loading/failed/denied/pending/terminal states, scrolling/navigation and visible removals. | Some states use explicit HTTP overlays. Chromium phone emulation and the opt-in [emulated iPhone WebKit lane](#device-evidence) are not physical Safari/microphone validation; restart banner assertions do not restart a service. |
 
 Source-deployment startup exports committed installation HEAD under ignored `.altitude-source/<sha>` in the
 deployment checkout, outside worker writable roots. Task helpers use the activated source;
@@ -363,8 +402,10 @@ versions, archive hashes and runner environment, with command/service diagnostic
 The workflow retains evidence for seven days; TLS private keys and runtime archives are excluded.
 Inspect the failed stage and diagnostics before rerunning. Missing results, timeout, or an unavailable
 user manager are unverified acceptance, not a passing lifecycle. A nonzero cleanup exit also fails
-the job even when the lifecycle assertions passed. The first hosted execution remains
-pending until a run and its results are recorded; source tests alone do not establish it.
+the job even when the lifecycle assertions passed. The workflow has not executed: its first
+dispatch was refused before runner startup by the account's hosted-runner spending limit, and
+`release.yml` uses the same hosted runner type. Native lifecycle acceptance stays unverified until a
+run and its results are recorded; source tests alone do not establish it.
 
 On a disposable Ubuntu 24.04 VM with Python 3.12+, Git, OpenSSL, GitHub CLI and a working systemd
 user manager, use the same entry point with two release-builder output directories. Each contains

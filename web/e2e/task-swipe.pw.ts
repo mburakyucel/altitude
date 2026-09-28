@@ -34,7 +34,7 @@ async function swipe(page: Page, x: number, y: number, dx: number, dy = 0) {
 
 const offset = (track: Locator) => track.evaluate((node) => parseFloat(node.style.transform.replace(/[^\d.-]/g, "")) || 0);
 
-test("@phone-only content swipes preserve both reading positions, draft and selection without adding history", async ({ page, request }, info) => {
+test("@phone-only content swipes preserve both reading positions, draft and selection without adding history", { tag: "@chromium" }, async ({ page, request }, info) => {
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const control = async (mode: string, text?: string) => expect((await request.post("/fixture/control", { data: { slug, mode, text } })).ok()).toBe(true);
   await control("history");
@@ -93,7 +93,7 @@ test("@phone-only content swipes preserve both reading positions, draft and sele
   await walk.state("04-accessible-tabs-and-reading-retained", { visible: [field, tabs], hidden: [live] });
 });
 
-test("@phone-only vertical scrolling, selected text, composer, screen edges and wide session content own their gestures", async ({ page, request }, info) => {
+test("@phone-only vertical scrolling, selected text, composer, screen edges and wide session content own their gestures", { tag: "@chromium" }, async ({ page, request }, info) => {
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const control = async (mode: string, text?: string) => expect((await request.post("/fixture/control", { data: { slug, mode, text } })).ok()).toBe(true);
   await control("history");
@@ -157,7 +157,7 @@ test("@phone-only vertical scrolling, selected text, composer, screen edges and 
   await walk.state("02-horizontal-code-scroll-keeps-live-view", { visible: [live, code], hidden: [conversation] });
 });
 
-test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back, end resistance and reduced motion", async ({ page, request }, info) => {
+test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back, end resistance and reduced motion", { tag: "@chromium" }, async ({ page, request }, info) => {
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const control = async (mode: string, text?: string) => expect((await request.post("/fixture/control", { data: { slug, mode, text } })).ok()).toBe(true);
   await control("history");

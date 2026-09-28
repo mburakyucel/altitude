@@ -197,7 +197,7 @@ test("foreground polling replaces a stalled stream with canonical completion", a
   } finally { await request.post(`${service}/fixture/release-stream`); }
 });
 
-test("project drafts survive selection and route remount with independent copy, paste and clearing", async ({ page, context, service }, info) => {
+test("project drafts survive selection and route remount with independent copy, paste and clearing", { tag: "@chromium" }, async ({ page, context, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
   await walk.open(`${service}/projects/alpha`);
@@ -419,7 +419,7 @@ for (const nextDraft of ["", "A new draft while the accepted turn answers"]) {
   });
 }
 
-test("listening, late Stop transcription and denied microphone reset without crossing project drafts", async ({ page, request, service }, info) => {
+test("listening, late Stop transcription and denied microphone reset without crossing project drafts", { tag: "@chromium" }, async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
   // Browser overlay: real MediaRecorder records a synthetic tone; no device or speech service is used.
@@ -488,7 +488,7 @@ test("listening, late Stop transcription and denied microphone reset without cro
 });
 
 for (const result of ["success", "failure", "cancel"] as const) {
-  test(`voice Send retains its original project through navigation and ${result}`, async ({ page, request, service }, info) => {
+  test(`voice Send retains its original project through navigation and ${result}`, { tag: "@chromium" }, async ({ page, request, service }, info) => {
     const walk = walkthrough(page, info);
     const v = views(page);
     await page.addInitScript(`

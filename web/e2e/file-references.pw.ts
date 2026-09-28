@@ -21,7 +21,7 @@ async function references(prose: Locator, paths: Record<string, string>) {
   await expect(prose.locator("code a, pre a, a a")).toHaveCount(0);
 }
 
-test("saved L2 and L3 links open rendered documents while preserving conversation and draft", async ({ page, context, request, service }, info) => {
+test("saved L2 and L3 links open rendered documents while preserving conversation and draft", { tag: "@chromium" }, async ({ page, context, request, service }, info) => {
   const { paths, source, slug } = await (await request.get(`${service}/fixture/files`)).json();
   const walk = walkthrough(page, info);
   await walk.open(`${service}/projects/alpha`);
@@ -107,7 +107,7 @@ test("real file loading, missing recovery, denial, unsupported and empty states"
   await walk.state("07-empty-document", { visible: [page.getByText("This file is empty.")], hidden: [page.locator(".task-file-raw"), page.getByRole("alert")] });
 });
 
-test("file references remain usable alongside listening, cancellation and microphone denial", async ({ page, request, service }, info) => {
+test("file references remain usable alongside listening, cancellation and microphone denial", { tag: "@chromium" }, async ({ page, request, service }, info) => {
   // Named browser capability overlay: real MediaRecorder gets a synthetic tone, never a device.
   await page.addInitScript(`
     const audio = new AudioContext();

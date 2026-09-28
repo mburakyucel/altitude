@@ -91,7 +91,7 @@ test("lost reported-message receipt preserves one saved message through reload w
   expect(submissions).toBe(1);
 });
 
-test("reported composer retains voice listening, cancellation and denied states", async ({ page, request }, info) => {
+test("reported composer retains voice listening, cancellation and denied states", { tag: "@chromium" }, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await request.post("/fixture/reported", { data: {} });
   await page.addInitScript(() => {

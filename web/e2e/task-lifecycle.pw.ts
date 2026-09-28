@@ -4,7 +4,7 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ scenario: "tasks" });
 
-test("voice Send finishes in its original L2 conversation while viewing L3", async ({ page, request }, info) => {
+test("voice Send finishes in its original L2 conversation while viewing L3", { tag: "@chromium" }, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "prepare-index-migration";
   const task = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json());

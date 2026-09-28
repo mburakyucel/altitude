@@ -26,7 +26,7 @@ async function run(page: Page, line: string) {
   await page.keyboard.press("Enter");
 }
 
-test("a task terminal opens in its worktree, closes when its shell exits and follows the task", async ({ page, request, context }, info) => {
+test("a task terminal opens in its worktree, closes when its shell exits and follows the task", { tag: "@chromium" }, async ({ page, request, context }, info) => {
   test.setTimeout(120_000);
   const phone = info.project.name === "phone";
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);

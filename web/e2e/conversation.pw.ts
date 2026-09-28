@@ -106,7 +106,7 @@ async function revealTime(row: Locator, phone: boolean) {
   await row.dispatchEvent("pointerup", { pointerType: "touch", bubbles: true });
 }
 
-test("real rows: bubbles, prose, day dividers, the time in the gutter, folded and grouped system lines, the card", async ({ page, request }, info) => {
+test("real rows: bubbles, prose, day dividers, the time in the gutter, folded and grouped system lines, the card", { tag: "@chromium" }, async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -575,7 +575,7 @@ async function expectVoiceDraftLocked(page: Page, field: Locator, text: string) 
   await expect(field).toHaveValue(text);
 }
 
-test("voice: starting, listening, cancelled, transcribing, landed (nothing else appears), failed", async ({ page, context, request }, info) => {
+test("voice: starting, listening, cancelled, transcribing, landed (nothing else appears), failed", { tag: "@chromium" }, async ({ page, context, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -694,7 +694,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   expect(posts).toEqual([]);
 });
 
-test("voice: Send at once transcribes the draft into the normal pending bubble", async ({ page, context, request }, info) => {
+test("voice: Send at once transcribes the draft into the normal pending bubble", { tag: "@chromium" }, async ({ page, context, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -752,7 +752,7 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   expect(posts).toEqual(["Keep the draft and send this now"]);
 });
 
-test("voice: cancelling delayed Send transcription restores editing and ignores its late result", async ({ page, request }, info) => {
+test("voice: cancelling delayed Send transcription restores editing and ignores its late result", { tag: "@chromium" }, async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -802,7 +802,7 @@ test("voice: cancelling delayed Send transcription restores editing and ignores 
   expect(posts).toEqual([]);
 });
 
-test("voice: denied and unavailable", async ({ page, request }, info) => {
+test("voice: denied and unavailable", { tag: "@chromium" }, async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);

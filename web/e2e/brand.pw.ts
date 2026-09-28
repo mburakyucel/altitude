@@ -37,7 +37,7 @@ test("the Altitude mark names the product in both themes and serves as the tab a
   }
 });
 
-test("installation and bookmark metadata serves Climb icons with safe launcher cropping", async ({ page, request }, info) => {
+test("installation and bookmark metadata serves Climb icons with safe launcher cropping", async ({ page, request, browserName }, info) => {
   const walk = walkthrough(page, info);
   // Root-relative discovery works from a deep link as well as the landing page.
   await walk.open("/settings");
@@ -52,11 +52,13 @@ test("installation and bookmark metadata serves Climb icons with safe launcher c
     id: "/", name: "Altitude", short_name: "Altitude", start_url: "/", scope: "/", display: "standalone",
   });
   // Chromium parses the served manifest itself, rather than only our JSON reader.
-  const session = await page.context().newCDPSession(page);
-  const parsed = await session.send("Page.getAppManifest");
-  expect(parsed.errors).toEqual([]);
-  expect(parsed.url).toBe(new URL(manifestHref!, page.url()).href);
-  await session.detach();
+  if (browserName === "chromium") {
+    const session = await page.context().newCDPSession(page);
+    const parsed = await session.send("Page.getAppManifest");
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.url).toBe(new URL(manifestHref!, page.url()).href);
+    await session.detach();
+  }
   for (const size of [192, 512]) {
     expect(manifest.icons).toContainEqual(expect.objectContaining({ sizes: `${size}x${size}`, type: "image/png", purpose: "any" }));
   }
