@@ -1,4 +1,5 @@
 """HEAD responses match GET metadata without sending an entity body."""
+import gzip
 import socket
 import json
 import sys
@@ -31,6 +32,7 @@ class TestHead(AltitudeCase):
         assets = self.dist / "assets"
         assets.mkdir()
         (assets / "app.01234567.js").write_bytes(b"console.log('altitude');")
+        (assets / "model.01234567.ort").write_bytes(b"packed-weights" * 64)
         self.patch(config, "WEB_DIST", new=self.dist)
 
         (self.tmp / "digest.wav").write_bytes(b"RIFF-altitude-test-audio")
@@ -52,11 +54,11 @@ class TestHead(AltitudeCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def _request(self, method, path):
+    def _request(self, method, path, headers=""):
         host, port = self.httpd.server_address
         with socket.create_connection((host, port), timeout=2) as sock:
             sock.sendall(
-                f"{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
+                f"{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n{headers}\r\n".encode()
             )
             chunks = []
             while True:
@@ -92,6 +94,35 @@ class TestHead(AltitudeCase):
                     self.assertEqual(get_headers["x-frame-options"], "DENY")
                 self.assertEqual(self.httpd.errors, [])
                 self.assertNotIn("Traceback", "\n".join(self.logs))
+
+    def test_hashed_script_travels_gzip_only_to_a_browser_that_accepts_it(self):
+        script = b"console.log('altitude');"
+        for accept, encoded in (("gzip, deflate, br, zstd", True), ("deflate, gzip;q=0.5", True),
+                                ("gzip;q=0", False), ("br", False), (None, False),
+                                ("*;q=1, identity;q=0", True), ("*, gzip;q=0", False)):
+            with self.subTest(accept=accept):
+                header = f"Accept-Encoding: {accept}\r\n" if accept else ""
+                status, headers, body = self._request("GET", "/assets/app.01234567.js", header)
+                _, head_headers, head_body = self._request("HEAD", "/assets/app.01234567.js", header)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["content-type"], "text/javascript")
+                self.assertEqual(headers["vary"], "Accept-Encoding")  # a shared cache keeps both forms apart
+                self.assertEqual(headers["cache-control"], "public, max-age=31536000, immutable")
+                self.assertEqual(headers.get("content-encoding"), "gzip" if encoded else None)
+                self.assertEqual(gzip.decompress(body) if encoded else body, script)
+                self.assertEqual(int(headers["content-length"]), len(body))
+                self.assertEqual(head_headers["content-length"], headers["content-length"])
+                self.assertEqual(head_body, b"")
+
+    def test_page_and_punctuation_model_travel_as_stored(self):
+        # index.html is tiny and never cached; the punctuation model's packed weights barely compress.
+        for path in ("/", "/assets/model.01234567.ort"):
+            with self.subTest(path=path):
+                _, headers, body = self._request("GET", path, "Accept-Encoding: gzip\r\n")
+                self.assertNotIn("content-encoding", headers)
+                self.assertNotIn("vary", headers)
+                self.assertEqual(int(headers["content-length"]), len(body))
 
     def test_base_class_error_accepts_non_string_log_argument(self):
         status, _, _ = self._request("DELETE", "/api/overview")

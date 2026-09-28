@@ -2,6 +2,8 @@
 from __future__ import annotations
 import argparse
 import base64
+import functools
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -84,6 +86,31 @@ def design_viewer_url(project: str) -> str | None:
 
 def design_entry(project: str, device_id: str) -> str:
     return f"/{DESIGN_ROUTE}/{quote(project)}/{access.design_pass(project, device_id)}/{DESIGN_ENTRY}"
+
+
+# Hashed build assets that compress well travel gzip-encoded to browsers that accept it: a cold open
+# after each update downloads the app script in a third of the bytes (docs/ARCHITECTURE.md#web-delivery).
+# The punctuation model's packed weights barely compress and travel as they are.
+GZIP_ASSETS = {".js", ".mjs", ".css", ".wasm", ".tsv", ".svg", ".json"}
+
+
+@functools.lru_cache(maxsize=64)
+def _gzipped(path: Path) -> bytes:
+    """An asset's gzip encoding, made once per process: a hashed asset's name changes with its content."""
+    return gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+
+
+def _accepts_gzip(header: str | None) -> bool:
+    """Whether Accept-Encoding allows gzip: its own quality, else the wildcard's (RFC 9110 §12.5.3)."""
+    qualities = {}
+    for part in (header or "").split(","):
+        name, _, params = part.partition(";")
+        quality = params.strip().lower().removeprefix("q=")
+        try:
+            qualities[name.strip().lower()] = float(quality) if quality else 1.0
+        except ValueError:
+            qualities[name.strip().lower()] = 0.0
+    return qualities.get("gzip", qualities.get("*", 0.0)) > 0
 
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording
@@ -1435,13 +1462,19 @@ class Handler(BaseHTTPRequestHandler):
                 # serving index.html there hands JS/CSS a text/html body (MIME parse error)
                 return self._json({"error": "not found"}, 404)
             resolved = index  # SPA fallback: /projects/x, /chat/y, ... render client-side
-        data = resolved.read_bytes()
         immutable = resolved != index and resolved.relative_to(dist).parts[:1] == ("assets",)
+        compressible = immutable and resolved.suffix in GZIP_ASSETS
+        encoded = compressible and _accepts_gzip(self.headers.get("Accept-Encoding"))
+        data = _gzipped(resolved) if encoded else resolved.read_bytes()
         ctype = "text/html; charset=utf-8" if resolved.suffix == ".html" else (
             mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if encoded:
+            self.send_header("Content-Encoding", "gzip")
+        if compressible:
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Cache-Control", "public, max-age=31536000, immutable" if immutable else "no-store")
         # Another site cannot frame Altitude to steer the operator's clicks.
         self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
