@@ -64,7 +64,8 @@ why and closes; a desktop or SSH terminal on this computer runs the same command
 
 A task's owner can read its task terminal's output, and the task terminal says so. When you press
 Enter on a step its owner handed you, Altitude tells the owner once the command has finished (or the
-terminal ended first), and the owner reads the result and continues; no reply is needed. The owner reads what the terminal printed, never what
+terminal ended first), and the owner reads the result and continues; no reply is needed unless the terminal
+says Altitude couldn't tell the owner. The owner reads what the terminal printed, never what
 you typed at a hidden password prompt, and cannot type into or close the terminal. Output stays readable
 until a new terminal opens for the task, the task finishes or Altitude restarts; if a restart lost it,
 tell the owner what the command printed. Use a project terminal or a desktop terminal for work the owner

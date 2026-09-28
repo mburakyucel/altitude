@@ -391,6 +391,39 @@ class TestHandedCommand(TerminalCase):
         self.gone(term)
         self.assertIn("the task terminal ended (exited", self.notice())
 
+    def test_a_suspended_command_has_not_finished_until_it_ends(self):
+        self.hand("sleep 2")
+        self.type("\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        time.sleep(terminal.POLL_SECONDS * 3)  # the reader has seen sleep hold the foreground
+        self.type("\x1a", self.slug)
+        self.output(self.slug, until="Stopped")
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # the shell holds the terminal; sleep is suspended
+        self.assertEqual(self.notices(), [])
+        self.type("fg\r", self.slug)
+        self.assertIn("has finished", self.notice())
+
+    def test_a_notice_goes_only_to_the_attempt_that_handed_the_command(self):
+        self.hand("true")
+        task = S.load_task(self.project, self.slug)
+        task["attempt"] += 1
+        S.save_task(self.project, task)
+        self.type("\r", self.slug)
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + 1)
+        self.assertEqual(self.notices(), [])
+        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal",
+                                   attempt=task["attempt"] - 1))
+
+    def test_the_terminal_keeps_printing_while_its_notice_waits_for_the_project(self):
+        self.hand("echo first")
+        with S.project_lock(self.project):
+            self.type("\r", self.slug)
+            time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # the notice is waiting for this lock
+            self.type("echo second-$((1+1))\r", self.slug)
+            self.output(self.slug, until="second-2")
+            self.assertEqual(self.notices(), [])
+        self.assertIn("`echo first`", self.notice())
+
     def test_a_blocked_owner_is_woken_and_one_stopped_or_faulted_is_not(self):
         T.block(self.project, self.slug, "Waiting for the operator's command in the task terminal.", actor="l2")
         self.hand("true")
@@ -405,7 +438,7 @@ class TestHandedCommand(TerminalCase):
                 task.pop("resume_request", None)
                 task.update(hold)
                 S.save_task(self.project, task)
-                row = T.notify(self.project, self.slug, "Terminal: notice", by="terminal")
+                row = T.notify(self.project, self.slug, "Terminal: notice", by="terminal", attempt=task["attempt"])
                 task = S.load_task(self.project, self.slug)
                 self.assertNotIn("resume_request", task)
                 self.assertIn(row["id"], [pending["id"] for pending in T.pending(self.project, self.slug)])
@@ -417,7 +450,7 @@ class TestHandedCommand(TerminalCase):
         task = S.load_task(self.project, self.slug)
         task["state"] = "done"
         S.save_task(self.project, task)
-        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal"))
+        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal", attempt=task["attempt"]))
         self.open()
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.hand(self.project, None, terminal.status(self.project, None)["id"], "echo x")

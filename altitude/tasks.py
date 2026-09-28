@@ -569,13 +569,13 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         return row
 
 
-def notify(project: str, slug: str, text: str, *, by: str) -> dict | None:
+def notify(project: str, slug: str, text: str, *, by: str, attempt: int) -> dict | None:
     """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
     that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
-    session gets none."""
+    session, or one on a later attempt than the notice's, gets none."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task.get("state") not in ("running", "blocked"):
+        if task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt:
             return None
         row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)

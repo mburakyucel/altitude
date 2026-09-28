@@ -291,8 +291,9 @@ def hand(project: str, slug: str | None, ident, text) -> None:
     if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT:
         raise TerminalError("Send the command as text.", 400)
     term = _running(project, slug, ident)
+    attempt = S.load_task(project, slug).get("attempt")  # a later attempt's owner did not hand it
     with term.cond:
-        term.command = {"text": text}
+        term.command = {"text": text, "attempt": attempt}
 
 
 def _typed(term: Terminal, data: str) -> None:
@@ -309,8 +310,9 @@ def _typed(term: Terminal, data: str) -> None:
 
 
 def _follow(term: Terminal) -> None:
-    """After Enter, the handed command has finished once the shell has held the foreground again for a moment,
-    whatever its outcome. The shell only being quiet, or a program waiting for input, is not an end."""
+    """After Enter, the handed command has finished once the shell has held the foreground again for a moment
+    and no process group that held it since remains, whatever its outcome. The shell only being quiet, a program
+    waiting for input, or a job suspended (Ctrl+Z) or sent to the background is not an end."""
     command = term.command
     if not command or "entered" not in command:
         return
@@ -323,24 +325,40 @@ def _follow(term: Terminal) -> None:
         return
     if group != shell:
         command.pop("shell", None)
+        command.setdefault("groups", set()).add(group)
         return
     now = time.monotonic()
-    if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS:
+    if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS and not any(
+            map(_alive, command.get("groups", ()))):
         _notice(term, "the command you handed the operator has finished in the task terminal")
 
 
+def _alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
 def _notice(term: Terminal, what: str) -> None:
-    """Tell the task's owner, waking it when it waits. Altitude sees the shell, not the command's exit status."""
+    """Tell the task's owner, waking it when it waits. Altitude sees the shell, not the command's exit status.
+    The notice waits for the project lock on its own thread, so the reader keeps draining output meanwhile."""
     with term.cond:
         command, term.command = term.command, None
     if not command:
         return
-    try:
-        T.notify(term.project, term.slug, f"Terminal: {what}: `{command['text']}`. Read its output with "
-                 "`alt task terminal`, verify the actual outcome (Altitude does not see the exit status), then "
-                 "continue or report the blocker.", by="terminal")
-    except (OSError, ValueError, KeyError, T.TransitionError) as exc:  # the reader keeps serving the terminal
-        print(f"terminal: the notice for {term.project}/{term.slug} failed: {exc}", file=sys.stderr, flush=True)
+    text = (f"Terminal: {what}: `{command['text']}`. Read its output with `alt task terminal`, verify the actual "
+            "outcome (Altitude does not see the exit status), then continue or report the blocker.")
+
+    def send():
+        try:
+            T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"])
+        except (OSError, ValueError, KeyError, T.TransitionError) as exc:
+            print(f"terminal: the notice for {term.project}/{term.slug} failed: {exc}", file=sys.stderr, flush=True)
+    threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug}").start()
 
 
 def write(project: str, slug: str | None, ident, data: str) -> None:

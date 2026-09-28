@@ -1029,11 +1029,16 @@ terminal, never in the URL or history, shows the terminal and, once its screen h
 stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
 holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it into a task
 terminal, the page names it with `command`, so altd follows that one command in memory: the first Enter the
-operator types after it starts it, and a Ctrl+C before that Enter drops it. Once the shell has held the
-foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter, or the terminal ends
-first, `tasks.notify` leaves one Terminal notice in the task inbox, which reaches the owner at its next
-checkpoint as any queued message does and wakes a blocked owner unless it is stopped or faulted. It is no
-conversation entry and grants nothing. altd does not see the command's exit status, so the notice sends the
+operator types after it starts it, and a Ctrl+C before that Enter drops it. The command has finished once
+the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
+no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
+background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts
+counts as finished. Then, or when the terminal ends first, `tasks.notify` leaves one Terminal notice in the
+task inbox, on its own thread so the reader keeps draining output while it waits for the project lock. It
+reaches the owner at its next checkpoint as any queued message does and wakes a blocked owner unless it is
+stopped or faulted; a task no longer running or blocked, or on a later attempt than the one current when the
+page named the command, gets none. It is no conversation entry and grants nothing. When naming the command
+fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
 owner to `alt task terminal` to verify; a shell builtin that waits for input without a child looks finished.
 Project terminals send no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
