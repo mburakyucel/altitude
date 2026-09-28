@@ -297,18 +297,14 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
   // The header's PR chip with failed checks and a merge hold: a report shape the archive rarely keeps.
   await clearRoutes(page);
   const number = pr ?? 1;
-  await overlay(page, project.name, {
+  const repository = "https://github.com/example/project";
+  const held = {
     ...done!,
     prs: [number],
     hold_merge: "review before merge",
     report_json: { landed: { prs: [{ number, merged: false }], main_runs: [{ conclusion: "failure" }] } },
-  });
-  const repository = "https://github.com/example/project";
-  let projectRepository: string | null = repository;
-  await page.route((url) => url.pathname === `/api/project/${encodeURIComponent(project.name)}`, async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, json: { ...(await response.json()), repository: projectRepository } });
-  });
+  };
+  await overlay(page, project.name, { ...held, repository });
   await walk.open(taskPath(project.name, done!.slug));
   const prLink = v.main.getByRole("link", { name: `PR #${number} open · main checks failed` });
   await walk.state("03-pr-open-checks-failed-and-held", {
@@ -319,7 +315,8 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
   await expect(prLink).toHaveAttribute("href", `${repository}/pull/${number}`);
   await expect(prLink).toHaveAttribute("target", "_blank");
   await expect(prLink).toHaveAttribute("rel", "noopener noreferrer");
-  projectRepository = null;
+  await clearRoutes(page);
+  await overlay(page, project.name, { ...held, repository: null });
   await walk.open(taskPath(project.name, done!.slug));
   await walk.state("03b-pr-without-repository", {
     action: () => v.showDetails(),

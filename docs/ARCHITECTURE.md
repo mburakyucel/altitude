@@ -1390,6 +1390,19 @@ Reload. Only a failed load of that code shows this; an error inside a loaded ter
 that a reload clears unsent typed text, which lives in the page's memory. The browser keeps a failed
 module import for the page's lifetime, so only a reload recovers. Earlier builds are not retained.
 
+Every API reply is `no-store`. The app keeps what it has read in memory only (TanStack Query, per
+project and task), re-reads a view on each open and on every change event, and drops it all on
+re-pairing; nothing is prefetched or stored on the device. On a slow link the wait is therefore the
+download of the view itself. The task view carries the task record, its decisions, review, messages,
+documents and report, the newest 20 events, and the repository link for pull request links, so the
+task page reads no project view. The record's review, decision and message-delivery ledgers, which
+the view already presents, stay on the server. The overview, project, task and live-session views travel gzip-encoded
+(`Vary: Accept-Encoding`) to browsers that accept it, four to five times smaller; a running task's
+view and live session are re-read every two seconds. Replies that can carry a pairing code or key
+(access, pairing, devices, alerts, terminal) always travel as stored. Compression lets someone who
+watches the encrypted traffic, and can repeatedly plant chosen text in the same reply, infer secret
+text in it from reply sizes; the operator accepted that for these four views on 2026-09-28.
+
 ### Conversations and navigation
 
 The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch

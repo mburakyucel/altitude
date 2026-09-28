@@ -213,6 +213,16 @@ Wireframe renders stay in ignored `design/wireframes/shots/`. The
 illustrations that explain current behavior belong in `docs/images/`. Maintain the spec and useful
 boards in place, removing obsolete review scaffolding and its generators/references together.
 
+### Loading and caching evidence
+
+Caching and prefetch changes follow the [project rule](../AGENTS.md#working-rules-for-every-pr): a
+reviewed proposal, then a reviewed implementation. Measure before choosing. `web/e2e/first-open.pw.ts`
+is the example: it opens its own browser context, because the harness's request interception turns
+off the HTTP cache, and records each request's encoded size, encoding and cache use through the
+Chrome DevTools Protocol, with `Network.emulateNetworkConditions` for slow links. Wait for a landmark
+and the script's finished load, never network idle: the change stream stays open. Report cold, warm
+and slow opens separately, and keep simulated links distinct from the operator's real connection.
+
 ## Browser verification and recovery
 
 Worker confinement and the browser's own sandbox are separate protections. Worker launch and the

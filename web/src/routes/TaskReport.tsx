@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router";
 import { InlineProse, Prose, ProseScope } from "../components/Prose";
 import { TokenUsage } from "../components/TokenUsage";
-import { useOverview, useProject, useTask } from "../data/api";
+import { useOverview, useTask } from "../data/api";
 
 /*
  * The task's report view (SPEC.md §3.4, §5.2 note 1): the full report that no longer travels in the
@@ -43,7 +43,6 @@ export default function TaskReport() {
   const { name = "", slug = "" } = useParams();
   const task = useTask(name, slug);
   const overview = useOverview();
-  const project = useProject(name);
   if (task.isPending) {
     return (
       <div className="page" aria-label="Loading">
@@ -81,7 +80,7 @@ export default function TaskReport() {
   const empty = Object.keys(report).length === 0 && !markdown && !digest;
 
   return (
-    <ProseScope project={name} repository={project.data?.repository}>
+    <ProseScope project={name} repository={view.repository}>
     <div className="page report-page">
       <p className="text-meta">
         <Link to={`/projects/${name}/tasks/${slug}`}>← {view.title || slug}</Link>

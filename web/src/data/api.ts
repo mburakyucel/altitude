@@ -522,6 +522,8 @@ export const TaskViewSchema = z
     planned_wait: PlannedWaitSchema.nullish(),
     /** The task's worktree while it has one: where its terminal opens. */
     worktree: z.string().nullish(),
+    /** The project's GitHub page, for pull request links. */
+    repository: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
     review: TaskReviewSchema.nullish(),

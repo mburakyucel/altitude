@@ -113,6 +113,10 @@ validation task, or release prerequisite.
    can fewer owners, states, artifacts or compatibility paths express it; what is removed and what
    proves parity; which operator/provider/machine assumptions remain, behind which seam, and could
    an engine be dropped by changing only that seam? Existing tests alone do not justify behavior.
+4. Caching, prefetching and data retained in the browser or on the device need an independently
+   reviewed proposal before code and an independent implementation review before merge: what is kept,
+   for how long, what invalidates it, and how stale data can never be acted on as current, across
+   task/project isolation, reconnects and re-pairing. Evidence: [loading and caching](docs/DEVELOPMENT.md#loading-and-caching-evidence).
 
 ## UI
 
