@@ -261,6 +261,22 @@ nor verification outside worker confinement. Recovery requires evidence in the i
 without it, retain the capability block and present the exact remaining decision. Altitude's local
 fictional harness exception grants no authority for another project's verification.
 
+## Validation environments
+
+Each environment establishes one kind of evidence; running more of them does not widen what any one
+proves. A result names its environment, entry point, tested revision, OS and architecture, and is
+kept with the PR or task that ran it. An environment that was not run is a missing result, not a
+pass. Only `make check` gates delivery; the others are run for the changes they cover.
+
+| Environment | Entry point | Establishes | Does not establish | Status |
+| --- | --- | --- | --- | --- |
+| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
+| Disposable Linux VM | `scripts/installation_vm.py` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery and uninstall on Ubuntu 24.04 x86_64 | Reboot, the published `install.sh` download, cross-release migration, other distributions | In use through an owner's machine grant |
+| Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
+| Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
+| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
+| Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
+
 ## Device evidence
 
 Device results name their evidence class; a result in one class never stands in for another.

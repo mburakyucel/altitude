@@ -6,9 +6,9 @@ Native macOS, Windows and genuine clean-machine/provider acceptance are not esta
 
 The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
 exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
-and fixture engines. Its first hosted execution remains pending until results are recorded.
-The same harness runs on a disposable developer VM; it is not an installation command for your
-own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention,
+and fixture engines. It has not executed on GitHub; the same harness runs in a
+[local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
+installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention,
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
