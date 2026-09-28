@@ -224,13 +224,15 @@ descendant. On macOS 15 or newer on Apple silicon the service is a LaunchAgent i
 is its own launchd job, so its processes share a kernel coalition that no `setsid`, double fork or
 cleared environment leaves. The job's program is a supervisor outside any sandbox: it runs the command,
 enforces the time limit, and when the command exits stops whatever remains in the coalition, records the
-status and removes its own job. A caller's input and output reach the job as `systemd-run --pipe` passes
+status and removes its own job; while the command runs it holds an idle-sleep assertion (a closed lid
+still sleeps). A caller's input and output reach the job as `systemd-run --pipe` passes
 them: a regular file or device by path, a pipe through a relayed FIFO, and piped input (always a whole
 prompt) through a private file. Stop signals every coalition member, checking each one's start time and
 coalition again right before the signal since macOS has no process handle, until none is left. The seam
 reads processes and sockets through libproc and sysctl, finds Homebrew's libraries, and replaces
 `RLIMIT_AS`, which macOS rejects, with a watcher that kills a command past its memory footprint. The L3
-service-inspection shims and the source-checkout TLS setup and self-restart remain Linux-specific outside it;
+service-inspection shims remain Linux-specific outside it, and `platform.source_service()` keeps the
+source-checkout TLS setup and self-restart to Linux, refusing them on macOS with an explicit message;
 `tests/test_project_layers.py` keeps that count from rising. A pending installation
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance on a spare account
@@ -611,7 +613,9 @@ recheck registration under the project state lock, so removal cannot abandon rac
 
 Removed projects leave the managed list; their broker is closed (CLI removal is noticed by the
 next tick, with broker calls refused immediately). Repository files, remaining worktrees and the
-project's Altitude directory stay on disk. Registration with the same project name and repository
+project's Altitude directory stay on disk. A name that differs from a registered project's only by
+case is refused on every host, since both would share one runtime folder on a case-insensitive disk
+(the macOS default). Registration with the same project name and repository
 attaches L3 again and restores saved conversations, task archives, provider sessions and queued
 messages. The startup path drains the saved FIFO before any introductory turn. Registration
 reports restored conversation history so First run waits for successful registration and opens
@@ -901,7 +905,8 @@ not caller identity. Both engines share the verb; only the launcher is host-spec
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
-temporary directories; launchd refuses service control to any sandboxed process. Codex keeps its native
+temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
+runs as altd's child rather than as a job starts under the same profile. Codex keeps its native
 workspace-write sandbox inside the same job boundary (the two Seatbelt profiles cannot nest) and uses the
 same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
