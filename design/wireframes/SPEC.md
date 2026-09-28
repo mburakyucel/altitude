@@ -1138,6 +1138,21 @@ and use normal page scrolling on both viewports. Pending, waiting, restarting, a
 request denial, loading, read error, empty, dismissed and new-event states are walked on phone
 and desktop in `web/e2e/restart-banner.pw.ts`, including removals after actions.
 
+**New version (installed copies).** When the overview's `update` names a newer stable release, the
+same compact row in the same place reads **Altitude <version> is available. What’s new · Update ·
+×**; What’s new opens the release page. Update turns the row into a confirm: "Install Altitude
+<version>? Altitude checks the download, then restarts. If <version> does not start, <current>
+comes back." with **Install <version>** and **Cancel**. Install shows Starting…, then the row reads
+**Installing Altitude <version>… Altitude restarts when it is ready.** with no actions until the
+new version answers and the row leaves. A refused request keeps the confirm and shows the server's
+reason. A failed update reads "The update to <version> did not finish. <reason> Altitude <current>
+keeps running." with **Try again** and ×. Close (**Dismiss new version notice**) hides that version,
+or that failure, in this browser until a newer version or a new failure appears. Source deployments
+never show it. Data: `GET /api/overview` `update`; Install requests `POST /api/update` with the
+version. Source deployment, available, confirm, refused, installing, failed, dismissed failure,
+dismissed version, newer version and updated states are walked on phone and desktop in
+`web/e2e/update-notice.pw.ts`.
+
 All banner notices and toasts offer an accessible close control. Toast timers, hover/focus pause
 and action controls remain available. Inline form/transport errors, task faults, task questions
 and conversation navigation are contextual state or actions, not dismissible banner notices;
@@ -1214,6 +1229,11 @@ A **Terminal** switch row (off after install) says "Anyone who can open Altitude
 you on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
+An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
+or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
+new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
+release. Nothing else is sent, and nothing installs without you." It saves on change like Terminal;
+off hides the Version row's newer release and the notice. Source deployments show neither row.
 The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
