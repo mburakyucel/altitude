@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import runpy
+import subprocess
 import unittest
 from unittest import mock
 
@@ -59,6 +60,40 @@ class TestTaskConversation(ChatCase):
         self.assertEqual([(m["role"], m["text"], m["by"]) for m in history], [("burak", "Prefer the smaller diff.", "burak")])
         self.assertEqual([m["id"] for m in T.pending(self.project, self.slug)], [row["id"]])
         self.assertEqual(S.read_events(self.project, self.slug)[-1]["kind"], "task-message")
+
+    def test_task_api_sends_what_the_task_pages_read(self):
+        for command in (["init", "-q"], ["remote", "add", "origin", "git@github.com:example/demo.git"]):
+            subprocess.run(["git", *command], cwd=self.repo, check=True)
+        T.message(self.project, self.slug, "burak", "Keep it small.")
+        task = S.load_task(self.project, self.slug)
+        task.update({"message_deliveries": {"m" * 32: {"state": "delivered", "at": "y" * 5000}}, "paths": ["web/src/"]})
+        S.save_task(self.project, task)
+        for n in range(25):
+            S.append_event(self.project, self.slug, "note", text=f"event {n}")
+        (S.task_dir(self.project, self.slug) / "progress.md").write_text("Goal: small\n")
+
+        with mock.patch.object(server.monitor, "sessions", return_value=[]):
+            view = server.task_view(self.project, self.slug)
+
+        self.assertEqual(view["repository"], "https://github.com/example/demo")
+        self.assertEqual((view["slug"], view["state"], view["worktree"], view["session_id"]),
+                         (self.slug, "running", str(self.worktree), "session-old"))
+        self.assertEqual(view["paths"], ["web/src/"])
+        self.assertFalse(set(server.TASK_VIEW_OMITTED) & set(view))
+        self.assertEqual([e["text"] for e in view["events"]][-2:], ["event 23", "event 24"])
+        self.assertEqual(len(view["events"]), server.TASK_VIEW_EVENTS)
+        self.assertEqual(view["files"]["progress"], "Goal: small\n")
+        self.assertEqual([m["text"] for m in view["messages"]], ["Keep it small."])
+
+    def test_task_api_reads_without_a_repository_link_when_the_checkout_cannot_answer(self):
+        T.message(self.project, self.slug, "burak", "Keep it small.")
+        for failure in (FileNotFoundError(2, "No such directory"), subprocess.TimeoutExpired("git", 2)):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(server.monitor, "sessions", return_value=[]), \
+                    mock.patch.object(server.subprocess, "run", side_effect=failure):
+                view = server.task_view(self.project, self.slug)
+                self.assertIsNone(view["repository"])
+                self.assertEqual([m["text"] for m in view["messages"]], ["Keep it small."])
 
     def test_l2_reply_and_task_api_show_both_sides_without_qa_log(self):
         T.message(self.project, self.slug, "burak", "Can we keep this small?")

@@ -1327,8 +1327,13 @@ class Handler(BaseHTTPRequestHandler):
             self._head = False
             self.wfile = wfile
 
-    def _json(self, obj, code: int = 200) -> None:
+    def _json(self, obj, code: int = 200, compress: bool = False) -> None:
+        """A JSON reply. `compress` is for the large read-only views of a task, project or session, which
+        carry no credentials; replies that can carry a pairing code or key never do (docs/ARCHITECTURE.md#web-delivery)."""
         body = json.dumps(obj, default=str).encode()
+        encoded = compress and _accepts_gzip(self.headers.get("Accept-Encoding"))
+        if encoded:
+            body = gzip.compress(body, compresslevel=6, mtime=0)
         if self._keep_open:  # an HTTP/1.1 reply with its length keeps the connection in every browser
             self.protocol_version = "HTTP/1.1"
         try:
@@ -1337,6 +1342,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            if encoded:
+                self.send_header("Content-Encoding", "gzip")
+            if compress:
+                self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
             self.wfile.write(body)
             if self._keep_open:
@@ -1880,7 +1889,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"devices": access.devices(), "current": self._device and self._device["id"],
                                    "certificate": certificate_view()})
             if api == "overview":
-                return self._json(overview())
+                return self._json(overview(), compress=True)
             if api == "voice":
                 return self._json(voice_view())
             if api == "machine":
@@ -1907,7 +1916,7 @@ class Handler(BaseHTTPRequestHandler):
                 except KeyError:
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
-                return self._json(project_view(parts[2]))
+                return self._json(project_view(parts[2]), compress=True)
             if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))
@@ -1915,7 +1924,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "task" and len(parts) > 3:
                 try:
-                    return self._json(task_view(parts[2], parts[3]))
+                    return self._json(task_view(parts[2], parts[3]), compress=True)
                 except S.TaskNotFound:
                     return self._json({"error": "Task is not available."}, 404)
             if api == "transcript" and len(parts) > 3:
@@ -1923,7 +1932,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(transcript.view(
                         parts[2], parts[3],
                         engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
-                        cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"))
+                        cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"), compress=True)
                 except (KeyError, transcript.TranscriptAccessError):
                     return self._json({"error": "transcript unavailable for this task generation"}, 404)
             if api == "monitor":
@@ -2795,8 +2804,6 @@ def issue_write(project: str, operation: str, body: str, *, actor: str, title: s
 def project_view(name: str) -> dict:
     proj = config.project(name)
     week = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat()  # S.now()'s form
-    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
-                            capture_output=True, text=True, timeout=10)
     live = {s["slug"]: s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("project") == name}
     tasks = []
     for t in S.list_tasks(name):
@@ -2806,7 +2813,7 @@ def project_view(name: str) -> dict:
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
-            "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
+            "design_viewer": design_viewer_url(name), "repository": project_repository(name),
             # Done this week, newest first (#296: by finish time, never by slug).
             "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
@@ -2814,6 +2821,22 @@ def project_view(name: str) -> dict:
             "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
+
+
+def project_repository(name: str) -> str | None:
+    """The project's GitHub page, or None when a detached, moved or unreadable checkout has none to give."""
+    try:
+        origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
+                                capture_output=True, text=True, timeout=2)
+    except (KeyError, OSError, subprocess.SubprocessError):
+        return None
+    return repository_url(origin.stdout)
+
+
+# The record's own ledgers behind the view's review, decisions and message deliveries stay on the
+# server: they made a long task's reply several times larger, re-sent on every change.
+TASK_VIEW_OMITTED = ("reviews", "question_groups", "message_deliveries")
+TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 
 
 def task_view(project: str, slug: str) -> dict:
@@ -2832,11 +2855,13 @@ def task_view(project: str, slug: str) -> dict:
     if activity["generation"] != t.get("agent_id"):
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
                     "observation": None, "delivered": [], "error": "The worker changed. Refresh this task."}
-    return {**t, "can_continue": T.reported_continuable(t, report),
+    return {**{k: v for k, v in t.items() if k not in TASK_VIEW_OMITTED},
+            "repository": project_repository(project),
+            "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
             "files": files, "messages": T.message_views(project, slug, activity["delivered"]),
-            "events": events, "activity": activity, "review": reviews.view(project, slug),
+            "events": events[-TASK_VIEW_EVENTS:], "activity": activity, "review": reviews.view(project, slug),
             "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 

@@ -3,7 +3,7 @@ import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
+import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask } from "../data/api";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
@@ -619,8 +619,7 @@ function TaskPage({
   const location = useLocation();
   const navigate = useNavigate();
   const back = useTaskBack(project);
-  const projectQuery = useProject(project);
-  const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
+  const facts = taskFacts(task, overview.data, project, task.repository);
   const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
     .find((question) => question.status === "open" && !question.response);
   const [draft, setDraft] = useState("");
@@ -712,7 +711,7 @@ function TaskPage({
   const terminal = <Terminal project={project} task={task.slug} keys={phone} closeIcon={phone}
     onLeave={() => void navigate(`${base}/live${location.search}`, { replace: true, state: location.state })}
     head={phone ? tabs : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
-  const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
+  const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={task.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
   // A `run` block in this conversation opens the task's terminal with its command typed (SPEC.md §3.3).
   const runTarget = useMemo(() => Boolean(task.worktree) && task.state !== "done" && task.state !== "rejected"
     ? { open: (command: string) => {
@@ -720,7 +719,7 @@ function TaskPage({
       void navigate(`${base}/terminal${location.search}`, { replace: true, state: location.state });
     } }
     : { unavailable: "This task has no terminal now." }, [task.worktree, task.state, task.slug, project, base, location.search, location.state, navigate]);
-  const conversation = <ProseScope project={project} repository={projectQuery.data?.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
+  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
 
   if (phone) {
     return (

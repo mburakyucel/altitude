@@ -130,7 +130,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
       const record = task as { messages?: unknown[] };
-      return jsonResponse({ ...record, messages: [...(record.messages ?? []), ...sent] });
+      return jsonResponse({ ...record, repository: options.repository ?? null, messages: [...(record.messages ?? []), ...sent] });
     }
     if (url.includes("/api/l2/message")) {
       if (options.message) return options.message();
@@ -139,7 +139,6 @@ function stub(task: unknown, options: StubOptions = {}) {
       sent.push(message);
       return jsonResponse({ ok: true, message });
     }
-    if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [], repository: options.repository ?? null });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -582,12 +581,14 @@ describe("Task on desktop", () => {
 
   it.each([390, 1440])("links the PR in a new tab at %i pixels when the repository is known", async (width) => {
     setViewport(width);
-    stub(done, { repository: "https://github.com/example/project" });
+    const fetchMock = stub(done, { repository: "https://github.com/example/project" });
     const { user } = renderApp({ route });
 
     if (width === 390) await user.click(await screen.findByRole("button", { name: /Task details$/ }));
     const link = await screen.findByRole("link", { name: "PR #202 merged · main checks passed" });
     expect(link).toHaveAttribute("href", "https://github.com/example/project/pull/202");
+    // The task view carries the link; the whole project view is not fetched for it.
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/api/project/"))).toEqual([]);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });

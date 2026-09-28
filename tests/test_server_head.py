@@ -54,11 +54,11 @@ class TestHead(AltitudeCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def _request(self, method, path, headers=""):
+    def _request(self, method, path, headers="", body=b""):
         host, port = self.httpd.server_address
         with socket.create_connection((host, port), timeout=2) as sock:
             sock.sendall(
-                f"{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n{headers}\r\n".encode()
+                f"{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n{headers}\r\n".encode() + body
             )
             chunks = []
             while True:
@@ -123,6 +123,31 @@ class TestHead(AltitudeCase):
                 self.assertNotIn("content-encoding", headers)
                 self.assertNotIn("vary", headers)
                 self.assertEqual(int(headers["content-length"]), len(body))
+
+    def test_large_views_travel_gzip_and_uncached_and_credential_replies_as_stored(self):
+        view = {"state": "ready", "messages": ["the same words again"] * 200}
+        self.patch(server, "overview", new=lambda: view)
+        for accept, encoded in (("gzip, deflate, br", True), (None, False), ("gzip;q=0", False)):
+            with self.subTest(accept=accept):
+                header = f"Accept-Encoding: {accept}\r\n" if accept else ""
+                status, headers, body = self._request("GET", "/api/overview", header)
+                _, head_headers, head_body = self._request("HEAD", "/api/overview", header)
+
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["cache-control"], "no-store")
+                self.assertEqual(headers["vary"], "Accept-Encoding")
+                self.assertEqual(headers.get("content-encoding"), "gzip" if encoded else None)
+                self.assertEqual(json.loads(gzip.decompress(body) if encoded else body), view)
+                self.assertEqual(int(headers["content-length"]), len(body))
+                self.assertEqual(head_headers["content-length"], headers["content-length"])
+                self.assertEqual(head_body, b"")
+        # Device and pairing replies can carry a pairing code: never compressed.
+        for method, path in (("GET", "/api/devices"), ("POST", "/api/devices/code")):
+            with self.subTest(path=path):
+                status, headers, _ = self._request(method, path, "Accept-Encoding: gzip\r\nContent-Length: 2\r\n", b"{}")
+                self.assertEqual(status, 200)
+                self.assertNotIn("content-encoding", headers)
+                self.assertNotIn("vary", headers)
 
     def test_base_class_error_accepts_non_string_log_argument(self):
         status, _, _ = self._request("DELETE", "/api/overview")
