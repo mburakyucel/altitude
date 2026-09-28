@@ -6,7 +6,7 @@ import { walkthrough } from "./walkthrough";
  * A page opened before an update keeps running the earlier build (docs/ARCHITECTURE.md#web-delivery). The
  * terminal's code loads only when a terminal is first shown, so an update in between replaces the file that
  * page asks for. The fixture's update is a real swap of the served build: new file names, the old files
- * gone, answered by altd's own 404. Walked at both widths, with the chat draft kept across the reload.
+ * gone, answered by altd's own 404. Walked at both widths; nothing reloads until the operator chooses Reload.
  */
 test.use({ serviceScript: "terminal-service.py" });
 
@@ -79,4 +79,24 @@ test("the terminal's code cannot be fetched: the view says so without reloading,
     hidden: [panel.getByText("Couldn't load the terminal")],
   });
   await expect(page.locator(".terminal-screen .xterm-rows")).toContainText("$");
+});
+
+test("the check of the served page stalls: the Reload card still appears", async ({ page, request }, info) => {
+  test.setTimeout(60_000);
+  const phone = info.project.name === "phone";
+  const walk = walkthrough(page, info);
+  const panel = page.getByRole("region", { name: "Terminal" });
+  const views = phone ? page.getByRole("navigation", { name: "Task views" }) : page.getByRole("navigation", { name: "Panel view" });
+  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+
+  await walk.open(TASK);
+  await page.route((url) => url.pathname.startsWith("/assets/TerminalScreen-"), (route) => route.abort("internetdisconnected"));
+  await page.route((url) => url.pathname === "/", () => {});  // never answers
+  await views.getByRole("link", { name: "Terminal" }).click();
+  // The check gives up after five seconds.
+  await expect(panel.getByText("Couldn't load the terminal")).toBeVisible({ timeout: 15_000 });
+  await walk.state("update-05-terminal-check-stalled", {
+    visible: [panel.getByText("Couldn't load the terminal"), panel.getByRole("button", { name: "Reload" })],
+    hidden: [page.getByText("Unexpected Application Error!")],
+  });
 });

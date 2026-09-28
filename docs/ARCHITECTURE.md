@@ -1385,7 +1385,8 @@ walks cold, warm and slow opens with dictation assets failing.
 A page keeps running the build it opened with. Activation replaces `web/dist`, so a file that page
 loads later, such as the terminal's code (the app's one lazy module), is gone and altd answers 404.
 The terminal view then says whether the served page names another app script, meaning Altitude was
-updated, or Altitude could not be reached, and offers Reload. It does not reload by itself, and says
+updated, or Altitude could not be reached (no answer within five seconds counts as unreachable), and offers
+Reload. Only a failed load of that code shows this; an error inside a loaded terminal reaches the route's error page. It does not reload by itself, and says
 that a reload clears unsent typed text, which lives in the page's memory. The browser keeps a failed
 module import for the page's lifetime, so only a reload recovers. Earlier builds are not retained.
 

@@ -8,8 +8,13 @@ import { useToast } from "../data/Toast";
 import { subscribeCommands, takeCommand } from "../data/terminalCommand";
 import "./terminal.css";
 
+/** The terminal's code did not arrive; any other error inside the terminal screen is not this. */
+class ScreenLoadFailure extends Error {}
+
 // xterm.js loads only when a terminal is on screen.
-const TerminalScreen = lazy(() => import("./TerminalScreen"));
+const TerminalScreen = lazy(() => import("./TerminalScreen").catch((cause: unknown) => {
+  throw new ScreenLoadFailure("The terminal's code did not load", { cause });
+}));
 
 /**
  * Why the terminal's code did not arrive. An update replaces the hashed files a page opened before it
@@ -19,19 +24,23 @@ const TerminalScreen = lazy(() => import("./TerminalScreen"));
  */
 async function screenFailure(): Promise<"updated" | "failed"> {
   try {
-    const page = await fetch("/", { cache: "no-store" });
+    // Bounded, so a stalled connection still reaches the Reload card.
+    const page = await fetch("/", { cache: "no-store", signal: AbortSignal.timeout(5000) });
     return page.ok && !(await page.text()).includes(new URL(import.meta.url).pathname) ? "updated" : "failed";
   } catch {
     return "failed";
   }
 }
 
-/** Keeps a failed screen load inside the terminal view instead of the route's error page. */
-class ScreenBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch() { this.props.onError(); }
-  render() { return this.state.failed ? null : this.props.children; }
+/** Keeps a failed load of the terminal's code inside the terminal view; other errors reach the route's error page. */
+class ScreenBoundary extends Component<{ onError: () => void; children: ReactNode }, { error: unknown }> {
+  state: { error: unknown } = { error: null };
+  static getDerivedStateFromError(error: unknown) { return { error }; }
+  componentDidCatch(error: unknown) { if (error instanceof ScreenLoadFailure) this.props.onError(); }
+  render() {
+    if (this.state.error && !(this.state.error instanceof ScreenLoadFailure)) throw this.state.error;
+    return this.state.error ? null : this.props.children;
+  }
 }
 
 function Card({ title, children, action, tone }: { title?: string; children?: ReactNode; action?: ReactNode; tone?: "danger" }) {
