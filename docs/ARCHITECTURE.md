@@ -1012,7 +1012,8 @@ more input, resize or close, and stays readable only by a stream naming its id, 
 failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
-drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
+drive it, and `POST /api/terminal/<project>/command` with `{task, id, text}` names the command the page is
+about to type for the owner. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
 while every other altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
 keystroke (an echo takes one network round trip), and altd sends small writes without Nagle's delay.
 The page sends input in order, one request at a time, coalescing keys typed meanwhile and splitting a
@@ -1026,7 +1027,15 @@ message's `run` block (one line with no control, invisible-formatting or line-se
 **Open in terminal** in its task or project conversation: the page holds the command in memory for that
 terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
 stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
-holds the foreground. It never sends Enter, and the server sees ordinary input. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
+holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it into a task
+terminal, the page names it with `command`, so altd follows that one command in memory: the first Enter the
+operator types after it starts it, and a Ctrl+C before that Enter drops it. Once the shell has held the
+foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter, or the terminal ends
+first, `tasks.notify` leaves one Terminal notice in the task inbox, which reaches the owner at its next
+checkpoint as any queued message does and wakes a blocked owner unless it is stopped or faulted. It is no
+conversation entry and grants nothing. altd does not see the command's exit status, so the notice sends the
+owner to `alt task terminal` to verify; a shell builtin that waits for input without a child looks finished.
+Project terminals send no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 

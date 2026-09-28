@@ -49,7 +49,8 @@ export function inputPiece(text: string): string {
  * alert, until the operator has checked the screen.
  *
  * A chat `command` (SPEC.md §3.3) is typed as a paste once the screen has settled on the shell's prompt,
- * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead.
+ * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead. A task
+ * terminal first tells Altitude the command, so the task's owner hears once the operator has run it.
  */
 export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
   project: string;
@@ -249,12 +250,17 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       over = true;
       clearTimeout(expiry);
       setHeld(null);
+      // The task's owner hears once the command has run; typing it does not depend on that.
+      if (task) await terminalSend(project, "command", { task, id, text: command.text }).catch(() => undefined);
+      if (gone) return;
       pasteText.current(command.text);
       focus.current();
       report.current.onCommand?.();
     };
+    let gone = false;
     void attempt();
     return () => {
+      gone = true;
       over = true;
       clearTimeout(timer);
       clearTimeout(expiry);

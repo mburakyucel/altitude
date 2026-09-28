@@ -1713,3 +1713,11 @@ task's agent cannot read it. The last ended terminal's output stays readable unt
 for the task, the task finishes or Altitude restarts; after a restart the command says no output is
 available. Project terminals have no reader. Output the owner reads becomes part of its session and
 provider record; save only what the task's evidence needs.
+
+When the operator opens the owner's `run` command in the task terminal, altd tells the owner how it went
+with a Terminal notice at its next checkpoint, waking it when blocked: the command has finished (the shell
+held the foreground again for a second after Enter on it), or the terminal ended before the command ran or
+finished. The notice names the command and carries no exit status, so the owner reads the output with
+`alt task terminal` and verifies the outcome. Ctrl+C before Enter drops the command without a notice. The
+notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
+it for its next resume.

@@ -22,6 +22,7 @@ import select
 import socket
 import struct
 import subprocess
+import sys
 import termios
 import threading
 import time
@@ -29,7 +30,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, platform, state as S
+from . import config, platform, state as S, tasks as T
 
 REPLAY_BYTES = 256 * 1024
 READ_BYTES = 65536
@@ -42,6 +43,9 @@ STOP_POLL_SECONDS = 0.5
 #: How long input waits for a program that has stopped reading it before the request is refused.
 WRITE_SECONDS = 2.0
 POLL_SECONDS = 0.2
+#: How long the shell holds the foreground again after Enter before a handed command counts as finished: the
+#: moment between the commands of `a && b` is far shorter.
+COMMAND_SETTLE_SECONDS = 1.0
 #: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
 #: machine commands, terminals, restarts).
 ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
@@ -71,6 +75,9 @@ class Terminal:
     cond: threading.Condition = field(default_factory=threading.Condition)  # output and ending
     io: threading.Lock = field(default_factory=threading.Lock)  # the descriptor: held to use it or close it
     closing: bool = False  # Close was asked for: a waiting write gives up
+    #: The command the page typed from the owner's `run` block: its text, then when Enter ran it and since when
+    #: the shell has held the foreground again. The owner hears once it has finished.
+    command: dict | None = None
 
     @property
     def end(self) -> int:
@@ -175,6 +182,7 @@ def _read(term: Terminal) -> None:
     job ends the terminal as `failed`, with its reason."""
     while term.proc.poll() is None:
         _keep(term, _drain(term, POLL_SECONDS))
+        _follow(term)
     stop(term.unit)  # nothing of the job outlives a launcher that ended for any other reason
     for _ in range(REPLAY_BYTES // READ_BYTES):  # what was written before the end, bounded
         chunk = _drain(term, 0)
@@ -201,6 +209,10 @@ def _read(term: Terminal) -> None:
     with term.cond:
         term.ended = True
         term.cond.notify_all()
+    if term.command:
+        _notice(term, f"the task terminal ended ({term.reason}) before "
+                + ("the command you handed the operator finished" if term.command.get("entered")
+                   else "the operator ran the command you handed them"))
 
 
 def _drain(term: Terminal, wait: float) -> bytes:
@@ -272,6 +284,65 @@ def _busy(term: Terminal) -> str | None:
     return platform.process_name(group) or "A command"
 
 
+def hand(project: str, slug: str | None, ident, text) -> None:
+    """Follow the command the page is typing from the owner's `run` block, so the owner hears when it has run."""
+    if slug is None:
+        raise TerminalError("Only a task terminal tells its owner about a command.", 400)
+    if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT:
+        raise TerminalError("Send the command as text.", 400)
+    term = _running(project, slug, ident)
+    with term.cond:
+        term.command = {"text": text}
+
+
+def _typed(term: Terminal, data: str) -> None:
+    """Enter runs the handed command; Ctrl+C before it abandons the command, so a later Enter is not taken for it."""
+    with term.cond:
+        if not term.command or "entered" in term.command:
+            return
+        enter = min((i for i in (data.find("\r"), data.find("\n")) if i != -1), default=-1)
+        interrupt = data.find("\x03")
+        if interrupt != -1 and (enter == -1 or interrupt < enter):
+            term.command = None
+        elif enter != -1:
+            term.command["entered"] = time.monotonic()
+
+
+def _follow(term: Terminal) -> None:
+    """After Enter, the handed command has finished once the shell has held the foreground again for a moment,
+    whatever its outcome. The shell only being quiet, or a program waiting for input, is not an end."""
+    command = term.command
+    if not command or "entered" not in command:
+        return
+    with term.io:
+        try:
+            group, shell = os.tcgetpgrp(term.fd), platform.terminal_session(term.fd)
+        except OSError:  # no shell session to watch: the terminal's end tells the owner instead
+            return
+    if shell <= 0 or group <= 0:
+        return
+    if group != shell:
+        command.pop("shell", None)
+        return
+    now = time.monotonic()
+    if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS:
+        _notice(term, "the command you handed the operator has finished in the task terminal")
+
+
+def _notice(term: Terminal, what: str) -> None:
+    """Tell the task's owner, waking it when it waits. Altitude sees the shell, not the command's exit status."""
+    with term.cond:
+        command, term.command = term.command, None
+    if not command:
+        return
+    try:
+        T.notify(term.project, term.slug, f"Terminal: {what}: `{command['text']}`. Read its output with "
+                 "`alt task terminal`, verify the actual outcome (Altitude does not see the exit status), then "
+                 "continue or report the blocker.", by="terminal")
+    except (OSError, ValueError, KeyError, T.TransitionError) as exc:  # the reader keeps serving the terminal
+        print(f"terminal: the notice for {term.project}/{term.slug} failed: {exc}", file=sys.stderr, flush=True)
+
+
 def write(project: str, slug: str | None, ident, data: str) -> None:
     """Type `data`. A program that stops reading its input fills the terminal's queue; the write then gives
     up after WRITE_SECONDS, or as soon as Close is asked for, rather than holding the terminal."""
@@ -294,6 +365,7 @@ def write(project: str, slug: str | None, ident, data: str) -> None:
             if time.monotonic() >= deadline:
                 raise TerminalError("The terminal is not reading input. Press Ctrl+C or close it.")
             select.select([], [term.fd], [], POLL_SECONDS)
+    _typed(term, data)
 
 
 def _winsize(fd: int, rows: int, cols: int) -> None:

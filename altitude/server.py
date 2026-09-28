@@ -1831,7 +1831,7 @@ class Handler(BaseHTTPRequestHandler):
                 except terminal.TerminalError as exc:
                     return self._json({"error": f"Terminal is off, but a terminal is still running. {exc}"}, exc.status)
             return self._json(view)
-        if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close"):
+        if len(parts) != 4 or parts[3] not in ("open", "input", "command", "resize", "close"):
             return self._json({"error": "unknown api"}, 404)
         project, action, slug, ident = unquote(parts[2]), parts[3], body.get("task"), body.get("id")
         if slug is not None and not isinstance(slug, str):
@@ -1843,6 +1843,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
                 terminal.write(project, slug, ident, body.get("data"))
+            elif action == "command":
+                terminal.hand(project, slug, ident, body.get("text"))
             elif action == "resize":
                 terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
             else:
