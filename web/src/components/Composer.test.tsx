@@ -2,7 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
@@ -62,7 +62,14 @@ async function listen(user: ReturnType<typeof userEvent.setup>) {
 /** Advance fake timers inside act so every answer and render they release runs. */
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
+/** Live words show as soon as they are heard, so a test reads each update at once (liveReveal.test.ts paces them). */
+function reduceMotion(reduce: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: reduce && query === "(prefers-reduced-motion: reduce)", media: query }));
+}
+
 describe("Composer", () => {
+  beforeEach(() => reduceMotion(true));
+
   it("keeps text selectable but rejects typing and paste throughout microphone startup and listening", async () => {
     const { getUserMedia } = installVoiceBrowser();
     hostVoice();
@@ -1793,5 +1800,50 @@ describe("Composer", () => {
     expect(formatTimer(0)).toBe("0:00");
     expect(formatTimer(65_000)).toBe("1:05");
     expect(formatTimer(594_999)).toBe("9:54");
+  });
+});
+
+describe("Composer live words", () => {
+  beforeEach(() => reduceMotion(false));
+
+  const heard = "check the build, then the timer, and after that the tests on both phones";
+
+  it("flow in after the draft while listening; Stop lands the whole final text at once, editable", async () => {
+    installVoiceBrowser();
+    const server = hostVoice(heard, `${heard}.`);
+    const { user, field } = mount({ initial: "Please" });
+    await listen(user);
+    await waitFor(() => expect(field.value.length).toBeGreaterThan("Please ".length));
+    expect(field.value).not.toBe(`Please ${heard}`);
+    expect(`Please ${heard}`.startsWith(field.value)).toBe(true);
+    expect(server.audio.length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue(`Please ${heard}.`));
+    expect(field).not.toHaveAttribute("readonly");
+  });
+
+  it("Send while the words are still flowing sends the whole final text", async () => {
+    installVoiceBrowser();
+    hostVoice(heard, `${heard}.`);
+    const onSubmit = vi.fn((_text: string, accepted: () => void) => accepted());
+    const { user, field } = mount({ initial: "Please", onSubmit });
+    await listen(user);
+    await waitFor(() => expect(field.value.length).toBeGreaterThan("Please ".length));
+    expect(field.value).not.toBe(`Please ${heard}`);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(`Please ${heard}.`, expect.any(Function)));
+    expect(field).toHaveValue("");
+  });
+
+  it("Cancel while the words are still flowing restores the draft with nothing added", async () => {
+    installVoiceBrowser();
+    hostVoice(heard);
+    const { user, field } = mount({ initial: "Please" });
+    await listen(user);
+    await waitFor(() => expect(field.value.length).toBeGreaterThan("Please ".length));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Please");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+    expect(field).toHaveValue("Please");
   });
 });
