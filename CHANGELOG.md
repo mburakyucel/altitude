@@ -5,28 +5,60 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- On phone the terminal's key row ends with an **Enter** key: one tap runs what is typed at the
-  prompt, such as a command opened from chat, a `read` answer or a password, without opening the
-  soft keyboard.
-- Voice to text runs on this computer by default where its speech model can run (Linux x86_64), and
-  through the browser's own recognition elsewhere, including macOS for now; a saved choice is kept.
-  First run offers the one-time download of about 698 MB as its **Voice to text** step, and
-  **Settings → Voice input** offers two choices, This computer and Browser recognition. Dictation on
-  this computer keeps recording through a lost connection and its words catch up; after Stop or Send
-  it waits up to two minutes for the connection. Audio stays in the page's memory only.
-- The speech-service option is removed, with `/api/transcribe`, `--voice-model` and
-  `--voice-key-file`. On first start the stored service URL and key are deleted and the machine uses
-  the default; `alt machine set --voice` accepts `host` or `browser`.
+## v0.1.0-rc.2 — 2026-09-29
+
+Second release candidate of the early preview, for Linux x86_64 with a systemd user service
+(target: Ubuntu 24.04). It fixes installation: `v0.1.0-rc.1` cannot start its service. Install it
+from this release's `install.sh`; the one-line install and `alt update` use stable releases only.
+
+Known limitations: installation, update, failed-update recovery, uninstall and reboot pass in a
+disposable Ubuntu 24.04 virtual machine, but a clean physical machine and updating from one
+published release to another are not yet verified; live engine providers are not tested; on macOS
+`install.sh` stops before downloading anything.
+
+Recovery: a `v0.1.0-rc.1` installation failed at service start; run this release's `install.sh`,
+which keeps configuration, TLS identity and data. A failed activation restores the previous version;
+`alt recover` completes an interrupted one. A faulty release is followed by a new version.
+
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes
   and percent signs. `v0.1.0-rc.1` wrote that path in quotes, so systemd refused the unit and
-  installation failed at service start; installing on Linux needs a later release.
+  installation failed at service start.
 - `alt tls-share` sets up a phone's HTTPS trust without another computer or AirDrop: for ten minutes
   it offers the certificate at a plain-HTTP link on the configured network address and prints what
   the phone must match before tapping Install: a lone certificate, its real name and its SHA-256.
   The installer, `alt doctor` and **Settings → Devices** show the certificate's name, expiry and
   what trusting it allows, read from the certificate, including "No limits" for an unconstrained
-  CA. Altitude's HTTPS address no longer serves `/ca.crt`.
+  CA. Altitude's HTTPS address no longer serves `/ca.crt`. `alt tls-share` and `alt pair` read the
+  running service's address, port and certificate folder, so an ordinary shell reaches it.
+- Voice to text runs on this computer by default where its speech model can run (Linux x86_64):
+  it transcribes English speech on the CPU with NVIDIA's Parakeet TDT 0.6B v2 (CC-BY-4.0), and words
+  appear in the draft about a second behind speech. First run offers the one-time download of about
+  698 MB as its **Voice to text** step; it needs about 2.5 GB of free memory while in use.
+  Elsewhere, including macOS for now, the browser's own recognition is the default; a saved choice
+  is kept, and **Settings → Voice input** offers This computer and Browser recognition. Dictation
+  keeps recording through a lost connection and its words catch up; audio stays in the page's
+  memory only.
+- The speech-service option is removed, with `/api/transcribe`, `--voice-model` and
+  `--voice-key-file`. On first start the stored service URL and key are deleted and the machine uses
+  the default; `alt machine set --voice` accepts `host` or `browser`.
+- **Setup…** lives in the project's ⋯ menu with its status; the header shows Setup only while it
+  needs attention.
+- The in-app terminal accepts `sudo`, and on phone its key row ends with an **Enter** key that runs
+  the typed line without the soft keyboard. When you run a command a task owner handed you in its
+  task terminal, the owner is told once it finishes, and it can read that terminal's output.
+- Decision alerts reach Apple devices; a push service that refuses alerts is named, with its
+  reason, under the Needs you alert switch.
+- In a task conversation, each message from L3 folds to one line with its summary and **Show**.
+- A page opened before an update offers **Reload** when the terminal's code is gone, instead of an
+  application error.
+- Opening the app and task chats downloads less: app assets and views are sent gzip-encoded, and
+  replies that can carry pairing codes or keys stay uncompressed.
+- Reviews: an owner can record a finding as unresolved, which keeps merging refused; changes review
+  runs while unrelated questions stay open; an additional review leaves earlier open findings in
+  the merge gate. A held PR closed without merging stops asking for merge review.
+- A resume's reason reaches the resumed owner, and a failed fetch of main raises a self-deploy fault
+  only after five minutes without a successful fetch.
 
 ## v0.1.0-rc.1 — 2026-09-28
 
