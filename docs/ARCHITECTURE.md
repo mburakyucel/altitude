@@ -475,9 +475,12 @@ submodules are excluded by refusal. A path over 2 MiB in either base or candidat
 and diff, and the capture names it with its size. Both trees accept at most 10000 files and 64 MiB of
 remaining content, so removed content is bounded before creating the diff. Context includes the brief,
 request, original authority messages and corrections, decisions,
-and default-all or selected L2 evidence, bounded to 64 KiB. Proposal capture also binds the exact
-original L2 message and text against the committed head's source tree, even before code differs from
-main. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
+and default-all or selected L2 evidence; its captured `context.json` holds one copy of each input, so
+the request is omitted when the brief contains it verbatim, and is bounded to 64 KiB. Proposal capture
+also binds the exact original L2 message and text against the committed head's source tree, even before
+code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
+`context.json` names the proposal message and points to the file. Identity and freshness hash the
+logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
 refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,

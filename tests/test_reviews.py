@@ -449,6 +449,7 @@ class TestReviews(AltitudeCase):
         result = self.run_review(context_ids=[original["id"]])
         self.assertEqual({row["id"] for row in captured["messages"]},
                          {original["id"], coordinator["id"], correction["id"]})
+        self.assertEqual(captured["request"], "Keep the public result stable.\n", "a brief without the request keeps it")
         self.assertNotIn(owner["id"], result["snapshot"]["context_ids"])
         self.assertEqual(result["coverage"], "current")
         self.assertEqual(result["snapshot"]["captured_context_hash"], reviews._hash(captured))
@@ -784,6 +785,85 @@ class TestReviews(AltitudeCase):
         reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
                        dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
         reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_complete_proposal_and_retained_authority_capture_once_within_the_bound(self):
+        # Container proposal capture (I-20260927-193716): 57 KB of mandatory authority plus a 13 KB proposal
+        # stored twice exceeded the 64 KiB context before any reviewer launched.
+        git("reset", "--hard", "origin/main", cwd=self.worktree)
+        folder = S.task_dir(self.project, self.slug)
+        request = "Run the owner in a rootless container across Linux and Mac onboarding. " * 60
+        (folder / "request.md").write_text(request + "\n")
+        (folder / "brief.md").write_text("Acceptance: Linux, then Mac, then both. " * 120 + "\n\n**Request:**\n\n---\n\n" + request + "\n")
+        task = T.block(self.project, self.slug, "Which machine first?", actor="l2", expected_attempt=1)
+        answer = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Linux first, then the MacBook.")
+        T.resume(self.project, self.slug, agent_id="owner-one", expected_claim=T.claim_resume(self.project, self.slug)["id"],
+                 input_delivered=True)
+        T.resolve_question(self.project, self.slug, task["questions"][-1]["id"], 1, answer["id"], disposition="answered",
+                           reason="The operator selects this Linux machine first and the MacBook later. " * 20, expected_attempt=1)
+        authority = [T.message(self.project, self.slug, *((T.OPERATOR_MESSAGE_ROLE,) if n % 2 else ("l3",)),
+                               f"Authority {n}: keep host protections and every onboarding path. " * 20,
+                               **({} if n % 2 else {"by": "l3"})) for n in range(34)]
+        evidence = [T.message(self.project, self.slug, "l2", f"Probe {n} evidence. " * 60, expected_attempt=1) for n in range(48)]
+        proposal = T.message(self.project, self.slug, "l2", "# Proposal v4\n" + "Rootless Podman with private proc; “exact” text. " * 250,
+                             expected_attempt=1)
+        correction = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Correction: the forwarded terminal stays refused.")
+        authority += [answer, correction]
+        captured = {}
+        def inspect(prompt, **kwargs):
+            captured.update(context=(kwargs["snapshot"] / "context.json").read_text(),
+                            proposal=(kwargs["snapshot"] / "proposal.md").read_bytes())
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = inspect
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal", focus="Challenge the security model")
+        result = self.run_review(requested, proposal_id=proposal["id"], context_ids=[proposal["id"]])
+
+        self.assertEqual(result["state"], "completed")
+        context = json.loads(captured["context"])
+        self.assertGreater(len(captured["context"].encode()) + len(captured["proposal"]), 65536)
+        self.assertLessEqual(len(captured["context"].encode()), 65536)
+        self.assertEqual(captured["proposal"], proposal["text"].encode())
+        self.assertNotIn(proposal["text"][:200], captured["context"])
+        self.assertEqual(context["proposal"], {"id": proposal["id"], "at": proposal["at"], "file": "proposal.md"})
+        rows = {row["id"]: row for row in context["messages"]}
+        self.assertEqual(rows[proposal["id"]]["text_file"], "proposal.md")
+        self.assertNotIn("text", rows[proposal["id"]])
+        self.assertEqual({row["id"]: row["text"] for row in authority}, {i: rows[i]["text"] for i in rows if i != proposal["id"]})
+        self.assertFalse(set(rows) & {row["id"] for row in evidence})
+        self.assertEqual([d["message_id"] for d in context["decisions"]], [answer["id"]])
+        self.assertNotIn("request", context)
+        self.assertIn(request, context["brief"])
+        self.assertIn("proposal.md", self.engine.call_args.args[0])
+        # Identity and freshness are those of the logical context; the representation only affects the capture.
+        live = S.load_task(self.project, self.slug)
+        live["project"] = self.project
+        identity, logical = reviews._identity(self.project, live, proposal_id=proposal["id"])
+        snapshot = result["snapshot"]
+        self.assertEqual((snapshot["context_hash"], snapshot["proposal_hash"]), (identity["context_hash"], identity["proposal_hash"]))
+        self.assertEqual(logical["request"], request + "\n")
+        self.assertEqual(snapshot["proposal"]["text"], proposal["text"])
+        self.assertEqual(snapshot["captured_context_hash"], reviews._hash(context))
+        self.assertEqual(snapshot["input_hash"], reviews._hash({"tree": snapshot["tree"], "context": captured["context"],
+                                                                "patch": hashlib.sha256(b"").hexdigest(),
+                                                                "proposal": hashlib.sha256(captured["proposal"]).hexdigest()}))
+        self.assertTrue(snapshot["selected_owner_evidence"])
+        reviews.assess(self.project, self.slug, result["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs real Mac evidence."}])
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["coverage"], "current")
+
+        # Past the bound, capture refuses truthfully without launching; earlier open findings stay in the gate.
+        long_proposal = T.message(self.project, self.slug, "l2", "x" * 65537, expected_attempt=1)
+        refused = self.run_review(self.request(subject="proposal", additional=True), proposal_id=long_proposal["id"],
+                                  context_ids=[])
+        self.assertEqual(refused["state"], "failed")
+        self.assertIn("proposal exceeds 64 KiB", refused["error"])
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Further constraint. " * 700)
+        oversized = self.run_review(self.request(previous=refused["id"]), proposal_id=proposal["id"], context_ids=[proposal["id"]])
+        self.assertEqual(oversized["state"], "failed")
+        self.assertIn("Review context exceeds 64 KiB", oversized["error"])
+        self.assertIn("the proposal is bounded separately", oversized["error"])
+        self.assertEqual(self.engine.call_count, 1)
+        with self.assertRaisesRegex(T.TransitionError, f"{result['id']} \\(proposal\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
 
     def test_new_code_context_or_merge_pair_invalidates_assessment(self):
         result = self.run_review()
