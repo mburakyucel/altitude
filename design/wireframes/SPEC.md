@@ -1015,6 +1015,13 @@ terminal keeps running when the page leaves; returning replays up to 256 KB. Whe
 however it ends, the view returns to where the operator was — Live session on a task, the project for
 the project terminal — and keeps no output; the next visit opens a fresh shell.
 
+The screen scrolls through its output and scrollback like any other content: a finger dragged over it
+on phone (a quick swipe flings on and slows to a stop), the wheel or trackpad on desktop. Scrolling
+back sends nothing to the shell and leaves focus where it is, so the soft keyboard does not open for
+it. Scrolled back, new output leaves the earlier lines in place; back at the bottom the screen follows
+new output again, and typing or any key row key returns it to the prompt. A program's full-screen view
+(an editor, a pager) has no scrollback: a drag leaves it as it is, and the program's own keys move it.
+
 On desktop, Ctrl+V (Cmd+V) pastes and Ctrl+C with text selected copies (Cmd+C on a Mac); without a
 selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the panel is an overlay.
 
@@ -1039,8 +1046,9 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Terminal code missing | The page predates an update, whose activation removed the terminal code this page would load: "Altitude was updated", "This page is from the earlier version. Reload to open the terminal." If Altitude cannot be reached: "Couldn't load the terminal", "Check the connection to Altitude, then reload." Both add "The shell keeps running. Reloading clears text you have typed but not sent." and **Reload**; nothing reloads by itself. Walkthrough: `web/e2e/app-update.pw.ts`. |
 
 Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as
-an overlay) walks every state above against real shells, plus tab completion, copy and paste, with
-the agent check and the restart notice as fixtures.
+an overlay) walks every state above against real shells, plus tab completion, copy and paste, and
+scrolling back by touch or wheel while output arrives, with the agent check and the restart notice as
+fixtures.
 
 ### 3.11 Project switcher (phone)
 
