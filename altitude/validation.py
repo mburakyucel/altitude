@@ -38,7 +38,6 @@ CPU_QUOTA = "400%"
 FREE_DISK = 20 << 30             # bytes free in Altitude's home before a run starts
 RESULTS_LIMIT = 256 << 20        # bytes copied back into the task folder
 COMMAND_LIMIT = 16384
-CONTAINERFILE = config.SOURCE / "scripts" / "validation.Containerfile"
 USER = "1000:1000"               # the image's `ubuntu` user, mapped to the operator's own account (keep-id)
 IMAGE_CACHE = "/home/ubuntu/.cache/altitude-installation-vm"
 
@@ -74,8 +73,14 @@ def home() -> Path:
     return config.ROOT.with_name(config.ROOT.name + "-validation")
 
 
+def containerfile() -> Path:
+    """The deployed runner's Containerfile. Read at each run: the service moves `config.SOURCE` to the source it
+    activates after this module is imported."""
+    return config.SOURCE / "scripts" / "validation.Containerfile"
+
+
 def image_tag() -> str:
-    return "localhost/altitude-validation:" + hashlib.sha256(CONTAINERFILE.read_bytes()).hexdigest()[:16]
+    return "localhost/altitude-validation:" + hashlib.sha256(containerfile().read_bytes()).hexdigest()[:16]
 
 
 def podman() -> list[str]:
@@ -112,7 +117,7 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
     tag, pod = image_tag(), shlex.join(podman())
     lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
              f"{pod} image exists {tag} || {pod} build --quiet --tag={tag} "
-             f"--file={shlex.quote(str(CONTAINERFILE))} {shlex.quote(str(run / 'empty'))} >/dev/null || exit 125"]
+             f"--file={shlex.quote(str(containerfile()))} {shlex.quote(str(run / 'empty'))} >/dev/null || exit 125"]
     if kvm:
         prefetch = ("import sys; from pathlib import Path; sys.path.insert(0, '/runner'); "
                     "import installation_vm; installation_vm.base_image(Path('/cache'))")
