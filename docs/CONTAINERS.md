@@ -2,7 +2,9 @@
 
 Container support is under validation. The candidate uses rootless Podman with real systemd inside
 the image. The feasibility tuple is Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
-its systemd manager. Full application, onboarding and recovery acceptance is not established yet.
+its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory pass on that tuple.
+Full application, onboarding and recovery acceptance is not established yet. The tested rootless
+payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
 
 ## Boundary
@@ -105,6 +107,12 @@ An older image does not reverse schema/state changes: use a compatible image or 
 The automated backup/replacement/recovery path is unfinished, not an established operator procedure.
 Do not migrate an existing native installation with these commands.
 
+Resume claims identify their owner by PID, process start time, boot identity and PID namespace through
+the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters
+existing claim reconciliation; inaccessible identity evidence does not establish that the owner died.
+This removes the bare-PID liveness check for native and container resumes. The native macOS process
+identity implementation remains pending alongside its existing platform runtime gap.
+
 ## Evidence
 
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
@@ -112,6 +120,14 @@ image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
+
+An explicit `--native-sandbox-binary /path/to/diagnostic-executable` additionally copies an ordinary
+installed native diagnostic into the disposable image and exercises the application-generated task
+and coordinator profiles. It retains binary/probe hashes, positive controls, allowed/denied writes,
+manager/broker/loopback socket checks and a fictional Git commit. The source deployment is already
+root-owned and denies the unsandboxed write control. This optional stripped-image profile lane is
+prepared but has not run; the earlier profile evidence used a diagnostic image. It makes no provider
+session, authentication or other-engine confinement claim.
 
 Results explicitly name uncovered final-image engine confinement, full task workflow, Stop/restart/
 recreation, concurrent controller locks, updates/backups, published HTTPS/browser onboarding and Mac.

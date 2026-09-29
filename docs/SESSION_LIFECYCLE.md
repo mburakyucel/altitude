@@ -1,5 +1,11 @@
 # Engine and session lifecycle
 
+Durable resume claims record their owner's PID, start time, boot identity and PID namespace through
+`platform.py`. Reused process numbers after restart or container recreation do not keep an old claim
+live. Existing claim reconciliation retains the reserved messages and worker identity; missing process
+identity is stale, while an inspection permission error remains unavailable evidence. Linux is
+implemented; native macOS process-identity evidence remains part of that platform's open runtime gap.
+
 ## Conversation-audit pilot
 
 The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable

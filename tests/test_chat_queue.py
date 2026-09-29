@@ -301,7 +301,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         incidents.system_fault("fixture-fault", "First observed cause", project=self.project, task=self.slug)
         message = T.message(self.project, self.slug, "l3", "Waiting on a verified repair.")
         claim = T.claim_resume(self.project, self.slug)
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_process={**claim["owner_process"], "pid": 99999999},
                               worker={"id": "unbound-replacement", "sessionId": "thread-old"})
         incidents.system_fault("fixture-fault", "Changed local cause", project=self.project, task=self.slug)
         with mock.patch.object(engines, "resume_l2") as launch, mock.patch.object(engines, "stop_l2_worker") as stop:
@@ -430,7 +430,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual([lease["slug"] for lease in dispatch.leases(self.project)], [self.slug],
                          "an inbox-only in-flight resume retains its file lease")
         worker = {"id": "agent-replacement", "sessionId": "thread-old", "state": "working"}
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_process={**claim["owner_process"], "pid": 99999999},
                               worker=worker)
 
         self.assertEqual(dispatch.resume_due(self.project), [self.slug])
@@ -450,10 +450,26 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)],
                          [task["questions"][0]["anchor_id"], message["id"]])
 
+    def test_recreated_pid_namespace_recovers_launched_claim_without_replaying_its_batch(self):
+        message = T.message(self.project, self.slug, "l3", "Exactly one delivery", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        worker = {"id": "persisted-worker", "sessionId": "thread-old", "state": "working"}
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", worker=worker,
+                              owner_process={**claim["owner_process"], "namespace": "pid:[previous-container]"})
+        with mock.patch.object(engines, "resume_l2") as launch:
+            result = dispatch.resume(self.project, self.slug)
+        launch.assert_not_called()
+        self.assertTrue(result["recovered"])
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["agent_id"], task["session_id"], task["attempt"]), ("persisted-worker", "thread-old", 1))
+        self.assertFalse(task.get("resume_claim"))
+        self.assertEqual(T.pending(self.project, self.slug), [])
+        self.assertEqual(sum(row["id"] == message["id"] for row in T.task_messages(self.project, self.slug)), 1)
+
     def test_restart_with_ambiguous_provider_launch_fails_closed_without_a_duplicate(self):
         message = T.message(self.project, self.slug, "l3", "Do not deliver me twice.", by="l3")
         claim = T.claim_resume(self.project, self.slug)
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_pid=99999999)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_process={**claim["owner_process"], "pid": 99999999})
 
         with mock.patch.object(engines, "resume_l2") as launch, \
              mock.patch.object(incidents, "system_fault") as fault:
@@ -517,7 +533,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
     def test_restart_discards_a_launched_claim_superseded_by_a_new_question(self):
         earlier = T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
         claim = T.claim_resume(self.project, self.slug)
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_process={**claim["owner_process"], "pid": 99999999},
                               worker={"id": "replacement", "sessionId": "thread-old"})
         T.escalate(self.project, self.slug, "A newer scope decision?")
         with mock.patch.object(engines, "resume_l2") as launch, mock.patch.object(engines, "stop_l2_worker") as stop:
@@ -583,7 +599,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
     def test_ambiguous_recovery_records_fault_without_replacing_newer_question(self):
         T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
         claim = T.claim_resume(self.project, self.slug)
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_pid=99999999)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_process={**claim["owner_process"], "pid": 99999999})
         T.escalate(self.project, self.slug, "New question")
         with mock.patch.object(engines, "resume_l2") as launch:
             with self.assertRaisesRegex(dispatch.ResumeFailure, "worker ownership cannot be proven"):
@@ -599,7 +615,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
     def test_stale_recovery_stop_failure_keeps_wait_and_records_uncertainty(self):
         T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
         claim = T.claim_resume(self.project, self.slug)
-        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_process={**claim["owner_process"], "pid": 99999999},
                               worker={"id": "replacement", "sessionId": "thread-old"})
         T.escalate(self.project, self.slug, "New question")
         with mock.patch.object(engines, "stop_l2_worker", side_effect=OSError("Fixture stop failed")):

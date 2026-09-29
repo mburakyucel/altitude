@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -100,7 +101,7 @@ print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges'
 '''
 
 
-def run(archive: Path, checksum: str, evidence: Path) -> dict:
+def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | None = None) -> dict:
     evidence.mkdir(parents=True, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix="altitude-container-gate-"))
     result = {"passed": False, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -171,6 +172,27 @@ def run(archive: Path, checksum: str, evidence: Path) -> dict:
                 "-u", "altitude-volumes.service", "-u", "user@1000.service", "-n", "80"]))
             if not ready:
                 raise RuntimeError("Image application service did not start; inspect bootstrap.log and retained unit evidence")
+            if native_binary is not None:
+                binary = native_binary.resolve(strict=True)
+                mode = binary.stat().st_mode
+                if not stat.S_ISREG(mode) or mode & 0o6000 or "security.capability" in os.listxattr(binary):
+                    raise RuntimeError("The diagnostic must be an ordinary executable without elevation metadata")
+                result["native_tool"] = {"sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+                target = "/usr/local/bin/altitude-fixture-native"
+                call(["cp", str(binary), ident + ":" + target])
+                call(["exec", ident, "chmod", "0755", target])
+                source = Path(__file__).resolve().parent.parent / "tests/container_native_probe.py"
+                result["native_probe_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+                output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
+                               ident, "python3", "-c", source.read_text(), target], timeout=90)
+                native = json.loads(output)
+                (evidence / "native-profiles.json").write_text(json.dumps(native, indent=2) + "\n")
+                result["native_profiles"] = {"passed": native["gate_passed"], "failures": native["gate_failures"],
+                                             "versions": native["versions"], "limits": native["limits"]}
+                if not native["gate_passed"]:
+                    raise RuntimeError("Actual packaged native profiles failed; inspect native-profiles.json")
+                result["uncovered"].remove("actual engine sandbox in stripped image")
+                result["uncovered"].append("provider-session/configuration-layer and other engine confinement parity")
             result["elevation_inventory"] = json.loads(call(["exec", "--user", "0", ident, "python3", "-c", INVENTORY], timeout=30))
             output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
                            ident, "python3", "-c", PROBE], timeout=30)
@@ -215,7 +237,9 @@ if __name__ == "__main__":
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--native-sandbox-binary", type=Path,
+                        help="optional installed native diagnostic executable; copied as test tooling, never used for a provider session")
     args = parser.parse_args()
-    outcome = run(args.archive.resolve(), args.sha256, args.results.resolve())
+    outcome = run(args.archive.resolve(), args.sha256, args.results.resolve(), native_binary=args.native_sandbox_binary)
     print(json.dumps(outcome, indent=2))
     raise SystemExit(0 if outcome["passed"] else 1)

@@ -305,6 +305,7 @@ def describe_scope(scope: dict | None) -> str:
 
 def info(host: str | None = None) -> dict:
     """Return public identity evidence; local certificate validity does not prove device trust."""
+    from . import platform
     directory = config.TLS_DIR
     check(host, renew=False)
     ca = directory / "ca.crt"
@@ -316,7 +317,11 @@ def info(host: str | None = None) -> dict:
             "ca_sha256": f"sha256 Fingerprint={authority['sha256']}" if authority else None,
             "ca_name": authority and authority["name"], "ca_expires": authority and authority["expires"],
             "ca_scope": authority and describe_scope(authority["scope"]),
-            "trust": "unknown", "trust_steps": list(TRUST_STEPS)}
+            "trust": "unknown", "trust_steps": ([
+                "Export only ca.crt with the host container command's certificate action. Before trusting it, "
+                "check that the file holds only this certificate (ca_name) and that its SHA-256 matches ca_sha256; "
+                "otherwise delete it. Never transfer ca.key or server.key.", *TRUST_STEPS[1:]]
+                if platform.containerized() else list(TRUST_STEPS))}
 
 
 SHARE_MINUTES = 10

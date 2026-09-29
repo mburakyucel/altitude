@@ -7,8 +7,10 @@ inside a rootless Linux image. `platform.py` reads image identity outside writab
 runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
 refuse every peer in that deployment. Source merges remain ordinary project delivery; application
 activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
-manager. Immutable resources and persistent home/projects have separate lifetimes. Final-image and
-Mac runtime evidence remain pending.
+manager. Immutable resources and persistent home/projects have separate lifetimes. Image startup,
+local HTTPS and elevation-file inventory pass on the recorded Linux tuple; final-image engine
+confinement, full workflow/lifecycle and Mac runtime evidence remain pending. Resume-claim ownership
+uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
 
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,

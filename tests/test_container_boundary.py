@@ -90,6 +90,8 @@ class TestContainerBoundary(AltitudeCase):
         identity = tls.initialize()
         self.assertEqual(identity["host"], "fixture.local")
         self.assertEqual(tls.url(), f"https://fixture.local:{config.PORT}")
+        self.assertIn("host container command", tls.info()["trust_steps"][0])
+        self.assertNotIn("tls-share", tls.info()["trust_steps"][0])
         context = tls.check()
         self.assertEqual(handshake(context, config.TLS_DIR / "ca.crt", "fixture.local"), b"typed conversation")
         self.assertEqual(handshake(context, config.TLS_DIR / "ca.crt", "localhost"), b"typed conversation")

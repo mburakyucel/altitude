@@ -70,11 +70,7 @@ def _stop_replacement(engine: str, worker_id: str, job_root: Path) -> str | None
 
 def _claim_owner_live(claim: dict) -> bool:
     """Whether the daemon process which owns a durable resume claim still exists."""
-    try:
-        os.kill(int(claim.get("owner_pid")), 0)
-        return True
-    except (OSError, TypeError, ValueError):
-        return False
+    return platform.process_identity_live(claim.get("owner_process"))
 
 
 def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request_id: str | None = None,

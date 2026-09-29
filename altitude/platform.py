@@ -547,6 +547,29 @@ def process_start(pid: int) -> str:
     return _stat(pid)[19]
 
 
+def process_identity(pid: int) -> dict:
+    """A process lifetime within its boot and PID namespace, including container recreation."""
+    start = process_start(pid)
+    identity = {"pid": pid, "start": start,
+                "boot": (PROC / "sys/kernel/random/boot_id").read_text().strip(),
+                "namespace": os.readlink(PROC / str(pid) / "ns/pid")}
+    if process_start(pid) != start:
+        raise ProcessLookupError("Process changed while recording its identity")
+    return identity
+
+
+def process_identity_live(identity: object) -> bool:
+    """Unidentified/ended owners are stale; inaccessible process evidence remains an error."""
+    if not isinstance(identity, dict) or type(identity.get("pid")) is not int or identity["pid"] <= 0:
+        return False
+    if any(not isinstance(identity.get(key), str) or not identity[key] for key in ("start", "boot", "namespace")):
+        return False
+    try:
+        return process_identity(identity["pid"]) == identity and process_running(identity["pid"], identity["start"]) is True
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
 def process_running(pid: int, start: str) -> bool | None:
     """Whether the process with this identity still runs (a zombie has ended); None when `start` is not an
     identity. A missing process raises FileNotFoundError."""
