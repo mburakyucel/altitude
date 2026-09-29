@@ -32,10 +32,12 @@ explicit unavailable state, as voice input does. New code obeys the rule; existi
 only when a PR already touches it, never as its own project. `tests/test_project_layers.py`
 ratchets the counts so mentions outside a seam can only fall.
 
-Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. A change
-that touches services, processes, confinement, paths, external tools or installation ships for both
-behind that seam, or its PR names the macOS gap explicitly. Supported-platform claims in the docs
-follow recorded native evidence; see the [roadmap](docs/ROADMAP.md#native-macos-runtime).
+Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. Every
+change ships for macOS too, with host differences behind that seam. When the owner cannot verify it
+on macOS and it is unclear whether it works there, its PR and report say so: the change is Linux-only,
+or macOS support is a named follow-up that the operator or L3 can run as a task on the Altitude instance
+on the Mac. Supported-platform claims in the docs follow recorded native evidence; see the
+[roadmap](docs/ROADMAP.md#native-macos-runtime).
 
 Both engines use one execution and authority contract. Adapt that common contract when an
 integration conflicts with an engine's native operating model; do not build a second engine-specific

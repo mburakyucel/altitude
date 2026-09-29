@@ -54,8 +54,9 @@ remaining acceptance stays under #225/#226/#219/#350; those issues stay open:
 - **Native macOS runtime and installation:** the common engine/authority contract runs on a per-user
   LaunchAgent, with each job its own launchd job (coalition Stop, a supervisor-held time limit),
   Altitude's Seatbelt profile around Claude, Codex's own sandbox, and the installer's macOS branch.
-  macOS 15 and 26 on Apple silicon remain targets, not supported platforms, until the evidence below
-  is recorded. Running before any login (boot mode) is a separate, later increment.
+  It is on `main` (#570), and Altitude runs from source on the operator's Mac. macOS 15 and 26 on
+  Apple silicon remain targets, not supported platforms, until the evidence below is recorded.
+  Running before any login (boot mode) is a separate, later increment.
 - **Native evidence:** on a disposable Mac account, record exact OS/chip, application, Python and
   engine versions. Verify allowed writes and denied writes outside the task, ordinary and detached
   descendant Stop, timeout after owner exit, restart/adoption without duplicate workers, preserved
@@ -79,17 +80,18 @@ Public-release/history-audit work and P1 backup/continuity remain separately seq
 
 ### Native macOS runtime
 
-The operator's September 25, 2026 direction makes macOS a priority target alongside Linux: every
-platform change ships for both behind `altitude/platform.py` or names its macOS gap (see
-[AGENTS.md](../AGENTS.md#seams)). Task `macos-support-native-runtime-behind-the` owns #225's audit,
-the launchd and confinement proposal held for operator review, and the runtime increments. #527 moved
-host mechanisms into the seam; the macOS host behind it is implemented. Two operator decisions of
+macOS is a target alongside Linux: every change ships for both behind `altitude/platform.py`, or
+names itself Linux-only or its macOS support as a follow-up task for the Altitude instance on the Mac
+(see [AGENTS.md](../AGENTS.md#seams)). #527 moved host mechanisms into the seam, and #570 put the
+macOS host behind it on `main`; Altitude runs from source on the operator's Mac. The native lifecycle
+checks on the Mac remain pending: install and `alt doctor`, CLI and app update with adoption,
+failed-update rollback, uninstall keeping data, logout/login, reboot then login, sleep past a
+deadline, and the #551 install and update evidence. Two operator decisions of
 September 28, 2026 shape it: machine-grant commands run unsandboxed, as on Linux, because launchd
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
-started. The
-operator runs each increment's native validation on their own Apple silicon Mac; that
-evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
+started. Native validation runs on the operator's Apple silicon Mac, as tasks on its Altitude
+instance; that evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
 authorized. Native probes make no provider calls or model downloads.
 
 ## Early-user onboarding and public release
