@@ -11,7 +11,6 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
@@ -286,40 +285,20 @@ def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
 
 
-# The capability seam for speech: the browser's own recognition needs nothing installed; the
-# machine's own speech service is one OpenAI-compatible `audio/transcriptions` URL it chooses.
-VOICE_DEFAULT_MODEL = "whisper-1"
-
-
+# The capability seam for speech: host voice runs the pinned speech model on this computer (`altitude/speech.py`)
+# and is the default wherever that model can run; elsewhere the browser's own recognition is.
 def voice_setting() -> dict:
-    """The transcription backend: browser recognition (default) or the machine's speech service."""
+    """The transcription backend: the saved host or browser choice, else host where the model can run."""
     value = machine_settings().get("voice")
-    if isinstance(value, dict):
-        return {"backend": "endpoint", "model": VOICE_DEFAULT_MODEL, **value}
-    return {"backend": "browser"}
+    if value not in ("host", "browser"):
+        from . import speech
+        value = "host" if speech.manifest()[0] is not None else "browser"
+    return {"backend": value}
 
 
 def validate_voice(value) -> None:
-    if value is None or value == "browser":
-        return
-    if not isinstance(value, dict) or not value or set(value) - {"url", "model", "key"}:
-        raise ValueError("voice must be browser or the URL of your speech service")
-    url = value.get("url")
-    parts = urlsplit(url) if isinstance(url, str) else None
-    if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError("the speech service must be an http(s) URL")
-    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
-        raise ValueError("the speech service URL carries no credentials, query or fragment; give the key separately")
-    for field in ("model", "key"):
-        if field in value and (not isinstance(value[field], str) or not value[field].strip()):
-            raise ValueError(f"the speech service {field} must be nonempty text")
-
-
-def public_voice(value):
-    """The voice setting as records and readouts show it: an endpoint key is only ever 'set'."""
-    if isinstance(value, dict) and "key" in value:
-        return {**value, "key": "set"}
-    return value
+    if value not in (None, "browser", "host"):
+        raise ValueError("voice must be host or browser")
 
 
 def validate_wip(value) -> None:

@@ -170,16 +170,24 @@ while the app sends its next request cannot strand that request in Chromium; `ro
 guards this.
 
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
-no test requests a physical microphone. Image-input voice journeys retain real capture and
-MediaRecorder while holding `AudioContext.resume()` pending: an output-device/renderer
-failure cannot strand their microphone fixture in `AudioContext.resume()`. They assert the
-listening phase before the recorded interval; the Stop control also exists during startup.
-The cancel, transcription, image send, navigation and denied states run at both viewports.
-Fixture services set the `local` voice backend so those journeys keep the upload path;
+no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
+(conversation, project isolation, task lifecycle, L2 progress, image input, file references,
+cross-engine review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
+fixture host in `web/e2e/hostVoice.ts`: the page's real audio worklet hears Chromium's fake
+microphone, and the fixture can hold, replace or fail the final words, drop the connection or forget
+the recording, so no speech model runs. Image-input voice journeys also hold `AudioContext.resume()`
+pending: an output-device/renderer failure cannot strand their microphone fixture there. The cancel,
+transcription, image send, navigation and denied states run at both viewports.
 `voice-recognition.pw.ts` overlays `GET /api/voice` with `browser` and installs a page-level fake
 `SpeechRecognition` it drives itself (Playwright's Chromium has no vendor recognition), walking
 words while listening, landed, Send at once, cancel, failed, denied and no-recognizer states at
-both viewports. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
+both viewports, and asserts that nothing reaches `/api/voice/live`. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
+`host-voice.pw.ts` overlays `/api/voice` with `host` and answers `/api/voice/live` from a page-level
+fixture, so no model runs; the page's real audio worklet turns the synthetic microphone into 16 kHz
+chunks. It walks starting, live words, transcribing, landed, cancel, Send, stopped, busy, needs
+setup, setup progress, ready and unavailable at both viewports. `tests/test_speech.py` runs the
+supervisor against a fake worker process (load failure, hangs, crashes) and setup against a fake
+download of small checksummed files; nothing downloads the real model.
 
 `walkthrough.ts` drives actions, asserts text/roles appearing and disappearing, and saves named
 screenshots. Route smoke checks real route discovery, content, assets, console/API failures and
@@ -266,12 +274,14 @@ fictional harness exception grants no authority for another project's verificati
 Each environment establishes one kind of evidence; running more of them does not widen what any one
 proves. A result names its environment, entry point, tested revision, OS and architecture, and is
 kept with the PR or task that ran it. An environment that was not run is a missing result, not a
-pass. Only `make check` gates delivery; the others are run for the changes they cover.
+pass. Only `make check` gates delivery; the others are run for the changes they cover. Each entry
+point is one command an owner runs against its candidate, leaving pass/fail evidence; a gap names what
+blocks automating it.
 
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
-| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `scripts/installation_vm.py` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built `install.sh` through its public command against a release server inside the guest, on Ubuntu 24.04 x86_64 | Login/logout, the download from GitHub's published release, cross-release migration, other distributions | In use through an owner's machine grant |
+| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built `install.sh` through its public command against a release server inside the guest, on Ubuntu 24.04 x86_64 | Login/logout, the download from GitHub's published release, cross-release migration, other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
@@ -304,7 +314,7 @@ make ui-ios
 `@phone-only` walkthroughs, with WebKit's mock microphone granted. Results and the HTML report stay
 under ignored `web/ui-artifacts/ios/`; record the WebKit version from the report with any result.
 Tests tagged `@chromium` need a harness capability this WebKit build lacks and run only in the
-required projects: `MediaRecorder` (voice upload journeys), the `Notification` API, the
+required projects: the `Notification` API, the
 `clipboard-write` permission, a CDP session (manifest parsing, touch-drag swipes, transfer sizes and cache hits), or a replaceable
 `navigator.mediaDevices.getUserMedia`. Give a new walkthrough that tag only for one of these
 reasons. Where only one step needs Chromium, the step checks `browserName` and the rest of the test
@@ -312,7 +322,7 @@ still runs: route smoke omits its wheel overscroll, which mobile WebKit does not
 metadata omits Chromium's manifest parser.
 
 Two observed engine differences matter when reading voice results: this WebKit build has no
-`SpeechRecognition` or `MediaRecorder`, and an `AudioContext` created after an awaited microphone
+`SpeechRecognition`, and an `AudioContext` created after an awaited microphone
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
 
@@ -464,14 +474,13 @@ this Linux evidence is partial acceptance toward #226 and does not close it or e
 
 `scripts/installation_vm.py` runs the same harness on a Linux x86_64 host with KVM, at no cost and
 without GitHub runners. It needs `qemu-system-x86`, `qemu-utils` and `cloud-image-utils` (installed
-once by the machine's administrator) and read/write access to `/dev/kvm`. Build the two directories
-from a clean committed source, then pass them with that commit:
+once by the machine's administrator) and read/write access to `/dev/kvm`. One command builds both
+synthetic versions from a committed revision (default: HEAD, which refuses uncommitted edits to tracked
+files), runs every phase
+and leaves the evidence in the results directory:
 
 ```sh
-python3 scripts/build_release.py --version v0.0.0-rc.1 --output /tmp/altitude-vm/baseline
-python3 scripts/build_release.py --version v0.0.0-rc.2 --output /tmp/altitude-vm/candidate
-python3 scripts/installation_vm.py /tmp/altitude-vm/baseline /tmp/altitude-vm/candidate \
-  /tmp/altitude-vm/results "$(git rev-parse HEAD)"
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 ```
 
 The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
@@ -484,8 +493,8 @@ is restricted to the SSH forward. Before the harness starts, the runner probes t
 listener it opens on the host's loopback. Through the online card both must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
 probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap` and
-`reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence plus `vm.json` (source
-commit, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+`reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
+commit, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
 while the restarted guest waits for its unplugged card. An Altitude worker cannot

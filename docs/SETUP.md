@@ -257,7 +257,8 @@ Altitude what is waiting. On your own network the alert names the project and ta
 the alert says a decision is waiting and nothing more. It needs outbound internet from altd; where a
 push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
 phone means while it is on screen. Each alert opens that decision and carries no conversation text.
-A push service that refuses Altitude's default sender address takes one from `ALTITUDE_PUSH_CONTACT`.
+While a push service refuses Altitude's alerts, the line under the switch names it and the reason it
+gave; [refused decision alerts](OPERATIONS.md#refused-decision-alerts) lists what each reason needs.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
 ## First run in the browser
@@ -343,9 +344,11 @@ alt --project example chat "Describe this project and suggest one small improvem
 ## Project setup and repair
 
 **Altitude performs routine setup automatically. If a step fails, L3 helps investigate, and
-Altitude checks the result before marking it complete.** The project header's permanent **Setup**
-status opens its checklist on phone and desktop. It shows the latest observations, with **Check
-again** for a fresh check and relevant actions on incomplete rows.
+Altitude checks the result before marking it complete.** **Setup…** in the project's ⋯ menu opens
+the checklist on phone and desktop at any time. The project header shows a **Setup** status only while
+setup needs attention: it is running, a current requirement is missing or failed, or setup could not
+be read. A ready project's header stays quiet. The checklist shows the latest observations, with
+**Check again** for a fresh check and relevant actions on incomplete rows.
 
 | Step | What happens |
 | --- | --- |
@@ -361,7 +364,7 @@ Ready describes these project checks, not every future remote operation or model
 Setup never initializes Git. Optional capabilities such as voice do not prevent readiness.
 
 Existing projects receive the same current checks as new projects. Missing requirements introduced
-by an update appear without detach/reattach or repeating healthy work. Routine maintenance and
+by an update appear in the project header without detach/reattach or repeating healthy work. Routine maintenance and
 launch checks refresh recognized owned guard paths to the active source; saved task-worktree
 overrides receive the same checks. Failed or interrupted introductory
 agent calls wait for an explicit Retry; routine maintenance does not repeat them. Refresh, reconnection
@@ -398,10 +401,10 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
-| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
+| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
-| `alt machine set --voice` | Transcription backend: `browser` (default, no setup) or the URL of your OpenAI-compatible speech service, with an optional model and key for hosted providers. See [voice input](OPERATIONS.md#voice-input). |
+| `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,
@@ -426,17 +429,16 @@ Remote access is explicit: bind the specific private interface/address your devi
 wildcard bind is certified for `localhost` only) and arrange firewall/network access. There is no application login layer; HTTPS authenticates the
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
-for update/recovery and source deployments. Voice input works out of the box through the browser's
-own speech recognition, with English punctuated on the device by a model bundled in the archive; a
-speech service of your own is optional (see [voice input](OPERATIONS.md#voice-input)). Typing
-remains available without either.
+for update/recovery and source deployments. Voice input runs on this computer by default where its
+speech model can run: first run offers the one-time download of about 698 MB, checked against the
+release (**Set up voice**, **Use browser recognition instead** or **Skip**; see [host voice](OPERATIONS.md#host-voice)).
+Elsewhere, including macOS for now, voice uses the browser's own speech recognition, with English
+punctuated on the device by a model bundled in the archive (see [voice input](OPERATIONS.md#voice-input)).
+Typing remains available without either.
 Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).
-The overview shows the saved backend; the Voice input page holds its options. Browser recognition
-saves immediately. **Your speech service** requires the URL of an OpenAI-compatible
-`/v1/audio/transcriptions` endpoint, then **Save service**; a hosted provider's key and model sit
-behind **Hosted provider? Add a key or model**. [Your speech service](OPERATIONS.md#your-speech-service)
-has a worked example of running one on this computer; the service's own setup and charges apply.
-Installation downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
+The overview shows the saved backend; the Voice input page holds its two choices, **This computer**
+(with **Set up voice** and its progress) and **Browser recognition**, each saved immediately.
+Installation itself downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work
 

@@ -316,8 +316,11 @@ def handoff(project: str, slug: str, request: dict) -> dict:
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
                            engine: str | None = None, expected_attempt: int | None = None,
-                           generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
+                           generation: object = T._UNSET, stop_id: object = T._UNSET,
+                           deliver_reason: bool = True) -> dict:
     """Persist one L3/operator request for altd; this process never touches Git or a worker.
+
+    A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
     worker identity snapshot prevents a delayed resume, stop, or reject from applying to a replacement session.
@@ -343,8 +346,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                     raise T.TransitionError("Refresh the stopped task before continuing this session.")
         previous = task.get("daemon_request") or {}
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
-                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None) == (
-            operation, reason, actor, engine, expected_attempt)
+                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
+                previous.get("deliver_reason") if operation == "resume" else None) == (
+            operation, reason, actor, engine, expected_attempt, deliver_reason if operation == "resume" else None)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}
@@ -373,6 +377,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                    "block_id": task.get("block_id"),
                    "resume_request": task.get("resume_request"),
                    "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
+        if operation == "resume":
+            request["deliver_reason"] = deliver_reason
         if operation == "handoff":
             request.update(engine=engine, attempt=expected_attempt)
         task["daemon_request"] = request
@@ -477,12 +483,34 @@ def _run_setting(project: str | None, setting: str) -> dict:
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
-                     "actor": request["actor"], "reason": request["reason"], setting: config.public_voice(request[setting]),
+                     "actor": request["actor"], "reason": request["reason"], setting: request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
         S.write_json(path, request)
         return request
+
+
+def forget_speech_service() -> None:
+    """Delete a speech-service URL and key saved before that option was removed, once, at daemon start. The event
+    names only the removal, never the URL or key."""
+    with config.projects_lock():
+        settings = config.machine_settings()
+        receipt = config.ROOT / "voice-request.json"
+        request = S.read_json(receipt, {})
+        stale_setting = isinstance(settings.get("voice"), dict)
+        stale_receipt = isinstance(request.get("voice"), dict) or isinstance(request.get("result_voice"), dict)
+        if not stale_setting and not stale_receipt:
+            return
+        if stale_setting:
+            del settings["voice"]
+            S.write_json(config.ROOT / "settings.json", settings)
+        receipt.unlink(missing_ok=True)
+        events = config.ROOT / "events.jsonl"
+        rows = events.read_text().splitlines() if events.exists() else []
+        event = {"at": S.now(), "kind": "machine-set", "project": None, "actor": "altd",
+                 "reason": "speech-service option removed", "voice": None, "status": "done"}
+        S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
 
 
 def pending_task_operations(project: str) -> list[str]:
@@ -1558,6 +1586,8 @@ def pull_after_done(project: str, task: dict) -> list[str]:
     """Fast-forward the deployment checkout after a task lands; a checkout it may not move is a fault, not a silent skip."""
     try:
         return self_deploy_fast_forward(project, task.get("slug"))
+    except git_policy.FetchError as e:
+        return [f"self-deploy fetch failed; the tick retries: {str(e)[:160]}"]
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         from . import incidents
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)

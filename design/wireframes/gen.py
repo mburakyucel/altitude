@@ -233,13 +233,12 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
 /* voice states sheet: one row per state, desktop composer beside the phone dock */
-/* settings page: option rows, the endpoint form, read-only network lines, entry points */
+/* settings page: option rows, the host setup panel, read-only network lines, entry points */
 .opt{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--hairline);align-items:flex-start}.opt:last-child{border-bottom:0}
 .opt .radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--border);flex:none;margin-top:2px;position:relative}.opt .radio.on{border-color:var(--accent)}.opt .radio.on::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
 .opt b{display:block;font-size:14px;font-weight:600}.opt p{margin:2px 0 0;font-size:13px;color:var(--text-muted);line-height:1.5}
-.form{display:grid;gap:10px;margin-top:10px}.form label{display:grid;gap:4px;font-size:12px;color:var(--text-secondary);font-weight:500}
-.form .field{min-width:0;color:var(--text-primary)}.form .field.ph{color:var(--text-muted)}
-.form .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}.settings-saving .opt{opacity:.55}.settings-saving .btn{pointer-events:none}.form .save-error{color:var(--danger);flex-basis:100%}
+.form{display:grid;gap:10px;margin-top:10px}
+.form .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}.settings-saving .opt{opacity:.55}.settings-saving .btn{pointer-events:none}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;font-size:13px}.kv span{color:var(--text-muted)}.kv b{font-weight:500;overflow-wrap:anywhere}
 .sgrid{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:22px 32px;padding:0 40px 40px;align-items:start}
 .sgrid .vlab{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--text-primary);margin-top:6px}.sgrid .vlab span{color:var(--text-muted);font-weight:400;margin-left:6px}
@@ -691,42 +690,42 @@ def vrow(label, note, draft, phase, hint="", danger=False):
 
 voice_rows = "".join([
     vrow("Listening · browser recognition", "words land in the field as they are recognized; the last phrase may still change", LIVE, "listening", "Listening… Stop to add text, or Send."),
-    vrow("Listening · server transcription", "your speech service: the draft waits, text arrives after Stop or Send", "Keep the draft", "listening", "Listening… Stop to add text, or Send."),
-    vrow("Transcribing · server transcription only", "Cancel stays available; desktop waveform and timer freeze; phone hides them", "Keep the draft", "transcribing", "Transcribing…"),
+    vrow("Listening · this computer", "words arrive from this computer about a second behind speech; the last words may still change", LIVE, "listening", "Listening… Stop to add text, or Send."),
+    vrow("Transcribing · after Stop or Send", "this computer finishes its last words in about half a second; browser recognition waits for its last phrase; Cancel stays available; desktop waveform and timer freeze; phone hides them", LIVE, "transcribing", "Transcribing…"),
+    vrow("Connection lost · this computer", "recording and the timer continue; the recording stays in page memory only", LIVE, "listening", "Connection lost — still recording. Your words will catch up."),
+    vrow("Catching up · this computer", "the page reconnected and replays the recording; the words shown stay until the replay passes them", LIVE, "listening", "Catching up…"),
+    vrow("Waiting for connection · this computer", "Stop or Send while offline; Cancel discards the recording and keeps the words shown", LIVE, "transcribing", "Waiting for connection…"),
     vrow("Landed · every backend", "transcript appended to the draft, cursor at the end, nothing else appears", LIVE, "landed"),
-    vrow("Unavailable · this browser has no speech recognition", "mic hidden, typing unaffected; the docs name a server backend for this browser", "", "unavailable", "This browser has no speech recognition. Typing works."),
-    vrow("Failed · recognition or transcription error", "draft stays; nothing is sent", "Keep the draft", "failed", "Could not transcribe. Typing works.", danger=True),
+    vrow("Unavailable · this browser has no speech recognition", "mic hidden, typing unaffected", "", "unavailable", "This browser has no speech recognition. Typing works."),
+    vrow("Failed · recognition error", "draft stays; nothing is sent", "Keep the draft", "failed", "Could not transcribe. Typing works.", danger=True),
+    vrow("Unreached · this computer", "two minutes without a connection; the words shown stay and a voice Send returns its text unsent to its draft", LIVE, "failed", "Couldn't reach this computer: your recording's last words weren't added.", danger=True),
 ])
 voice_inner = (
     '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Voice input states</h1>'
     '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:960px">One recording cluster at both widths: Cancel, waveform, timer, Stop and the send arrow. '
     'Desktop keeps the cluster compact beside the controls with a crisp, bounded waveform instead of stretching it across the field; phone fills its single row. '
-    'Browser recognition shows words while you speak; server backends show the draft until the transcript lands. The field is read-only during voice input on every backend.</p></div>'
+    'Both backends show words while you speak; with this computer, a lost connection keeps recording and the words catch up. The field is read-only during voice input on every backend.</p></div>'
     f'<div class="vgrid">{voice_rows}</div>'
 )
-board("VoiceStates", 1200, 1420, voice_inner)
+board("VoiceStates", 1200, 2700, voice_inner)
 
 # ---------- settings overview and nested voice settings ----------
-def voice_options(chosen="browser", endpoint_form=False, status="", hosted=False):
+def voice_options(chosen="host", host="ready"):
     opts = [
+        ("host", "This computer", "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service. If the connection drops, recording continues and your words catch up."),
         ("browser", "Browser recognition", "No setup in supported browsers. Words appear as you speak. Your browser may send audio to its speech service; that service’s privacy policy applies."),
-        ("endpoint", "Your speech service", "After you stop, Altitude sends the recording to a speech-to-text service you run or choose, using the standard OpenAI transcription API. It can run on this computer, on another machine on your network, or be a hosted provider. Audio goes only to that address; its storage policy and any charges apply."),
     ]
+    panels = {
+        "ready": ('Ready on this computer. While you dictate, the speech process uses about 2 GB of memory.', '<span class="btn">Remove voice (698 MB)</span>'),
+        "absent": ('Needs a one-time download of about 698 MB, checked against this release.', '<span class="btn primary">Set up voice</span>'),
+    }
     rows = ""
     for key, title, note in opts:
         rows += f'<div class="opt"><span class="radio{" on" if chosen == key else ""}"></span><div style="flex:1;min-width:0"><b>{title}</b><p>{note}</p>'
-        if key == "endpoint" and endpoint_form:
-            failed = status.startswith("Not saved")
-            endpoint = '127.0.0.1:8080/v1/audio/transcriptions' if failed else 'https://speech.example.test/v1/audio/transcriptions' if hosted else 'http://127.0.0.1:8080/v1/audio/transcriptions'
-            button = 'Saving…' if status == 'Saving…' else 'Retry' if failed else 'Save service'
-            extra = ('<label>Model (optional)<span class="field ph">Default: whisper-1</span></label>'
-                     '<label>API key (optional)<span class="field ph" style="display:flex;justify-content:space-between"><span>Key set · never shown</span><span style="color:var(--accent);text-decoration:underline">Replace</span></span></label>'
-                     ) if hosted else '<span style="color:var(--accent);text-decoration:underline;font-size:13px">Hosted provider? Add a key or model</span>'
-            rows += ('<div class="form"><label>Service URL<span class="field" style="display:block;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + endpoint + '</span></label>'
-                     '<p class="muted" style="font-size:12px">The full address of its <code>/v1/audio/transcriptions</code> endpoint. <span style="color:var(--accent);text-decoration:underline">How to run one</span></p>'
-                     + extra +
-                     '<p class="muted" style="font-size:12px">Changes are saved only with Save service.</p>'
-                     '<div class="actions"><span class="btn primary">' + button + '</span>' + (f'<span class="save-error">{status}</span>' if failed else '') + '</div></div>')
+        if key == "host" and chosen == "host":
+            text, button = panels[host]
+            rows += (f'<div class="form"><p class="muted" style="font-size:12px;margin:0">{text}</p><div class="actions">{button}</div>'
+                     '<p class="muted" style="font-size:12px;margin:0">Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.</p></div>')
         rows += '</div></div>'
     return rows
 
@@ -735,7 +734,7 @@ def settings_content(phone=False):
     return (
         ('' if phone else '<h1>Settings</h1>')
         + '<h2>This machine</h2><p class="muted" style="margin-top:-6px">Applies to every project in this Altitude installation.</p>'
-        + f'<a class="setting-link" href="{target}"><span><b>Voice input</b><small>Browser recognition</small></span>{I("chev-r")}</a>'
+        + f'<a class="setting-link" href="{target}"><span><b>Voice input</b><small>This computer</small></span>{I("chev-r")}</a>'
         '<div class="card" style="margin-top:14px"><h3>Network</h3><p class="muted" style="margin:2px 0 10px">Connection details · view only</p>'
         '<div class="kv"><span>Address</span><b>https://altitude.example.test</b><span>HTTPS</span><b>On</b><span>Operator</span><b>Operator</b></div></div>'
         + '<h2 style="margin-top:22px">This project</h2><p class="muted" style="margin-top:-6px">Applies only to that project.</p>'
@@ -762,8 +761,8 @@ def project_settings_content(phone=False):
 def voice_settings_content(phone=False):
     heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>Voice input</h1>'
     return (heading + '<p class="muted" style="margin:0 0 18px">Choose how speech becomes text. Applies to every project.</p>'
-        '<div class="card"><h3>Transcription</h3>' + voice_options("browser") + '</div>'
-        '<p class="muted" style="font-size:12px">Changes apply to your next recording. Altitude keeps no recordings; the speech service that transcribes them controls its own retention.</p>')
+        '<div class="card"><h3>Transcription</h3>' + voice_options("host") + '</div>'
+        '<p class="muted" style="font-size:12px">Changes apply to your next recording. Altitude keeps no recordings.</p>')
 
 def rail_settings():
     return rail("settings").replace('<div class="who">', '<div class="who on">').replace('<span class="avatar">B</span>Burak', '<span class="avatar">O</span>Operator')
@@ -778,14 +777,22 @@ board("VoiceSettings", 1440, 900, '<div style="display:grid;grid-template-column
 voice_settings_phone_header = '<header class="mh"><a class="btn" href="MobileSettings.html" style="padding:0 8px">' + I("chev-l") + 'Settings</a><h1 style="font-size:17px;margin:0 0 0 12px">Voice input</h1></header>'
 board("MobileVoiceSettings", 390, 844, '<div class="m"><div></div>' + voice_settings_phone_header + '<div class="route-content">' + voice_settings_content(phone=True) + '</div><div></div>' + tabbar("") + '</div>')
 
-def desk_settings_card(chosen, endpoint_form=False, status="", hosted=False):
-    return '<div class="vdesk" style="max-width:640px"><div class="card' + (' settings-saving' if status == 'Saving…' else '') + '">' + '<h3>Voice input</h3>' + voice_options(chosen, endpoint_form, status, hosted) + (f'<p class="muted" style="margin:6px 0 0">{status}</p>' if status and not endpoint_form else '') + '</div></div>'
+def settings_card(chosen, status="", host="ready", phone=False):
+    """One Voice input card; status is the line under the choices, and a Retry/Reload link follows a failure."""
+    saving = status == "Saving…"
+    if chosen is None:
+        body = f'<p class="muted" style="margin:6px 0 0">{status}</p>'
+    else:
+        body = voice_options(chosen, host)
+        if status.startswith("Not saved"):
+            body += f'<p style="margin:6px 0 0;color:var(--danger);font-size:13px">{status} <span style="color:var(--accent);text-decoration:underline">Reload settings</span></p>'
+        elif status:
+            body += f'<p class="muted" style="margin:6px 0 0">{status}</p>'
+    card = '<div class="card' + (' tight' if phone else '') + (' settings-saving' if saving else '') + '"><h3>Voice input</h3>' + body + '</div>'
+    return f'<div class="compact" style="width:390px">{card}</div>' if phone else f'<div class="vdesk" style="max-width:640px">{card}</div>'
 
-def phone_settings_card(chosen, endpoint_form=False, status="", hosted=False):
-    return '<div class="compact" style="width:390px"><div class="card tight' + (' settings-saving' if status == 'Saving…' else '') + '">' + '<h3>Voice input</h3>' + voice_options(chosen, endpoint_form, status, hosted) + (f'<p class="muted" style="margin:6px 0 0">{status}</p>' if status and not endpoint_form else '') + '</div></div>'
-
-def srow(label, note, chosen, endpoint_form=False, status="", hosted=False):
-    return (f'<div class="vlab">{label}<span>{note}</span></div>' + desk_settings_card(chosen, endpoint_form, status, hosted) + phone_settings_card(chosen, endpoint_form, status, hosted))
+def srow(label, note, chosen, status="", host="ready"):
+    return (f'<div class="vlab">{label}<span>{note}</span></div>' + settings_card(chosen, status, host) + settings_card(chosen, status, host, phone=True))
 
 entry_desktop = ('<div class="vdesk" style="display:flex;gap:28px;align-items:flex-start">'
     '<div style="width:260px"><div class="muted" style="margin-bottom:8px">Rail, operator row</div><div class="who on" style="border:1px solid var(--border)"><span class="avatar">O</span>Operator<span style="margin-left:auto;color:var(--accent)">' + I("gear", "i sm") + '</span></div></div>'
@@ -794,17 +801,19 @@ entry_phone = ('<div class="compact" style="width:390px"><div class="muted" styl
 
 settings_inner = (
     '<div style="padding:28px 40px 8px"><h1 style="margin:0;font-size:18px">Settings: states and entry points</h1>'
-    '<p class="muted" style="margin:6px 0 18px">Settings opens a compact overview. These backend options live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
+    '<p class="muted" style="margin:6px 0 18px">Settings opens a compact overview. The voice choices live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
     '<div class="sgrid">'
-    + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone", "browser").split('<div class="vdesk"')[0] + entry_desktop + entry_phone
-    + srow("Default", "browser recognition, nothing to configure", "browser")
-    + srow("Your speech service", "only the URL is asked; nothing saves until Save service; How to run one opens the setup docs", "endpoint", endpoint_form=True)
-    + srow("Hosted provider", "the link reveals optional model and key; a stored key is never returned", "endpoint", endpoint_form=True, hosted=True)
-    + srow("Saving", "controls disabled; success returns to the selected option with Saved", "endpoint", endpoint_form=True, status="Saving…")
-    + srow("Failed save", "correct the URL and retry; the saved choice is unchanged", "endpoint", endpoint_form=True, status="Not saved: use a URL beginning with https:// or http://.")
+    + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone", None).split('<div class="vdesk"')[0] + entry_desktop + entry_phone
+    + srow("Loading", "no selected default or editable controls", None, "Loading settings…")
+    + srow("Read failed", "Retry reads again; typing elsewhere is unaffected", None, 'Could not load settings. <span style="color:var(--accent);text-decoration:underline">Retry</span>')
+    + srow("Saved host", "This computer, saved at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
+    + srow("Host not set up", "Set up voice starts the download; progress refreshes every second with Cancel setup", "host", host="absent")
+    + srow("Saved browser", "Browser recognition, saved at once; nothing to configure", "browser", "Saved.")
+    + srow("Saving", "choices disabled until the request answers", "browser", "Saving…")
+    + srow("Failed/denied save", "server explanation with Retry; a choice changed elsewhere offers Reload settings; the saved choice is unchanged", "host", "Not saved: the voice choice changed elsewhere.")
     + '</div>'
 )
-board("SettingsStates", 1200, 3700, settings_inner)
+board("SettingsStates", 1200, 3460, settings_inner)
 
 
 # =====================================================================

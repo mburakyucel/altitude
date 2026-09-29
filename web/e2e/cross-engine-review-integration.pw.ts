@@ -19,7 +19,7 @@ test("proposal review preserves its approval question and captured version along
   await walk.open(`/projects/${initial.project}/tasks/${initial.slug}`);
   const menu = page.getByRole("dialog", { name: "Task details" });
   await page.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }).click();
-  await expect(menu.getByRole("button", { name: "Review changes" })).toBeDisabled();
+  await expect(menu.getByRole("button", { name: "Review changes" })).toBeEnabled();
   await walk.state("01-proposal-request-before-approval", { visible: [menu.getByRole("button", { name: "Review proposal" }), menu.getByText(/Separate same-engine reviewer/)], hidden: [] });
   await menu.getByRole("button", { name: "Review proposal" }).click();
   await expect(menu).toBeHidden();

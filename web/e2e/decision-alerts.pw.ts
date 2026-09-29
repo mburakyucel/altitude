@@ -126,6 +126,45 @@ test("a browser without notifications keeps every decision usable", async ({ pag
   await expect(offer).toBeDisabled();
 });
 
+test("a push service that refuses alerts is named with its reason until a push gets through", { tag: "@chromium" }, async ({ page, context, request }, info) => {
+  const walk = walkthrough(page, info);
+  const tick = async (status: number, reason = "") =>
+    (await request.post("/fixture/tick", { data: { status, reason } })).json();
+  const offer = page.getByRole("button", { name: "Alert me about new decisions" });
+  const on = page.getByRole("button", { name: "Alerts on" });
+  const refused = page.getByText(/push\.example refused Altitude's last alert \(403 BadJwtToken\)/);
+  const reach = page.getByText(/even when Altitude is closed/);
+
+  await recordAlerts(page);
+  await fakePushService(page);
+  await context.grantPermissions(["notifications"]);
+  await walk.open("/");
+  await offer.click();
+  await expect(reach).toBeVisible();
+  const decision = await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a drill day", question: "Which day?" } });
+  expect(decision.ok()).toBe(true);
+  expect(await tick(403, "BadJwtToken")).toEqual({ refused: [{ host: "push.example", reason: "403 BadJwtToken" }] });
+
+  // The page reads the refusal on its next return to the screen.
+  await page.reload();
+  await walk.state("09-push-refused", { visible: [on, refused], hidden: [reach, offer] });
+
+  // Turning alerts off and on subscribes this device afresh; the line returns to its reach.
+  await on.click();
+  await expect(offer).toBeVisible();
+  await walk.state("10-refused-then-resubscribed", { action: () => offer.click(), visible: [on, reach], hidden: [refused] });
+
+  // A refusal cleared by the push service accepting the next alert stops showing too.
+  await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a restore target", question: "Which host?" } });
+  await tick(403, "BadJwtToken");
+  await page.reload();
+  await expect(refused).toBeVisible();
+  await request.post("/fixture/decision", { data: { project: "beacon", title: "Pick a log format", question: "Which format?" } });
+  expect(await tick(201)).toEqual({ refused: [] });
+  await page.reload();
+  await walk.state("11-refusal-cleared", { visible: [on, reach], hidden: [refused] });
+});
+
 test("a device that cannot be woken keeps alerting while Altitude is open, and says so", { tag: "@chromium" }, async ({ page, context }, info) => {
   const walk = walkthrough(page, info);
   await recordAlerts(page);

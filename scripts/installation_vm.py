@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF]
 
-The two directories are release-builder outputs, as for test_installation_lifecycle.sh. The
+Builds two synthetic release versions from one committed revision (default HEAD) and runs the
+harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. The
 signature-checked Ubuntu cloud image is cached; each run boots a copy-on-write overlay that is
 deleted afterwards. The guest has two network cards: one is online only while cloud-init installs
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
@@ -246,17 +247,32 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
             stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
 
 
-def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path) -> int:
+def build(commit: str, work: Path, results: Path) -> None:
+    """Both release versions, built from the one source commit into the throwaway work directory."""
+    for name, version in (("baseline", "v0.0.0-rc.1"), ("candidate", "v0.0.0-rc.2")):
+        with (results / f"build-{name}.log").open("w") as log:
+            subprocess.run([sys.executable, "-B", str(Path(__file__).resolve().parent / "build_release.py"),
+                            "--version", version, "--output", str(work / name), "--source", commit],
+                           stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)
+
+
+def run(results: Path, commit: str, cache: Path) -> int:
     results.mkdir(parents=True, exist_ok=True)
-    record = {"source_commit": commit, "host": {"kernel": platform.release(), "machine": platform.machine()},
+    checkout = Path(__file__).resolve().parent.parent
+    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
+    record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
+              "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
               "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
-    note("verifying the Ubuntu cloud image")
-    record["image"] = base_image(cache)
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
     machine = None
     try:
+        note(f"building both release versions from {commit[:12]}")
+        build(commit, work, results)
+        note("verifying the Ubuntu cloud image")
+        record["image"] = base_image(cache)
+        baseline, candidate = work / "baseline", work / "candidate"
         note("booting the VM")
         machine = Machine(work, cache / IMAGE)
         machine.start()
@@ -316,16 +332,14 @@ def run(baseline: Path, candidate: Path, results: Path, commit: str, cache: Path
             # The overlay, its private key and seed go even when stopping or copying logs failed.
             shutil.rmtree(work)
             (results / "vm.json").write_text(json.dumps(record, indent=2) + "\n")
-            note("VM deleted; " + ("passed" if record["passed"] else "failed"))
+            note("VM deleted; " + ("passed" if record["passed"] else "failed") + f"; evidence in {results}")
     return 0 if record["passed"] else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("baseline", type=Path)
-    parser.add_argument("candidate", type=Path)
     parser.add_argument("results", type=Path)
-    parser.add_argument("source_commit")
+    parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
                         help="where the verified base image is kept between runs")
     args = parser.parse_args()
@@ -336,11 +350,12 @@ def main() -> int:
         print("Missing: " + ", ".join(missing), file=sys.stderr)
         print("Install with: sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", file=sys.stderr)
         return 2
-    if len(args.source_commit) != 40:
-        print("Supply the full source commit the archives were built from.", file=sys.stderr)
+    resolved = subprocess.run(["git", "rev-parse", "--verify", f"{args.source}^{{commit}}"], text=True,
+                              capture_output=True, cwd=Path(__file__).resolve().parent)
+    if resolved.returncode:
+        print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
-    return run(args.baseline.resolve(), args.candidate.resolve(), args.results.resolve(),
-               args.source_commit, args.cache)
+    return run(args.results.resolve(), resolved.stdout.strip(), args.cache)
 
 
 if __name__ == "__main__":

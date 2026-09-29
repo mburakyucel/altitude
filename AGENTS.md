@@ -76,6 +76,11 @@ development/admin exposure grants no new privilege model, generic flag framework
 
 ## Checks
 
+Validation is automated and reusable first: an owner repeats the relevant [validation
+environment](docs/DEVELOPMENT.md#validation-environments) against its own candidate with one command
+and keeps its pass/fail evidence, so the operator does not run validation by hand. Reports name
+acceptance that no run covered and the concrete blocker for each gap.
+
 Owners and helpers run tests relevant to their changes during development. This repository's
 required self-hosted PR `check` runs the full `make check` suite. `alt land` requires a successful
 run for the current head and tested tree, with current main included in that head. A branch missing

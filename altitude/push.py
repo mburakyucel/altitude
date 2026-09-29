@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -25,7 +26,9 @@ from urllib.parse import urlparse
 
 from . import config, digest, state as S
 
-CONTACT = os.environ.get("ALTITUDE_PUSH_CONTACT") or "mailto:altitude@localhost"
+# Apple refuses a token whose contact has no real domain (403 BadJwtToken for altitude@localhost), so the
+# default is a well-formed address at a reserved domain: it names no one, and a real one overrides it.
+CONTACT = os.environ.get("ALTITUDE_PUSH_CONTACT") or "mailto:altitude@example.com"
 KEY_DIR = config.ROOT / "push"
 RECORD = config.ROOT / "push.json"
 DEVICES = 5  # the operator's own devices; a bounded list keeps replaced phones from accumulating
@@ -98,21 +101,40 @@ def _token(endpoint: str) -> str:
     return f"{signed}.{_b64(_signature(_openssl('dgst', '-sha256', '-sign', _key(), stdin=signed.encode())))}"
 
 
-def _send(endpoint: str) -> int:
-    """One empty POST: no body, so the service carries no word of the decision."""
+def _send(endpoint: str) -> tuple[int, str]:
+    """One empty POST: no body, so the service carries no word of the decision. A refusal says why."""
     request = urllib.request.Request(endpoint, data=b"", method="POST", headers={
         "TTL": str(TTL_SECONDS), "Urgency": "high", "Content-Length": "0",
         "Authorization": f"vapid t={_token(endpoint)},k={public_key()}"})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            return response.status
+            return response.status, ""
     except urllib.error.HTTPError as exc:
-        return exc.code
+        return exc.code, _reason(exc)
+
+
+def _reason(refusal: urllib.error.HTTPError) -> str:
+    """Apple and Mozilla answer {"reason": …}, Google a line of text. Only a short plain code is kept:
+    the reason is logged and shown on the page, and a body echoing an endpoint must not carry it there."""
+    try:
+        body = refusal.read(2000).decode(errors="replace").strip()
+    except OSError:
+        return ""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        body = str(parsed.get("reason") or parsed.get("message") or parsed.get("error") or "")
+    body = " ".join(body.split())
+    return body if re.fullmatch(r"[\w .,'()-]{1,80}", body) else ""
 
 
 def _record() -> dict:
     stored = S.read_json(RECORD, {}) or {}
-    return {"subscriptions": list(stored.get("subscriptions") or []), "seen": list(stored.get("seen") or [])}
+    return {"subscriptions": list(stored.get("subscriptions") or []), "seen": list(stored.get("seen") or []),
+            "refused": {endpoint: why for endpoint, why in (stored.get("refused") or {}).items()
+                        if endpoint in (stored.get("subscriptions") or [])}}
 
 
 def _save(record: dict) -> None:
@@ -142,7 +164,10 @@ def subscribe(endpoint: str) -> dict:
         # Already waiting decisions are not news to the first device; a later one must not silence
         # what the devices already subscribed are still owed.
         seen = _waiting() if not record["subscriptions"] else record["seen"]
-        _save({"subscriptions": [*kept[-(DEVICES - 1):], endpoint], "seen": seen})
+        kept = [*kept[-(DEVICES - 1):], endpoint]
+        # A fresh subscription starts unrefused; what its push service thinks shows on the next send.
+        refused = {known: why for known, why in record["refused"].items() if known in kept and known != endpoint}
+        _save({"subscriptions": kept, "seen": seen, "refused": refused})
     return {"push": True}
 
 
@@ -150,40 +175,62 @@ def forget(endpoint: str) -> dict:
     with _LOCK:
         record = _record()
         record["subscriptions"] = [known for known in record["subscriptions"] if known != endpoint]
+        record["refused"].pop(endpoint, None)
         _save(record)
     return {"push": False}
+
+
+def refused() -> list[dict]:
+    """Devices whose push service refuses Altitude's alerts, and why, for the page to say so."""
+    return [{"host": urlparse(endpoint).netloc, "reason": why} for endpoint, why in _record()["refused"].items()]
 
 
 def notify(log=lambda message: None) -> None:
     """Called each tick: a newly waiting decision wakes every subscribed device, once.
 
     A decision counts as announced only once a device has taken it. A machine that was asleep or off
-    its network when the decision arrived therefore still wakes on the next tick that gets through."""
+    its network when the decision arrived therefore still wakes on the next tick that gets through.
+    A device whose push service refused is tried again each tick while a decision waits, so a fix on
+    either side reaches it without another step, even when another device took the decision."""
     with _LOCK:
         record = _record()
         if not record["subscriptions"]:
             return
         keys = _waiting()
         fresh = [key for key in keys if key not in record["seen"]]
-        if not fresh:  # answered decisions drop out; the record stays the size of the queue
+        refusing = [endpoint for endpoint in record["subscriptions"] if endpoint in record["refused"]]
+        if not fresh and not (keys and refusing):  # answered decisions drop out; the record stays the size of the queue
             record["seen"] = keys
             _save(record)
             return
-        endpoints = list(record["subscriptions"])
-    taken = False
+        endpoints = list(record["subscriptions"]) if fresh else refusing
+        before = dict(record["refused"])  # a subscription renewed while sending starts clean, not refused again
+    taken, outcomes = False, {}
     for endpoint in endpoints:  # sent outside the lock: a slow push service must not stall a subscription
         try:
-            status = _send(endpoint)
+            status, reason = _send(endpoint)
         except (PushFailure, OSError) as exc:  # unreachable service or no signing tool: again next tick
             log(f"push to {urlparse(endpoint).netloc} deferred: {exc}")
             continue
         if status in (404, 410):  # gone for good; the device subscribes again when it next alerts
             forget(endpoint)
-        elif status >= 300:
-            log(f"push to {urlparse(endpoint).netloc} refused with {status}")
+        elif status >= 300:  # kept, and recorded with its reason below
+            outcomes[endpoint] = f"{status} {reason}".strip()
         else:
             taken = True
+            outcomes[endpoint] = None
     with _LOCK:
         record = _record()
         record["seen"] = keys if taken else [key for key in keys if key not in fresh]
+        for endpoint, why in outcomes.items():
+            now = record["refused"].get(endpoint)
+            if endpoint not in record["subscriptions"] or now != before.get(endpoint) or now == why:
+                continue
+            # Once per change, with its reason: a refusal logged every tick without one hid its cause.
+            host = urlparse(endpoint).netloc
+            log(f"push to {host} refused with {why}" if why else f"push to {host} delivered again")
+            if why:
+                record["refused"][endpoint] = why
+            else:
+                record["refused"].pop(endpoint, None)
         _save(record)

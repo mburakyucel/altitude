@@ -22,6 +22,10 @@ and visibility decisions remain separate. Private-trial readiness
 requires exact OS/architecture, application/engine versions and observed compatibility evidence;
 fixtures do not establish fresh-machine or live-provider success.
 
+Validation work favors reusable automated entry points that owners run against their candidates over
+steps the operator repeats by hand; each [validation environment](DEVELOPMENT.md#validation-environments)
+names what it does not establish, and remaining manual steps name their reason.
+
 ### Portable installation: delivered and remaining
 
 PR #356 delivers the Linux CLI, daemon and

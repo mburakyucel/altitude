@@ -554,6 +554,7 @@ class Platform(unittest.TestCase):
                 unit = Path(tmp) / "altitude.service"
                 unit.write_text(platform.definition(prefix, Path(sys.executable).resolve(), prefix / "install.json",
                                                     {"PATH": "/usr/bin:/bin"}))
+                unit.chmod(0o644)  # the installer's mode; CI jobs run with umask 000
                 result = subprocess.run(["systemd-analyze", "verify", "--man=no", "--generators=no", str(unit)],
                                         capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)

@@ -14,6 +14,10 @@ from pathlib import Path, PurePosixPath
 
 from . import config, engines, state as S, tasks as T
 
+# Room for a long task's complete mandatory history plus selected evidence (I-20260927-193716), well
+# under the captured-input tool's 2 MiB file limit, while keeping a review's context finite.
+CONTEXT_LIMIT = 256 * 1024
+
 _inflight: set[tuple[str, str, str]] = set()
 _inflight_lock = threading.Lock()
 
@@ -45,9 +49,6 @@ def _owner(task, actor, expected_attempt=None, *, required=False):
 def _eligible(task, subject="changes"):
     if task.get("fault") or task.get("stop_id") or task.get("planned_wait"):
         return "Continue or settle the task before requesting review."
-    # The held PR's merge question stays open through its review; any other answer can still change the code.
-    if subject == "changes" and any(q["status"] == "open" and not T.asks_merge(task, q) for q in task.get("questions", [])):
-        return "Settle the open question before requesting changes review; only the held PR's merge question can stay open."
     if task.get("state") == "reported":
         report = S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json")
         if not T.reported_continuable(task, report):
@@ -240,7 +241,7 @@ def view(project, slug):
 
 
 def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
-            engine=None, model=None):
+            engine=None, model=None, additional=False):
     from . import dispatch, route
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         raise T.TransitionError("A stable review request identity is required.")
@@ -249,6 +250,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
     if any(value is not None and not (isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}", value))
            for value in (engine, model)):
         raise T.TransitionError("A selected review engine or model must be a plain name.")
+    if additional and previous:
+        raise T.TransitionError("An additional review replaces no review; name --previous only to replace one.")
     with merge_lock(project, slug, wait=False), dispatch.launch_lock(), S.project_lock(project):
         task = S.load_task(project, slug)
         task["project"] = project
@@ -273,12 +276,13 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         if repeated:
             if (repeated.get("focus", "") != focus or repeated.get("source_id") != source_id
                     or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject
-                    or repeated.get("selection") != selection):
+                    or repeated.get("selection") != selection or repeated.get("additional", False) != additional):
                 raise T.TransitionError("That review request identity already has a different focus or selection.")
             return _project_review(repeated, task, None)
         if prior and _unresolved(prior):
             # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
-            raise T.TransitionError("Fix or dismiss the review's open findings with evidence before requesting another.")
+            raise T.TransitionError("Fix or dismiss the review's open findings with evidence before replacing it, "
+                                    "or request an additional review that leaves them in the merge gate.")
         if why := _eligible(task, subject):
             raise T.TransitionError(why)
         latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
@@ -286,7 +290,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         reselect = bool(latest and previous == latest["id"] and latest["state"] == "requested"
                         and (engine or model) and selection != latest.get("selection"))
         if latest and not reselect:
-            if previous != latest["id"] or latest["state"] in ("requested", "running"):
+            # An additional review adds to an assessed latest review; every other request names what it replaces.
+            if previous != latest["id"] and not additional or latest["state"] in ("requested", "running"):
                 if (engine or model) and latest.get("selection") != selection:
                     raise T.TransitionError("Another review request is open. Name it with --previous to select a different reviewer.")
                 return _project_review(latest, task, None)
@@ -309,7 +314,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 raise T.TransitionError("The review source must be an original owner or operator message.")
             requester = source["role"]
         # An owner retry cannot turn an operator requirement into an owner-waivable request.
-        if latest and latest.get("requested_by") == T.OPERATOR_MESSAGE_ROLE and latest["state"] != "withdrawn":
+        if not additional and latest and latest.get("requested_by") == T.OPERATOR_MESSAGE_ROLE and latest["state"] != "withdrawn":
             requester = T.OPERATOR_MESSAGE_ROLE
         at = T._conversation_time()
         row = {"id": request_id, "requested_at": at, "requested_by": requester, "source_id": source_id,
@@ -318,9 +323,10 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                "engine_label": choice.get("label"), "same_engine": bool(choice.get("same_engine")),
                "fallback_reason": choice.get("fallback_reason", ""), "allowance_known": bool(choice.get("allowance_known")),
                "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
-               "delivered": actor == "l2", "previous": previous,
+               "delivered": actor == "l2", "previous": previous, "additional": additional,
                "message": {"id": request_id, "at": at, "role": "system", "by": requester,
-                           "review_id": request_id, "text": f"Adversarial {subject} review requested. Prepare a committed source checkpoint, "
+                           "review_id": request_id, "text": f"{'Additional adversarial' if additional else 'Adversarial'} {subject} review requested. "
+                           + ("Current reviews and their open findings stay in the merge gate. " if additional else "") + "Prepare a committed source checkpoint, "
                            f"then run alt task review run --review-id {request_id}"
                            + (" --proposal-message <original-L2-proposal-id>" if subject == "proposal" else "")
                            + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. "
@@ -383,9 +389,27 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         context["limitations"] = context.get("limitations", []) + [
             "Paths over 2 MiB in the base or candidate are not captured in source or changes.patch: "
             + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(omitted.items())) + "."]
-    text = json.dumps(context, ensure_ascii=False, indent=2)
-    if len(text.encode()) > 65536:
-        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included.")
+    # The reviewer receives one copy of each input: the brief embeds the request, and the proposal
+    # under review is its own file with its own bound, like changes.patch (I-20260927-193716).
+    captured = {k: v for k, v in context.items() if k != "request" or v.strip() not in context["brief"]}
+    proposal_text = b""
+    if proposal:
+        proposal_text = context["proposal"]["text"].encode()
+        captured["proposal"] = {"id": proposal_id, "at": context["proposal"]["at"], "file": "proposal.md"}
+        captured["messages"] = [{**{k: v for k, v in r.items() if k != "text"}, "text_file": "proposal.md"}
+                                if r["id"] == proposal_id else r for r in context["messages"]]
+    text = json.dumps(captured, ensure_ascii=False, indent=2)
+    if len(text.encode()) > CONTEXT_LIMIT:
+        # Authority, corrections and decisions are never dropped, so only optional L2 evidence can shrink it.
+        mandatory = len(json.dumps({**captured, "messages": [r for r in captured["messages"] if r["role"] != "l2" or r["id"] == proposal_id]},
+                                   ensure_ascii=False, indent=2).encode())
+        raise T.TransitionError(f"Review context is {len(text.encode())} bytes, over its 256 KiB bound"
+                                + (" (the proposal is bounded separately)" if proposal else "") + ". "
+                                + (f"Mandatory authority, corrections and decisions alone are {mandatory} bytes, so selecting less L2 evidence "
+                                   "cannot make it fit; report the capture fault." if mandatory > CONTEXT_LIMIT else
+                                   "Select relevant L2 evidence with --context-message; authority messages remain included."))
+    if len(proposal_text) > 65536:
+        raise T.TransitionError("The proposal exceeds 64 KiB. Publish a proposal of at most 64 KiB and name it with --proposal-message.")
     folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
     snapshot = folder / "snapshot"
     snapshot.mkdir(parents=True, exist_ok=False)
@@ -410,13 +434,16 @@ def _capture(project, task, review, context_ids, proposal_id=None):
     (snapshot / "changes.patch").write_bytes(patch)
     (snapshot / "context.json").write_text(text)
     (snapshot / "l1.md").write_text((config.PERSONAS / "l1.md").read_text())
+    inputs = {"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}
+    if proposal:
+        (snapshot / "proposal.md").write_bytes(proposal_text)
+        inputs["proposal"] = hashlib.sha256(proposal_text).hexdigest()
+        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
     identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
-                    captured_context_hash=_hash(context), selected_owner_evidence=context_ids is not None,
+                    captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
                     omitted=[{"path": path, "size": size} for path, size in sorted(omitted.items())],
-                    input_hash=_hash({"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}))
-    if proposal:
-        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
+                    input_hash=_hash(inputs))
     runtime = folder / "runtime"
     runtime.mkdir()
     return identity, snapshot, runtime
@@ -425,8 +452,8 @@ def _capture(project, task, review, context_ids, proposal_id=None):
 def review_prompt(snapshot, focus, subject="changes"):
     rules = engines.repository_rules(snapshot / "source")
     return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
-              "then context.json and changes.patch. Give a relatively quick, focused independent adversarial review. "
-              + ("Review the exact proposal in context.json against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
+              "then context.json and " + ("proposal.md" if subject == "proposal" else "changes.patch") + ". Give a relatively quick, focused independent adversarial review. "
+              + ("Review the exact proposal in proposal.md, the message context.json names, against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
               "Start with the brief, decisions, diff and requested focus. Check the main correctness, regression, "
               "security and acceptance risks; follow affected callers and tests when needed to substantiate a finding. "
               "Avoid unrelated exploration, cosmetic suggestions and repeated passes without new evidence. "

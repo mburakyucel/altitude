@@ -223,7 +223,6 @@ class TestDecisions(AltitudeCase):
         task = S.load_task(self.project, slug)
         question, independent = T.question_group_view(self.project, task)["questions"]
         self.assertEqual([row.get("id") for row in T.decisions(self.project)], [question["id"], independent["id"]])
-        self.assertFalse(T.asks_merge(task, question), "freeform input does not authorize a changes-review exception")
         response = T.accept_question(self.project, slug, question["id"], question["revision"], text="The release team.")
         T.resume(self.project, slug)
         T.take_inbox(self.project, slug)

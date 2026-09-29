@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test.use({ scenario: "tasks" });
@@ -91,19 +92,11 @@ test("lost reported-message receipt preserves one saved message through reload w
   expect(submissions).toBe(1);
 });
 
-test("reported composer retains voice listening, cancellation and denied states", { tag: "@chromium" }, async ({ page, request }, info) => {
+test("reported composer retains voice listening, cancellation and denied states", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await request.post("/fixture/reported", { data: {} });
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-      configurable: true,
-      value: async () => {
-        const context = new AudioContext();
-        await context.resume();
-        return context.createMediaStreamDestination().stream;
-      },
-    });
-  });
+  // Host voice hears Chromium's fake microphone through the fixture host.
+  await fixtureHost(page);
   await walk.open("/projects/atlas/tasks/prepare-index-migration");
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const mic = page.getByRole("button", { name: "Start voice input", exact: true });

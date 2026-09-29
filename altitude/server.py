@@ -25,11 +25,9 @@ from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import urllib.error
-import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -113,22 +111,9 @@ def _accepts_gzip(header: str | None) -> bool:
     return qualities.get("gzip", qualities.get("*", 0.0)) > 0
 
 
-# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). The server forwards that recording
-# unchanged to the machine's speech service, one OpenAI-compatible `audio/transcriptions` endpoint
-# on this computer, the network or a hosted provider. Browser recognition never uploads. Altitude
-# owns no speech model.
-VOICE_MAX_BODY = 16 << 20
-BODY_LIMIT = 1 << 20  # every other JSON request; image messages and recordings have their own limits
-VOICE_TYPES = {
-    "audio/mp4": ".m4a",
-    "audio/webm": ".webm",
-    "audio/ogg": ".ogg",
-    "audio/wav": ".wav",
-    "audio/x-wav": ".wav",
-    "audio/mpeg": ".mp3",
-    "audio/aac": ".aac",
-    "audio/x-m4a": ".m4a",
-}
+# Host voice streams samples to `altitude/speech.py`, which transcribes them on this computer; browser
+# recognition never uploads.
+BODY_LIMIT = 1 << 20  # every other JSON request; image messages and host voice audio have their own limits
 
 
 class VoiceInputError(RuntimeError):
@@ -140,120 +125,30 @@ class VoiceInputError(RuntimeError):
 
 
 def _voice_selection(setting: dict) -> str:
-    """Bind a recording to its disclosed backend and destination, without retaining old settings."""
-    destination = setting.get("url", "") if setting["backend"] == "endpoint" else ""
-    return hashlib.sha256(json.dumps([setting["backend"], destination]).encode()).hexdigest()
+    """Bind a recording to its backend and host runtime: a changed choice, setup or removal ends it."""
+    path = speech.runtime() if setting["backend"] == "host" else None
+    return hashlib.sha256(json.dumps([setting["backend"], path.name if path else ""]).encode()).hexdigest()
 
 
 def voice_view() -> dict:
-    """Settings and recording destination, with a write-only endpoint key."""
     setting = config.voice_setting()
-    return {"backend": setting["backend"], "url": setting.get("url", ""),
-            "model": setting.get("model", ""), "key_set": bool(setting.get("key")),
-            "selection": _voice_selection(setting)}
+    return {"backend": setting["backend"], "selection": _voice_selection(setting), "host": speech.status()}
 
 
 def save_voice(body: dict) -> dict:
     """Apply the operator's voice selection through the same durable request as the CLI."""
-    if body.keys() - {"backend", "url", "model", "key", "keep_key", "selection"}:
+    if body.keys() - {"backend", "selection"}:
         raise ValueError("Unsupported voice settings fields.")
-    current = config.voice_setting()
-    if body.get("selection") != _voice_selection(current):
+    if body.get("selection") != _voice_selection(config.voice_setting()):
         raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
     backend = body.get("backend")
-    if backend == "browser":
-        if body.keys() - {"backend", "selection"}:
-            raise ValueError("Service fields apply only to your speech service.")
-        value = "browser"
-    elif backend == "endpoint":
-        value = {"url": body.get("url")}
-        for field in ("model", "key"):
-            text = body.get(field, "")
-            if not isinstance(text, str):
-                raise ValueError(f"The speech service {field} must be text.")
-            if text.strip():
-                value[field] = text.strip()
-        keep_key = body.get("keep_key", False)
-        if not isinstance(keep_key, bool):
-            raise ValueError("Keep key must be true or false.")
-        if keep_key:
-            if "key" in body:
-                raise ValueError("Choose either keeping or replacing the key.")
-            if current["backend"] != "endpoint" or current["url"] != value["url"]:
-                raise ValueError("A saved key can only be kept for the same service URL.")
-            if current.get("key"):
-                value["key"] = current["key"]
-    else:
-        raise ValueError("Choose browser recognition or your speech service.")
-    dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR)
+    if backend not in ("browser", "host"):
+        raise ValueError("Choose this computer or browser recognition.")
+    dispatch.request_setting(None, "voice", backend, "Voice input settings", actor=config.OPERATOR_ACTOR)
     result = dispatch._run_setting(None, "voice")
     if result["status"] != "done":
         raise ValueError(result["note"])
     return voice_view()
-
-
-def transcribe_voice(raw: bytes, content_type: str, *, setting: dict | None = None) -> str:
-    """Transcribe one bounded browser recording through the machine's speech service, retaining no audio."""
-    media_type = content_type.split(";", 1)[0].strip().lower()
-    extension = VOICE_TYPES.get(media_type)
-    if extension is None:
-        raise VoiceInputError("This browser's recording format is not supported.", 415)
-    setting = config.voice_setting() if setting is None else setting
-    if setting["backend"] == "browser":
-        raise VoiceInputError("Voice now runs in the browser on this installation. Try again.", 409)
-    return _transcribe_endpoint(raw, media_type, extension, setting)
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A redirect would carry the bearer key to whatever host the endpoint names; a 3xx is a failure."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-_ENDPOINT_OPENER = urllib.request.build_opener(_NoRedirect)
-
-
-def _transcribe_endpoint(raw: bytes, media_type: str, extension: str, setting: dict) -> str:
-    """One OpenAI-compatible `audio/transcriptions` request; the service decodes the browser's container."""
-    boundary = uuid.uuid4().hex
-    body = b"".join([
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{setting['model']}\r\n".encode(),
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n".encode(),
-        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording{extension}\"\r\n"
-         f"Content-Type: {media_type}\r\n\r\n").encode(),
-        raw, f"\r\n--{boundary}--\r\n".encode(),
-    ])
-    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"}
-    if setting.get("key"):
-        headers["Authorization"] = f"Bearer {setting['key']}"
-    # The URL carries no credentials (config.validate_voice), so naming it tells the user what to fix.
-    service = setting["url"]
-    request = urllib.request.Request(service, data=body, headers=headers, method="POST")
-    try:
-        with _ENDPOINT_OPENER.open(request, timeout=120) as response:
-            payload = json.loads(response.read(1 << 20).decode("utf-8", "replace"))
-    except urllib.error.HTTPError as exc:
-        log(f"voice service refused the recording: HTTP {exc.code}")
-        raise VoiceInputError(
-            f"Your speech service at {service} answered HTTP {exc.code}. Check its URL, model and key. "
-            "Your draft is unchanged.", 503
-        ) from exc
-    except TimeoutError as exc:
-        raise VoiceInputError(f"Your speech service at {service} took too long. Try again.", 504) from exc
-    except (urllib.error.URLError, OSError) as exc:
-        log(f"voice service unreachable: {exc.reason if isinstance(exc, urllib.error.URLError) else type(exc).__name__}")
-        raise VoiceInputError(
-            f"Couldn't reach your speech service at {service}. Check that it's running. Your draft is unchanged.", 503
-        ) from exc
-    except ValueError as exc:
-        raise VoiceInputError(f"Your speech service at {service} returned an invalid response.", 502) from exc
-    text = payload.get("text") if isinstance(payload, dict) else None
-    if not isinstance(text, str):
-        raise VoiceInputError(f"Your speech service at {service} returned an invalid response.", 502)
-    if not text.strip():
-        raise VoiceInputError("No speech was detected. Your draft is unchanged.", 422)
-    return text.strip()
 
 
 def image_capability(project: str, slug: str | None = None) -> dict:
@@ -293,6 +188,10 @@ def log(msg: str) -> None:
     print(line, end="", flush=True)
 
 
+#: The daemon's host voice recordings and speech worker.
+SPEECH = speech.Host(log)
+
+
 def spawn(key: str, fn, *a) -> bool:
     """Run fn in a named background thread unless one with that key is already running."""
     with _bg_guard:
@@ -328,7 +227,8 @@ def request_daemon_task_operation(project: str, slug: str, operation: str, reaso
                                   generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
     """Persist an operator request before scheduling its one daemon-side runner."""
     observed = {key: value for key, value in (("generation", generation), ("stop_id", stop_id)) if value is not T._UNSET}
-    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, **observed)
+    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, deliver_reason=False,
+                                             **observed)
     if result.get("queued"):
         try:
             spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
@@ -1163,6 +1063,28 @@ def tick() -> None:
     morning_digest()
 
 
+SELF_DEPLOY_FETCH_GRACE_SECONDS = 300
+_fetch_failing_since: dict[str, float] = {}  # project → monotonic time its self-deploy fetches started failing
+
+
+def self_deploy(project: str) -> None:
+    # Activation: a sole running worker's merge must activate without another dispatch or report.
+    try:
+        with dispatch.publication_settlement(project):
+            dispatch.self_deploy_fast_forward(project)
+    except git_policy.FetchError as e:
+        # #602: a fetch that recovers on a later tick is not an incident; one failing past the grace period is.
+        since = _fetch_failing_since.setdefault(project, time.monotonic())
+        if time.monotonic() - since < SELF_DEPLOY_FETCH_GRACE_SECONDS:
+            log(f"[{project}] self-deploy fetch failed; retrying next tick: {e}")
+        else:
+            incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+        return
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+    _fetch_failing_since.pop(project, None)
+
+
 def tick_project(project: str) -> None:
     if audit.path(project).exists():
         spawn(f"audit:{project}", audit.run, project)
@@ -1170,12 +1092,7 @@ def tick_project(project: str) -> None:
         project_setup.maintain(project)
     except (OSError, ValueError, RuntimeError) as exc:
         log(f"[{project}] setup check unavailable: {exc}")
-    # Activation: a sole running worker's merge must activate without another dispatch or report.
-    try:
-        with dispatch.publication_settlement(project):
-            dispatch.self_deploy_fast_forward(project)
-    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+    self_deploy(project)
     try:
         images.collect(project)
     except (images.ImageError, OSError) as e:
@@ -1557,37 +1474,61 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _transcribe_voice(self) -> None:
+    def _host_voice(self, parts: list[str], query: dict) -> None:
+        """Host voice: `live` starts a recording, `live/<id>/audio?seq=N&final=0|1` adds samples and answers the
+        text so far, `live/<id>/cancel` discards it; `host` sets up, cancels setup or removes the runtime. The
+        live routes carry raw samples, so they are read here rather than as JSON."""
+        denied = self._terminal_denied(json_body=False, subject="Voice")
+        if denied:
+            self.close_connection = True
+            return self._json({"error": denied}, 403)
+        device = self._device["id"] if self._device else None
         try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            return self._json({"error": "invalid recording size"}, 400)
-        if length <= 0:
-            return self._json({"error": "expected an audio recording"}, 400)
-        if length > VOICE_MAX_BODY:
-            return self._json({"error": "recording is too large"}, 413)
-        content_type = self.headers.get("Content-Type") or ""
-        if content_type.split(";", 1)[0].strip().lower() not in VOICE_TYPES:
-            return self._json({"error": "This browser's recording format is not supported."}, 415)
-        raw = self.rfile.read(length)
-        if len(raw) != length:
-            return self._json({"error": "the recording upload was incomplete"}, 400)
-        try:
+            if parts == ["api", "voice", "host"]:
+                action = self._body().get("action")
+                if action == "setup":
+                    SPEECH.start_setup()
+                elif action == "cancel":
+                    SPEECH.cancel_setup()
+                elif action == "remove":
+                    SPEECH.remove()
+                else:
+                    return self._json({"error": "Choose setup, cancel or remove."}, 400)
+                return self._json(voice_view())
+            self._keep_open = True  # one request every half second: no fresh handshake for each
+            if len(parts) == 5 and parts[2] == "live" and parts[4] == "cancel":
+                self._body()
+                SPEECH.close(parts[3], device)
+                return self._json({"ok": True})
+            if parts != ["api", "voice", "live"] and (len(parts) != 5 or parts[2] != "live" or parts[4] != "audio"):
+                return self._json({"error": "unknown api"}, 404)
+            # A reconnecting page replays its recording only into the backend and runtime it started with.
             setting = config.voice_setting()
-            if self.headers.get("X-Voice-Selection") != _voice_selection(setting):
-                raise VoiceInputError("Voice settings changed. Your typed draft is unchanged. Record again with the new setting.", 409)
-            text = transcribe_voice(raw, content_type, setting=setting)
-        except VoiceInputError as exc:
-            log(f"voice transcription failed ({exc.status}): {type(exc.__cause__).__name__ if exc.__cause__ else str(exc)}")
+            if setting["backend"] != "host" or self.headers.get("X-Voice-Selection") != _voice_selection(setting):
+                self.close_connection = True  # an audio body stays unread
+                raise speech.SpeechError("Voice settings changed. Record again with the new setting.", 409)
+            if parts == ["api", "voice", "live"]:
+                self._body()
+                owner = access.voice_owner(device)
+                replaying = self.headers.get("X-Voice-Owner")
+                if replaying is not None and replaying != owner:
+                    raise speech.SpeechError("Voice stopped: this recording belongs to another device.", 403)
+                return self._json({**SPEECH.open(device), "owner": owner})
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                seq = int((query.get("seq") or [""])[0])
+            except ValueError:
+                raise speech.SpeechError("Voice received a malformed recording.", 400) from None
+            final = (query.get("final") or ["0"])[0] == "1"
+            if length < 0 or length > speech.CHUNK_LIMIT or seq < 0:
+                self.close_connection = True
+                raise speech.SpeechError("Voice received a malformed recording.", 400)
+            pcm = self.rfile.read(length)
+            if len(pcm) != length:
+                raise speech.SpeechError("Voice stopped: the recording upload was incomplete.", 400)
+            return self._json(SPEECH.audio(parts[3], device, seq, pcm, final))
+        except speech.SpeechError as exc:
             return self._json({"error": str(exc)}, exc.status)
-        except Exception as exc:  # noqa: BLE001 — internals stay in the private log, never the response
-            log(f"voice transcription failed: {exc!r}\n{traceback.format_exc()}")
-            return self._json(
-                {"error": "Voice transcription is temporarily unavailable. You can keep typing and try again."},
-                503,
-            )
-        log(f"voice transcription: {len(text)} characters from {length} uploaded bytes")
-        return self._json({"text": text})
 
     def _cross_site(self) -> bool:
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
@@ -1773,7 +1714,7 @@ class Handler(BaseHTTPRequestHandler):
                 except terminal.TerminalError as exc:
                     return self._json({"error": f"Terminal is off, but a terminal is still running. {exc}"}, exc.status)
             return self._json(view)
-        if len(parts) != 4 or parts[3] not in ("open", "input", "resize", "close"):
+        if len(parts) != 4 or parts[3] not in ("open", "input", "command", "resize", "close"):
             return self._json({"error": "unknown api"}, 404)
         project, action, slug, ident = unquote(parts[2]), parts[3], body.get("task"), body.get("id")
         if slug is not None and not isinstance(slug, str):
@@ -1785,6 +1726,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(terminal.open_terminal(project, slug))
             if action == "input":
                 terminal.write(project, slug, ident, body.get("data"))
+            elif action == "command":
+                terminal.hand(project, slug, ident, body.get("text"))
             elif action == "resize":
                 terminal.resize(project, slug, ident, body.get("cols"), body.get("rows"))
             else:
@@ -1910,9 +1853,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._terminal_get(parts, q)
             if api == "alerts":
                 try:  # without a key the page keeps alerting while it is open, and says so
-                    return self._json({"key": push.public_key()})
+                    return self._json({"key": push.public_key(), "refused": push.refused()})
                 except push.PushFailure as exc:
-                    return self._json({"key": None, "why": str(exc)})
+                    return self._json({"key": None, "why": str(exc), "refused": []})
             if api == "setup" and len(parts) == 3:
                 try:
                     return self._json(project_setup.observe(parts[2]))
@@ -2007,8 +1950,8 @@ class Handler(BaseHTTPRequestHandler):
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
             if api == "files":
                 return self._json({"error": "Use GET to read a document."}, 405)
-            if api == "transcribe":
-                return self._transcribe_voice()
+            if api == "voice" and len(parts) > 2:
+                return self._host_voice(parts, parse_qs(u.query))
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
@@ -2913,6 +2856,7 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
+    dispatch.forget_speech_service()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
         try:
             git_policy.activate_source()
@@ -2970,6 +2914,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
             terminal.close_all()
         except terminal.TerminalError as exc:
             log(f"terminal: {exc}")  # each terminal's job is PartOf the service, which stops it too
+        SPEECH.shutdown()
 
 
 def certificate_view() -> dict | None:

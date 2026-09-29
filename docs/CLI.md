@@ -555,7 +555,7 @@ operator's shell selects the project by inserting `--project example` after `alt
    its `checkout_archive` branch and SHA. A successful preservation leaves clean main at `origin/main`
    and keeps the task blocked. Snapshot commits live only on the local archive branch.
 4. Give the owner the branch, SHA and authorized reconciliation scope with
-   `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
+   `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR." --summary "Reconcile the archived edits"`
    For a faulted task, this L3 message records scope without waking it; request
    `alt task resume reconcile-edits --reason "Archive and reconciliation scope verified"` separately.
    The owner inspects the snapshot before applying authorized changes and selecting what to publish.
@@ -705,18 +705,19 @@ booleans and nonnumeric values are rejected. Reset removes the override and rest
 The same request path selects the transcription backend every composer uses:
 
 ```sh
-alt machine set --voice browser --reason 'Recognize in the browser'   # the default
-alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'My speech server'
-alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
+alt machine set --voice host --reason 'Transcribe on this computer'
+alt machine set --voice browser --reason 'Recognize in the browser'
 alt machine set --unset-voice --reason 'Back to the default'
 ```
 
-`--voice` accepts `browser` or the `http(s)` URL of an OpenAI-compatible speech service, without
-credentials or a query string; `--voice-model` and `--voice-key-file` (a file, or `-` for stdin)
-accompany a URL only, so the key is never on a command line. `machine show` reports `voice` with
-a key shown as `set`; the key itself stays in the private settings and request files under the
-runtime home and never appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
-backend needs, where audio goes and how to run a speech service.
+`--voice` accepts `host` or `browser`. Without a saved choice, the backend is `host` where this computer
+can run the speech model and `browser` elsewhere; `machine show` reports the backend in effect. See
+[voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
+
+`alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
+state. `alt voice setup` downloads and checks the speech model and its runtime once (about 698 MB),
+printing progress and the final state; `alt voice remove` stops dictation and deletes them. Setup
+and removal are the operator's; agents are refused.
 
 ### Projects folder
 
@@ -835,7 +836,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ```text
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
-alt task message <slug> <text>|- [--file <path>] [--image <id>]
+alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
 alt task reply [<slug>] <text>|- [--file <path>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
@@ -860,7 +861,12 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
-`alt task message <slug> 'Resolve the conflicts and retain the review hold.'` continues a reported
+L3's `alt task message` requires `--summary`: one plain line, up to 100 characters, saying what the
+message is about. The task conversation shows it as the message's folded row, and Show opens the
+original text; the summary is stored beside that text and changes nothing the owner receives. Only
+L3's messages carry a summary.
+
+`alt task message <slug> 'Resolve the conflicts and retain the review hold.' --summary 'Resolve conflicts, keep the review hold'` continues a reported
 owner whose recorded PR is still open. `alt task resume <slug> --reason 'Continue the existing PR'`
 is the equivalent coordinator/operator continuation without a new conversation message. Both use
 the daemon's existing resume path and retain the attempt, provider session, worktree, branch, PR,
@@ -869,7 +875,7 @@ queued resume receipt means accepted work; inspect `alt task status <slug>` for 
 state or a capacity/recovery wait. Repeating the same outstanding coordinator resume request reuses
 its receipt. Separate messages remain separate, even when their text matches.
 
-L3 also uses `alt task message <slug> 'Correct the report and retain the pending acceptance.'`
+L3 also uses `alt task message <slug> 'Correct the report and retain the pending acceptance.' --summary 'Correct the report'`
 or `alt task resume <slug> --reason 'Correct the contradicted report'` when the current verifier
 verdict is `contradicted`, including after every delivery PR is merged. This correction path checks
 the recorded report owner and delivery, requires the existing owner session and worktree, and needs
@@ -1014,6 +1020,11 @@ intent, not evidence that every helper used the requested level.
 For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
 `daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the
 worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.
+When altd claims a resume requested with `task resume --reason`, the reason joins the task conversation
+once as a message from its actor (L3's folds as "Resumed the task") and reaches the resumed owner after
+the pending inbox rows, marked as the resume reason with its actor and time. A claim that fails before launch returns it to the
+inbox with the rest of the batch. A message wake and the task page's Resume and Continue buttons,
+which send fixed text rather than an authored reason, add nothing.
 A repeated reason after a genuine later lifecycle creates a new request against that lifecycle's identity.
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
@@ -1030,7 +1041,7 @@ The daemon accepts only existing committed images from the current project; ther
 arbitrary download or cross-project relay. For example:
 
 ```sh
-alt task message fix-layout 'Match the spacing shown in this screenshot.' --image <image-id>
+alt task message fix-layout 'Match the spacing shown in this screenshot.' --summary 'Match the screenshot spacing' --image <image-id>
 ```
 
 The task receives the actual managed image content through its engine adapter and retains the
@@ -1394,6 +1405,8 @@ alt task review assess --review-id <proposal-review-id> --proposal-message <revi
 alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
+# Review new material while earlier reviews and their open findings stay in the merge gate:
+alt task review request --subject proposal --additional --focus "Challenge the security addendum"
 # Select the reviewer for one request, or re-select a request still waiting to run:
 alt task review request --subject proposal --engine <engine> --model <model> --focus "Challenge the wording"
 alt task review request --previous <waiting-id> --model <model>
@@ -1401,18 +1414,22 @@ alt task review request --previous <waiting-id> --model <model>
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
-skipped by the operator's UI action. A proposal request can continue an owner with an approval
-question solely to prepare, run and assess review, preserving that question and its approval requirement.
-A changes request does the same while the only open question is the held PR's merge question (an operator
-question with quick options naming that PR): the question, its revision and the card stay unchanged, and the
-merge hold still needs the operator's approval. Any other open question refuses changes review until it is settled.
+skipped by the operator's UI action. Open questions do not prevent either subject: a request can continue a
+question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
+and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
+freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
 main and commit before retrying.
 `run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
-included. Default capture includes all L2 messages. The 64 KiB context limit fails explicitly.
+included. Default capture includes all L2 messages. The captured context holds one copy of each input and
+fails explicitly beyond 256 KiB, naming its size; when authority, corrections and decisions alone exceed
+the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
+that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
+captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
+competes with retained authority.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
@@ -1429,6 +1446,11 @@ saved and shown with its unresolved findings, but it does not clear the review. 
 merge while any current assessment has an open finding, and a new request cannot replace that review
 until a later `assess` by the current owner gives evidence-backed `fixed`/`dismissed` outcomes. That
 assessment then faces the ordinary freshness checks; withdrawal authority is unchanged.
+`--additional` requests another review of the subject that replaces none, for example of a proposal
+addendum. It needs every current review finished and assessed, cannot name `--previous`, and has its
+own focus and requester. Earlier reviews keep their open findings, requester, focus and withdrawal
+authority, and still block merge however the additional review turns out. Retrying or re-running the
+additional review with `--previous` replaces only it.
 With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; post the outcome explanation before assessment so it is included in the final context.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.
@@ -1699,3 +1721,13 @@ task's agent cannot read it. The last ended terminal's output stays readable unt
 for the task, the task finishes or Altitude restarts; after a restart the command says no output is
 available. Project terminals have no reader. Output the owner reads becomes part of its session and
 provider record; save only what the task's evidence needs.
+
+When the operator opens the owner's `run` command in the task terminal, altd tells the owner how it went
+with a Terminal notice at its next checkpoint, waking it when blocked: the command looks finished (the shell
+held the foreground again for a second after Enter on it, and no job it started is suspended or in the
+background), or the terminal ended before the command ran or finished. Only the attempt that handed the
+command hears about it. The notice names the command and is a prompt to check, not proof that it ended: it
+carries no exit status, and a command waiting for input, such as `read`, can look finished. The owner reads the
+output with `alt task terminal` and verifies that the command ended and how. Ctrl+C before Enter drops the command without a notice. The
+notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
+it for its next resume.

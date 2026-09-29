@@ -255,15 +255,85 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(task["state"], "running")
         for key in ("waiting_on", "escalated", "fault"):
             self.assertNotIn(key, task, f"{key} leaves with the block")
-        out = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.", env={"ALTITUDE_ACTOR": "l3"})
+        unsummarised = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.",
+                                env={"ALTITUDE_ACTOR": "l3"})
+        self.assertNotEqual(unsummarised.returncode, 0)
+        self.assertIn("--summary", unsummarised.stderr)
+        out = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.",
+                       "--summary", "  Keep the\n tests  ", env={"ALTITUDE_ACTOR": "l3"})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(T.task_messages(self.project, self.slug)[-1]["role"], "l3")
+        latest = T.task_messages(self.project, self.slug)[-1]
+        self.assertEqual((latest["role"], latest["text"], latest["summary"]), ("l3", "Also keep the tests.", "Keep the tests"))
+        self.assertEqual(T.pending(self.project, self.slug)[-1]["text"], "Also keep the tests.",
+                         "the owner receives the complete original text")
+        with self.assertRaisesRegex(T.TransitionError, "100 characters"):
+            T.message(self.project, self.slug, "l3", "Too long.", summary="x" * 101)
+        with self.assertRaisesRegex(T.TransitionError, "only L3"):
+            T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Mine.", summary="Operator line")
 
     def test_resume_without_a_message_continues_from_the_progress_file(self):
         self.block()
         seen = {}
         self.resume(seen)
         self.assertEqual(seen["prompt"], "Continue from your progress file.")
+
+    def test_resume_reason_reaches_the_faulted_owner_once_after_its_inbox(self):
+        # I-20260927-193716: the resumed owner saw only an earlier non-waking note and re-faulted.
+        self.block("Sandbox refused the container probe.")
+        task = S.load_task(self.project, self.slug)
+        task["fault"] = "worker"
+        S.save_task(self.project, task)
+        earlier = T.message(self.project, self.slug, "l3", "I will verify the fix before resuming.")
+        steering = T.message(self.project, self.slug, "burak", "Keep the probe finite.")
+        request = dispatch.request_task_operation(self.project, self.slug, "resume",
+                                                  "Fix merged and the probe now passes locally.", actor="l3")["request"]
+        seen = {}
+        self.quiet_launch()
+        self.patch(engines, "resume_l2", side_effect=lambda _engine, _name, session_id, prompt, **_kw: (
+            seen.update(prompt=prompt) or {"returncode": 0, "agent": {"id": "agent-new", "sessionId": session_id}}))
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "done")
+        reason = T.task_messages(self.project, self.slug)[-1]
+        self.assertEqual((reason["id"], reason["role"], reason["summary"], reason["text"]),
+                         (request["id"], "l3", "Resumed the task", "Fix merged and the probe now passes locally."))
+        self.assertEqual(seen["prompt"], T.render_inbox([earlier, steering, reason]))
+        self.assertIn(f"Resumed by L3 at {reason['at']} with this reason (message id {request['id']}):\n"
+                      "Fix merged and the probe now passes locally.", seen["prompt"])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+
+        self.block()
+        later = T.message(self.project, self.slug, "burak", "One more detail.")
+        self.resume(seen, worker="agent-later")
+        self.assertEqual(seen["prompt"], T.render_inbox([later]))
+        self.assertEqual(sum(row["id"] == request["id"] for row in T.task_messages(self.project, self.slug)), 1)
+
+    def test_a_button_resume_is_not_the_same_request_as_an_authored_one(self):
+        self.block()
+        text = "Resume requested from the task conversation"
+        button = dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                 deliver_reason=False)
+        self.assertFalse(button["request"]["deliver_reason"])
+        with self.assertRaisesRegex(T.TransitionError, "already queued"):
+            dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE)
+        again = dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                deliver_reason=False)
+        self.assertEqual((again["idempotent"], again["request"]["id"]), (True, button["request"]["id"]))
+
+    def test_an_operator_resume_row_is_not_an_answer(self):
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
+                       "--for-operator", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [question] = T.question_views(self.project, self.slug)
+        request = dispatch.request_task_operation(self.project, self.slug, "resume",
+                                                  "Go ahead with the blue one.",
+                                                  actor=T.OPERATOR_MESSAGE_ROLE)["request"]
+        self.quiet_launch()
+        self.patch(engines, "resume_l2", side_effect=lambda _engine, _name, session_id, _prompt, **_kw: (
+            {"returncode": 0, "agent": {"id": "agent-new", "sessionId": session_id}}))
+        dispatch.run_task_operation(self.project, self.slug)
+        self.assertEqual(T.task_messages(self.project, self.slug)[-1]["id"], request["id"])
+        with self.assertRaisesRegex(T.TransitionError, "original message"):
+            T.resolve_question(self.project, self.slug, question["id"], question["revision"], request["id"],
+                               disposition="answered", reason="Resume reason", expected_attempt=1)
 
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")

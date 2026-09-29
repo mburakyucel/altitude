@@ -161,7 +161,7 @@ precedes that evidence.
 For reproducible Linux installation evidence, dispatch the
 [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance) on main with
 the selected source SHA as `source_ref`, or run the same harness in a
-[local VM](DEVELOPMENT.md#local-vm-run) with archives built from that SHA. It builds two synthetic version labels from that same
+[local VM](DEVELOPMENT.md#local-vm-run) with `make installation-vm RESULTS=dir SOURCE=<sha>`. It builds two synthetic version labels from that same
 commit and exercises real installation, service activation, HTTPS, update, failed activation recovery
 and retained-data uninstall; the local VM also runs the built `install.sh` against a release server
 inside the guest. This establishes no cross-release data migration or download from the published

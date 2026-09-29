@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
-import { ApiError, imageSendRefused, transcribeVoice } from "../data/api";
-import type { VoiceBackend } from "../data/api";
+import { ApiError, imageSendRefused } from "../data/api";
+import type { VoiceSettings } from "../data/api";
+import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
+import { HostCapture, MAX_RETAINED, UNREACHED } from "./hostCapture";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
 import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
@@ -14,17 +16,15 @@ import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
  * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
  * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
- * The installation's voice backend decides the capture: browser recognition shows words while
- * listening and never uploads; the local service and a configured endpoint record and upload on
- * Stop or Send. Both run the same recorder-shaped state machine.
+ * The installation's voice backend decides the capture: host voice streams to this computer's speech
+ * model and browser recognition never uploads; both show their words while listening and run the same
+ * recorder-shaped state machine. Host voice keeps recording through a lost connection and its words catch
+ * up; after Stop or Send it waits for the connection with Cancel.
  */
 
 /** Recordings stop five seconds under ten minutes, absorbing timer delay and container padding. */
 export const MAX_RECORDING_MS = 595_000;
 const LAST_MINUTE_MS = 60_000;
-const MAX_UPLOAD_BYTES = 16 << 20;
-/** A transcription that takes longer than this is a failure the hint reports; typing still works. */
-const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
 const WAVEFORM_CLOSE_MS = 3000;
 
@@ -52,9 +52,10 @@ function closeWaveform(context: AudioContext) {
 }
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
-type Capture = MediaRecorder | RecognitionCapture;
-type SendFailure = "refused" | "unconfirmed" | "transcription" | null;
-type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; cancel: () => void };
+type Capture = RecognitionCapture | HostCapture;
+/** "transcription": the recording failed; "unreached": host voice lost the connection past its wait. */
+type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | null;
+type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; capture: Capture; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
 
 // #320: only submitted text lives beyond a composer. These records never initiate a send.
@@ -77,7 +78,7 @@ function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = 
   const key = recoveryKey(conversation);
   const stored = sessionStorage.getItem(key);
   try {
-    if (saved.text || saved.failure === "transcription" || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
+    if (saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
     else sessionStorage.removeItem(key);
     unwrittenRecovery.delete(conversation);
   } catch (error) {
@@ -149,38 +150,36 @@ export function combineDraft(draft: string, transcript: string): string {
 
 /**
  * Why voice is unavailable: "insecure" (the hint says so), "unrecognized" (the browser backend has
- * no speech recognition; the hint says so), "unsupported" (the mic simply hides), "pending" while the
- * backend is still being read (the mic hides), or null.
+ * no speech recognition; the hint says so), "host" (host voice cannot run on this computer, or its setup
+ * failed; the hint says why), "unsupported" (the mic simply hides), "pending" while the backend is still
+ * being read (the mic hides), or null.
  */
-export function voiceUnavailable(backend: VoiceBackend | null): "insecure" | "unrecognized" | "unsupported" | "pending" | null {
+export function voiceUnavailable(voice: VoiceSettings | null): "insecure" | "unrecognized" | "host" | "unsupported" | "pending" | null {
   if (typeof window === "undefined" || typeof navigator === "undefined") return "unsupported";
   if (window.isSecureContext === false) return "insecure";
-  if (backend === null) return "pending";
+  if (voice === null) return "pending";
   if (typeof navigator.mediaDevices?.getUserMedia !== "function") return "unsupported";
-  if (backend === "browser") return recognitionAvailable() ? null : "unrecognized";
-  if (typeof MediaRecorder === "undefined") return "unsupported";
-  return null;
+  if (voice.backend === "browser") return recognitionAvailable() ? null : "unrecognized";
+  if (voice.host.state === "unavailable" || voice.host.state === "failed") return "host";
+  return typeof AudioWorkletNode === "undefined" ? "unsupported" : null;
 }
 
-function recordingMimeType(): string {
-  const choices = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
-  return (
-    choices.find((type) => {
-      try {
-        return MediaRecorder.isTypeSupported(type);
-      } catch {
-        return false;
-      }
-    }) ?? ""
-  );
+/** What the hint says when host voice cannot run here; the Settings link offers setup or Retry. */
+function hostVoiceHint(voice: VoiceSettings): ReactNode {
+  const host = voice.host;
+  if (host.state === "unavailable") return `Voice isn't available on this computer: ${host.reason}. Typing works.`;
+  if (host.state === "failed") return <>Voice setup did not finish. <Link className="link" to="/settings/voice">Retry in Settings</Link>. Typing works.</>;
+  if (host.state === "setting-up") return "Voice is being set up on this computer. Typing works.";
+  return <>{host.state === "outdated" ? "Voice needs an update on this computer." : "Voice needs a one-time download on this computer."}{" "}
+    <Link className="link" to="/settings/voice">Set up voice</Link></>;
 }
 
 /**
- * Discard a recognition capture without waiting for its last phrase. Its recognizer lets go of the
- * microphone later; the capture releases the stream then, and the next capture waits for that
- * (`RecognitionCapture.idle`) instead of starting on top of it.
+ * Discard a live capture without waiting for its last words. A recognizer lets go of the microphone
+ * later; the capture releases the stream then, and the next capture waits for that
+ * (`RecognitionCapture.idle`) instead of starting on top of it. Host voice lets go at once.
  */
-function discardRecognition(capture: RecognitionCapture) {
+function discardRecognition(capture: Capture) {
   capture.onupdate = null;
   capture.onstop = null;
   capture.cancel();
@@ -338,7 +337,6 @@ export default function Composer({
   const deferredRecovery = useRef<SubmittedText | null>(null);
   const [refusalReason, setRefusalReason] = useState("");
   const recorder = useRef<Capture | null>(null);
-  const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
   // Only a cancel made in view takes focus back, even when a recorder reports its end later (issue
   // #495): the field after Escape, the microphone after the X, so a phone keyboard does not open.
@@ -368,6 +366,10 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
+  /** Host voice was asked for before this computer finished its setup: the hint offers Settings. */
+  const [setupNeeded, setSetupNeeded] = useState(false);
+  /** Host voice: the microphone is open and the first samples are awaited. */
+  const [startingVoice, setStartingVoice] = useState(false);
   /** Browser dictation landed without punctuation: the bundled model could not run in this browser. */
   const [unpunctuated, setUnpunctuated] = useState<"loading" | "failed" | null>(null);
   const [sendFailure, setSendFailure] = useState<SendFailure>(null);
@@ -377,7 +379,12 @@ export default function Composer({
   const voice = useVoiceBackend();
   const backend = voice?.backend ?? null;
   const captureSelection = useRef("");
-  const unavailable = voiceUnavailable(backend);
+  const unavailable = voiceUnavailable(voice);
+  const [, watched] = useReducer((count: number) => count + 1, 0);
+  useEffect(() => {
+    HostCapture.watchers.add(watched);
+    return () => { HostCapture.watchers.delete(watched); };
+  }, []);
   const canvas = useWaveform(waveform.current, phase === "listening");
 
   useLayoutEffect(() => {
@@ -424,7 +431,7 @@ export default function Composer({
       if (!retained) abort.current?.abort();
       const active = recorder.current;
       if (!retained) recorder.current = null;
-      if (!retained && active instanceof RecognitionCapture && active.state !== "inactive") {
+      if (!retained && active && active.state !== "inactive") {
         discardRecognition(active);
         return;
       }
@@ -484,7 +491,7 @@ export default function Composer({
         saved.failure = "unconfirmed";
         delete saved.pending[id];
       }
-      if (saved.text || saved.failure === "transcription") {
+      if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
         saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
         view.restore(saved);
         try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
@@ -543,7 +550,7 @@ export default function Composer({
       }
       if (!preserveDraft) { failure.current = null; setSendFailure(null); }
       setRecoveryUnavailable(false); setRefusalReason("");
-      setVoiceFailure(""); setUnpunctuated(null); images.setError("");
+      setVoiceFailure(""); setSetupNeeded(false); setUnpunctuated(null); images.setError("");
       if (withImages) { admitting.current = true; setAdmission("sending"); }
       if (!preserveDraft) { draft.current = ""; onChange(""); }
       let accepted = false;
@@ -599,7 +606,7 @@ export default function Composer({
   const currentSubmit = useRef(submit);
   currentSubmit.current = submit;
 
-  const endVoiceSend = useCallback((sending: VoiceSend, problem?: "transcription") => {
+  const endVoiceSend = useCallback((sending: VoiceSend, problem?: "transcription" | "unreached") => {
     if (voiceSends.get(conversation) !== sending) return;
     voiceSends.delete(conversation);
     recoveryViews.get(conversation)?.voice(null);
@@ -608,7 +615,7 @@ export default function Composer({
 
   // ---- voice: listening, transcribing, landed; every failure is one hint and an unchanged draft ----
   const finish = useCallback(
-    async (finished: Capture, used: MediaStream | null) => {
+    (finished: Capture, used: MediaStream | null) => {
       if (recorder.current !== finished) return;
       recorder.current = null;
       stopRequested.current = false;
@@ -616,8 +623,6 @@ export default function Composer({
       capTimer.current = null;
       if (mounted.current) releaseStream(used);
       else used?.getTracks().forEach((track) => track.stop());
-      const parts = chunks.current;
-      chunks.current = [];
       const sending = sendAfterTranscribing.current;
       if (mounted.current) setLive(null);
       if (!mounted.current && !sending) return;
@@ -626,77 +631,38 @@ export default function Composer({
         if (!cancelled.current || focusAfterCancel.current) focusField();
         return;
       }
-      if (finished instanceof RecognitionCapture) {
-        // Browser recognition: the words are already here; nothing is uploaded. Words shown before a
-        // recognizer error still land in the draft; only a refusal discards them.
-        const text = finished.failure === "denied" ? "" : finished.text;
-        if (sending) {
-          if (finished.failure) {
-            sending.text = combineDraft(sending.text, text);
-            endVoiceSend(sending, "transcription");
-            return;
-          }
-          if (!text.trim()) { endVoiceSend(sending); return; }
-          voiceSends.delete(conversation);
-          const view = recoveryViews.get(conversation);
-          view?.voice(null);
-          void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
+      // The words are already here. Words shown before an error still land in the draft; only a refusal
+      // discards them.
+      const text = finished.failure === "denied" ? "" : finished.text;
+      const unreached = finished instanceof HostCapture && finished.unreached;
+      // The host refused the page's setting or setup: read them again.
+      if (finished instanceof HostCapture && finished.outdated) refreshVoiceBackend();
+      if (sending) {
+        if (finished.failure) {
+          sending.text = combineDraft(sending.text, text);
+          endVoiceSend(sending, unreached ? "unreached" : "transcription");
           return;
         }
-        setPhase("idle");
-        if (finished.failure === "denied") setDenied(true);
-        else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
-        if (text.trim()) setUnpunctuated(finished.unpunctuated);
-        if (text.trim()) {
-          const next = combineDraft(draft.current, text);
-          editDraft(next);
-          focusField(next.length);
-          return;
-        }
-        focusField();
+        if (!text.trim()) { endVoiceSend(sending); return; }
+        voiceSends.delete(conversation);
+        const view = recoveryViews.get(conversation);
+        view?.voice(null);
+        void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
         return;
       }
-      const type = finished.mimeType || recordingMimeType() || "application/octet-stream";
-      const audio = parts.length ? new Blob(parts, { type }) : null;
-      if (!audio?.size || audio.size > MAX_UPLOAD_BYTES) {
-        if (sending) { endVoiceSend(sending, "transcription"); return; }
-        setPhase("idle");
-        setVoiceFailure("Could not transcribe. Typing works.");
-        focusField();
-        return;
-      }
-      const request = sending?.controller ?? new AbortController();
-      abort.current = request;
-      const timeout = setTimeout(() => request.abort(), TRANSCRIBE_TIMEOUT_MS);
-      setPhase("transcribing");
-      try {
-        const text = await transcribeVoice(audio, captureSelection.current, request.signal);
-        if ((!mounted.current && !sending) || request.signal.aborted) return;
-        if (sending) {
-          if (!text.trim()) { endVoiceSend(sending); return; }
-          voiceSends.delete(conversation);
-          const view = recoveryViews.get(conversation);
-          view?.voice(null);
-          void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
-          return;
-        }
-        // Landed: appended to the draft, cursor at the end, nothing else on screen (issue #195).
+      setPhase("idle");
+      if (finished.failure === "denied") setDenied(true);
+      else if (unreached) setVoiceFailure(UNREACHED);
+      else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(`${finished.reason} Typing works.`);
+      else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
+      if (text.trim()) setUnpunctuated(finished.unpunctuated);
+      if (text.trim()) {
         const next = combineDraft(draft.current, text);
         editDraft(next);
-        setPhase("idle");
         focusField(next.length);
-      } catch (error) {
-        // 409: the installation moved to browser recognition since this page read its backend.
-        if (error instanceof ApiError && error.status === 409) refreshVoiceBackend();
-        if (sending) { endVoiceSend(sending, "transcription"); return; }
-        if (!mounted.current || cancelled.current || abort.current !== request) return;
-        setPhase("idle");
-        setVoiceFailure(error instanceof ApiError && error.status === 409 ? error.message : "Could not transcribe. Typing works.");
-        focusField();
-      } finally {
-        clearTimeout(timeout);
-        if (abort.current === request) abort.current = null;
+        return;
       }
+      focusField();
     },
     [conversation, editDraft, endVoiceSend, focusField, releaseStream],
   );
@@ -714,11 +680,11 @@ export default function Composer({
       setSendFailure(null);
       setRecoveryUnavailable(false);
       const sending: VoiceSend = { id, text: draft.current, failure: priorFailure, controller: new AbortController(), send: prepareSubmit?.() ?? onSubmit,
-        images: images.selected.length ? images.submission() : undefined,
+        images: images.selected.length ? images.submission() : undefined, capture: active,
         cancel: () => {
           sending.controller.abort();
-          if (recorder.current === active) { recorder.current = null; chunks.current = []; }
-          if (active instanceof RecognitionCapture && active.state !== "inactive") discardRecognition(active);
+          if (recorder.current === active) recorder.current = null;
+          if (active.state !== "inactive") discardRecognition(active);
           else active.stream.getTracks().forEach((track) => track.stop());
           releaseWaveform();
           setLive(null);
@@ -738,9 +704,9 @@ export default function Composer({
     setPhase("transcribing");
     try {
       if (active.state !== "inactive") active.stop();
-      else void finish(active, active.stream);
+      else finish(active, active.stream);
     } catch {
-      void finish(active, active.stream);
+      finish(active, active.stream);
     } finally {
       releaseWaveform();
     }
@@ -748,16 +714,27 @@ export default function Composer({
 
   const start = useCallback(async () => {
     if (unavailable || disabled || admitting.current || phase !== "idle") return;
+    if (voice?.backend === "host" && voice.host.state !== "ready") {
+      // Setup may have finished since this page read it: read again, and the next tap starts.
+      setSetupNeeded(true);
+      refreshVoiceBackend();
+      return;
+    }
+    if (voice?.backend === "host" && HostCapture.retained.size >= MAX_RETAINED) {
+      setVoiceFailure("Voice is still sending an earlier recording. Typing works.");
+      return;
+    }
     captureSelection.current = voice?.selection ?? "";
     focusAfterCancel.current = null;
     setVoiceFailure("");
+    setSetupNeeded(false);
+    setStartingVoice(false);
     setUnpunctuated(null);
     setDenied(false);
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
     sendAfterTranscribing.current = null;
-    chunks.current = [];
     setPhase("starting");
     const opening = new AbortController();
     traceVoice("capture.open", opening, { backend: backend ?? undefined });
@@ -784,32 +761,27 @@ export default function Composer({
       // Warm native recognition may start before React's next effect. Connect its companion
       // waveform first, after the old capture's release gate, with no await before start().
       waveform.current = openWaveform(opened);
-      let active: Capture;
-      if (backend === "browser") {
-        const recognition = new RecognitionCapture(opened, { before: draft.current });
-        recognition.onupdate = (text) => { if (recorder.current === recognition && !cancelled.current) setLive(combineDraft(draft.current, text)); };
-        recognition.onstop = () => void finish(recognition, used);
-        active = recognition;
-      } else {
-        const mimeType = recordingMimeType();
-        const recording = new MediaRecorder(opened, mimeType ? { mimeType } : undefined);
-        recording.ondataavailable = (event) => {
-          if (recorder.current === recording && event.data.size) chunks.current.push(event.data);
+      if (backend === "host") {
+        const host = new HostCapture(opened, captureSelection.current);
+        host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+        host.onstop = () => finish(host, used);
+        host.oninterrupted = () => stop();
+        host.onlistening = () => {
+          if (recorder.current !== host) return;
+          traceVoice("capture.listening", host);
+          startedAt.current = Date.now();
+          setStartingVoice(false);
+          setPhase("listening");
+          capTimer.current = setTimeout(() => stop(), MAX_RECORDING_MS);
         };
-        recording.onstop = () => void finish(recording, used);
-        recording.onerror = () => {
-          if (recorder.current !== recording) return;
-          cancelled.current = false;
-          chunks.current = [];
-          try {
-            if (recording.state !== "inactive") recording.stop();
-            else void finish(recording, used);
-          } catch {
-            void finish(recording, used);
-          }
-        };
-        active = recording;
+        recorder.current = host;
+        setStartingVoice(true);
+        host.start();
+        return;
       }
+      const active = new RecognitionCapture(opened, { before: draft.current });
+      active.onupdate = (text) => { if (recorder.current === active && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+      active.onstop = () => finish(active, used);
       recorder.current = active;
       active.start();
       traceVoice("capture.listening", active);
@@ -821,7 +793,7 @@ export default function Composer({
       const failed = recorder.current;
       if (failed?.stream === opened) {
         recorder.current = null;
-        if (failed instanceof RecognitionCapture) discardRecognition(failed);
+        discardRecognition(failed);
       }
       opened?.getTracks().forEach((track) => track.stop());
       if (!mounted.current || opening.signal.aborted) return;
@@ -847,7 +819,7 @@ export default function Composer({
     abort.current?.abort();
     abort.current = null;
     const active = recorder.current;
-    if (active instanceof RecognitionCapture && active.state !== "inactive") {
+    if (active && active.state !== "inactive") {
       recorder.current = null;
       discardRecognition(active);
       releaseWaveform();
@@ -855,19 +827,7 @@ export default function Composer({
       focusField();
       return;
     }
-    if (active) {
-      try {
-        if (active.state !== "inactive") {
-          // A recorder ends through its stop event.
-          active.stop();
-          return;
-        }
-      } catch {
-        // Release below when a broken recorder cannot emit its stop event.
-      }
-      recorder.current = null;
-    }
-    chunks.current = [];
+    recorder.current = null;
     // Only this composer's own capture: a discarded recognizer keeps its stream until it ends.
     releaseStream(active?.stream ?? null);
     setPhase("idle");
@@ -929,12 +889,17 @@ export default function Composer({
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
+  // A voice Send keeps its capture after this composer remounts; otherwise the capture is this composer's own.
+  const shown = voiceSend?.capture ?? recorder.current;
+  const connection = shown instanceof HostCapture ? shown.connection : "ok";
   if (transcribing) {
     hintRole = "status";
-    hintText = "Transcribing…";
+    hintText = connection === "lost" ? "Waiting for connection…" : connection === "catching-up" ? "Catching up…" : "Transcribing…";
   } else if (listening) {
     hintRole = "status";
-    hintText = phase === "starting" ? "Opening microphone…" : "Listening… Stop to add text, or Send.";
+    hintText = phase === "starting" ? startingVoice ? "Starting voice…" : "Opening microphone…"
+      : connection === "lost" ? "Connection lost — still recording. Your words will catch up."
+      : connection === "catching-up" ? "Catching up…" : "Listening… Stop to add text, or Send.";
   } else if (admission === "uncertain") {
     hintTone = "danger";
     hintRole = "alert";
@@ -942,10 +907,10 @@ export default function Composer({
   } else if (admission === "sending") {
     hintRole = "status";
     hintText = "Sending images…";
-  } else if (sendFailure === "transcription") {
+  } else if (sendFailure === "transcription" || sendFailure === "unreached") {
     hintTone = "danger";
     hintRole = "alert";
-    hintText = "Could not transcribe. Typing works.";
+    hintText = sendFailure === "unreached" ? UNREACHED : "Could not transcribe. Typing works.";
   } else if (sendFailure === "refused" && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
@@ -982,6 +947,9 @@ export default function Composer({
     hintText = "Voice needs HTTPS";
   } else if (unavailable === "unrecognized") {
     hintText = "This browser has no speech recognition. Typing works.";
+  } else if (voice?.backend === "host" && (unavailable === "host" || setupNeeded)) {
+    hintRole = setupNeeded ? "status" : undefined;
+    hintText = hostVoiceHint(voice);
   } else {
     routineHint = true;
     if (busy) {
