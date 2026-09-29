@@ -3,10 +3,12 @@
 Container support is under validation. The candidate uses rootless Podman with real systemd inside
 the image. The feasibility tuple is Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
 its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory passed on commit
-`171d8027de970315c6de5ad92cb38dbc9420bca5`, archive SHA-256
-`2a0d2e1ab2360e6669c6dd1a64deb081423ae38b53cd7d50d7d1cd0505474af3`.
+`1639f3102b9e07215d49b1f45dc4a1fc396071f7`, archive SHA-256
+`b014ddf7897ad177a60365e72c89a6cdc745e1c9b5c8c577d01cdb2ee7f5dfcc`.
 That same image passed the native diagnostic task/coordinator permission matrix and actual daemon
-environment/listener/certificate checks. This evidence applies to that exact source and Linux tuple.
+environment/listener/certificate checks. Its admission lane also passed daemon and same-container
+restart, independent fixture-job survival/descendant Stop, and replacement with retained fixture
+project/certificate and explicit Continue. This evidence applies to that exact source and Linux tuple.
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
@@ -140,26 +142,27 @@ while paused and removes the notice after a fresh admitted status. It offers no 
 route. Task/coordinator credentials refuse the host action; same-UID trust limits remain unchanged.
 Policy-confined workers running as the application UID can rewrite the receipt directly. These
 controls manage Altitude launch admission and are not a security boundary against those workers.
-The OS-sandboxed engine's receipt-directory denial is included in the new native probe, but remains
-unverified until that probe runs on this candidate. The earlier image result predates this receipt.
+The OS-sandboxed engine's receipt-directory denial passed for both generated roles on the exact
+image above; the ordinary application-user control could write there. This establishes the tested
+native profile boundary, not real provider-session/configuration stacking or other-engine parity.
 
 Pause rejects new admissions atomically. Calls admitted earlier can finish, including a launch
 already preparing its claim; status reports admitted calls still active. Detached workers can remain
 after those calls return. Neither a quiet status nor a pause proves that a backup is consistent:
-stop the controller before copying both volumes. Native and Mac validation of this admission
-increment remains pending; the earlier exact image evidence above does not cover this later code.
+stop the controller before copying both volumes. Linux primitive admission/lifecycle checks pass
+on the recorded image; full application recovery and Mac validation remain pending.
 
 The reusable image gate's `--lifecycle` lane checks daemon and same-container restart, independent
 fixture-job survival and descendant cleanup, then replacement with retained project data and TLS
 identity. It checks paused provider refusal and rejects Continue for the previous instance before
-accepting the replacement. This is a prepared fixture lane; record an actual run before claiming it
-passes. It does not establish full application task recovery, backup restore or a version upgrade.
+accepting the replacement. The lane passed on the recorded image, including independent cleanup
+inspection. It does not establish full application task recovery, backup restore or a version upgrade.
 
 Use task Stop for owned task work before stopping the whole container. Host `stop` stops the selected
 container; `remove` refuses a running one and retains both volumes. A new controller can use those
 volumes after the old controller stops. Registrations, settings, sessions and holds persist there;
 recreation cannot preserve processes. Automatic replay is not an update/recovery strategy. Native
-Stop/descendant and recreation acceptance for the final image is pending.
+primitive Stop/descendant and recreation checks pass; full task Stop/resume across replacement remains pending.
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
