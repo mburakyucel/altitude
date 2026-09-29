@@ -29,7 +29,8 @@ with its own durable conversation, isolated worktree and PR delivery. Questions 
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
 Other reports wait quietly while L3 has no available engine and reach it once one is; a failed
-report turn retries after a growing delay instead of repeating into the conversation.
+report turn retries after a growing delay instead of repeating into the conversation. An owner that
+blocks on its own question is not reporting, so a report file beside that block produces no report turn.
 
 An [increment's brief](CLI.md#incremental-issue-delivery) identifies its acceptance, parent issue and
 outstanding scope. Completing that increment completes the task; L2 supplies PR/acceptance evidence and
