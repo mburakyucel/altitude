@@ -280,34 +280,64 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
   </section>;
 }
 
-type ShareState = { status: "idle" | "opening" | "closed" } | { status: "open"; share: PhoneShare; until: number } | { status: "failed"; error: Error };
+type ShareState = { status: "idle" | "opening" | "closed" } | { status: "failed"; error: Error }
+  | { status: "open" | "closing"; share: PhoneShare; until: number; error?: Error };
 
-/** Add a phone: the service's ten-minute share window as a QR code with its time left. Close, the end of
- * the ten minutes or leaving the page closes the window. */
+/** Add a phone: the service's ten-minute share window as a QR code with its time left. Close confirms
+ * only once the service has closed the link; the end of the ten minutes closes it on the service, and
+ * leaving the page closes it too, even while it is still opening. */
 function AddPhone() {
   const [state, setState] = useState<ShareState>({ status: "idle" });
   const [now, setNow] = useState(() => Date.now());
-  const link = state.status === "open" ? state.share.link : null;
+  const live = useRef<{ mounted: boolean; link: string | null }>({ mounted: true, link: null });
   useEffect(() => {
-    if (!link) return;
+    const current = live.current;
+    current.mounted = true;
+    return () => {
+      current.mounted = false;
+      if (current.link) void closePhoneShare(current.link).catch(() => undefined);
+      current.link = null;
+    };
+  }, []);
+  const shown = state.status === "open" || state.status === "closing";
+  useEffect(() => {
+    if (!shown) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => { window.clearInterval(timer); void closePhoneShare(link).catch(() => undefined); };
-  }, [link]);
-  const left = state.status === "open" ? Math.max(0, Math.ceil((state.until - now) / 1000)) : 0;
+    return () => window.clearInterval(timer);
+  }, [shown]);
+  const left = shown ? Math.max(0, Math.ceil((state.until - now) / 1000)) : 0;
   useEffect(() => {
-    if (state.status === "open" && left === 0) setState({ status: "closed" });
-  }, [state.status, left]);
+    if (shown && left === 0) {
+      live.current.link = null;
+      setState({ status: "closed" });
+    }
+  }, [shown, left]);
   const open = async () => {
     setState({ status: "opening" });
     try {
       const share = await openPhoneShare();
+      if (!live.current.mounted) {
+        void closePhoneShare(share.link).catch(() => undefined);
+        return;
+      }
+      live.current.link = share.link;
       setNow(Date.now());
       setState({ status: "open", share, until: Date.now() + share.seconds * 1000 });
     } catch (error) {
-      setState({ status: "failed", error: error as Error });
+      if (live.current.mounted) setState({ status: "failed", error: error as Error });
     }
   };
-  if (state.status === "open") {
+  if (shown) {
+    const close = async () => {
+      setState({ ...state, status: "closing", error: undefined });
+      try {
+        await closePhoneShare(state.share.link);
+        live.current.link = null;
+        if (live.current.mounted) setState({ status: "closed" });
+      } catch (error) {
+        if (live.current.mounted) setState({ ...state, status: "open", error: error as Error });
+      }
+    };
     const minutes = Math.floor(left / 60), seconds = String(left % 60).padStart(2, "0");
     return <div className="phone-share">
       <QRCode rows={state.share.qr} label={`QR code for ${state.share.link}`} />
@@ -315,8 +345,9 @@ function AddPhone() {
       <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
       <div className="phone-share-time">
         <span role="timer" aria-live="off">Closes in {minutes}:{seconds}</span>
-        <button type="button" className="btn" onClick={() => setState({ status: "closed" })}>Close</button>
+        <button type="button" className="btn" disabled={state.status === "closing"} onClick={() => void close()}>{state.status === "closing" ? "Closing…" : "Close"}</button>
       </div>
+      {state.error ? <p role="alert" className="text-meta text-danger">The link is still open: {state.error.message}</p> : null}
     </div>;
   }
   return <>

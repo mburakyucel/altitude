@@ -303,14 +303,50 @@ describe("Add a phone", () => {
     await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40002/" } }));
   });
 
-  it("closes the window when its time runs out", async () => {
+  it("shows the window closed when its time runs out, as the service closes it itself", async () => {
     const posts = shareFixture({ seconds: 1 });
     const { user } = renderApp({ route: "/settings/devices" });
     await user.click(await screen.findByRole("button", { name: "Add a phone" }));
     await screen.findByRole("img", { name: /^QR code/ });
     expect(await screen.findByText("The link is closed.", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /^QR code/ })).toBeNull();
+    expect(posts.filter((post) => post.path === "/api/devices/share-close")).toHaveLength(0);
+  });
+
+  it("keeps the QR code and a retryable Close when the service could not close the link", async () => {
+    const posts = shareFixture();
+    const original = globalThis.fetch;
+    let refuse = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/devices/share-close" && refuse) return json({ error: "Could not reach Altitude." }, 503);
+      return original(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await user.click(await screen.findByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The link is still open: Could not reach Altitude.");
+    expect(screen.getByRole("img", { name: /^QR code/ })).toBeInTheDocument();
+    refuse = false;
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(await screen.findByText("The link is closed.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(posts.filter((post) => post.path === "/api/devices/share-close")).toHaveLength(1);
+  });
+
+  it("closes a window that finishes opening after the page was left", async () => {
+    const posts = shareFixture();
+    const original = globalThis.fetch;
+    let answer: () => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/devices/share") await new Promise<void>((resolve) => { answer = resolve; });
+      return original(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await screen.findByRole("button", { name: "Opening…" });
+    await user.click(screen.getByRole("link", { name: "‹ Settings" }));
+    answer();
+    await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40001/" } }));
   });
 
   it("shows why the service cannot offer the certificate and keeps the button", async () => {

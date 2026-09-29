@@ -1,4 +1,5 @@
 """The QR code a phone camera scans to open the certificate share link."""
+import hashlib
 import unittest
 
 from altitude import qr
@@ -17,6 +18,12 @@ REFERENCE = {
 }
 
 
+# Larger symbols, including version 32's exceptional alignment spacing: SHA-256 of libqrencode's module rows,
+# "0"/"1" per module, joined by newlines, for "x" repeated this many times.
+LARGE = {1455: (32, "6d8abd9d9ff061b69fee83a582ad4d8755f14168250becf8fcfb09413a12a467"),
+         2329: (40, "6dccc84f9c3f399420cd47311cd686df06ab1e7cf5572d55b8d07f59bad50a69")}
+
+
 def rows(modules):
     return [f"{int(''.join('1' if dark else '0' for dark in row), 2):0{(len(row) + 3) // 4}x}" for row in modules]
 
@@ -28,6 +35,15 @@ class TestQR(unittest.TestCase):
                 modules = qr.matrix(text)
                 self.assertEqual(len(modules), size)
                 self.assertEqual(rows(modules), expected)
+
+    def test_large_versions_match_the_independent_encoder(self):
+        for length, (version, digest) in LARGE.items():
+            with self.subTest(version=version):
+                modules = qr.matrix("x" * length)
+                self.assertEqual(len(modules), version * 4 + 17)
+                bits = "\n".join("".join("1" if dark else "0" for dark in row) for row in modules)
+                self.assertEqual(hashlib.sha256(bits.encode()).hexdigest(), digest)
+        self.assertEqual(qr._alignment(32), [6, 34, 60, 86, 112, 138])
 
     def test_the_version_grows_with_the_text_and_a_text_beyond_version_40_is_refused(self):
         self.assertEqual(len(qr.matrix("a" * 14)), 21)

@@ -84,7 +84,12 @@ test("Settings › Devices › Add a phone shows the QR code with its time left,
     if (gate) await gate;
     await route.fulfill({ json: { link: LINK, seconds, name: LIMITED.name, sha256: FINGERPRINT, qr: QR } });
   });
+  let closeFails = true;
   await page.route("**/api/devices/share-close", async (route) => {
+    if (closeFails) {
+      closeFails = false;
+      return route.fulfill({ status: 503, json: { error: "Could not reach Altitude." } });
+    }
     closes.push(route.request().postDataJSON());
     await route.fulfill({ json: { closed: true } });
   });
@@ -99,21 +104,28 @@ test("Settings › Devices › Add a phone shows the QR code with its time left,
       card.getByText(/^Scan it with the phone’s camera/), card.getByText(/^10 17 1E 25 2C 33 3A 41/)],
     hidden: [add, card.getByRole("alert")],
   });
-  await walk.state("09-closed", {
+  await walk.state("09-close-failed", {
+    action: () => card.getByRole("button", { name: "Close" }).click(),
+    visible: [code, card.getByRole("alert").getByText("The link is still open: Could not reach Altitude."),
+      card.getByRole("button", { name: "Close" })],
+    hidden: [add, card.getByRole("status")],
+  });
+  await walk.state("10-closed", {
     action: () => card.getByRole("button", { name: "Close" }).click(),
     visible: [card.getByRole("status").getByText("The link is closed."), add],
-    hidden: [code, card.getByRole("timer")],
+    hidden: [code, card.getByRole("timer"), card.getByRole("alert")],
   });
   expect(closes).toEqual([{ link: LINK }]);
   seconds = 2;
   gate = null;
   await add.click();
   await expect(code).toBeVisible();
-  await walk.state("10-expired", {
+  await walk.state("11-expired", {
     visible: [card.getByRole("status").getByText("The link is closed."), add],
     hidden: [code],
   });
-  expect(closes).toEqual([{ link: LINK }, { link: LINK }]);
+  // The service closes an expired window itself.
+  expect(closes).toEqual([{ link: LINK }]);
 });
 
 test("the phone page from the QR code walks the downloads, the fingerprint check and the trust steps", async ({ page }, info) => {
@@ -121,7 +133,7 @@ test("the phone page from the QR code walks the downloads, the fingerprint check
   const html = python(`import sys; from altitude import tls
 sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.stringify(FINGERPRINT)}}, "https://192.168.1.20:8890", 10).decode())`);
   const shown = async () => { await page.setContent(html); };
-  await walk.state("11-phone-page", {
+  await walk.state("12-phone-page", {
     action: shown,
     visible: [page.getByRole("heading", { name: "Add this phone to Altitude" }), page.getByText(/^10 17 1E 25 2C 33 3A 41/),
       page.getByRole("link", { name: "Download the profile" }), page.getByRole("link", { name: "Download the certificate" }),
@@ -129,5 +141,5 @@ sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.strin
     hidden: [],
   });
   await page.emulateMedia({ colorScheme: "dark" });
-  await walk.state("12-phone-page-dark", { action: shown, visible: [page.getByRole("link", { name: "Download the profile" })], hidden: [] });
+  await walk.state("13-phone-page-dark", { action: shown, visible: [page.getByRole("link", { name: "Download the profile" })], hidden: [] });
 });
