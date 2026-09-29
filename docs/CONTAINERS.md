@@ -187,8 +187,9 @@ the platform seam. A numerically reused PID cannot keep an earlier claim live. M
 existing claim reconciliation. Boot/start mismatches are checked before the protected namespace link;
 inaccessible identity evidence for a matching lifetime does not establish that the owner died.
 This removes the bare-PID liveness check for native and container resumes. The native macOS branch
-uses libproc start times for the owner and launchd, with a single native PID namespace. Deterministic
-fixtures cover that integration; actual Mac acceptance remains pending with the native runtime owner.
+uses the read-only kernel boot-session UUID and libproc owner start time, with a single native PID
+namespace. Deterministic fixtures cover that integration; actual Mac acceptance remains pending
+with the native runtime owner.
 
 ## Evidence
 
@@ -204,16 +205,21 @@ directory without that link loses the user bus and crun 1.14.1 can fall back to 
 The preflight refuses a missing or redirected bus. Each launcher command also routes system-bus
 fallback to a private rejecting socket, which accepts no authentication and forwards nothing.
 `bin/altitude-crun` reinstalls that guard before invoking the ordinary `/usr/bin/crun`, including
-when Podman strips its environment. The adapter refuses secure execution or an elevated runtime
-that could ignore the environment override. Keep this host launcher and adapter available for the
+when Podman strips its environment. The adapter checks its own secure-execution state and refuses
+an elevated runtime file; a security-domain transition during the runtime exec is not covered by
+those checks. Keep this host launcher and adapter available for the
 lifetime of containers it creates; Podman records the absolute OCI runtime path.
 
 A private runtime-directory ledger records attempted system-bus connections. The launcher fails on
-new attempts even when a child cleanup error is swallowed; the gate also checks the ledger after
-cleanup and retains the result before removing fixture storage. This instruments the selected
+recorded attempts, including those between commands, even when a child cleanup error is swallowed;
+guarded cleanup can execute but cannot report success while denial evidence remains. The gate checks
+the ledger after cleanup and retains the result before removing fixture storage. This instruments the selected
 Podman/crun D-Bus clients; it is not an OS sandbox against a program that ignores D-Bus routing or
 against same-account software. It does not change host polkit or service policy. Native verification
 of the complete runtime, asynchronous cleanup, rootless mapping and default protections is pending.
+The command-scoped listener does not establish complete asynchronous attempt detection; inherited
+routing can point to a listener that has already closed. This guard is not yet an accepted native
+gate, and native retries remain blocked pending the remaining review findings.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

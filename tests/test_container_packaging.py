@@ -140,6 +140,19 @@ class TestSystemBusGuard(AltitudeCase):
         self.assertEqual(observed, [['/usr/bin/crun', 'delete', '--force', 'fictional-id']])
         self.assertIn('connection refused', platform.container_bus_denials(environment).read_text())
 
+    def test_denial_between_commands_cannot_be_silently_absorbed(self):
+        environment = self.environment()
+        ledger = platform.container_bus_denials(environment)
+        ledger.touch(mode=0o600)
+        ledger.write_text('system-manager connection refused\n')
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, 'getuid', return_value=1000), \
+             mock.patch.object(platform, 'container_user_environment', return_value=environment), \
+             mock.patch.object(platform.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as command:
+            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
+                platform.container_command(['rm', '--force', 'fixture'])
+            command.assert_called_once()  # Guarded cleanup remains possible; success is never claimed.
+        self.assertEqual(ledger.read_text(), 'system-manager connection refused\n')
+
 
 class TestFixtureCleanup(AltitudeCase):
     def test_reused_pause_pid_is_not_signalled_after_identity_changes(self):

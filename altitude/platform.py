@@ -478,12 +478,13 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     environment = container_user_environment()
     with container_bus_guard(environment) as guarded:
         ledger = container_bus_denials(environment)
-        before = ledger.stat().st_size
         result = subprocess.run(["podman", "--remote=false", "--runtime", str(CONTAINER_OCI), *arguments], text=True,
                                 capture_output=not interactive, timeout=timeout, env=guarded)
         # A runtime child can report a denied connection yet have its failure
-        # swallowed by Podman cleanup. Such a command must still fail.
-        if ledger.stat().st_size != before or CONTAINER_BUS_DENIAL in (result.stderr or ""):
+        # swallowed by Podman cleanup. Include denials between invocations; they
+        # must never become a silently accepted baseline. Still execute guarded
+        # cleanup, but never report it as successful while denial evidence exists.
+        if ledger.stat().st_size or CONTAINER_BUS_DENIAL in (result.stderr or ""):
             raise RuntimeError(CONTAINER_BUS_DENIAL)
     if result.returncode:
         error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
@@ -945,9 +946,13 @@ def process_start(pid: int) -> str:
 
 
 def _process_boot() -> str:
-    # Native macOS has one PID namespace; launchd's epoch start time distinguishes
-    # boots using the same libproc evidence as all other process ownership.
-    return "darwin:" + process_start(1) if _darwin() else (PROC / "sys/kernel/random/boot_id").read_text().strip()
+    if _darwin():
+        # Public read-only kernel identity; reading root-owned launchd via libproc
+        # can require privileges the ordinary application account does not have.
+        value = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"],
+                               capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+        return "darwin:" + str(uuid.UUID(value))
+    return (PROC / "sys/kernel/random/boot_id").read_text().strip()
 
 
 def process_identity(pid: int) -> dict:
