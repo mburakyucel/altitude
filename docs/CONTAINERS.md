@@ -13,6 +13,9 @@ The `--workflow` lane on harness `499038e` passed against the same archive: regi
 coordinator connection/resumption, real systemd task jobs, Stop, saved draft/session/merge hold,
 queued steering and deliberate continuation after replacement. Its synchronous driver owns separate
 fictional state; this does not establish background daemon scheduling or full onboarding.
+Harness `99e5b7e` also passed claim-recovery fault injection on that archive after actual container
+replacement: an exited owner's prelaunch claim restores input before continuation, while a launch
+without confirmed worker identity faults without replay. This is not evidence of a real provider crash.
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
