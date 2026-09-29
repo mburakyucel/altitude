@@ -10,7 +10,7 @@ from unittest import mock
 from tests.support import AltitudeCase, REPO
 from tests import test_installation
 from altitude import installation
-from scripts.installation_lifecycle import Lifecycle, failed_archive
+from scripts.installation_lifecycle import Lifecycle, failed_archive, following
 
 
 class TestLifecycleHarness(AltitudeCase):
@@ -49,8 +49,20 @@ class TestLifecycleHarness(AltitudeCase):
         results.mkdir()
         harness = Lifecycle(artifacts, artifacts, results, "f" * 40)
         harness.home = self.tmp
-        with self.assertRaisesRegex(AssertionError, "differs from selected source"):
-            harness.archive(artifacts, "mismatched")
+        with self.assertRaisesRegex(AssertionError, "differs from its selected source"):
+            harness.archive(artifacts, "candidate")
+        # A published baseline names its own commit; the candidate still has to match the selected source.
+        commit = installation.extract(archive, checksum, self.tmp / "inspected")["commit"]
+        published = Lifecycle(artifacts, artifacts, results, f"{commit}..{'f' * 40}")
+        published.home = self.tmp
+        self.assertEqual(published.archive(artifacts, "baseline")[3]["commit"], commit)
+        self.assertIn("Published-release baseline", published.result["limits"][0])
+        with self.assertRaisesRegex(AssertionError, "candidate archive commit differs"):
+            published.archive(artifacts, "candidate")
+
+    def test_injected_failure_is_always_newer_than_the_candidate(self):
+        self.assertEqual([following(v) for v in ("v0.0.0-rc.2", "v0.2.0-rc.1", "v0.1.3")],
+                         ["v0.0.0-rc.3", "v0.2.0-rc.2", "v0.1.4-rc.1"])
 
     def test_non_disposable_account_refuses_before_any_application_or_service_command(self):
         results = self.tmp / "results"
@@ -79,7 +91,7 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertFalse((self.tmp / "results").exists())
 
     def test_shell_entry_accepts_each_phase_and_still_requires_root(self):
-        for phase in ("bootstrap", "reboot-install", "reboot-verify"):
+        for phase in ("bootstrap", "reboot-install", "reboot-verify", "recovery"):
             with self.subTest(phase=phase):
                 result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
                                          "b", "c", str(self.tmp / "results"), "a" * 40, phase],
@@ -105,6 +117,26 @@ class TestLifecycleHarness(AltitudeCase):
                 harness.execute("reboot-verify")
             run.assert_not_called()
         self.assertFalse(json.loads((results / "reboot-verify-result.json").read_text())["passed"])
+
+
+    def test_recovery_refuses_a_failed_installation_that_kept_nothing_to_retain(self):
+        # Without settings and a TLS identity left behind, "installing over it keeps them" proves nothing.
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, f"{'b' * 40}..{'a' * 40}")
+        harness.home = self.tmp / "home"
+        harness.prefix, harness.settings, harness.tls = (harness.home / "prefix", harness.home / "config/install.json",
+                                                         harness.home / "config/tls")
+        releases = ({"version": "v0.1.0-rc.1"}, {"version": "v0.2.0-rc.1"})
+        with mock.patch.object(harness, "prepare", return_value=("old", "1", None, releases[0], "new", "2", None, releases[1])), \
+                mock.patch.object(harness, "run", return_value="") as run:
+            with self.assertRaisesRegex(AssertionError, "kept no settings or TLS identity"):
+                harness.execute("recovery")
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["failed-install"])
+        self.assertFalse(run.call_args.kwargs["success"])
+        result = json.loads((results / "recovery-result.json").read_text())
+        self.assertFalse(result["passed"])
+        self.assertIn("installed over it", result["limits"][0])
 
 
 class TestInstallationVm(AltitudeCase):
@@ -143,3 +175,69 @@ class TestInstallationVm(AltitudeCase):
         self.assertIn("qemu-system-x86_64", result.stderr)
         self.assertIn("sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", result.stderr)
         self.assertFalse((self.tmp / "results").exists())
+
+    def test_recovery_needs_a_published_baseline(self):
+        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"), str(self.tmp / "results"),
+                                 "--recovery"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--recovery needs --baseline-release", result.stderr)
+        self.assertFalse((self.tmp / "results").exists())
+
+    def test_published_baseline_accepts_only_the_checked_release_its_tag_names(self):
+        from scripts import installation_vm as vm
+        archive, checksum = test_installation.Installation.archive(self, "v0.1.0-rc.2")
+        commit = installation.extract(archive, checksum, self.tmp / "inspected")["commit"]
+        assets = self.tmp / "assets"
+        assets.mkdir()
+        name = "altitude-v0.1.0-rc.2.tar.gz"
+        shutil.copyfile(archive, assets / name)
+        (assets / (name + ".sha256")).write_text(checksum + "\n")
+        (assets / "install.py").write_text("installer\n")
+        (assets / "install.sh").write_text("script\n")
+        write_sums = lambda: (assets / "SHA256SUMS").write_text("".join(
+            f"{hashlib.sha256((assets / name).read_bytes()).hexdigest()}  {name}\n"
+            for name in (name, "install.py", "install.sh")))
+        write_sums()
+        native = subprocess.run
+        tags = {"refs": f"{'a' * 40}\trefs/tags/v0.1.0-rc.2\n{commit}\trefs/tags/v0.1.0-rc.2^{{}}\n"}
+
+        def run(command, **kwargs):
+            if command[0] == "gh":
+                self.assertEqual(command[command.index("--repo") + 1], "example/altitude")
+                shutil.copytree(assets, command[command.index("--dir") + 1], dirs_exist_ok=True)
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:3] == ["git", "remote", "get-url"]:
+                return subprocess.CompletedProcess(command, 0, "git@github.com:example/altitude.git\n", "")
+            if command[:2] == ["git", "ls-remote"]:
+                return subprocess.CompletedProcess(command, 0, tags["refs"], "")
+            return native(command, **kwargs)
+
+        def attempt(name):
+            with mock.patch.object(vm.subprocess, "run", side_effect=run):
+                return vm.published("v0.1.0-rc.2", self.tmp / name)
+
+        # An annotated tag's peeled commit is the one the archive must declare.
+        self.assertEqual(attempt("good"), {"release": "v0.1.0-rc.2", "commit": commit,
+                                           "sha256": dict(reversed(line.split()) for line in
+                                                          (assets / "SHA256SUMS").read_text().splitlines())})
+        self.assertEqual(vm.next_minor("v0.1.0-rc.2"), "v0.2.0-rc.1")
+        tags["refs"] = f"{commit}\trefs/tags/v0.1.0-rc.2\n"  # lightweight tag
+        self.assertEqual(attempt("lightweight")["commit"], commit)
+        tags["refs"] = f"{'b' * 40}\trefs/tags/v0.1.0-rc.2\n"
+        with self.assertRaisesRegex(SystemExit, "declares v0.1.0-rc.2 at"):
+            attempt("other-commit")
+        tags["refs"] = ""
+        with self.assertRaisesRegex(SystemExit, "no tag"):
+            attempt("no-tag")
+        tags["refs"] = f"{commit}\trefs/tags/v0.1.0-rc.2\n"
+        (assets / "extra.txt").write_text("unlisted\n")
+        with self.assertRaisesRegex(SystemExit, "assets differ"):
+            attempt("extra")
+        (assets / "extra.txt").unlink()
+        (assets / "install.sh").write_text("substituted\n")
+        with self.assertRaisesRegex(SystemExit, "install.sh differs"):
+            attempt("substituted")
+        (assets / "install.sh").write_text("script\n")
+        (assets / (name + ".sha256")).write_text("0" * 64 + "\n")
+        with self.assertRaisesRegex(SystemExit, ".sha256 differs"):
+            attempt("checksum-file")

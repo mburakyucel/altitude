@@ -4,8 +4,9 @@
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
 The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
-its check after the VM restarts. `bootstrap` runs the built install.sh through its public curl | sh
-command against a release server on this machine's loopback, whose name the root wrapper points here.
+its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
+failed. `bootstrap` runs the built install.sh through its public curl | sh command against a release
+server on this machine's loopback, whose name the root wrapper points here.
 """
 from __future__ import annotations
 
@@ -38,14 +39,24 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def following(version: str) -> str:
+    """The next release candidate after VERSION, so an update to it is never a downgrade."""
+    match = re.fullmatch(r"(v0\.\d+\.\d+)(?:-rc\.(\d+))?", version)
+    base, candidate = match.group(1), match.group(2)
+    if candidate:
+        return f"{base}-rc.{int(candidate) + 1}"
+    minor, patch = base[3:].split(".")
+    return f"v0.{minor}.{int(patch) + 1}-rc.1"
+
+
 def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
     """A declared, checksum-valid startup failure, never a published artifact."""
     release = json.loads((package / "release.json").read_text())
-    release["version"] = "v0.0.0-rc.3"
+    release["version"] = following(release["version"])
     (package / "bin/alt").write_text(
         "#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n"
         "(Path.home() / 'results/failed-startup.json').write_text(json.dumps("
-        "{'pid': os.getpid(), 'argv': sys.argv[1:], 'version': 'v0.0.0-rc.3'}))\n"
+        f"{{'pid': os.getpid(), 'argv': sys.argv[1:], 'version': {release['version']!r}}}))\n"
         "raise SystemExit('intentional lifecycle startup failure')\n")
     release["files"]["bin/alt"] = digest(package / "bin/alt")
     write_json(package / "release.json", release)
@@ -61,10 +72,13 @@ def boot_id() -> str:
 
 
 class Lifecycle:
-    def __init__(self, baseline: Path, candidate: Path, results: Path, expected_commit: str):
+    def __init__(self, baseline: Path, candidate: Path, results: Path, commits: str):
         self.baseline, self.candidate, self.results = baseline, candidate, results
         self.state = results / "reboot-state.json"  # what reboot-verify needs from reboot-install
-        self.expected_commit = expected_commit
+        # BASELINE..CANDIDATE when the baseline is a published release; one commit when both share a source.
+        baseline_commit, _, candidate_commit = commits.rpartition("..")
+        self.expected = {"baseline": baseline_commit or candidate_commit, "candidate": candidate_commit}
+        published = self.expected["baseline"] != self.expected["candidate"]
         self.home = Path.home()
         self.prefix = self.home / ".local/share/altitude"
         self.alt = self.home / ".local/bin/alt"
@@ -72,7 +86,9 @@ class Lifecycle:
         self.settings = self.home / ".config/altitude/install.json"
         self.env = dict(os.environ)
         self.result = {"passed": False, "steps": [], "artifacts": [], "limits": [
-            "Same-source version transition; no cross-release storage migration",
+            "Published-release baseline updated to the candidate; the guest runs the published files offline, not its own GitHub download; "
+            "no storage migration (no application state is created)"
+            if published else "Same-source version transition; no cross-release storage migration",
             "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
             "No live provider, native worker confinement or macOS acceptance",
         ]}
@@ -109,7 +125,7 @@ class Lifecycle:
         spec.loader.exec_module(installer)
         package = self.home / f"{name}-package"
         release = installer.extract(archive, checksum, package)
-        assert release["commit"] == self.expected_commit, "Archive commit differs from selected source"
+        assert release["commit"] == self.expected[name], f"{name} archive commit differs from its selected source"
         assert digest(folder / "install.py") == digest(package / "altitude/installation.py")
         write_json(self.results / f"{name}-manifest.json", release)
         self.result["artifacts"].append({"kind": name, "filename": archive.name,
@@ -167,7 +183,7 @@ class Lifecycle:
         })
         old, old_sha, package, before = self.archive(self.baseline, "baseline")
         new, new_sha, new_package, after = self.archive(self.candidate, "candidate")
-        assert before["version"] != after["version"] and after["version"] != "v0.0.0-rc.3"
+        assert before["version"] != after["version"]
         self.run("user-manager", "systemctl", "--user", "show", "--property=Version")
         self.run("host-tools", "/usr/bin/python3", "--version")
         with socket.socket() as sock:
@@ -183,9 +199,11 @@ class Lifecycle:
         fixture.chmod(0o755)
         # Discover configured executable settings from the packaged engine seam.
         # No application module is mocked or patched for native acceptance.
-        keys = json.loads(self.run("engine-settings", "/usr/bin/python3", "-B", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
-            "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
+        # Both packages count: a candidate that adds an engine must still reach only the fixture.
+        keys = {key for step, source in (("engine-settings", package), ("candidate-engine-settings", new_package))
+                for key in json.loads(self.run(step, "/usr/bin/python3", "-B", "-c",
+                    "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
+                    "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", source))}
         assert keys, "Package exposes no engine executable settings"
         self.env.update({key: str(fixture) for key in keys})
         return old, old_sha, package, before, new, new_sha, new_package, after
@@ -268,6 +286,31 @@ class Lifecycle:
         self.uninstall({})
         self.result["passed"] = True
 
+    def recovery(self):
+        """A baseline whose activation fails, then the candidate's installer over what it left.
+
+        The published v0.1.0-rc.1 fails at service start; later installers must keep its settings and TLS identity."""
+        old, old_sha, _, _, new, new_sha, _, after = self.prepare()
+        self.result["limits"][0] = ("Published-release baseline whose installation fails, then the candidate installed over it; "
+                                    "the guest runs the published files offline, not its own GitHub download; "
+                                    "the candidate installs with its install.py, which its install.sh downloads and runs")
+        self.run("failed-install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", old,
+                 "--sha256", old_sha, success=False, timeout=180)
+        left = sorted(str(path.relative_to(self.home)) for root in (self.prefix, self.settings.parent)
+                      if root.exists() for path in root.rglob("*"))
+        write_json(self.results / "failed-install-files.json", left)
+        assert self.settings.is_file() and (self.tls / "ca.crt").is_file(), "The failed installation kept no settings or TLS identity"
+        sentinels = [self.home / ".altitude/fictional/history.jsonl", self.home / "Projects/fictional/worktree/notes.txt"]
+        for path in sentinels:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("Fictional retained installation acceptance data\n")
+        retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
+        self.run("install", "/usr/bin/python3", "-B", self.candidate / "install.py", "--archive", new, "--sha256", new_sha)
+        self.healthy("installed", after)
+        self.doctor("installed", after)
+        assert all(digest(path) == value for path, value in retained.items()), "Installing over the failed release changed retained data"
+        self.uninstall(retained)
+
     def bootstrap(self):
         """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
         old, old_sha, _, before, *_ = self.prepare()
@@ -333,7 +376,7 @@ class Lifecycle:
     def execute(self, phase: str = "all"):
         try:
             {"all": self.exercise, "bootstrap": self.bootstrap, "reboot-install": self.reboot_install,
-             "reboot-verify": self.reboot_verify}[phase]()
+             "reboot-verify": self.reboot_verify, "recovery": self.recovery}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise

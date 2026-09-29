@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py RESULTS_DIR [--source REF]
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery]]
 
 Builds two synthetic release versions from one committed revision (default HEAD) and runs the
-harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. The
+harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. With
+--baseline-release, the baseline is instead the published GitHub release TAG, downloaded on this
+host with gh and checked against its SHA256SUMS and tagged commit, and only the candidate is built. The
 signature-checked Ubuntu cloud image is cached; each run boots a copy-on-write overlay that is
 deleted afterwards. The guest has two network cards: one is online only while cloud-init installs
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest; then a third installs the baseline, the VM restarts and the harness
-checks that the service came back on its own before removing it.
+checks that the service came back on its own before removing it. --recovery instead runs only the
+recovery phase: the published baseline's installation must fail, and the candidate installed over it
+must start and keep its settings, TLS identity and data.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations
@@ -27,6 +31,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from urllib.request import urlopen
@@ -247,29 +252,97 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
             stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
 
 
-def build(commit: str, work: Path, results: Path) -> None:
-    """Both release versions, built from the one source commit into the throwaway work directory."""
-    for name, version in (("baseline", "v0.0.0-rc.1"), ("candidate", "v0.0.0-rc.2")):
+def lifecycle(machine: Machine, commits: str, results: Path, record: dict) -> None:
+    """The lifecycle, then install.sh's bootstrap, then an install that must survive the VM's restart."""
+    exits = record["harness_exit"]
+    for phase in ("all", "bootstrap", "reboot-install"):
+        note(f"running the {phase} phase")
+        exits[phase] = harness(machine, commits, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
+        if exits[phase]:
+            return
+    note("restarting the VM")
+    record["boot_id_after_restart"] = machine.reboot(time.monotonic() + 300)
+    # The online card stays unplugged across the guest's restart.
+    record["reachable"]["after_restart"] = reachable(machine)
+    if any(record["reachable"]["after_restart"].values()):
+        raise SystemExit(f"The guest is not isolated after its restart: {record['reachable']}")
+    note("running the reboot-verify phase")
+    exits["reboot-verify"] = harness(machine, commits, "reboot-verify", results / "harness-reboot-verify.log")
+
+
+def published(tag: str, folder: Path) -> dict:
+    """The published release's files, each matching its SHA256SUMS line, and the commit its tag names.
+
+    gh downloads the assets with the operator's GitHub login, so a private repository's release works too."""
+    checkout = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(checkout))
+    from altitude.installation import VERSION
+    from altitude.server import repository_url
+    if not VERSION.fullmatch(tag):
+        raise SystemExit(f"{tag} is not a release version")
+    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout
+    repository = repository_url(git("remote", "get-url", "origin").strip()).removeprefix("https://github.com/")
+    folder.mkdir(parents=True)
+    fetched = subprocess.run(["gh", "release", "download", tag, "--repo", repository, "--dir", str(folder)],
+                             capture_output=True, text=True, timeout=600)
+    if fetched.returncode or not (folder / "SHA256SUMS").is_file():
+        raise SystemExit(f"Cannot download {repository} release {tag}: {fetched.stderr.strip() or 'no SHA256SUMS'}")
+    sums = dict(reversed(line.split()) for line in (folder / "SHA256SUMS").read_text().splitlines())
+    archive = f"altitude-{tag}.tar.gz"
+    if archive not in sums or {path.name for path in folder.iterdir()} != {*sums, "SHA256SUMS", archive + ".sha256"}:
+        raise SystemExit(f"{tag} assets differ from its SHA256SUMS: {sorted(p.name for p in folder.iterdir())}")
+    for name, digest in sums.items():
+        if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
+            raise SystemExit(f"{tag}/{name} differs from the release's SHA256SUMS")
+    if (folder / (archive + ".sha256")).read_text().strip() != sums[archive]:
+        raise SystemExit(f"{tag}/{archive}.sha256 differs from the release's SHA256SUMS")
+    refs = git("ls-remote", "--tags", "origin", tag, f"{tag}^{{}}").splitlines()
+    # An annotated tag's peeled line names the commit; a lightweight tag names it directly.
+    commits = [line.split()[0] for line in refs if line.endswith("^{}")] or [line.split()[0] for line in refs]
+    if not commits:
+        raise SystemExit(f"origin has no tag {tag}")
+    with tarfile.open(folder / archive) as bundle:
+        release = json.load(bundle.extractfile("release.json"))
+    if (release["version"], release["commit"]) != (tag, commits[0]):
+        raise SystemExit(f"{archive} declares {release['version']} at {release['commit']}, not {tag} at {commits[0]}")
+    return {"release": tag, "commit": commits[0], "sha256": sums}
+
+
+def next_minor(version: str) -> str:
+    """A synthetic candidate label newer than the published VERSION."""
+    return f"v0.{int(version.split('.')[1]) + 1}.0-rc.1"
+
+
+def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline", "v0.0.0-rc.1"), ("candidate", "v0.0.0-rc.2"))) -> None:
+    """Release versions built from the one source commit into the throwaway work directory."""
+    for name, version in versions:
         with (results / f"build-{name}.log").open("w") as log:
             subprocess.run([sys.executable, "-B", str(Path(__file__).resolve().parent / "build_release.py"),
                             "--version", version, "--output", str(work / name), "--source", commit],
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)
 
 
-def run(results: Path, commit: str, cache: Path) -> int:
+def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False) -> int:
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
     git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
-              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "passed": False}
+              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
     machine = None
     try:
-        note(f"building both release versions from {commit[:12]}")
-        build(commit, work, results)
+        if baseline_release:
+            note(f"downloading the published {baseline_release} and building the candidate from {commit[:12]}")
+            record["baseline"] = published(baseline_release, work / "baseline")
+            build(commit, work, results, (("candidate", next_minor(baseline_release)),))
+            commits = f"{record['baseline']['commit']}..{commit}"
+        else:
+            note(f"building both release versions from {commit[:12]}")
+            build(commit, work, results)
+            commits = commit
         note("verifying the Ubuntu cloud image")
         record["image"] = base_image(cache)
         baseline, candidate = work / "baseline", work / "candidate"
@@ -298,27 +371,18 @@ def run(results: Path, commit: str, cache: Path) -> int:
         # Each phase creates, uses and deletes its own disposable account inside the guest.
         exits = record["harness_exit"] = {}
         try:
-            for phase in ("all", "bootstrap", "reboot-install"):
-                note(f"running the {phase} phase")
-                exits[phase] = harness(machine, commit, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
-                if exits[phase]:
-                    break
+            if recovery:
+                note("running the recovery phase")
+                exits["recovery"] = harness(machine, commits, "recovery", results / "harness-recovery.log")
             else:
-                note("restarting the VM")
-                record["boot_id_after_restart"] = machine.reboot(time.monotonic() + 300)
-                # The online card stays unplugged across the guest's restart.
-                record["reachable"]["after_restart"] = reachable(machine)
-                if any(record["reachable"]["after_restart"].values()):
-                    raise SystemExit(f"The guest is not isolated after its restart: {record['reachable']}")
-                note("running the reboot-verify phase")
-                exits["reboot-verify"] = harness(machine, commit, "reboot-verify", results / "harness-reboot-verify.log")
+                lifecycle(machine, commits, results, record)
         finally:
             note(f"harness exits {exits}; copying its results")
             try:
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        record["passed"] = list(exits.values()) == [0, 0, 0, 0] and "uncopied_results" not in record
+        record["passed"] = list(exits.values()) == [0] * (1 if recovery else 4) and "uncopied_results" not in record
     finally:
         try:
             if machine:
@@ -340,9 +404,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("results", type=Path)
     parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
+    parser.add_argument("--baseline-release", metavar="TAG", help="published release to install first and update from")
+    parser.add_argument("--recovery", action="store_true",
+                        help="install the candidate over the published baseline's failed installation instead")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
                         help="where the verified base image is kept between runs")
     args = parser.parse_args()
+    if args.recovery and not args.baseline_release:
+        parser.error("--recovery needs --baseline-release")
     # A stop request still deletes the VM and writes the record.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     missing = missing_prerequisites()
@@ -355,7 +424,7 @@ def main() -> int:
     if resolved.returncode:
         print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
-    return run(args.results.resolve(), resolved.stdout.strip(), args.cache)
+    return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery)
 
 
 if __name__ == "__main__":

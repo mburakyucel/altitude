@@ -51,12 +51,12 @@ command installs a published release as the account that will use Altitude. The 
 stable release yet, so install the newest release candidate from its own tag:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
 ```
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
-installation fails at service start. The next release candidate carries the fix; see the
-[changelog](../CHANGELOG.md).
+installation fails at service start. Its failed activation keeps configuration, TLS identity and
+data; install `v0.1.0-rc.2` over it with the command above.
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64 or a Mac with Apple silicon on macOS 15 or newer, not root,
@@ -72,8 +72,8 @@ names the newest one; `latest` skips release candidates.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
 Releases that the release workflow publishes from the public repository attest every release file.
-`v0.1.0-rc.1` was published while the repository was private and has no attestation, so this check
-applies to later releases. To verify an attested release's script before running it, set `VERSION`
+A release published while the repository was private, including `v0.1.0-rc.1`, has no attestation,
+so this check applies to releases published once it is public. To verify an attested release's script before running it, set `VERSION`
 to its tag:
 
 ```sh
@@ -89,7 +89,7 @@ and verify the checksum's source; a checksum from the same untrusted download do
 authenticity.
 
 ```sh
-python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>'
+python3.12 install.py --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>'
 export PATH="$HOME/.local/bin:$PATH"
 alt doctor
 ```
