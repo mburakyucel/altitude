@@ -262,10 +262,45 @@ const NOTE: Record<AlertState, string> = {
 /** The honest difference the operator needs: this device wakes for a decision, closed app and all. */
 const PUSHED = "Alerts arrive on this device even when Altitude is closed. Away from your network the alert says a decision is waiting, without naming it.";
 
+type Refusal = { host: string; reason: string };
+
+/**
+ * A push service that refuses Altitude's alerts leaves its device alerting only while Altitude is
+ * open; altd records why. Read while alerts are on, again after this device subscribes and whenever
+ * the page returns to the screen, so a refusal cleared by a later push stops showing.
+ */
+function useRefusals(on: boolean, pushed: boolean): Refusal[] {
+  const [refused, setRefused] = useState<Refusal[]>([]);
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    const read = () => {
+      if (document.hidden) return;
+      void fetch("/api/alerts")
+        .then((response) => response.json() as Promise<{ refused?: Refusal[] }>)
+        .then((body) => { if (live) setRefused(body.refused ?? []); })
+        .catch(() => undefined); // altd unreachable: the next return to the page reads again
+    };
+    read();
+    document.addEventListener("visibilitychange", read);
+    return () => {
+      live = false;
+      document.removeEventListener("visibilitychange", read);
+    };
+  }, [on, pushed]);
+  return on ? refused : [];
+}
+
+function refusedNote({ host, reason }: Refusal): string {
+  return `The push service at ${host} refused Altitude's last alert${reason ? ` (${reason})` : ""}, so that device `
+    + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.";
+}
+
 /** The switch on Needs you (SPEC.md §2.1), set on each device that should alert. */
 export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
   const state = useAlertState();
   const pushed = useSyncExternalStore(watch, readPushState, () => false);
+  const [refusal] = useRefusals(state === "on", pushed);
   const [asking, setAsking] = useState(false);
   const on = state === "on";
   const settled = state === "unsupported" || state === "blocked";
@@ -286,7 +321,7 @@ export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
       >
         {on ? "Alerts on" : "Alert me about new decisions"}
       </button>{" "}
-      <span>{state === "on" && pushed ? PUSHED : NOTE[state]}</span>
+      <span>{refusal ? refusedNote(refusal) : state === "on" && pushed ? PUSHED : NOTE[state]}</span>
     </p>
   );
 }

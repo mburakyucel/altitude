@@ -40,6 +40,11 @@ def main():
                 body = self._body()
                 return self._json({"slug": asking(body.get("project", "beacon"), body["title"], body["question"],
                                                   body.get("escalated", True))})
+            if self.path == "/fixture/tick":  # one push tick against a fixture push service answering `status`
+                body = self._body()
+                push._send = lambda endpoint: (body["status"], body.get("reason", ""))
+                push.notify()
+                return self._json({"refused": push.refused()})
             if self.path == "/fixture/escalate":
                 body = self._body()
                 [row] = [d for d in T.decisions(body["project"]) if d["slug"] == body["slug"]]
