@@ -5,7 +5,7 @@ import type { Page, Route } from "@playwright/test";
  * recordings that answer each chunk from the samples heard, so no model runs and nothing leaves the page.
  * `offline` drops every live request as a lost connection would; `forget` makes the host answer 410 for the
  * recording it knows, as after an idle drop or a restart, so the page opens a new one and replays; `holdAudio`
- * holds the chunks' answers.
+ * holds the chunks' answers; `live` replaces the words answered while listening.
  */
 
 type HostState = Record<string, unknown>;
@@ -29,6 +29,8 @@ export async function fixtureHost(page: Page, initial: HostState = READY) {
     failFinal: null as null | { status: number; error: string },
     /** Holds every chunk's answer until it settles, as a slow host would. */
     holdAudio: null as null | Promise<void>,
+    /** The words answered while listening, in place of "check" and "check the build". */
+    live: null as null | string,
     offline: false,
     forget: false,
     opened: 0,
@@ -78,7 +80,7 @@ export async function fixtureHost(page: Page, initial: HostState = READY) {
       if (host.failFinal) return route.fulfill({ status: host.failFinal.status, json: { error: host.failFinal.error } });
       return route.fulfill({ json: { text: host.final ?? `Heard ${host.chunks.length} chunks.`, final: true } });
     }
-    return route.fulfill({ json: { text: host.chunks.length > 1 ? "check the build" : "check" } });
+    return route.fulfill({ json: { text: host.live ?? (host.chunks.length > 1 ? "check the build" : "check") } });
   });
   return host;
 }

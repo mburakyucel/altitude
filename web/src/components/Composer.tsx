@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
 import { HostCapture, MAX_RETAINED, UNREACHED } from "./hostCapture";
+import { useLiveReveal } from "./liveReveal";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
 import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
@@ -17,7 +18,7 @@ import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
  * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
  * The installation's voice backend decides the capture: host voice streams to this computer's speech
- * model and browser recognition never uploads; both show their words while listening and run the same
+ * model and browser recognition never uploads; both show their words flowing in while listening and run the same
  * recorder-shaped state machine. Host voice keeps recording through a lost connection and its words catch
  * up; after Stop or Send it waits for the connection with Cancel.
  */
@@ -354,9 +355,10 @@ export default function Composer({
   const [capturePhase, setPhase] = useState<Phase>("idle");
   const [voiceSend, setVoiceSend] = useState(() => voiceSends.get(conversation) ?? null);
   const phase = voiceSend ? "transcribing" : capturePhase;
-  /** Browser recognition: the draft plus the words recognized so far, shown while listening. */
+  /** The words recognized so far, flowing in after the draft while listening. */
   const [live, setLive] = useState<string | null>(null);
-  const displayedDraft = voiceSend?.text ?? live ?? value;
+  const flowing = useLiveReveal(live);
+  const displayedDraft = voiceSend?.text ?? (flowing === null ? value : combineDraft(value, flowing));
   const waveform = useRef<Waveform | null>(null);
   const releaseWaveform = useCallback(() => {
     const graph = waveform.current;
@@ -763,7 +765,7 @@ export default function Composer({
       waveform.current = openWaveform(opened);
       if (backend === "host") {
         const host = new HostCapture(opened, captureSelection.current);
-        host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+        host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(text); };
         host.onstop = () => finish(host, used);
         host.oninterrupted = () => stop();
         host.onlistening = () => {
@@ -780,7 +782,7 @@ export default function Composer({
         return;
       }
       const active = new RecognitionCapture(opened, { before: draft.current });
-      active.onupdate = (text) => { if (recorder.current === active && !cancelled.current) setLive(combineDraft(draft.current, text)); };
+      active.onupdate = (text) => { if (recorder.current === active && !cancelled.current) setLive(text); };
       active.onstop = () => finish(active, used);
       recorder.current = active;
       active.start();
