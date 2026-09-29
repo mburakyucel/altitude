@@ -1561,29 +1561,31 @@ def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]
 
 
 def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
-    """Fast-forward a project's deployment to origin/main. Backend, launch inputs and tracked web build inputs
-    need activation: announce those with an FYI and `monitor/restart-pending.json`, never restart from here.
+    """Fast-forward a project's deployment to its origin branch: main, or `config.SOURCE_BRANCH` for the checkout
+    Altitude runs from. Backend, launch inputs and tracked web build inputs need activation: announce those with
+    an FYI and `monitor/restart-pending.json`, never restart from here.
 
     The one implementation the deployment tick and `pull_after_done` share. Returns notes, empty when the
-    project does not deploy from its checkout or the checkout is already at origin/main. Anything that is not a
+    project does not deploy from its checkout or the checkout is already at its origin branch. Anything that is not a
     pure fast-forward — dirty, on another branch, ahead of origin, or diverged — raises a deployment failure."""
     proj = config.project(project)
     if not proj.get("self_deploy", project == "altitude"):
         return []
     repo = config.project_path(project)
-    origin_sha = git_policy.fetch_origin(repo, "main")
-    state = git_policy.service_preflight(repo, "main")   # clean, on main, neither ahead nor diverged
+    branch = config.SOURCE_BRANCH if repo.resolve() == config.REPO.resolve() else "main"
+    origin_sha = git_policy.fetch_origin(repo, branch)
+    state = git_policy.service_preflight(repo, branch)   # clean, on the branch, neither ahead nor diverged
     if not state.behind:
         return []
     head = state.head
-    pull = subprocess.run(["git", "merge", "-q", "--ff-only", "origin/main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+    pull = subprocess.run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=str(repo), capture_output=True, text=True, timeout=120)
     if pull.returncode != 0:
         raise git_policy.GitPolicyError(
             f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
         )
     files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
     changed = [f for f in files if activation_component(f)]
-    notes = [f"self-deploy: main {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
+    notes = [f"self-deploy: {branch} {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
     if changed and config.RELEASE is None:
         pend_p = config.MONITOR_DIR / RESTART_PENDING
         pend = S.read_json(pend_p, {}) or {}

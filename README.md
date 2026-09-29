@@ -59,7 +59,8 @@ One engine is enough, and each integration is
 ## Get started
 
 Altitude runs for one person on a Linux x86_64 machine with a systemd user manager. Ubuntu 24.04
-is the initial target; clean-machine and provider acceptance remain pending. You need Python 3.12+,
+is the initial target; clean-machine and provider acceptance remain pending. A Mac with Apple silicon
+on macOS 15 or newer runs Altitude from a source checkout while its native acceptance is pending. You need Python 3.12+,
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
@@ -77,8 +78,8 @@ acceptance are not yet established.
    [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script
    checks the machine, runs nothing it downloads unless it matches the release's checksums and
    prints the next steps. The [installation steps](docs/SETUP.md#install-the-application) explain
-   what it trusts and how to verify attested releases. On macOS it stops before installing: the
-   native runtime is not delivered yet.
+   what it trusts and how to verify attested releases. On macOS it stops before installing; a Mac runs
+   Altitude from a [source checkout](docs/SETUP.md#install-the-application) for now.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device) (`alt tls-share`

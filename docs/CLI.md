@@ -623,8 +623,11 @@ Every other `alt` command that calls altd sends the machine key from the same st
 from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
 phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
-CA's name, scope, expiry and SHA-256 fingerprint that the phone checks before installing it. It serves nothing else
-and exits when the time is up or on Ctrl-C. See [set up a phone](SETUP.md#set-up-a-phone).
+link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and
+SHA-256 fingerprint that the phone checks before installing it. The link serves only a guided page,
+an iPhone configuration profile holding only the certificate, and the certificate file; it closes
+when the time is up or on Ctrl-C. Settings → Devices → **Add a phone** opens the same kind of link
+from the service. See [set up a phone](SETUP.md#set-up-a-phone).
 
 ## Project lifecycle
 
@@ -1339,6 +1342,13 @@ same worktree. Follow-up merge commits require manual reconciliation first becau
 could drop merge-resolution edits. Unseen remote changes also require incorporation before
 continuation. Failures after reconciliation or push can be retried with `alt land`.
 
+A task PR closed without merging stays closed. The next `alt land` from the same task opens a fresh
+PR from the same branch with its own title and description, replacing the closed PR's remote commits
+under the recorded-tip lease; the owner rebases or resets the branch first so it carries only
+the intended work. The closed PR stays in `prs` and in the delivery event, and the fresh PR becomes
+the current delivery with its own checks, review and hold release. A closed PR whose branch is
+not the task's is refused.
+
 Task `prs` and delivery events preserve earlier PR/head/merge evidence. The current `delivery`
 receipt is recorded before waiting for checks; an unpublished delivery cannot complete the task.
 The landing result names no main run: the merged commit's push-triggered run rarely exists at that
@@ -1698,13 +1708,19 @@ first, then runs the command as the operator in a transient user unit outside ev
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
 runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
-appends output to `machine.log` in the task folder and records the exit status, so a command that
-restarts Altitude keeps its row and unit. The CLI prints the output and a status line, then exits
-with the command's status (124 on timeout). Each run completes its `machine.jsonl` row and adds a
-`machine-run` task event and a `machine-run` project event with the command, unit, exit status and
-purpose. A missing grant, a non-running task, a stale attempt, a grant from an earlier attempt or a
-revoked grant refuses with the reason; no exit status within the limit is reported as a timeout or
-an explicit uncertainty, never as success. `alt task status <slug> --brief` shows the active purpose.
+writes its output to `<unit>.log` and its exit status to `<unit>.exit` in the task folder, so the
+result outlives altd. The CLI prints the output and a status line, then exits with the command's
+status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit
+recorded, and adds a `machine-run` task event and a `machine-run` project event with the command,
+unit, exit status and purpose. When Altitude restarts during a command, including one the command
+restarts itself, the next altd follows every unfinished row's unit to its end and completes the
+row and events from that saved status; the CLI tags its call with a request id, reconnects with it
+and prints the same command's result without running it again. A missing grant, a non-running
+task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason,
+as does a request id from an earlier attempt. A unit stopped at the limit is reported as a timeout,
+and any other end without an exit status, including one that happened unseen while altd restarted,
+as an explicit uncertainty with its reason, never as success. When altd cannot be reached at all,
+the CLI fails at once. `alt task status <slug> --brief` shows the active purpose.
 
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,

@@ -509,7 +509,7 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
-| Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once |
+| Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. With either backend, new words flow in letter by letter at a steady pace timed to finish as the next update arrives (about speaking pace, faster while catching up); a revised word changes in place without the text backing up, and under reduced motion each update appears at once. Stop, Send and a recording that stops early use every recognized word, including any still flowing in. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once |
 | Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Host voice finishes its last words here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195). When English punctuation did not finish, the words land as heard and a muted hint stays until the next capture or send: "Added without punctuation: still loading. Next time it will be ready." while the model is still downloading, otherwise "Added without punctuation: this browser could not run it." | the operator edits or sends as with a typed draft |
 | Denied | mic stays available; hint reads "Microphone blocked in the browser. Typing works." (microphone or recognizer refused) | the hint stays until the next tap, which asks the browser again; a lasting block shows the hint again |
@@ -1031,6 +1031,13 @@ terminal keeps running when the page leaves; returning replays up to 256 KB. Whe
 however it ends, the view returns to where the operator was — Live session on a task, the project for
 the project terminal — and keeps no output; the next visit opens a fresh shell.
 
+The screen scrolls through its output and scrollback like any other content: a finger dragged over it
+on phone (a quick swipe flings on and slows to a stop), the wheel or trackpad on desktop. Scrolling
+back sends nothing to the shell and leaves focus where it is, so the soft keyboard does not open for
+it. Scrolled back, new output leaves the earlier lines in place; back at the bottom the screen follows
+new output again, and typing or any key row key returns it to the prompt. A program's full-screen view
+(an editor, a pager) has no scrollback: a drag leaves it as it is, and the program's own keys move it.
+
 On desktop, Ctrl+V (Cmd+V) pastes and Ctrl+C with text selected copies (Cmd+C on a Mac); without a
 selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the panel is an overlay.
 
@@ -1055,8 +1062,9 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Terminal code missing | The page predates an update, whose activation removed the terminal code this page would load: "Altitude was updated", "This page is from the earlier version. Reload to open the terminal." If Altitude cannot be reached: "Couldn't load the terminal", "Check the connection to Altitude, then reload." Both add "The shell keeps running. Reloading clears text you have typed but not sent." and **Reload**; nothing reloads by itself. Walkthrough: `web/e2e/app-update.pw.ts`. |
 
 Walkthrough: `web/e2e/terminal.pw.ts` at 390×844 and 1440×900 (the project terminal at 1100 wide, as
-an overlay) walks every state above against real shells, plus tab completion, copy and paste, with
-the agent check and the restart notice as fixtures.
+an overlay) walks every state above against real shells, plus tab completion, copy and paste, and
+scrolling back by touch or wheel while output arrives, with the agent check and the restart notice as
+fixtures.
 
 ### 3.11 Project switcher (phone)
 
@@ -1296,12 +1304,33 @@ the current one) with **Cancel** and a red **Remove**; removing the current devi
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
 With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. To add a phone, run this on the computer running Altitude; it gives a ten-minute link and the
-steps:", the copyable `alt tls-share` command, "Before installing it on the phone, check that its name
-and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
+once. Add a phone shows a QR code for its camera, or run `alt tls-share` on the computer running
+Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
+name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
 CA) and Expires. An unreadable certificate shows "Could not read the certificate: <reason>" in red;
-without HTTPS or a CA file the card is absent. `web/e2e/certificate.pw.ts` walks these at both widths.
+without HTTPS or a CA file the card is absent.
+
+| Add a phone state | What appears and what actions do |
+| --- | --- |
+| Ready | **Add a phone**. |
+| Opening | **Opening…**, disabled. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
+| Closing | **Closing…**, disabled, while the service closes the link. |
+| Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
+| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
+| Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
+
+The phone page the QR code opens is served by the share link itself, light or dark with the phone:
+**Add this phone to Altitude**, "This lets the phone recognise your Altitude as genuine. Your phone
+asks you to approve each step.", a grey card with the CA name, its SHA-256 in four monospace rows and
+"It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.", then
+**iPhone or iPad** with a full-width blue **Download the profile** and four numbered steps (Allow and
+Close; Settings › Profile Downloaded, check the certificate name and More Details SHA-256, Install
+with the passcode, or Remove; Certificate Trust Settings; open the HTTPS address in a new Private tab
+with no warning, then pair), and **Android and other devices** with a grey **Download the
+certificate** and two steps. It names no step as automatic. `web/e2e/certificate.pw.ts` walks the
+card, every Add a phone state and the phone page at both widths.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
@@ -1381,7 +1410,8 @@ a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the c
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
 field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning. To set up a phone, run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+after it opens without a warning. To set up a phone, use Add a phone in Settings › Devices on a paired
+device, or run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |

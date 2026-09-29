@@ -1307,17 +1307,54 @@ class TestLand(AltitudeCase):
         self.assertEqual(res["checks"], "merged")  # its own value — never reported as a pass
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
 
-    def test_closed_unmerged_pr_refuses_before_any_mutation(self):
+    def test_closed_unmerged_pr_is_followed_by_a_fresh_pr_from_the_same_task(self):
+        # A superseded PR's branch keeps its stale commit; the next delivery replaces it under the lease.
+        self.staged_change("src/stale.py")
+        self.git("commit", "-q", "-m", "stale")
+        self.git("push", "-q", "origin", "worktree-fix-x")
+        stale = self.git("rev-parse", "HEAD").strip()
+        self.git("reset", "-q", "--hard", "origin/main")
+        (self.ghdir / "pr.json").write_text(json.dumps(
+            {"number": 55, "url": "https://example.invalid/pr/55", "state": "CLOSED", "title": "Old title",
+             "isCrossRepository": False}))
+        task = S.load_task("demo", "fix-x")
+        task.update(prs=[55], delivery={"number": 55, "head": stale, "base": "b", "branch": "worktree-fix-x"},
+                    hold_merge_id="h", merge_approval={"pr": 55, "hold_id": "h", "hold": "Review each PR"})
+        S.save_task("demo", task)
+        self.staged_change("src/next.py")
+        body = self.tmp / "body.md"
+        body.write_text("The next delivery\n")
+        res = land.land("fix: next delivery", cwd=self.repo, wait=0, pr_title="Next delivery",
+                        pr_body_file=str(body))
+        self.assertEqual((res["pr"], res["merged"]), (101, False))
+        self.assertEqual(res["replaced"], [self.git("log", "--oneline", "-1", stale).strip()])
+        create = next(a for a in self.gh_log() if a[:2] == ["pr", "create"])
+        self.assertEqual(create[create.index("--title") + 1], "Next delivery")
+        self.assertEqual(create[create.index("--body-file") + 1], str(body))
+        self.assertNotIn(["pr", "reopen"], [a[:2] for a in self.gh_log()])
+        self.assertNotIn(["pr", "edit"], [a[:2] for a in self.gh_log()])
+        task = S.load_task("demo", "fix-x")
+        self.assertEqual(task["prs"], [55, 101])
+        self.assertEqual((task["delivery"]["number"], task["delivery"]["head"]), (101, res["head"]))
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), res["head"])
+        # The closed PR's approval does not carry to the new PR: the original hold is back.
+        self.assertEqual(task["hold_merge"], "Review each PR")
+        closed = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "delivery" and e.get("previous")]
+        self.assertEqual(closed[-1]["previous"]["number"], 55)
+        self.assertEqual(closed[-1]["previous"]["state"], "CLOSED")
+        # A retry finds the open PR and reuses it.
+        self.assertEqual(land.land("fix: next delivery", cwd=self.repo, wait=0)["pr"], 101)
+        self.assertEqual(S.load_task("demo", "fix-x")["prs"], [55, 101])
+
+    def test_someone_elses_closed_pr_is_still_refused(self):
         self.staged_change()
         (self.ghdir / "pr.json").write_text(json.dumps(
-            {"number": 55, "url": "https://example.invalid/pr/55", "state": "CLOSED"}))
+            {"number": 55, "url": "https://example.invalid/pr/55", "state": "CLOSED", "headRefName": "other"}))
         head = self.git("rev-parse", "HEAD").strip()
-        with self.assertRaisesRegex(land.LandError, "closed"):
-            land.land("fix: onto a closed pr", cwd=self.repo, wait=0)
+        with self.assertRaisesRegex(land.LandError, "not the expected"):
+            land.land("fix: onto a foreign pr", cwd=self.repo, wait=0)
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
-        self.assertEqual(self.git("write-tree"), self.selected_index)
-        self.assertEqual(self.remote_heads(), ["main"])  # nothing pushed onto the closed PR's branch
-        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
+        self.assertEqual(self.remote_heads(), ["main"])
 
     def test_create_path_reads_the_pr_back_once(self):
         pr = land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x", pr=None)

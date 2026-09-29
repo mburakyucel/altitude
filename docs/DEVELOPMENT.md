@@ -24,7 +24,8 @@ make check
 For a deliberately separate foreground preview, build with `pnpm --dir web build`, put `bin/`
 on PATH, select unused runtime and TLS directories outside project/source roots, and choose a free
 port with `ALTITUDE_PORT`. Run `alt tls-init`, follow the [certificate trust guide](SETUP.md#trust-https-on-each-device),
-then `alt serve` with the same environment. It still needs the systemd user manager for workers.
+then `alt serve` with the same environment. It still needs the systemd user manager, or on macOS the
+logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
@@ -43,6 +44,23 @@ Dependency and browser installation are explicit prerequisites, so a warm run ne
 fetch packages. In a restricted worktree add `--store-dir /tmp/altitude-ui-pnpm-store` to the
 frozen install. Do not alter the lockfile to work around an installation failure. On a clean
 Linux CI host, `playwright install --with-deps chromium` also installs browser OS dependencies.
+
+On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
+`lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
+`cwebp`) and `bash` (macOS's own bash 3.2 has no bracketed paste, which the terminal walkthroughs
+check), with `/opt/homebrew/opt/python@3.12/libexec/bin`, `/opt/homebrew/opt/node@24/bin` and
+`/opt/homebrew/bin` ahead of `/usr/bin` on PATH. Terminal tests there start each shell as a real,
+throwaway launchd job, the only part of the suite that reaches launchd, since only a real job gives
+the shell a coalition of its own; the browser walkthroughs' terminal service opts in the same way. The
+walkthroughs press the platform's own editing keys (`ControlOrMeta`), so select-all, copy and paste
+are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in for systemd set `host = "linux"`, and
+`tests/test_platform_darwin.py` covers the macOS side of the platform seam with fixtures on any host.
+`python3 scripts/platform_probe.py` checks the same mechanisms natively on either host with
+throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
+`setsid`, double fork, a cleared environment or continued forking, cleanup when the main process
+exits, the time limit, also after its owner exits, macOS confinement and supervisor tampering,
+process and socket facts, and the memory limit. `--service` adds a throwaway user service's start,
+restart and stop. It prints one JSON row per check and exits non-zero when one fails.
 
 Individual commands remain useful for focused development:
 
@@ -184,7 +202,7 @@ words while listening, landed, Send at once, cancel, failed, denied and no-recog
 both viewports, and asserts that nothing reaches `/api/voice/live`. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
 `host-voice.pw.ts` overlays `/api/voice` with `host` and answers `/api/voice/live` from a page-level
 fixture, so no model runs; the page's real audio worklet turns the synthetic microphone into 16 kHz
-chunks. It walks starting, live words, transcribing, landed, cancel, Send, stopped, busy, needs
+chunks. It walks starting, live words (flowing in frame by frame, and at once under reduced motion), transcribing, landed, cancel, Send, stopped, busy, needs
 setup, setup progress, ready and unavailable at both viewports. `tests/test_speech.py` runs the
 supervisor against a fake worker process (load failure, hangs, crashes) and setup against a fake
 download of small checksummed files; nothing downloads the real model.
@@ -519,8 +537,11 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0
 ```
 
 `RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's
-installation must fail, and the candidate's installer run over what it left must start the service
-and keep its settings, TLS identity and fictional data, then uninstall. `v0.1.0-rc.1` is such a
+installation must fail and leave an interrupted activation that the candidate's installer refuses.
+The phase then runs the cleanup [setup](SETUP.md#install-the-application) gives for that machine
+(disable and remove the unit, reload systemd, `alt recover`), and the candidate's installer run over
+what is left must start the service and keep its settings, TLS identity and fictional data, then
+uninstall. `v0.1.0-rc.1` is such a
 baseline, since systemd refuses the unit it writes:
 
 ```sh

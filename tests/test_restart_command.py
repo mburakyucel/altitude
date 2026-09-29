@@ -54,21 +54,30 @@ class TestRestartCommand(AltitudeCase):
             staging.mkdir(); (staging / "version").write_text("new")
             attempts = 0
 
-            def run(command, **_kwargs):
+            def restart_unit():
                 nonlocal attempts
                 attempts += 1
                 if attempts == 1:
                     raise restart.RestartError("simulated restart failure")
-                return mock.Mock(returncode=0)
 
             with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", dist), \
                     mock.patch.object(restart, "unit_properties", return_value={"MainPID": "10"}), \
-                    mock.patch.object(restart, "run", side_effect=run), \
+                    mock.patch.object(restart, "restart_unit", side_effect=restart_unit), \
                     mock.patch.object(restart, "diagnostics"):
                 with self.assertRaises(restart.RestartError):
                     restart.publish_and_restart(staging)
             self.assertEqual((dist / "version").read_text(), "old")
             self.assertFalse(staging.exists())
+
+    def test_the_checkout_is_checked_against_the_branch_the_service_runs(self):
+        restart = load_script()
+        for environment, branch in (("", "main"), ("ALTITUDE_SOURCE_BRANCH=trial", "trial")):
+            unit = {"WorkingDirectory": str(restart.ROOT),
+                    "Environment": f"ALTITUDE_HOME={config.ROOT} {environment}".strip()}
+            with self.subTest(branch=branch), mock.patch.object(restart, "unit_properties", return_value=unit), \
+                    mock.patch.object(restart.git_policy, "fetch_and_require_exact_base") as fetch:
+                restart.require_deployed_checkout()
+                fetch.assert_called_once_with(restart.ROOT, branch)
 
     def test_decision_11_script_allows_running_and_blocked_workers_and_waiting_reports(self):
         restart = load_script()

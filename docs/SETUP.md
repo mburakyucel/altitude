@@ -7,9 +7,11 @@ After container replacement, the browser explains that new AI work is paused and
 Continue command. It retains messages and setup requests until that action; an ordinary restart
 of the same container retains its previous admission. See [container recovery](CONTAINERS.md#lifecycle-and-recovery).
 
-Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The release
-archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
-Native macOS, Windows and genuine clean-machine/provider acceptance are not established.
+Altitude targets one operator on a Linux x86_64 machine with a systemd user manager, or on a Mac with
+Apple silicon running macOS 15 or newer. The release archive includes the CLI, daemon and built UI;
+Ubuntu 24.04 is the initial validation target. The macOS runtime is implemented and its native
+acceptance on a spare account is pending ([roadmap](ROADMAP.md#native-macos-runtime)); Windows and
+genuine clean-machine/provider acceptance are not established.
 
 The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
 exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
@@ -27,6 +29,13 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   selected engine's sandbox. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
   compatibility matrix is not established.
+- Or macOS 15 or newer on Apple silicon, with the account logged in (the screen may stay locked).
+  The service is a LaunchAgent of your login and needs no administrator rights; it starts at login,
+  so a Mac that restarts waits for one login, and running before any login is a later increment.
+  Put Homebrew's `openssl@3` ahead of `/usr/bin` on PATH (`brew install openssl@3`): macOS's own
+  LibreSSL cannot check a certificate's host name. Python 3.12 comes from `brew install python@3.12`
+  or python.org, Git from the Xcode command line tools. Each task job runs as its own launchd job,
+  also with a foreground Altitude server.
 - Python 3.12 or newer, Git, GitHub CLI (`gh`) and OpenSSL on PATH. The archive needs no Node,
   package manager, application source checkout or UI build. The backend uses Python's standard library.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
@@ -52,8 +61,17 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/re
 ```
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
-installation fails at service start. Its failed activation keeps configuration, TLS identity and
-data; install `v0.1.0-rc.2` over it with the command above.
+installation fails at service start and leaves that unit and an interrupted activation behind.
+Until they are cleared, `alt recover`, updates and uninstall stop at the refused unit. On a machine
+that ran it, remove the unit and complete the activation's recovery, then run the command above;
+configuration, TLS identity and data are kept:
+
+```sh
+systemctl --user disable altitude.service
+rm ~/.config/systemd/user/altitude.service
+systemctl --user daemon-reload
+~/.local/bin/alt recover
+```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
@@ -80,7 +98,9 @@ curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/
 ```
 
 On macOS the command stops before downloading anything and reports the macOS version, chip and
-Python it found; the native macOS runtime is not delivered yet ([#225](https://github.com/mburakyucel/altitude/issues/225)).
+Python it found: macOS installation waits for native acceptance ([#551](https://github.com/mburakyucel/altitude/issues/551)).
+A Mac runs Altitude from a source checkout instead: build the web app, run `bin/alt tls-init`, then
+`make install-service`, which installs a LaunchAgent of your login ([operations](OPERATIONS.md)).
 
 The same installer runs by hand from the release files, for example offline or with a private
 archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
@@ -153,32 +173,45 @@ address" for a type of name its limits leave open.
 
 #### Set up a phone
 
-On the computer running Altitude, locally or over SSH, run:
+On a device that already trusts Altitude, open **Settings → Devices** and tap **Add a phone** in the
+Certificate card. Or, on the computer running Altitude, locally or over SSH, run:
 
 ```sh
 alt tls-share
 ```
 
-It reads the address, port and certificate folder from the running Altitude service itself, so
-the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
+Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
+and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
+fingerprint, an iPhone profile download, a plain certificate download for Android and other
+devices, and the steps below. The link serves only that page and the public CA certificate, as a
+configuration profile holding only the certificate or as the certificate file; it never serves a
+key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
+the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new
+**Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
+then use another channel.
+
+`alt tls-share` reads the address, port and certificate folder from the running Altitude service
+itself, so the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
 `ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
-service's address, and offers only a certificate the service proves it serves under. For ten
-minutes it offers the certificate at a plain-HTTP link on the service's address and prints the
-steps below with the CA's real name and fingerprint. It serves nothing else; Ctrl-C closes it
-sooner. A firewall on that computer can block the link's port; then use another channel.
+service's address, and offers only a certificate the service proves it serves under. **Add a phone**
+is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
+in any terminal, including Altitude's own.
 
-It stops with the reason when the service is not installed or not running, serves plain HTTP,
-listens only on loopback (`ALTITUDE_HOST` must be the private-network address the phone opens,
-which takes effect when the service restarts), does not answer, or answers without proving that
-certificate. It needs the Linux user service; the native macOS service is not available yet.
+Both stop with the reason when the service serves plain HTTP or listens only on loopback
+(`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
+service restarts). `alt tls-share` also stops when the service is not installed or not running,
+does not answer, or answers without proving that certificate. It reads the Linux user service or,
+on a Mac, the source service's LaunchAgent, whose address comes from `ALTITUDE_HOST` when it is
+installed: `ALTITUDE_HOST=<address> make install-service`.
 
-On an iPhone or iPad:
+The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
+iPad:
 
-1. Open the link in Safari and tap **Allow**. Open Settings → **Profile Downloaded**.
-2. Before tapping **Install**, check that it contains only a **Certificate** with the printed name,
-   and that **More Details** → that certificate shows the printed SHA-256. If anything differs, tap
-   **Remove** and stop: someone else answered the link.
+1. Tap **Download the profile**, then **Allow**. Open Settings → **Profile Downloaded**.
+2. Before tapping **Install**, check that it contains only a **Certificate** with the name shown on
+   the trusted screen, and that **More Details** → that certificate shows the same SHA-256. If
+   anything differs, tap **Remove** and stop: someone else answered the link.
 3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
    Trust Settings**. Installing the profile alone does not enable TLS trust.
    [Apple guidance](https://support.apple.com/en-us/102390).
@@ -189,7 +222,7 @@ Safari may remember an earlier "visit this website" exception, which can hide mi
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
 every site and unpairs Safari.
 
-On Android, open the link in Chrome and install the file under Settings → Security → Encryption &
+On Android, tap **Download the certificate** in Chrome and install the file under Settings → Security → Encryption &
 credentials → Install a certificate → **CA certificate** (names vary by device), comparing the
 fingerprint where the device shows it. Firefox for Android also needs its third-party CA setting.
 [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
@@ -204,7 +237,7 @@ fingerprint where the device shows it. Firefox for Android also needs its third-
   [Firefox guidance](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
 - **Mac clients:** import the CA in Keychain Access and set its SSL trust explicitly. Safari and
   Chrome honor that setting; Firefox normally imports trusted roots from the System keychain,
-  otherwise use its Authorities import. This is client guidance, not native Mac runtime support.
+  otherwise use its Authorities import.
   [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
   [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
 
@@ -406,6 +439,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_OPERATOR` | Initial name shown for the operator; unset falls back to Git's global `user.name`, and with neither, screens say “you”. First run or **Settings → Your name** stores a name that replaces it; clearing that name returns to this value. |
 | `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
+| `ALTITUDE_SOURCE_BRANCH` | The branch a source service runs and self-deploys, default `main`. The service refuses to start unless its checkout is clean, on this branch and not ahead of `origin/<branch>`; task worktrees still branch from `main`. On a Mac, `make install-service` sets it to the checked-out branch when that is not `main`. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |

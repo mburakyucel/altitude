@@ -237,6 +237,8 @@ def prepare(directory: Path, *, apply: bool = False) -> dict:
     if os.environ.get("ALTITUDE_ACTOR") in ("l2", "l3"):
         raise RuntimeError("Source TLS preparation is an operator operation")
     platform.require_supported()
+    if not platform.source_service():
+        raise RuntimeError("Source TLS preparation applies to the Linux source service")
     directory = directory.expanduser().resolve(strict=True)
     before = _observe(directory)
     content = _override(directory)

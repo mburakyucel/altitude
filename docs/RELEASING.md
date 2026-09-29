@@ -175,7 +175,7 @@ and retained-data uninstall; the local VM also runs the built `install.sh` again
 inside the guest. This establishes no cross-release data migration or download from the published
 GitHub release. After publication, `BASELINE=<tag>` repeats the run with the published release as the
 baseline: its exact `install.sh` and archive install in the offline guest and update to the candidate
-(the guest's own download from GitHub stays unexercised); with `RECOVERY=1` the candidate instead installs over the published release's failed installation. Record its run URL or `vm.json`, runner environment, artifact hashes and actual results separately
+(the guest's own download from GitHub stays unexercised); with `RECOVERY=1` the candidate instead installs over the published release's failed installation after the documented cleanup. Record its run URL or `vm.json`, runner environment, artifact hashes and actual results separately
 from required candidate checks. Availability of either entry point alone is not executed acceptance
 or a new release gate.
 

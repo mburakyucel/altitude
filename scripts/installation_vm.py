@@ -14,8 +14,8 @@ forward, so during the tests the guest reaches neither the internet nor this hos
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest; then a third installs the baseline, the VM restarts and the harness
 checks that the service came back on its own before removing it. --recovery instead runs only the
-recovery phase: the published baseline's installation must fail, and the candidate installed over it
-must start and keep its settings, TLS identity and data.
+recovery phase: the published baseline's installation must fail, and after the documented cleanup the
+candidate installed over it must start and keep its settings, TLS identity and data.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations

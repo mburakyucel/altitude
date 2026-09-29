@@ -268,3 +268,46 @@ class TestAccess(AltitudeCase):
         status, reply, _ = self.request("POST", "/api/devices/code", {}, device=phone)
         self.assertEqual((status, reply["minutes"]), (200, access.CODE_MINUTES))
         self.assertEqual(self.pair(reply["code"], headers={"User-Agent": DESKTOP})[0], 200)
+
+    def test_add_a_phone_opens_one_bounded_share_window_for_the_operator_only(self):
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+        from altitude import qr, terminal, tls
+        self.patch(config, "TLS", True)
+        self.patch(config, "TLS_DIR", self.tmp / "private-tls")
+        self.patch(config, "HOST", "127.0.0.1")
+        server.tls_init()
+        self.addCleanup(lambda: server._SHARE and server._SHARE.close())
+        self.assertEqual(self.request("POST", "/api/devices/share", {})[0], 401)
+        phone, _ = self.paired()
+        with mock.patch.object(terminal, "agent_connection", return_value=True):
+            status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
+        self.assertEqual((status, reply), (403, {"error": "Add a phone requests from Altitude's own agents are refused."}))
+        self.patch(terminal, "agent_connection", new=lambda *_: False)
+        status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
+        self.assertEqual(status, 409)
+        self.assertIn("configured for 127.0.0.1, which only this computer can open", reply["error"])
+        # The suite may bind only loopback, so loopback stands in for the phone's network address here.
+        self.patch(tls, "phone_address", new=lambda _found: None)
+        status, first, _ = self.request("POST", "/api/devices/share", {}, device=phone)
+        self.assertEqual(status, 200, first)
+        authority = tls.identity(config.TLS_DIR / "ca.crt")
+        self.assertEqual((first["name"], first["sha256"]), ("Altitude local CA", authority["sha256"]))
+        self.assertRegex(first["link"], r"^http://127\.0\.0\.1:\d+/$")
+        self.assertEqual(first["qr"], ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(first["link"])])
+        self.assertTrue(590 <= first["seconds"] <= 600, first["seconds"])
+        with urllib.request.urlopen(first["link"] + "ca.crt", timeout=5) as response:
+            self.assertEqual(response.read(), (config.TLS_DIR / "ca.crt").read_bytes())
+        # Opening again replaces the window; the earlier page closing it cannot close the new one.
+        second = self.request("POST", "/api/devices/share", {}, device=phone)[1]
+        with self.assertRaises(urllib.error.URLError):
+            urllib.request.urlopen(first["link"], timeout=5)
+        self.assertEqual(self.request("POST", "/api/devices/share-close", {"link": first["link"]}, device=phone)[:2],
+                         (200, {"closed": True}))
+        with urllib.request.urlopen(second["link"], timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.request("POST", "/api/devices/share-close", {}, device=phone)[0], 400)
+        self.request("POST", "/api/devices/share-close", {"link": second["link"]}, device=phone)
+        with self.assertRaises(urllib.error.URLError):
+            urllib.request.urlopen(second["link"], timeout=5)

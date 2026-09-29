@@ -224,15 +224,15 @@ test("project drafts survive selection and route remount with independent copy, 
   await v.field("beta").fill("Beta independent draft");
   await switchProject(page, info, "alpha");
   await expect(v.field("alpha")).toHaveValue("Alpha unsent draft");
-  await v.field("alpha").press("Control+a");
-  await page.keyboard.press("Control+c");
+  await v.field("alpha").press("ControlOrMeta+a");
+  await page.keyboard.press("ControlOrMeta+c");
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("Alpha unsent draft");
   await walk.state("04-alpha-draft-restored", { visible: [v.text("Alpha saved history."), v.field("alpha")], hidden: [v.text("Beta independent draft")] });
   await switchProject(page, info, "beta");
   await expect(v.field("beta")).toHaveValue("Beta independent draft");
-  await v.field("beta").press("End");
+  await v.field("beta").press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");  // end of line on each platform
   await page.keyboard.press("Shift+Enter");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("ControlOrMeta+v");
   await expect(v.field("beta")).toHaveValue("Beta independent draft\nAlpha unsent draft");
   const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
   await nav.getByRole("link", { name: "Monitor", exact: true }).click();
@@ -462,7 +462,7 @@ test("listening, late Stop transcription and denied microphone reset without cro
   host.holdFinal = transcript.promise;
   const delivered = finalSettled(page);
   await mic.click();
-  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft check", { timeout: 5000 });
+  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft check the build", { timeout: 5000 });
   await stop.click();
   await expect.poll(() => host.finals).toBe(1);
   await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
@@ -508,7 +508,7 @@ for (const result of ["success", "failure", "cancel"] as const) {
     await v.field("alpha").fill("Alpha original draft");
     await v.convo.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.convo.getByRole("button", { name: "Stop voice input" })).toBeVisible();
-    await expect(v.field("alpha")).toHaveValue("Alpha original draft check", { timeout: 5000 });
+    await expect(v.field("alpha")).toHaveValue("Alpha original draft check the build", { timeout: 5000 });
     await v.send.click();
     await switchProject(page, info, "beta");
     await v.field("beta").fill("Beta independent draft");

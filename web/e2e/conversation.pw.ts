@@ -561,11 +561,11 @@ async function expectVoiceDraftLocked(page: Page, field: Locator, text: string) 
   await expect(field).toBeVisible();
   await expect(field).not.toBeEditable();
   await field.focus();
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type("unwanted keyboard edit");
   await page.keyboard.press("Backspace");
   await page.evaluate(() => navigator.clipboard.writeText("unwanted clipboard edit"));
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("ControlOrMeta+v");
   await expect(field).toHaveValue(text);
 }
 
@@ -646,7 +646,7 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   host.holdFinal = new Promise<void>((resolve) => (release = resolve));
   await v.mic.click();
   await expect(v.stop).toBeVisible();
-  await expect(v.field).toHaveValue(/^Keep the draft check/, { timeout: 5000 });
+  await expect(v.field).toHaveValue("Keep the draft check the build", { timeout: 5000 });
   await walk.state("03-transcribing-overlay", {
     action: () => v.stop.click(),
     visible: [transcribing, v.field, v.cancel, v.main.locator(".composer-box .spinner"), ...(!v.phone ? [wave] : [])],

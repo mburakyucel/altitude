@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1612,6 +1612,19 @@ class Handler(BaseHTTPRequestHandler):
     def _devices_post(self, action: str, body: dict) -> None:
         if action == "code":
             return self._json(access.issue_code())
+        if action in ("share", "share-close"):
+            denied = self._terminal_denied(json_body=True, subject="Add a phone")
+            if denied:
+                return self._json({"error": denied}, 403)
+            if action == "share-close":
+                if body.keys() - {"link"} or not isinstance(body.get("link"), str):
+                    return self._json({"error": "Name the link to close."}, 400)
+                close_share(body["link"])
+                return self._json({"closed": True})
+            try:
+                return self._json(open_share())
+            except (tls.TLSFailure, OSError) as exc:
+                return self._json({"error": str(exc)}, 409)
         if action != "revoke" or not isinstance(body.get("id"), str):
             return self._json({"error": "unknown api"}, 404)
         try:
@@ -2022,9 +2035,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "run"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "command"}:
+                    if o.keys() - {"project", "slug", "attempt", "command", "request"}:
                         raise ValueError("alt task run: unsupported fields")
-                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command")))
+                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                                          o.get("request")))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError) as exc:
@@ -2583,57 +2597,121 @@ def repository_url(origin: str) -> str | None:
 
 
 MACHINE_COMMAND_LIMIT = 16384
-_machine_running: set[str] = set()   # tasks with a command under way; one at a time keeps the log readable
+MACHINE_POLL_SECONDS = 1
 
 
-def run_machine_command(project: str, slug: str, attempt: object, command: object) -> dict:
+def _machine_rows(runs: Path) -> list[dict]:
+    return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+
+
+def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object) -> dict:
     """One command under the task's recorded machine grant, executed by altd outside the worker sandbox.
 
     Only the running owner's current attempt may call it, and only while a grant is recorded. The command, unit,
-    exit status and output land in the task folder (`machine.jsonl`, `machine.log`), the task events and the
-    project log, so the operator can read exactly what ran under their grant.
+    exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task events and
+    the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
+    command: calling again with it, after a restart ended the connection, waits for that command's result
+    instead of running it again.
     """
     S.require_task_slug(slug)
     if not isinstance(command, str) or not command.strip() or len(command) > MACHINE_COMMAND_LIMIT:
         raise ValueError(f"alt task run: supply one non-empty command of at most {MACHINE_COMMAND_LIMIT} characters")
+    if not isinstance(request, str) or not re.fullmatch(r"[0-9a-f]{32}", request):
+        raise ValueError("alt task run: name the request with 32 lowercase hexadecimal characters")
     folder = S.task_dir(project, slug)
     runs = folder / "machine.jsonl"
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
             raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
-        grant = task.get("machine_access")
-        if not grant:
-            raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for a "
-                                  "concrete purpose, resolve their answer, then have L3 record it with "
-                                  "alt task machine --grant")
-        if grant.get("attempt") != task.get("attempt"):
-            raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
-        if f"{project}/{slug}" in _machine_running:
-            raise ValueError("alt task run: one command at a time; the previous command is still running")
-        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
-        sequence = len(rows) + 1
-        # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
-        row = {"n": sequence, "purpose": grant["purpose"], "command": command,
-               "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
-               "started": S.now(), "finished": None, "error": "still running or interrupted with altd"}
-        T._append_jsonl(runs, row)
-        _machine_running.add(f"{project}/{slug}")
-    try:
-        result = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
-                                         log=folder / "machine.log", unit=row["unit"],
-                                         identity=dispatch.l2_env(project, slug, task["attempt"]))
-    finally:
-        _machine_running.discard(f"{project}/{slug}")
-    row.update({key: result[key] for key in ("exit", "timed_out", "started", "finished", "error")})
+        rows = _machine_rows(runs)
+        earlier = next((r for r in rows if r.get("request") == request), None)
+        if earlier is not None and earlier.get("attempt") != task.get("attempt"):
+            raise PermissionError("alt task run: this request belongs to an earlier attempt")
+        if earlier is None:
+            grant = task.get("machine_access")
+            if not grant:
+                raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for "
+                                      "a concrete purpose, resolve their answer, then have L3 record it with "
+                                      "alt task machine --grant")
+            if grant.get("attempt") != task.get("attempt"):
+                raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
+            if any(r["finished"] is None for r in rows):  # one at a time keeps the record readable
+                raise ValueError("alt task run: one command at a time; the previous command is still running")
+            # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
+            sequence = len(rows) + 1
+            row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
+                   "command": command,
+                   "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
+                   "started": datetime.now(timezone.utc).isoformat(), "finished": None,
+                   "error": "still running or interrupted with altd"}
+            T._append_jsonl(runs, row)
+        elif earlier["command"] != command:
+            raise ValueError("alt task run: this request already ran a different command")
+    if earlier is not None:
+        return _await_machine_row(project, slug, earlier["n"])
+    try:  # a launch that fails still settles its row, so it never holds the next command
+        launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
+                                               folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
+                                               identity=dispatch.l2_env(project, slug, task["attempt"]))
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        launch_error = str(exc)[:300]
+    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error)
+
+
+def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
+                           launch_error: str | None = None) -> dict:
+    """Follow the row's unit to its end and complete its row, task event and project log entry once; return the
+    completed row with the unit's output. The altd that started the command settles it, and the next altd settles
+    one that a restart interrupted. The row is written last, so a restart between the writes settles it again,
+    and the task event, found by unit, is not repeated."""
+    folder = S.task_dir(project, slug)
+    outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
+                                      timeout=config.MACHINE_COMMAND_TIMEOUT, launch_error=launch_error,
+                                      poll=MACHINE_POLL_SECONDS)
+    runs = folder / "machine.jsonl"
     with S.project_lock(project):
-        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
-        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == sequence else r, sort_keys=True) + "\n"
-                                     for r in rows))
-    S.append_event(project, slug, "machine-run", actor="l2", **row)
-    S.project_log(project, "machine-run", slug=slug, command=command, unit=row["unit"], exit=row["exit"],
-                  timed_out=row["timed_out"])
-    return {**result, "n": sequence}
+        rows = _machine_rows(runs)
+        current = next(r for r in rows if r["n"] == row["n"])
+        if current["finished"] is None:
+            current.update(outcome)
+            if not any(e["kind"] == "machine-run" and e.get("unit") == current["unit"]
+                       for e in S.read_events(project, slug)):
+                S.project_log(project, "machine-run", slug=slug, command=current["command"], unit=current["unit"],
+                              exit=current["exit"], timed_out=current["timed_out"])
+                S.append_event(project, slug, "machine-run", actor="l2", **current)
+            S.atomic_write(runs, "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+    return {**current, **engines.machine_output(folder, current["unit"])}
+
+
+def _await_machine_row(project: str, slug: str, sequence: int) -> dict:
+    """The row once it is complete, or as it stands when the command's limit has long passed."""
+    folder = S.task_dir(project, slug)
+    deadline = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 90
+    while True:
+        row = next(r for r in _machine_rows(folder / "machine.jsonl") if r["n"] == sequence)
+        if row["finished"] is not None or time.monotonic() >= deadline:
+            return {**row, **engines.machine_output(folder, row["unit"])}
+        time.sleep(MACHINE_POLL_SECONDS)
+
+
+def settle_interrupted_machine_commands() -> list[threading.Thread]:
+    """Follow every machine command a stopped altd left running, so its row and event get its real result. A
+    ledger that cannot be read is logged and left as it is; it never stops altd from starting."""
+    threads = []
+    for project in config.load_projects():
+        for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
+            try:
+                rows = [row for row in _machine_rows(runs) if row["finished"] is None]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                log(f"machine commands: cannot read {runs}: {exc}")
+                continue
+            for row in rows:
+                thread = threading.Thread(target=settle_machine_command, args=(project, runs.parent.name, row),
+                                          kwargs={"watched": False}, name=f"machine-{row['unit']}", daemon=True)
+                thread.start()
+                threads.append(thread)
+    return threads
 
 
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
@@ -2926,6 +3004,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         restart_notice()
+        settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
@@ -2955,6 +3034,35 @@ def certificate_view() -> dict | None:
     except (tls.TLSFailure, OSError) as exc:
         return {"error": str(exc)}
     return {**authority, "scope": tls.describe_scope(authority["scope"])}
+
+
+_SHARE: tls.Share | None = None
+_SHARE_LOCK = threading.Lock()
+
+
+def open_share() -> dict:
+    """Settings › Devices › Add a phone: one share window of the CA this service serves under, replacing an
+    earlier one, with its QR code and what the phone must match."""
+    global _SHARE
+    found = tls.located({"host": config.HOST, "port": config.PORT, "tls": config.TLS, "tls_dir": config.TLS_DIR})
+    ca = config.TLS_DIR / "ca.crt"
+    with _SHARE_LOCK:
+        if _SHARE is not None:
+            _SHARE.close()
+        tls.phone_address(found)
+        _SHARE = tls.Share(found, ca.read_bytes(), tls.identity(ca))
+        window = _SHARE
+    log("opened a ten-minute certificate share for a phone")
+    return {"link": window.link, "seconds": round(window.remaining()), "name": window.authority["name"],
+            "sha256": window.authority["sha256"],
+            "qr": ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(window.link)]}
+
+
+def close_share(link: str) -> None:
+    """Close the share window at `link` early; a page closing a window another page replaced leaves it open."""
+    with _SHARE_LOCK:
+        if _SHARE is not None and _SHARE.link == link:
+            _SHARE.close()
 
 
 def tls_init(ip: str | None = None) -> dict:

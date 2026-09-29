@@ -15,6 +15,11 @@ from altitude import config, installation, platform, tls
 
 ORIGINAL_STATUS = platform.status
 
+# A validity period already over. OpenSSL 3.4 and newer refuse negative -days but take explicit dates.
+_help = subprocess.run(["openssl", "x509", "-help"], capture_output=True, text=True)
+EXPIRED = (["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"]
+           if "-not_after" in _help.stdout + _help.stderr else ["-days", "-1"])
+
 
 def handshake(server_context, ca: Path | None, host="localhost"):
     client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -252,7 +257,8 @@ class TestTLS(unittest.TestCase):
         def expired_leaf(*args, **kwargs):
             arguments = list(args)
             if "-days" in arguments:
-                arguments[arguments.index("-days") + 1] = "-1"
+                at = arguments.index("-days")
+                arguments[at:at + 2] = EXPIRED
             return run(*arguments, **kwargs)
 
         with tempfile.TemporaryDirectory(dir=self.root) as temporary:
@@ -264,7 +270,7 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(tls.check(), self.directory / "ca.crt"), b"typed conversation")
         self.assertEqual((self.directory / "ca.crt").read_bytes(), ca_before)
         run("x509", "-in", self.directory / "ca.crt", "-signkey", self.directory / "ca.key",
-            "-days", "-1", "-out", self.directory / "expired-ca.crt")
+            *EXPIRED, "-out", self.directory / "expired-ca.crt")
         (self.directory / "ca.crt").write_bytes((self.directory / "expired-ca.crt").read_bytes())
         before = self.snapshot()
         with self.assertRaises(tls.TLSFailure):
@@ -389,6 +395,9 @@ class ServiceCase(unittest.TestCase):
     manager started it, while this shell carries none of them."""
 
     def setUp(self):
+        host = mock.patch.object(platform.sys, "platform", "linux")  # systemd and procfs fixtures
+        host.start()
+        self.addCleanup(host.stop)
         temporary = tempfile.TemporaryDirectory(dir=SUITE)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
@@ -456,10 +465,6 @@ class TestServiceDiscovery(ServiceCase):
         self.running({})
         (self.proc / "4242" / "environ").unlink()
         with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's settings"):
-            tls.service()
-        with mock.patch.object(platform, "status", ORIGINAL_STATUS), \
-                mock.patch.object(platform, "sys", mock.Mock(platform="darwin")), \
-                self.assertRaisesRegex(tls.TLSFailure, "native macOS validation is pending"):
             tls.service()
 
 
@@ -541,17 +546,19 @@ class TestShare(ServiceCase):
         health = HealthServer(self, self.service_tls, 4242)
         self.running({"ALTITUDE_PORT": str(health.port), "ALTITUDE_TLS_DIR": str(self.service_tls)})
         # The suite may bind only loopback, so loopback stands in for the phone's network address here.
-        patcher = mock.patch.object(tls, "_phone_address")
+        patcher = mock.patch.object(tls, "phone_address")
         patcher.start()
         self.addCleanup(patcher.stop)
         thread = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
         thread.start()
         return thread, health
 
-    def test_serves_only_the_certificate_and_prints_what_the_phone_must_match(self):
+    def test_serves_the_guide_profile_and_certificate_only_and_prints_a_qr_code_and_the_checks(self):
+        import plistlib
         import threading
         import urllib.error
         import urllib.request
+        from altitude import qr
         lines, printed = [], threading.Event()
 
         def out(line):
@@ -561,26 +568,57 @@ class TestShare(ServiceCase):
         sharing, health = self.sharing(out)
         self.assertTrue(printed.wait(10))
         steps = lines[0]
-        link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", steps).group(0)
+        link = re.search(r"http://127\.0\.0\.1:\d+/", steps).group(0)
+        self.assertIn(qr.terminal(link), steps)
+        authority = tls.identity(self.service_tls / "ca.crt")
+        certificate = (self.service_tls / "ca.crt").read_bytes()
         with urllib.request.urlopen(link, timeout=5) as response:
+            self.assertEqual(response.headers["Content-Type"], "text/html; charset=utf-8")
+            self.assertEqual(response.headers["Content-Security-Policy"], "default-src 'none'; style-src 'unsafe-inline'")
+            page = response.read().decode()
+        for row in tls.fingerprint_rows(authority["sha256"]):
+            self.assertIn(row, page)
+        for text in ('href="/altitude.mobileconfig"', 'href="/ca.crt"', "Certificate Trust Settings",
+                     f'href="https://127.0.0.1:{health.port}"', "If it differs, stop here."):
+            self.assertIn(text, page)
+        with urllib.request.urlopen(link + "altitude.mobileconfig", timeout=5) as response:
+            self.assertEqual(response.headers["Content-Type"], "application/x-apple-aspen-config")
+            settings = plistlib.loads(response.read())
+        self.assertEqual(settings["PayloadDisplayName"], "Altitude local CA")
+        [payload] = settings["PayloadContent"]
+        self.assertEqual(payload["PayloadType"], "com.apple.security.root")
+        self.assertEqual(payload["PayloadContent"], ssl.PEM_cert_to_DER_cert(certificate.decode()))
+        with urllib.request.urlopen(link + "ca.crt", timeout=5) as response:
             self.assertEqual(response.headers["Content-Type"], "application/x-x509-ca-cert")
-            self.assertEqual(response.read(), (self.service_tls / "ca.crt").read_bytes())
-        for other in ("/", "/ca.key", "/server.key", "/api/health"):
+            self.assertEqual(response.read(), certificate)
+        for other in ("/index.html", "/ca.key", "/server.key", "/api/health", "/pair"):
             with self.subTest(path=other), self.assertRaises(urllib.error.HTTPError) as refused:
-                urllib.request.urlopen(link.replace("/ca.crt", other), timeout=5)
+                urllib.request.urlopen(link[:-1] + other, timeout=5)
             self.assertEqual(refused.exception.code, 404)
         sharing.join(15)
         self.assertFalse(sharing.is_alive(), "the link closes by itself")
-        authority = tls.identity(self.service_tls / "ca.crt")
-        pairs = authority["sha256"].split(":")
-        for row in (pairs[:8], pairs[8:16], pairs[16:24], pairs[24:]):
-            self.assertIn(" ".join(row), steps)
+        for row in tls.fingerprint_rows(authority["sha256"]):
+            self.assertIn(row, steps)
         self.assertIn("contains only a Certificate, named Altitude local CA", steps)
         self.assertIn("Before tapping Install", steps)
         self.assertIn(tls.describe_scope(authority["scope"]), steps)
         self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
         self.assertIn(f"open https://127.0.0.1:{health.port} in a new Private tab", steps)
-        self.assertEqual(lines[1:], ["Sent the certificate to 127.0.0.1.", "The link is closed."])
+        self.assertEqual(lines[1:], ["Sent the profile to 127.0.0.1.", "Sent the certificate to 127.0.0.1.",
+                                     "The link is closed."])
+        with self.assertRaises(OSError):
+            urllib.request.urlopen(link, timeout=5)
+
+    def test_the_profile_holds_only_the_public_certificate_and_keeps_its_identity_across_reinstalls(self):
+        import plistlib
+        body = (self.service_tls / "ca.crt").read_bytes()
+        authority = tls.identity(self.service_tls / "ca.crt")
+        first, again = tls.profile(body, authority), tls.profile(body, authority)
+        self.assertEqual(first, again)
+        self.assertNotIn(b"PRIVATE KEY", first)
+        settings = plistlib.loads(first)
+        self.assertEqual([p["PayloadType"] for p in settings["PayloadContent"]], ["com.apple.security.root"])
+        self.assertEqual(settings["PayloadType"], "Configuration")
 
     def test_a_stalled_client_neither_blocks_the_phone_nor_outlives_the_link(self):
         import socket
@@ -594,7 +632,7 @@ class TestShare(ServiceCase):
 
         sharing, _ = self.sharing(out)
         self.assertTrue(printed.wait(10))
-        link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", lines[0]).group(0)
+        link = re.search(r"http://127\.0\.0\.1:\d+/", lines[0]).group(0) + "ca.crt"
         port = int(link.split(":")[2].split("/")[0])
         with socket.create_connection(("127.0.0.1", port), timeout=10) as stalled:
             stalled.sendall(b"GET /ca.crt HTTP/1.1\r\n")  # headers never finish

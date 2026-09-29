@@ -307,15 +307,15 @@ Deployment and activation errors remain visible independently of isolated task p
 
 An archive installation pins these inputs to its immutable application version; it needs no
 application source checkout. Updates select a verified version at the same narrow quiet point
-used by dispatch, resume, L3 and report verification. Independent Linux worker units survive the
-daemon replacement and retain their pinned resources; persisted ownership, sessions, messages and
+used by dispatch, resume, L3 and report verification. Independent worker jobs (Linux user units,
+macOS launchd jobs) survive the daemon replacement and retain their pinned resources; persisted ownership, sessions, messages and
 holds remain authoritative when the daemon adopts them. Previous versions stay installed.
 New installations save the discovered toolchain PATH for native service startup; updates preserve it.
 Failed activation restores the prior version and service definition; an interrupted recovery
 retains its receipt for `alt recover`. Stopping the daemon does not stop independent task workers.
 Uninstall refuses while unfinished tasks own worker inputs and retains versions still referenced
 by registered project guards. [Operations](OPERATIONS.md#installed-application-lifecycle) describes
-the operator commands and retention. This does not establish native macOS confinement or reboot evidence.
+the operator commands and retention. Fixtures do not establish native macOS confinement or reboot evidence.
 
 Source TLS preparation checks the existing process, listener and certificate before setting its
 explicit TLS-directory service override. It reloads the user-unit definition without restarting
@@ -937,6 +937,8 @@ merge on main, and replays only follow-up work onto current main before opening 
 The task retains every delivery; no-work retries open nothing, including work already on main.
 Each PR needs its own candidate checks, review and applicable hold release. Prior PR-specific
 approval does not release the next PR's hold. See [continuation commands and recovery](CLI.md#continue-after-a-pr-merges).
+A task PR closed without merging is likewise followed by a fresh PR from the same task on its next
+`alt land`; the closed PR is never reopened or edited.
 
 The attempt, engine, launch model, provider conversation and durable messages do not change because
 of a merge. Resume still uses the existing claim and Git isolation gates. A new resume claim discards
@@ -1034,12 +1036,12 @@ machine access for one purpose; the owner resolves the answer, and L3 or the ope
 (`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision. `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
-carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit appends output
-to the task's `machine.log` and writes the exit status itself; altd completes the row in `machine.jsonl` and
-records the task event and the project log entry. A grant binds to one task attempt, survives resume, and is
+carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
+and exit status to the task folder itself; altd completes the row in `machine.jsonl` and records the task event
+and the project log entry. A grant binds to one task attempt, survives resume, and is
 revoked by the owner, L3 or the operator; a non-running task, a stale attempt, an earlier attempt's grant or a
-missing grant refuses with the reason. A command that restarts Altitude ends the CLI connection while the unit
-and its record continue; the owner verifies with a fresh command afterwards. The door is altd's
+missing grant refuses with the reason. When Altitude restarts during a command, the unit continues, the next
+altd completes its row from the saved exit status, and the CLI reconnects and prints that command's result. The door is altd's
 operator-trusted HTTP surface, reachable by every worker on this single-account host; altd checks the task
 record, not the calling process.
 

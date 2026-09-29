@@ -21,7 +21,8 @@ _PRIVATE = ("DNS:localhost", "DNS:local", "DNS:internal", "DNS:home.arpa",
             "IP:192.168.0.0/255.255.0.0", "IP:100.64.0.0/255.192.0.0",
             "IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "IP:fc00::/fe00::")
 TRUST_STEPS = (
-    "Any channel may carry ca.crt, and `alt tls-share` offers it to a phone on this network for ten minutes. "
+    "Any channel may carry ca.crt, and Settings > Devices > Add a phone or `alt tls-share` offers it to a phone "
+    "on this network for ten minutes through a QR code. "
     "Before installing, check that the file holds only this certificate (ca_name) and that its SHA-256 matches "
     "ca_sha256; otherwise delete it. Never transfer ca.key or server.key.",
     "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
@@ -346,13 +347,19 @@ def service() -> dict:
     if differing:
         raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
                          "Unset them in this shell, then retry.")
-    kind, name = _host(found["public_host"] if platform.containerized() else found["host"])
+    return {**located(found), "pid": pid}
+
+
+def located(found: dict) -> dict:
+    """Service network settings with the name a device opens and the service's URL."""
+    from . import platform
+    kind, name = _host(found.get("public_host", config.PUBLIC_HOST) if platform.containerized() else found["host"])
     address = f"[{name}]" if kind == "IP" and ":" in name else name
-    return {**found, "pid": pid, "kind": kind, "name": name,
+    return {**found, "kind": kind, "name": name,
             "url": f"{'https' if found['tls'] else 'http'}://{address}:{found['port']}"}
 
 
-def _phone_address(found: dict) -> None:
+def phone_address(found: dict) -> None:
     """Refuse a service a phone cannot open over HTTPS."""
     if not found["tls"]:
         raise TLSFailure("The Altitude service serves plain HTTP, so it has no certificate for a phone to trust.")
@@ -389,92 +396,206 @@ def _proven(found: dict) -> bytes:
     return body
 
 
-def share(minutes: int = SHARE_MINUTES, out=print) -> None:
-    """Offer the public CA certificate to a phone on this network over plain HTTP for a few minutes. The
-    channel is unauthenticated: the printed steps have the phone check the file's contents and SHA-256
-    before installing it, and nothing else is served."""
-    from . import platform
+def profile(body: bytes, authority: dict) -> bytes:
+    """An iPhone/iPad configuration profile whose only payload is the public CA certificate, so the phone
+    shows a named install screen. Its identifiers follow the certificate, so installing it again replaces
+    the earlier copy."""
+    import plistlib
+    import uuid
+
+    digest = authority["sha256"].replace(":", "").lower()
+
+    def payload(kind: str) -> dict:
+        return {"PayloadIdentifier": f"local.altitude.ca.{digest[:16]}{kind}", "PayloadVersion": 1,
+                "PayloadUUID": str(uuid.uuid5(uuid.NAMESPACE_URL, f"altitude-ca:{digest}{kind}")).upper()}
+
+    certificate = {**payload(".certificate"), "PayloadType": "com.apple.security.root",
+                   "PayloadDisplayName": authority["name"], "PayloadCertificateFileName": "ca.crt",
+                   "PayloadContent": ssl.PEM_cert_to_DER_cert(body.decode())}
+    return plistlib.dumps({**payload(""), "PayloadType": "Configuration", "PayloadDisplayName": authority["name"],
+                           "PayloadOrganization": "Altitude", "PayloadContent": [certificate],
+                           "PayloadDescription": "Lets this device check that it is talking to your Altitude on "
+                                                 "your own network. It holds only Altitude's public certificate."})
+
+
+def fingerprint_rows(sha256: str) -> list[str]:
+    """A SHA-256 fingerprint as four rows of eight byte pairs, the way devices show it."""
+    pairs = sha256.split(":")
+    return [" ".join(pairs[start:start + 8]) for start in range(0, len(pairs), 8)]
+
+
+def _guide(authority: dict, service_url: str, minutes: float) -> bytes:
+    """The page the phone opens from the QR code: the fingerprint, both downloads and the remaining taps."""
+    from html import escape
+
+    name = escape(authority["name"])
+    rows = "<br>".join(fingerprint_rows(authority["sha256"]))
+    address = escape(service_url)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add this phone to Altitude</title>
+<style>
+body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0 auto;max-width:34rem;padding:1.25rem;color:#1d1d1f;background:#fff}}
+h1{{font-size:1.5rem;margin:.25rem 0 .75rem}}h2{{font-size:1.1rem;margin:1.75rem 0 .5rem}}
+.check{{border:1px solid #d2d2d7;border-radius:12px;padding:.75rem 1rem;background:#f5f5f7}}
+.sha{{font:14px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.02em}}
+a.button{{display:block;text-align:center;padding:.8rem 1rem;border-radius:12px;background:#0a66d8;color:#fff;
+font-weight:600;text-decoration:none;margin:.5rem 0}}a.button.secondary{{background:#e8e8ed;color:#1d1d1f}}
+ol{{padding-left:1.25rem}}li{{margin:.4rem 0}}small{{color:#6e6e73}}a{{color:#0a66d8}}
+@media (prefers-color-scheme:dark){{body{{background:#000;color:#f5f5f7}}.check{{background:#1c1c1e;border-color:#3a3a3c}}
+a{{color:#4da3ff}}a.button.secondary{{background:#2c2c2e;color:#f5f5f7}}small{{color:#98989d}}}}
+</style></head><body>
+<h1>Add this phone to Altitude</h1>
+<p>This lets the phone recognise your Altitude as genuine. Your phone asks you to approve each step.</p>
+<div class="check"><strong>{name}</strong><br><small>SHA-256</small><div class="sha">{rows}</div>
+<small>It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.</small></div>
+<h2>iPhone or iPad</h2>
+<a class="button" href="/altitude.mobileconfig">Download the profile</a>
+<ol>
+<li>Tap <strong>Allow</strong>, then <strong>Close</strong>.</li>
+<li>Open <strong>Settings › Profile Downloaded</strong>. Check that it contains only a certificate named
+<strong>{name}</strong> and that <strong>More Details</strong> shows the SHA-256 above. Then tap
+<strong>Install</strong> and enter your passcode. If anything differs, tap <strong>Remove</strong>.</li>
+<li>Open <strong>Settings › General › About › Certificate Trust Settings</strong> and turn on <strong>{name}</strong>.</li>
+<li>Open <a href="{address}">{address}</a> in a new Private tab. It must load with no warning; then pair this phone.</li>
+</ol>
+<h2>Android and other devices</h2>
+<a class="button secondary" href="/ca.crt">Download the certificate</a>
+<ol>
+<li>Open <strong>Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate</strong>
+and choose the downloaded file. Firefox for Android also needs its third-party CA certificate setting.</li>
+<li>Open <a href="{address}">{address}</a> in a new private tab. It must load with no warning; then pair this device.</li>
+</ol>
+<p><small>This page works for {minutes:g} minutes after the QR code appeared, or until it is closed there.</small></p>
+</body></html>
+""".encode()
+
+
+class Share:
+    """A bounded window that offers the service's public CA to a phone over plain HTTP on its private address:
+    the guided page at /, the iPhone profile and the plain certificate; nothing else. Callers first check
+    phone_address(found), so the window never opens on a loopback-only service. The channel is
+    unauthenticated, so every screen has the phone compare the certificate's SHA-256 with a trusted one
+    before installing it. The listener closes at its deadline or on close()."""
+
+    def __init__(self, found: dict, body: bytes, authority: dict, minutes: float = SHARE_MINUTES, sent=None):
+        import http.server
+        import socket
+        import threading
+        import time
+
+        self.authority, self.minutes = authority, minutes
+        self.closed, self._lock = threading.Event(), threading.Lock()
+        self.deadline = time.monotonic() + minutes * 60
+        files = {"/": (_guide(authority, found["url"], minutes), "text/html; charset=utf-8", None),
+                 "/altitude.mobileconfig": (profile(body, authority), "application/x-apple-aspen-config", "profile"),
+                 "/ca.crt": (body, "application/x-x509-ca-cert", "certificate")}
+        connections: set[socket.socket] = set()
+        self._connections = connections
+        share = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            timeout = 10
+
+            def setup(self) -> None:
+                super().setup()
+                connections.add(self.connection)
+
+            def finish(self) -> None:
+                connections.discard(self.connection)
+                super().finish()
+
+            def do_GET(self) -> None:
+                found = files.get(self.path)
+                if found is None or share.remaining() <= 0:
+                    self.send_error(404)
+                    return
+                content, kind, what = found
+                self.send_response(200)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.end_headers()
+                if self.command == "GET":
+                    self.wfile.write(content)
+                    if what and sent:
+                        sent(f"Sent the {what} to {self.client_address[0]}.")
+
+            do_HEAD = do_GET
+
+            def log_message(self, *args) -> None:
+                pass
+
+        class Server(http.server.ThreadingHTTPServer):
+            address_family = socket.AF_INET6 if found["kind"] == "IP" and ":" in found["name"] else socket.AF_INET
+            block_on_close = False  # closing ends open connections below instead of waiting for them
+
+        try:
+            self._server = Server((found["name"], 0), Handler)
+        except OSError as exc:
+            raise TLSFailure(f"Cannot listen on {found['name']} for the phone: {exc}.") from exc
+        host = f"[{found['name']}]" if self._server.address_family == socket.AF_INET6 else found["name"]
+        self.link = f"http://{host}:{self._server.server_address[1]}/"
+        threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
+        self._timer = threading.Timer(max(0.0, self.deadline - time.monotonic()), self.close)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def remaining(self) -> float:
+        import time
+        return 0.0 if self.closed.is_set() else max(0.0, self.deadline - time.monotonic())
+
+    def close(self) -> None:
+        """Stop answering and cut any open connection; `closed` is set once the link is gone."""
+        import socket
+
+        with self._lock:
+            if self.closed.is_set():
+                return
+            self._timer.cancel()
+            self._server.shutdown()
+            for connection in list(self._connections):  # a slow or stalled client ends with the link
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self._server.server_close()
+            self.closed.set()
+
+
+def share(minutes: float = SHARE_MINUTES, out=print) -> None:
+    """`alt tls-share`: open a share window for the running service's proven CA certificate and print its
+    QR code and the checks, until it closes on time or on Ctrl-C."""
+    from . import platform, qr
     if platform.containerized():
         raise TLSFailure("Export the public CA with the host container command's certificate action; "
                          "this container does not publish a second certificate-sharing port.")
-    import http.server
-    import socket
-    import threading
-    import time
 
     found = service()
-    _phone_address(found)
+    phone_address(found)
     body = _proven(found)
-    kind, name = found["kind"], found["name"]
     authority = identity(found["tls_dir"] / "ca.crt")
-    deadline = time.monotonic() + minutes * 60
-    connections: set[socket.socket] = set()
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        timeout = 10
-
-        def setup(self) -> None:
-            super().setup()
-            connections.add(self.connection)
-
-        def finish(self) -> None:
-            connections.discard(self.connection)
-            super().finish()
-
-        def do_GET(self) -> None:
-            if self.path != "/ca.crt" or time.monotonic() >= deadline:
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-x509-ca-cert")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            if self.command == "GET":
-                self.wfile.write(body)
-                out(f"Sent the certificate to {self.client_address[0]}.")
-
-        do_HEAD = do_GET
-
-        def log_message(self, *args) -> None:
-            pass
-
-    class Server(http.server.ThreadingHTTPServer):
-        address_family = socket.AF_INET6 if kind == "IP" and ":" in name else socket.AF_INET
-        block_on_close = False  # expiry closes open connections below instead of waiting for them
-
+    window = Share(found, body, authority, minutes, sent=out)
     try:
-        server = Server((name, 0), Handler)
-    except OSError as exc:
-        raise TLSFailure(f"Cannot listen on {name} for the phone: {exc}.") from exc
-    with server:
-        host = f"[{name}]" if server.address_family == socket.AF_INET6 else name
-        pairs = authority["sha256"].split(":")
-        out(f"For the next {minutes} minutes, on the phone open this link in Safari and tap Allow:\n"
-            f"  http://{host}:{server.server_address[1]}/ca.crt\n"
-            "Then Settings > Profile Downloaded. Before tapping Install, check that:\n"
+        out(f"For the next {minutes:g} minutes, scan this with the phone's camera and open the link:\n"
+            f"{qr.terminal(window.link)}\n"
+            f"  {window.link}\n"
+            "The page it opens has the downloads and the steps. Before tapping Install, check that:\n"
             f"  - it contains only a Certificate, named {authority['name']}\n"
             "  - More Details > that certificate shows SHA-256:\n"
-            + "".join(f"      {' '.join(pairs[start:start + 8])}\n" for start in range(0, len(pairs), 8)) +
+            + "".join(f"      {row}\n" for row in fingerprint_rows(authority["sha256"])) +
             "If anything differs, tap Remove and stop: someone else answered the link.\n"
             f"Trusting it allows: {describe_scope(authority['scope'])}\n"
             f"It expires {authority['expires']}.\n"
             f"After Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
             f"Then open {found['url']} in a new Private tab. It must load with no warning; only then run alt pair.\n"
-            "Android: install the file under Settings > Security > Encryption & credentials > "
-            "Install a certificate > CA certificate.\n"
             "Ctrl-C closes the link sooner.")
-        serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
-        serving.start()
-        try:
-            threading.Event().wait(max(0.0, deadline - time.monotonic()))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            server.shutdown()
-            for connection in list(connections):  # a slow or stalled client ends with the link
-                try:
-                    connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
+        window.closed.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        window.close()
     out("The link is closed.")

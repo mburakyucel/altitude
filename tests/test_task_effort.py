@@ -18,6 +18,8 @@ def set_effort(project, value):
 
 
 class TestTaskEffort(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()
@@ -194,6 +196,8 @@ class TestTaskEffort(AltitudeCase):
 
 
 class TestEffortCommand(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def test_claude_worker_fresh_and_resume_honor_effort_without_inherited_override(self):
         self.quiet_engines()
         self.patch(platform, "job_active", return_value=False)

@@ -18,7 +18,7 @@
  * at most for the connection, then ends with the words shown.
  */
 import { ApiError, cancelHostVoice, sendHostVoice, startHostVoice } from "../data/api";
-import { traceVoice, voiceError } from "./voiceDiagnostics";
+import { traceVoice, voiceError } from "./voiceTrace";
 
 const RATE = 16000;
 /** Send once this much is gathered; while a request is in flight, samples keep gathering. */

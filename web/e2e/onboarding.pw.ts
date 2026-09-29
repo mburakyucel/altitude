@@ -70,7 +70,7 @@ test("first run walks the name, prerequisites, declined incident reports, voice 
     hidden: [keep],
   });
   await setUpVoice.click();
-  expect(host.requests).toEqual(["setup"]);
+  await expect.poll(() => host.requests).toEqual(["setup"]);  // the click sends it; wait for it to arrive
 
   const browser = page.getByRole("region", { name: "Choose a folder" });
   await walk.state("07-projects-folder-empty", {

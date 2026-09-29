@@ -75,3 +75,7 @@
 .device-certificate .onboarding-command { align-self: stretch; }
 .device-certificate .settings-network { margin-top: 0; }
 .certificate-fingerprint { font-family: var(--font-mono); white-space: pre-line; }
+.phone-share { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; align-self: stretch; }
+.phone-share-qr { width: 232px; height: 232px; max-width: 100%; border-radius: var(--radius-control); }
+.phone-share-link { font-family: var(--font-mono); overflow-wrap: anywhere; user-select: all; }
+.phone-share-time { display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }

@@ -242,7 +242,7 @@ def activate_source() -> None:
         # Versioned installs already pin code and resources outside project worktrees.
         return
     repo = config.REPO
-    head = service_preflight(repo).head
+    head = service_preflight(repo, config.SOURCE_BRANCH).head
     repair_hooks(repo)
     root = repo / ".altitude-source"
     root.mkdir(exist_ok=True)

@@ -312,6 +312,8 @@ class TestInputHandoff(AltitudeCase):
 
 
 class TestStopEvidence(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.root = self.tmp / "stop-jobs"

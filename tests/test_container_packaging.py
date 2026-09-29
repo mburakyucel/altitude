@@ -155,7 +155,7 @@ class TestFixtureCleanup(AltitudeCase):
             return 123
         with mock.patch.object(platform, "PROC", proc), mock.patch.object(os, "pidfd_open", side_effect=acquire), \
              mock.patch.object(os, "close") as close, mock.patch.object(platform.shutil, "which", return_value="/usr/bin/podman"), \
-             mock.patch.object(platform.signal, "pidfd_send_signal") as send:
+             mock.patch.object(platform.signals, "pidfd_send_signal") as send:
             with self.assertRaisesRegex(RuntimeError, "identity changed"):
                 platform.cleanup_container_pause(home)
             send.assert_not_called()
@@ -177,8 +177,8 @@ class TestVolumeLocks(AltitudeCase):
              mock.patch.object(platform, "containerized", return_value=True), mock.patch.object(os, "getuid", return_value=0), \
              mock.patch.object(os, "chown") as chown, mock.patch.dict(os.environ, {"NOTIFY_SOCKET": "/run/fixture-notify"}), \
              mock.patch.object(platform, "_initialize_container_lifecycle") as initialize, \
-             mock.patch.object(platform.socket, "socket") as channel, mock.patch.object(platform.signal, "signal"), \
-             mock.patch.object(platform.signal, "pause", side_effect=InterruptedError("fixture stop")):
+             mock.patch.object(platform.socket, "socket") as channel, mock.patch.object(platform.signals, "signal"), \
+             mock.patch.object(platform.signals, "pause", side_effect=InterruptedError("fixture stop")):
             with self.assertRaisesRegex(InterruptedError, "fixture stop"):
                 platform.container_bootstrap()
             self.assertEqual(chown.call_args_list, [mock.call(home, 1000, 1000), mock.call(projects, 1000, 1000)])

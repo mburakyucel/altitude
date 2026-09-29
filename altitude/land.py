@@ -11,7 +11,7 @@ Explicit adoption pins an existing external PR's original history. Its task bran
 fast-forward updates to the original branch; merging preserves history and requests no branch deletion.
 
 Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
-first — a merged PR can start another delivery; a closed PR is refused — so
+first — a merged or closed-unmerged PR starts another delivery on a fresh PR — so
 a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
 from __future__ import annotations
 import contextlib
@@ -458,7 +458,8 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
     finally:
         if tmp:
             Path(tmp).unlink(missing_ok=True)
-    pr = _pr_view(root, branch)
+    # By its printed URL: the branch may also name an earlier closed or merged PR.
+    pr = _pr_view(root, ((c.stdout or "").strip().splitlines() or [branch])[-1])
     if pr is None:
         raise LandError("gh pr create succeeded but the PR cannot be read back")
     _note(f"PR #{pr.get('number')} created")
@@ -1116,13 +1117,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             recorded_tip = _fetch_remote_tip(root, branch)
         adoption, pr, publish_branch = None, None, branch
         _note(f"continuing after PR #{previous['number']} in the same task")
-    if pr is not None and pr.get("state") == "CLOSED":
-        raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
-                        f"commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
-                        f"and re-run alt land, or start a new task branch")
+    closed = None
+    if pr is not None and pr.get("state") == "CLOSED":  # it stays closed; the next delivery is its own PR
+        closed = {"number": pr["number"], "head": pr.get("headRefOid"), "url": pr.get("url"), "state": "CLOSED"}
+        pr = None
+        _note(f"PR #{closed['number']} closed without merging — opening a fresh PR from {branch!r}")
     if changed or not pr or (task.get("delivery") or {}).get("head") != _need(_git(root, "rev-parse", "HEAD"), "head"):
         task = _record_delivery(project, slug, task, authority, branch=publish_branch,
-                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
+                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=closed)
     if changed:
         _need(_git(root, "commit", "-m", message), "git commit")
         commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")

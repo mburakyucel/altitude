@@ -243,13 +243,31 @@ including binding and runtime paths, against ambient user-manager values. Source
 New installation settings capture the discovered toolchain PATH, including a custom nvm default;
 updates retain the saved environment.
 `installation.py` owns archive validation, activation receipts, recovery and retention;
-`platform.py` is the platform seam: it owns the generated Linux x86_64 per-user daemon service, the
-transient jobs that run workers, reviews, machine commands and restarts, their status and stop, and the
-process and socket facts behind worker identity, terminal Stop and the terminal's agent check. The L3
-service-inspection shims and the source-checkout TLS setup remain Linux-specific outside it;
+`platform.py` is the platform seam: it owns the generated per-user daemon service, the jobs that run
+workers, reviews, machine commands, updates and restarts, their status and stop, resource limits, and the
+process and socket facts behind worker identity, terminal Stop and the terminal's agent check. On Linux
+x86_64 the service is a systemd user unit and each job a transient user unit whose cgroup holds every
+descendant. On macOS 15 or newer on Apple silicon the service is a LaunchAgent in the user's `gui` domain
+(`~/Library/LaunchAgents/dev.altitude.altd.plist`, logging to `~/Library/Logs/altitude/`), and each job
+is its own launchd job, so its processes share a kernel coalition that no `setsid`, double fork or
+cleared environment leaves. The job's program is a supervisor outside any sandbox: it runs the command,
+enforces the time limit, and when the command exits stops whatever remains in the coalition, records the
+status and removes its own job; while the command runs it holds an idle-sleep assertion (a closed lid
+still sleeps). A caller's input and output reach the job as `systemd-run --pipe` passes
+them: a regular file or device by path, a pipe through a relayed FIFO, and piped input (always a whole
+prompt) through a private file. Stop signals every coalition member, checking each one's start time and
+coalition again right before the signal since macOS has no process handle, until none is left. A member
+that outlives the stop, or cannot be read, keeps the job's record, so the job stays active, as a unit whose
+processes have not ended does, until they have gone. The seam
+reads processes and sockets through libproc and sysctl, finds Homebrew's libraries, and replaces
+`RLIMIT_AS`, which macOS rejects, with a watcher that kills a command past its memory footprint. The L3
+service-inspection shims remain Linux-specific outside it, and `platform.source_service()` keeps the
+source-checkout TLS drop-in to Linux, refusing it on macOS with an explicit message (a source service restarts
+itself on both hosts through the seam);
 `tests/test_project_layers.py` keeps that count from rising. A pending installation
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
-containment remain in the common engine contract. macOS runtime acceptance remains pending.
+containment remain in the common engine contract. macOS runtime acceptance on a spare account
+([roadmap](ROADMAP.md#native-macos-runtime)) remains pending.
 
 An installed copy's daemon checks for a newer release at startup and every twelve hours, off the
 timer thread: one anonymous request to GitHub's latest-release endpoint for the repository in
@@ -259,7 +277,7 @@ the update itself change it under one lock; source deployments neither check nor
 overview's `update` field and `alt doctor` report the installed version and a newer one; an
 interactive `alt` command prints one line about it at most once a day from that record, never to
 agents. `POST /api/update` accepts only the exact newer version the record shows and starts
-`alt update --version` in its own transient user unit (`platform.detach`), so the update outlives
+`alt update --version` in a job of its own (`platform.detach`), so the update outlives
 the service restart it causes; it passes the operator terminal's request checks, and Altitude has
 no login, so anyone who can open the page can start an update to that verified release, never a
 downgrade or another build. An update that fails, or has not finished after thirty minutes, reads
@@ -291,15 +309,26 @@ only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
 until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
-constraints ("No limits" when it has none), with the URL and per-platform trust steps. `alt tls-share`
-(operator only) runs in the CLI process, not in altd. It takes the address, port and TLS directory
-from the running service's own process environment through the platform seam
-(`platform.service_settings`), since the service manager, not the operator's shell, configures the
-service; a disagreeing shell setting is refused. It fetches `/api/health` over HTTPS trusting only
-that directory's CA and requires the answer from the service's main process. Then for ten minutes it
-answers plain HTTP on the service's non-loopback address and an ephemeral port with those `ca.crt`
-bytes and nothing else, and prints the name and fingerprint the device checks before installing it.
-`alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
+constraints ("No limits" when it has none), with the URL and per-platform trust steps. A phone gets
+the public CA through a share window (`tls.Share`): for ten minutes it answers plain HTTP on the
+service's non-loopback address and an ephemeral port with a guided page, an iPhone configuration
+profile whose only payload is the CA certificate (`com.apple.security.root`, identifiers derived
+from the fingerprint so reinstalling replaces it), and the `ca.crt` bytes; nothing else, with no
+Altitude API or page. It closes at its deadline or on demand and cuts any open connection. The
+channel is unauthenticated, so the trusted screen that opened it shows the CA's name and
+fingerprint for the phone to compare before installing. `altitude/qr.py` draws its link as a QR
+code (byte mode, level M) for terminals and the browser. `alt tls-share` (operator only) opens a
+window in the CLI process, not in altd. It takes the address, port and TLS directory from the
+running service's own process environment through the platform seam (`platform.service_settings`),
+since the service manager, not the operator's shell, configures the service; a disagreeing shell
+setting is refused. It fetches `/api/health` over HTTPS trusting only that directory's CA and
+requires the answer from the service's main process before offering those bytes. Settings → Devices
+→ **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
+cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
+keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
+the page sends on Close (confirming only once it succeeds) or when it is left, including while the
+window is still opening. The page keeps the window only in component state, never in a
+query cache. `alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
@@ -335,6 +364,31 @@ re-checks the device every second, and its design-board links stop opening. A ch
 ends this way still finishes and is logged. The file store needs only POSIX file locking and modes, so macOS
 behaves the same. The web app shows only the pairing screen until `GET /api/access` reports the
 browser paired, and returns to it on any 401.
+
+### Linux and macOS
+
+Everything above the platform seam is the same on both hosts. These are the behaviors that differ;
+`platform.py` owns each one, and the sections named in the last column describe it.
+
+| Area | Linux x86_64 | macOS 15+ on Apple silicon | Where |
+| --- | --- | --- | --- |
+| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
+| Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
+| A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
+| Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
+| Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
+| Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
+| Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
+| Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
+| Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
+| Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
+| Source-checkout deployment | systemd unit (`make install-service`); TLS drop-in; self-restart | LaunchAgent (`make install-service`); self-restart through the seam; TLS drop-in refused with an explicit message | Operations |
+| L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
+
+Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
+default and runtime folders are named after projects.
 
 ### Project setup
 
@@ -641,7 +695,9 @@ recheck registration under the project state lock, so removal cannot abandon rac
 
 Removed projects leave the managed list; their broker is closed (CLI removal is noticed by the
 next tick, with broker calls refused immediately). Repository files, remaining worktrees and the
-project's Altitude directory stay on disk. Registration with the same project name and repository
+project's Altitude directory stay on disk. A name that differs from a registered project's only by
+case is refused on every host, since both would share one runtime folder on a case-insensitive disk
+(the macOS default). Registration with the same project name and repository
 attaches L3 again and restores saved conversations, task archives, provider sessions and queued
 messages. The startup path drains the saved FIFO before any introductory turn. Registration
 reports restored conversation history so First run waits for successful registration and opens
@@ -723,6 +779,8 @@ reconciliation. Dirty working files can prevent Git's rebase; landing does not a
 Conflicts and raised rebase errors abort back to the task branch with committed and working edits
 retained. Follow-up merge commits require owner reconciliation before landing, preserving edits
 made in merge resolutions. Work already present on main produces a truthful merged retry.
+A task PR closed without merging is not reopened: the next `alt land` opens a fresh PR from the
+task branch and records the closed PR as the preceding delivery evidence.
 
 The task's `delivery` records the current PR number/head, base SHA, publication branch and precise
 timestamp; a publication in progress has no number/head. `prs` retains every delivery number, and
@@ -929,21 +987,29 @@ project lock. Neither engine's worker reaches the user service manager or sudo. 
 workspace runs only under a recorded machine grant: the operator's answer to the owner's purpose
 question, recorded by L3 or the operator and verified mechanically against that question revision,
 opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
-executes the command in its own transient user unit through `engines.machine_command`, with the bus
-reachable and the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`; the
-unit appends output and exit status to the task folder itself, and altd completes `machine.jsonl`
-and adds a task event and a project event per command. The owner, L3 and the operator can revoke
+executes the command in a job of its own through `engines.machine_command`, with the service manager
+reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
+the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches
+the service manager, it can also stop or reconfigure its own job: the time limit bounds an ordinary command,
+not one that works against it. The unit writes its output and exit status to the task folder itself, and altd completes `machine.jsonl`
+and adds a task event and a project event per command. The ledger is also the one-at-a-time record: at startup
+altd follows every unfinished row's unit to its end (`server.settle_interrupted_machine_commands`) and completes it
+from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
-not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
-hooks for inbox delivery and telemetry. Codex uses the native `altitude-task` permission profile, extending
-the workspace policy to retain protected configuration paths and temporary writes. Its explicit roots are
-the task worktree, its Git directories and Altitude state. The session bus and manager runtime directory
-(including its direct private socket) are denied; other runtime-directory paths keep their existing policy. The same
-generated profile supplies provider-free confinement checks. It stays inside the same unit boundary and
-uses the same door; private worker records and output identify both engines' sessions
+not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent job with Altitude's
+hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
+may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
+the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
+temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
+runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+roots. The session bus and manager runtime directory (including its direct private socket) are denied;
+other runtime-directory paths retain their policy. The generated profile also supplies provider-free
+confinement checks. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+(the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
-collected transient unit as termination evidence. Unknown states, bus failures and query timeouts
+collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
+recorded coalition has members. Unknown states, bus failures and query timeouts
 remain unavailable and refuse resume or stop confirmation; an active worker must be stopped before
 its replacement launches. A turn that ends without a
 report, a block, or a completion blocks the task with its result error or stderr tail, on either engine. A
@@ -1029,8 +1095,9 @@ terminal. altd keeps that hardening; worker and review jobs are confined by thei
 `PartOf` Altitude's service, so the shell and its children live only as long as altd: there is no multiplexer
 and no persistence. A launcher that cannot
 start the job (no reachable user manager) ends the terminal as `failed` with the launcher's error, which the page
-shows. The
-macOS runtime is not implemented, so this path has no native macOS evidence. A task terminal opens in the task's worktree while the
+shows. On
+macOS the job is a launchd job whose supervisor holds the shell on the pseudo-terminal and stops it when altd's
+launcher has gone, and Close hangs up every member of the job's coalition. A task terminal opens in the task's worktree while the
 task is neither done nor rejected; a project terminal opens in the registered project folder. The
 tick's `terminal.sweep()` closes a task's terminal once the task is done, rejected or gone, and a
 project's once it is no longer managed. Opening returns the running terminal when one exists.
@@ -1106,12 +1173,13 @@ not from Altitude itself. Its reads and streams pass the same-page rule every PO
 another site open in the operator's browser from typing into a shell. Then `terminal.agent_connection`,
 asked once per connection since a connection keeps its client socket, finds the client end of the TCP
 connection in
-`/proc/net/tcp{,6}`, in both address families since an IPv6 socket can reach an IPv4 address. A
+`/proc/net/tcp{,6}` on Linux, or among this user's processes' sockets on macOS, in both address families
+since an IPv6 socket can reach an IPv4 address. A
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds
 that socket and none of altd, anything altd started (a Claude L3 turn runs as altd's child in altd's
 own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands, terminal
-shells) does.
+shells; on macOS the job coalition recorded under that unit name) does.
 A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
@@ -1121,8 +1189,8 @@ limits. A process an agent starts outside those units, through the user service 
 scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
 proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
 looks like the operator's browser, so the operator keeps the terminal off while one serves Altitude.
-Claude L2 workers have no OS sandbox, so they can already change the
-operator's files directly. Reading the process table is Linux-specific. Every paired browser can use the terminal once it is
+On Linux, Claude L2 workers have no OS sandbox, so they can already change the
+operator's files directly. Every paired browser can use the terminal once it is
 on. That is the same trust as its other
 operator controls, and the Settings copy says so. That includes `sudo`: a paired browser whose user knows
 the operator's password, or that uses a terminal while `sudo` still remembers an authentication there, can act
@@ -1270,9 +1338,10 @@ The shared overview remains authoritative. Monitor shows the changed area, file 
 quiet-point waits and available Restart action independently of monitor readings, with explicit
 loading, read failure, no-update and request-error states. Dismissal changes no scheduling,
 authority or fault state. Every toast has a dismiss control; inline errors and task questions
-retain their recovery and answer controls. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
+retain their recovery and answer controls. Both engines launch L2 workers in independent jobs outside altd's own;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
-service retain `KillMode=control-group`, so stopping a worker takes all its descendants. An exited or
+service retain `KillMode=control-group` on Linux, and on macOS Stop takes every member of the job's
+coalition, so stopping a worker takes all its descendants. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
@@ -1790,7 +1859,12 @@ loads afresh. No text leaves the device and no
 server component is involved.
 The composer runs one capture state machine for every backend: recognized words appear after the
 typed draft while listening (the field scrolls to keep the latest words in view once they pass its
-height), the last phrase may change until final, the recognizer restarts when
+height), the last phrase may change until final,
+and the display alone paces them: `liveReveal.ts` reveals each update's text letter by letter at a
+rate that finishes about when the next update is due (the recent update gaps, at least twelve letters
+a second), keeps the revealed length through a revision so corrected words change in place, and shows
+each update whole under reduced motion. Stop, Send and failures read the capture's own text, never the
+revealed prefix, so pacing cannot drop or delay a word; the recognizer restarts when
 the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
 and Stop waits at most three seconds for the recognizer's last phrase, then for its punctuation, before
 landing the words; no upload follows. A recognizer refusal is the denied state, and because a refusal can be temporary, the
@@ -1810,7 +1884,7 @@ Abandoned captures do not queue inference when a pending model load completes or
 punctuation output. Native-device capture and audio-session behavior require native evidence;
 scripted recognizer tests establish ordering and text isolation only. The microphone
 diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
-`voiceDiagnostics.ts` retains up to 256 metadata-only events for ten minutes, including track
+`voiceTrace.ts` retains up to 256 metadata-only events for ten minutes, including track
 state, recognizer callbacks and one waveform state/signal-presence sample per second. It never
 records speech, drafts, raw samples or device identifiers, uploads data, or changes capture behavior.
 The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.

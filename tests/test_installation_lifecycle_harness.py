@@ -2,7 +2,6 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -108,8 +107,9 @@ class TestLifecycleHarness(AltitudeCase):
         harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, "a" * 40)
         harness.home = self.tmp / "altitude-installation.fixture/alt-install-1"
         (results / "reboot-state.json").write_text(json.dumps({"env": {}, "release": {}, "pid": "1",
-            "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}))
-        with mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
+                                                                "boot_id": "fixture-boot"}))
+        with mock.patch("scripts.installation_lifecycle.boot_id", return_value="fixture-boot"), \
+                mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
                 mock.patch("scripts.installation_lifecycle.os.getuid", return_value=1000), \
                 mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
             user.return_value.pw_name = "alt-install-1"
@@ -137,6 +137,25 @@ class TestLifecycleHarness(AltitudeCase):
         result = json.loads((results / "recovery-result.json").read_text())
         self.assertFalse(result["passed"])
         self.assertIn("installed over it", result["limits"][0])
+
+
+    def test_recovery_runs_the_documented_cleanup_only_after_the_candidate_is_refused(self):
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, f"{'b' * 40}..{'a' * 40}")
+        harness.home = self.tmp / "home"
+        harness.prefix, harness.settings, harness.tls = (harness.home / "prefix", harness.home / "config/install.json",
+                                                         harness.home / "config/tls")
+        for path in (harness.settings, harness.tls / "ca.crt", harness.prefix / "pending.json"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n")
+        releases = ({"version": "v0.1.0-rc.1"}, {"version": "v0.2.0-rc.1"})
+        with mock.patch.object(harness, "prepare", return_value=("old", "1", None, releases[0], "new", "2", None, releases[1])), \
+                mock.patch.object(harness, "run", return_value="installed") as run:
+            with self.assertRaisesRegex(AssertionError, "installed"):
+                harness.execute("recovery")
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["failed-install", "refused-install"])
+        self.assertTrue((harness.prefix / "pending.json").exists())
 
 
 class TestInstallationVm(AltitudeCase):

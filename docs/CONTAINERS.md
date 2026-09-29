@@ -186,8 +186,9 @@ Resume claims identify their owner by PID, process start time, boot identity and
 the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters
 existing claim reconciliation. Boot/start mismatches are checked before the protected namespace link;
 inaccessible identity evidence for a matching lifetime does not establish that the owner died.
-This removes the bare-PID liveness check for native and container resumes. The native macOS process
-identity implementation remains pending alongside its existing platform runtime gap.
+This removes the bare-PID liveness check for native and container resumes. The native macOS branch
+uses libproc start times for the owner and launchd, with a single native PID namespace. Deterministic
+fixtures cover that integration; actual Mac acceptance remains pending with the native runtime owner.
 
 ## Evidence
 

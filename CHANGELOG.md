@@ -12,6 +12,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   messages stay queued while paused, and task Stop/review holds remain in force.
   Full runtime, lifecycle/recovery, onboarding and Mac acceptance remain pending; see
   [the container boundary and validation limits](docs/CONTAINERS.md).
+- Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
+  rights: `make install-service` makes it a background service of your login (it starts when you log in and
+  keeps running with the screen locked). Each agent job runs as its own background job that Stop ends
+  completely, and Claude Code jobs may write only in their task's worktree and their own state. `install.sh`
+  still stops on macOS: native acceptance is pending, so macOS is not yet a supported platform.
 
 ## v0.1.0-rc.2 — 2026-09-29
 
@@ -24,9 +29,12 @@ disposable Ubuntu 24.04 virtual machine, but a clean physical machine and updati
 published release to another are not yet verified; live engine providers are not tested; on macOS
 `install.sh` stops before downloading anything.
 
-Recovery: a `v0.1.0-rc.1` installation failed at service start; run this release's `install.sh`,
-which keeps configuration, TLS identity and data. A failed activation restores the previous version;
-`alt recover` completes an interrupted one. A faulty release is followed by a new version.
+Recovery: a `v0.1.0-rc.1` installation failed at service start and left its refused service unit
+and an interrupted activation, which block `alt recover`, updates and uninstall. Remove that unit,
+run `alt recover`, then run this release's `install.sh`; configuration, TLS identity and data are
+kept (see [setup](docs/SETUP.md#install-the-application)). A failed activation restores the
+previous version; `alt recover` completes an interrupted one. A faulty release is followed by a new
+version.
 
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes

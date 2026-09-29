@@ -98,6 +98,18 @@ export async function makePairingCode(): Promise<PairingCode> {
   return PairingCodeSchema.parse(await post("/api/devices/code", {}));
 }
 
+export const PhoneShareSchema = z.object({ link: z.string(), seconds: z.number(), name: z.string(), sha256: z.string(), qr: z.array(z.string()) }).passthrough();
+export type PhoneShare = z.infer<typeof PhoneShareSchema>;
+
+/** Add a phone: open the service's ten-minute certificate share window, replacing an earlier one. */
+export async function openPhoneShare(): Promise<PhoneShare> {
+  return PhoneShareSchema.parse(await post("/api/devices/share", {}));
+}
+
+export async function closePhoneShare(link: string): Promise<void> {
+  await post("/api/devices/share-close", { link });
+}
+
 export async function revokeDevice(id: string): Promise<Devices> {
   return DevicesSchema.parse(await post("/api/devices/revoke", { id }));
 }

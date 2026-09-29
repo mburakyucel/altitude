@@ -8,6 +8,8 @@ from altitude import config, dispatch, l3, server, state as S, tasks as T
 
 
 class TestRestartPending(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()
