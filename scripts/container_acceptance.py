@@ -166,7 +166,9 @@ def run(archive: Path, checksum: str, evidence: Path) -> dict:
                     time.sleep(1)
             (evidence / "bootstrap.log").write_text(call(["logs", ident]))
             (evidence / "unit-status.txt").write_text(call(["exec", ident, "systemctl", "show",
-                "altitude-volumes.service", "user@1000.service", "--property=ActiveState,SubState,Result,MainPID"]))
+                "altitude-volumes.service", "user@1000.service", "--property=Id,ActiveState,SubState,Result,MainPID,ExecMainStatus"]))
+            (evidence / "bootstrap-journal.txt").write_text(call(["exec", ident, "journalctl", "--no-pager", "-b",
+                "-u", "altitude-volumes.service", "-u", "user@1000.service", "-n", "80"]))
             if not ready:
                 raise RuntimeError("Image application service did not start; inspect bootstrap.log and retained unit evidence")
             result["elevation_inventory"] = json.loads(call(["exec", "--user", "0", ident, "python3", "-c", INVENTORY], timeout=30))

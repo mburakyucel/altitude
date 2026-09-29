@@ -10,6 +10,30 @@ from scripts import container, container_acceptance
 
 
 class TestVolumeLocks(AltitudeCase):
+    def test_bootstrap_recognizes_nested_same_device_mounts_before_starting_manager(self):
+        home = self.tmp / "home"
+        projects = home / "Projects"
+        projects.mkdir(parents=True)
+        proc = self.tmp / "proc"
+        (proc / "self").mkdir(parents=True)
+        mountinfo = proc / "self/mountinfo"
+        mountinfo.write_text(f"40 30 8:2 /vol/home {home} rw - ext4 /dev/fixture rw\n"
+                            f"41 40 8:2 /vol/projects {projects} rw - ext4 /dev/fixture rw\n")
+        self.assertFalse(projects.is_mount())
+        with mock.patch.object(platform, "CONTAINER_PROJECTS", projects), mock.patch.object(platform, "PROC", proc), \
+             mock.patch.object(platform, "containerized", return_value=True), mock.patch.object(os, "getuid", return_value=0), \
+             mock.patch.object(os, "chown") as chown, mock.patch.dict(os.environ, {"NOTIFY_SOCKET": "/run/fixture-notify"}), \
+             mock.patch.object(platform.socket, "socket") as channel, mock.patch.object(platform.signal, "signal"), \
+             mock.patch.object(platform.signal, "pause", side_effect=InterruptedError("fixture stop")):
+            with self.assertRaisesRegex(InterruptedError, "fixture stop"):
+                platform.container_bootstrap()
+            self.assertEqual(chown.call_args_list, [mock.call(home, 1000, 1000), mock.call(projects, 1000, 1000)])
+            channel.return_value.__enter__.return_value.sendall.assert_called_once_with(b"READY=1")
+            mountinfo.write_text(f"40 30 8:2 /vol/home {home} rw - ext4 /dev/fixture rw\n")
+            with self.assertRaisesRegex(RuntimeError, "dedicated local Podman volume"):
+                platform.container_bootstrap()
+            self.assertEqual(chown.call_count, 2)  # No partial ownership changes on a missing mount.
+
     def test_sharing_either_volume_refuses_and_releases_partial_acquisition(self):
         home, projects, home2, projects2 = [self.tmp / name for name in ("home", "projects", "home2", "projects2")]
         for path in (home, projects, home2, projects2):

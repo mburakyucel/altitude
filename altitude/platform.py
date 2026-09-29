@@ -120,10 +120,13 @@ def container_bootstrap() -> None:
     """The image's root bootstrap unit, ordered before the application user manager."""
     if not containerized() or os.getuid() != 0:
         raise RuntimeError("Container bootstrap requires its image and container-root account")
-    home, projects = Path("/home/altitude"), Path("/home/altitude/Projects")
+    home, projects = CONTAINER_PROJECTS.parent, CONTAINER_PROJECTS
+    # Named volumes can share a backing device: stat-based is_mount misses their nested bind mounts.
+    # These two fixed image paths contain no mountinfo escape characters.
+    mounts = {line.split()[4] for line in (PROC / "self/mountinfo").read_text().splitlines()}
     for directory in (home, projects):
         info = directory.lstat()
-        if not stat.S_ISDIR(info.st_mode) or not directory.is_mount():
+        if not stat.S_ISDIR(info.st_mode) or str(directory) not in mounts:
             raise RuntimeError(f"Mount a dedicated local Podman volume at {directory}")
         if info.st_uid not in (0, 1000):
             raise RuntimeError(f"Volume {directory} must belong to container UID 1000 or be newly created")
