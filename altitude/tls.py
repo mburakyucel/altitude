@@ -28,7 +28,9 @@ TRUST_STEPS = (
     "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
     "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
     "Mac: open ca.crt in Keychain Access, then set Trust > When using this certificate > Always Trust.",
-    "iPhone/iPad: open ca.crt, then in Settings > Profile Downloaded check that it contains only a Certificate "
+    "iPhone/iPad: open the share link in Safari, tap Download the profile and Allow. Then open Settings > "
+    "Profile Downloaded; this entry appears after download, and an uninstalled profile expires after eight minutes. "
+    "Also check General > VPN & Device Management for profiles. Check that it contains only a Certificate "
     "named ca_name and that More Details shows its SHA-256 before tapping Install. Then turn it on under "
     "General > About > Certificate Trust Settings.",
     "Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate. "
@@ -440,15 +442,21 @@ a{{color:#4da3ff}}a.button.secondary{{background:#2c2c2e;color:#f5f5f7}}small{{c
 <div class="check"><strong>{name}</strong><br><small>SHA-256</small><div class="sha">{rows}</div>
 <small>It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.</small></div>
 <h2>iPhone or iPad</h2>
+<p>Open this page in <strong>Safari</strong>, then tap <strong>Download the profile</strong>.</p>
 <a class="button" href="/altitude.mobileconfig">Download the profile</a>
 <ol>
 <li>Tap <strong>Allow</strong>, then <strong>Close</strong>.</li>
-<li>Open <strong>Settings › Profile Downloaded</strong>. Check that it contains only a certificate named
+<li>Open <strong>Settings › Profile Downloaded</strong> after the download completes. Check that it contains only a certificate named
 <strong>{name}</strong> and that <strong>More Details</strong> shows the SHA-256 above. Then tap
-<strong>Install</strong> and enter your passcode. If anything differs, tap <strong>Remove</strong>.</li>
+<strong>Install</strong> and enter your passcode. If details are unavailable, stop before installing.
+If anything differs, tap <strong>Remove</strong>.</li>
 <li>Open <strong>Settings › General › About › Certificate Trust Settings</strong> and turn on <strong>{name}</strong>.</li>
 <li>Open <a href="{address}">{address}</a> in a new Private tab. It must load with no warning; then pair this phone.</li>
 </ol>
+<p><strong>No Profile Downloaded?</strong> This shortcut appears only after a profile download.
+Check <strong>Settings › General › VPN &amp; Device Management</strong> for profiles, too.
+iOS deletes an uninstalled profile after eight minutes. If none is there, return to this page in Safari
+and download again. If there is no Allow prompt or the download fails, stop and report what Safari shows.</p>
 <h2>Android and other devices</h2>
 <a class="button secondary" href="/ca.crt">Download the certificate</a>
 <ol>

@@ -137,6 +137,9 @@ sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.strin
     action: shown,
     visible: [page.getByRole("heading", { name: "Add this phone to Altitude" }), page.getByText(/^10 17 1E 25 2C 33 3A 41/),
       page.getByRole("link", { name: "Download the profile" }), page.getByRole("link", { name: "Download the certificate" }),
+      page.getByText("No Profile Downloaded?", { exact: true }),
+      page.getByText("Settings › General › VPN & Device Management", { exact: true }),
+      page.getByText(/iOS deletes an uninstalled profile after eight minutes/),
       page.getByText("Certificate Trust Settings", { exact: false }), page.getByRole("link", { name: "https://192.168.1.20:8890" }).first()],
     hidden: [],
   });

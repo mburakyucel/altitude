@@ -583,7 +583,18 @@ class TestShare(ServiceCase):
             self.assertIn(text, page)
         with urllib.request.urlopen(link + "altitude.mobileconfig", timeout=5) as response:
             self.assertEqual(response.headers["Content-Type"], "application/x-apple-aspen-config")
-            settings = plistlib.loads(response.read())
+            profile_bytes = response.read()
+            self.assertEqual(int(response.headers["Content-Length"]), len(profile_bytes))
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+            settings = plistlib.loads(profile_bytes)
+        # A phone/browser may inspect the download before fetching it. HEAD must describe the
+        # same profile without sending bytes or falsely logging a completed profile download.
+        with urllib.request.urlopen(urllib.request.Request(link + "altitude.mobileconfig", method="HEAD"),
+                                    timeout=5) as response:
+            self.assertEqual(response.headers["Content-Type"], "application/x-apple-aspen-config")
+            self.assertEqual(int(response.headers["Content-Length"]), len(profile_bytes))
+            self.assertEqual(response.read(), b"")
         self.assertEqual(settings["PayloadDisplayName"], "Altitude local CA")
         [payload] = settings["PayloadContent"]
         self.assertEqual(payload["PayloadType"], "com.apple.security.root")
