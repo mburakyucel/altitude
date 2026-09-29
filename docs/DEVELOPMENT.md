@@ -298,6 +298,15 @@ identity states using fictional API/storage. Neither suite establishes native im
 browser acceptance; rerun the image gate on the exact candidate under authorized runtime access.
 Its `--lifecycle` option adds finite native job/descendant, daemon restart, same-container restart
 and retained-volume replacement checks. It uses fictional data and never invokes an engine.
+The `--workflow` lane uses a deterministic CLI at the engine seam and real platform jobs,
+project registration, coordinator conversation, Git guards/worktrees and task records. It checks
+Stop, queued steering, replacement admission and continuation of the same saved session and draft.
+Its synchronous application driver owns a separate fictional state directory inside the persistent
+home; the image daemon serves readiness with its default fresh state. This lane does not establish
+daemon scheduling, browser onboarding, interrupted-launch recovery or real provider compatibility.
+Run `python3 -m unittest tests.test_container_workflow` before the authorized image gate: it runs
+the same workflow and CLI with a local-process platform adapter, without host services. Workspace
+results do not establish native systemd or image support; those require the gate's retained results.
 
 Device results name their evidence class; a result in one class never stands in for another.
 
