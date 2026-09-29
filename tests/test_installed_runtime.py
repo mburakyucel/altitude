@@ -11,7 +11,7 @@ from unittest import mock
 
 from tests.support import REPO, AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, engines, git_policy, project_setup, server, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, platform, project_setup, server, state as S, tasks as T
 
 
 class InstalledRuntime(AltitudeCase):
@@ -98,7 +98,18 @@ class InstalledRuntime(AltitudeCase):
             git_policy.install_hooks(self.repo)
 
     def test_task_dispatch_and_resume_keep_owner_hold_and_packaged_resources(self):
-        expected = self.prefix / "hooks"
+        self.assert_dispatch_and_resume(self.prefix / "hooks")
+
+    def test_image_task_dispatch_and_resume_keep_owner_hold_and_image_guards(self):
+        # Real Git, setup, state and dispatch; only the image identity and engine are fixtures.
+        # This does not establish native units, confinement or recreation admission.
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
+        self.patch(config, "INSTALL_PREFIX", Path("/"))
+        self.patch(config, "HOME", self.tmp / "image-home")
+        self.assert_dispatch_and_resume(self.source / "hooks")
+
+    def assert_dispatch_and_resume(self, expected):
         self.assertEqual(git_policy.install_hooks(self.repo), expected)
         task = T.new(self.project, "Installed task", "Use the packaged installation.", hold_merge="Operator review")
         dispatch.run(self.project, task["slug"])
@@ -116,6 +127,14 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(resumed["session_id"], running["session_id"])
         self.assertEqual(resumed["worktree"], running["worktree"])
         self.assertEqual(resumed["hold_merge"], running["hold_merge"])
+        self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
+        dispatch.stop(self.project, task["slug"], reason="Pause the fixture task")
+        stopped = S.load_task(self.project, task["slug"])
+        self.assertEqual(stopped["state"], "blocked")
+        self.assertEqual(stopped["session_id"], resumed["session_id"])
+        self.assertEqual(stopped["hold_merge"], "Operator review")
+        self.assertTrue(stopped["stop_id"])
+        self.assertFalse(engines.worker_live(stopped["l2_engine"], stopped, job_root=None))
         self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
 
     def test_missing_guard_resources_refuse_dispatch_before_launch(self):

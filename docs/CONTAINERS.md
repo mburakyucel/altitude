@@ -47,8 +47,12 @@ roots' ownership and never recursively rewrites user data.
 
 Browser terminal, task-terminal transcript reads, host speech and in-app update/restart actions are
 unavailable for every peer: published-port forwarding cannot reliably identify agent connections.
-Browser speech and an explicitly configured external speech service retain their existing behavior.
+Browser recognition remains available where the browser supports it. Host voice is unavailable in
+the container; the image does not pass through host audio devices or a GPU.
 No application command bridges to the host runtime.
+Daemon startup does not queue the native “code now on main” coordinator notice: restarting the
+daemon does not activate an image update or authorize a recovery turn. Saved tasks and messages
+remain available.
 
 ## Build and start — host terminal
 

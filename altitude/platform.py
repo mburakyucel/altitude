@@ -61,7 +61,7 @@ def container_unavailable(subject: str) -> str | None:
     if subject == "Terminal":
         return "Browser terminal is unavailable in this container. Use podman exec from a host terminal."
     if subject == "Voice":
-        return "Host voice is unavailable in this container. Use browser recognition or an external speech service."
+        return "Host voice is unavailable in this container. Use browser recognition where supported."
     return IMAGE_MANAGED
 
 

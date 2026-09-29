@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, installation, platform, server, source_tls, speech, state as S, tasks as T, terminal, tls
+from altitude import config, dispatch, installation, l3, platform, server, source_tls, speech, state as S, tasks as T, terminal, tls
 
 
 class TestContainerIdentity(AltitudeCase):
@@ -122,6 +122,21 @@ class TestContainerBoundary(AltitudeCase):
             with self.assertRaisesRegex(RuntimeError, "image-managed"):
                 server.restart_service()
         self.assertEqual(flag.read_bytes(), before)
+
+    def test_image_restart_does_not_queue_native_activation_notice_or_lose_task_state(self):
+        self.private_ledgers()
+        task = T.new(self.project, "Retained task", "Keep the existing review hold", hold_merge="Review required")
+        task["state"] = "blocked"
+        S.save_task(self.project, task)
+        message = T.message(self.project, task["slug"], config.OPERATOR_ACTOR, "Saved context")
+        before = S.load_task(self.project, task["slug"])
+        server.restart_notice()
+        self.assertEqual(l3.queued(self.project), [])
+        self.assertEqual(S.load_task(self.project, task["slug"]), before)
+        self.assertIn(message["id"], [row["id"] for row in T.pending(self.project, task["slug"])])
+        with mock.patch.object(platform, "containerized", return_value=False):
+            server.restart_notice()
+        self.assertEqual(len(l3.queued(self.project)), 1)
 
     def test_image_lifecycle_refuses_before_download_record_or_service_mutation(self):
         with mock.patch.object(installation, "_changing_update_record", side_effect=AssertionError("no update record")), \

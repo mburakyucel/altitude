@@ -608,6 +608,8 @@ def request_project_setup(project: str, action: str, *, actor: str, expected: st
 
 def restart_notice() -> None:
     """Give L3 the active tasks and their explicit waits after a restart."""
+    if platform.containerized():
+        return  # #543: daemon startup neither activates main nor authorizes an image recovery turn.
     for project in config.load_projects():
         if not config.is_managed(project):
             continue
