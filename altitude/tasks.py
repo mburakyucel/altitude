@@ -1821,7 +1821,8 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
 
 def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
     if source == "task":
-        return [row for row in task_messages(project, slug) if not row.get("removed_at")]
+        # A resume reason authorizes that resume only; the UI's Resume sends fixed text nobody wrote as an answer.
+        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"

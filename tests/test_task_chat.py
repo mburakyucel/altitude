@@ -306,6 +306,23 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(seen["prompt"], T.render_inbox([later]))
         self.assertEqual(sum(row["id"] == request["id"] for row in T.task_messages(self.project, self.slug)), 1)
 
+    def test_an_operator_resume_row_is_not_an_answer(self):
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
+                       "--for-operator", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        [question] = T.question_views(self.project, self.slug)
+        request = dispatch.request_task_operation(self.project, self.slug, "resume",
+                                                  "Resume requested from the task conversation",
+                                                  actor=T.OPERATOR_MESSAGE_ROLE)["request"]
+        self.quiet_launch()
+        self.patch(engines, "resume_l2", side_effect=lambda _engine, _name, session_id, _prompt, **_kw: (
+            {"returncode": 0, "agent": {"id": "agent-new", "sessionId": session_id}}))
+        dispatch.run_task_operation(self.project, self.slug)
+        self.assertEqual(T.task_messages(self.project, self.slug)[-1]["id"], request["id"])
+        with self.assertRaisesRegex(T.TransitionError, "original message"):
+            T.resolve_question(self.project, self.slug, question["id"], question["revision"], request["id"],
+                               disposition="answered", reason="Clicked Resume", expected_attempt=1)
+
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")
         self.setenv("ALTITUDE_PROJECT", self.project)
