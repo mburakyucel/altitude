@@ -18,7 +18,7 @@ assert "security.capability" not in os.listxattr(binary)
 os.environ['ALTITUDE_HOME'] = str(home / 'sandbox-fixture-state')
 os.environ['CODEX_HOME'] = str(home / '.codex')
 sys.path.insert(0, '/opt/altitude')
-from altitude import config, engines, l3
+from altitude import config, engines, l3, platform
 
 def command(args, cwd=None):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=20, check=True)
@@ -40,6 +40,7 @@ git_roots = engines._git_dirs(workspace)
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
            'state': config.ROOT, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,
+           'guard_consent': platform.container_git_guards()[1],
            'protected_codex': workspace / '.codex', 'protected_agents': workspace / '.agents',
            'temporary': Path('/tmp/task-native-write')}
 for path in targets.values():

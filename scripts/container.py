@@ -107,6 +107,7 @@ def execute(instance: str, command: list[str], *, interactive: bool = False) -> 
     return platform.container_command(["exec", *(["-it"] if interactive else []), "--user", "1000:1000",
                                        "--workdir", "/home/altitude",
                                        "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
+                                       "--env", "PATH=" + platform.CONTAINER_USER_PATH,
                                        value["Id"], *command], timeout=3600 if interactive else 30, interactive=interactive)
 
 
@@ -155,7 +156,7 @@ def main() -> None:
             print(facts)
             print(f"Public CA saved to {args.output}. Compare its fingerprint before trusting it on a device.")
         else:
-            print(execute(args.name, ["/bin/bash", "-l"] if args.action == "shell" else ["alt", "pair"],
+            print(execute(args.name, ["/bin/bash", "--noprofile", "--norc"] if args.action == "shell" else ["alt", "pair"],
                           interactive=args.action == "shell"))
     except (OSError, ValueError, RuntimeError) as exc:
         parser.exit(1, f"Container operation refused: {exc}\n")

@@ -9,6 +9,27 @@ from altitude import config, engines, platform
 from scripts import container, container_acceptance
 
 
+class TestFixtureCleanup(AltitudeCase):
+    def test_reused_pause_pid_is_not_signalled_after_identity_changes(self):
+        proc = self.tmp / "proc"
+        process = proc / "42"
+        process.mkdir(parents=True)
+        (process / "comm").write_text("podman pause\n")
+        home = self.tmp / "fixture-home"
+        (process / "environ").write_bytes(("HOME=" + str(home)).encode() + b"\0")
+        (process / "exe").symlink_to("/usr/bin/podman")
+        def acquire(pid):
+            (process / "environ").write_bytes(b"HOME=/unrelated\0")
+            return 123
+        with mock.patch.object(platform, "PROC", proc), mock.patch.object(os, "pidfd_open", side_effect=acquire), \
+             mock.patch.object(os, "close") as close, mock.patch.object(platform.shutil, "which", return_value="/usr/bin/podman"), \
+             mock.patch.object(platform.signal, "pidfd_send_signal") as send:
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                platform.cleanup_container_pause(home)
+            send.assert_not_called()
+            close.assert_called_once_with(123)
+
+
 class TestVolumeLocks(AltitudeCase):
     def test_bootstrap_recognizes_nested_same_device_mounts_before_starting_manager(self):
         home = self.tmp / "home"
@@ -120,6 +141,16 @@ class TestContainerLauncher(AltitudeCase):
         self.assertEqual(engines.clean_env()["PATH"].split(":")[0], str(config.SOURCE / "bin"))
         for engine in config.ENGINES:
             self.assertIn("--prefix ~/.local", engines.install_command(engine))
+
+    def test_operator_shell_and_exec_find_persistent_user_tools_without_login_profile(self):
+        self.patch(platform, "containerized", return_value=True)
+        with mock.patch.object(container, "owned", return_value={"Id": "fixture"}):
+            container.execute("fixture", ["/bin/bash", "--noprofile", "--norc"], interactive=True)
+        self.assertIn("PATH=" + platform.CONTAINER_USER_PATH, self.calls[-1])
+        self.assertIn("--user", self.calls[-1])
+        self.assertIn("1000:1000", self.calls[-1])
+        self.assertIn("--env PATH=" + platform.CONTAINER_USER_PATH, platform.container_shell_command())
+        self.assertTrue(platform.container_shell_command().endswith("bash --noprofile --norc"))
 
 
 class TestImageGate(AltitudeCase):

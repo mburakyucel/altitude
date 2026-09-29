@@ -466,6 +466,22 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual(T.pending(self.project, self.slug), [])
         self.assertEqual(sum(row["id"] == message["id"] for row in T.task_messages(self.project, self.slug)), 1)
 
+        with mock.patch.object(engines, "worker", return_value=None), \
+             mock.patch.object(engines, "resume_l2") as launch, \
+             mock.patch.object(server, "request_task_resume") as resume, \
+             mock.patch.object(incidents, "system_fault") as fault:
+            dead = next(item for item in dispatch.poll(self.project) if item["task"]["slug"] == self.slug)
+            self.assertTrue(dead["died"])
+            server._on_l2_finished(self.project, dead)
+            blocked = S.load_task(self.project, self.slug)
+            self.assertEqual(blocked["state"], "blocked")
+            self.assertIn("ended without a fresh report", blocked["blocked_reason"])
+            self.assertEqual(dispatch.resume_due(self.project), [])
+            self.assertEqual(sum(row["id"] == message["id"] for row in T.task_messages(self.project, self.slug)), 1)
+            launch.assert_not_called()
+            resume.assert_not_called()
+            fault.assert_called_once()
+
     def test_restart_with_ambiguous_provider_launch_fails_closed_without_a_duplicate(self):
         message = T.message(self.project, self.slug, "l3", "Do not deliver me twice.", by="l3")
         claim = T.claim_resume(self.project, self.slug)

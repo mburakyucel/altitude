@@ -3,7 +3,8 @@
 Durable resume claims record their owner's PID, start time, boot identity and PID namespace through
 `platform.py`. Reused process numbers after restart or container recreation do not keep an old claim
 live. Existing claim reconciliation retains the reserved messages and worker identity; missing process
-identity is stale, while an inspection permission error remains unavailable evidence. Linux is
+identity is stale. Boot/start mismatches establish a stale owner before reading its protected
+namespace link; a permission error when the lifetime still matches remains unavailable evidence. Linux is
 implemented; native macOS process-identity evidence remains part of that platform's open runtime gap.
 
 ## Conversation-audit pilot

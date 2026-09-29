@@ -2,12 +2,22 @@
 
 Container support is under validation. The candidate uses rootless Podman with real systemd inside
 the image. The feasibility tuple is Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
-its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory pass on that tuple.
+its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory passed on commit
+`03ca1a936e942282b2d314a85ca49cd1bb2553e4`, archive SHA-256
+`07b9be89d681ad8934def42f7605b84a6de77c58d841e2aed25740dd5a441fc2`.
+Later source revisions and the optional stripped-image native-profile lane have not run natively.
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
 
 ## Boundary
+
+Packaged Git guards live in `/opt/altitude/hooks`. Approved custom-hook compositions and their
+consent receipts live in `/home/altitude/.config/altitude/git-guards`, outside project and task-state
+writable roots. They use the image interpreter and source directly, without native installer state.
+Task machine commands, when explicitly authorized through the existing grant workflow, execute as
+the application user inside this container. They do not grant host access; no host runtime socket
+or command bridge is mounted. Host administration remains a separate operator action.
 
 This deployment requires **container-wide `unmask=/proc/*`**. It permits nested native worker
 confinement but removes Podman's default masked/read-only proc mounts for every container process,
@@ -80,7 +90,9 @@ existing output. Container `alt tls-share` explains this path instead of opening
 
 Run sign-in, engine installation and Git commands **inside the container shell**. First run and
 Settings show inside-container checks and the host shell command. Missing engine tools install in
-the persistent home; missing bundled Git/GitHub CLI is an incomplete-image error. Host tools and
+the persistent home. The operator shell explicitly includes `~/.local/bin` and skips login/startup
+profiles, so a fresh volume needs no shell-profile edit. That user PATH is not given to container root.
+Missing bundled Git/GitHub CLI is an incomplete-image error. Host tools and
 authentication cannot establish container readiness. Set Git identity and authentication there,
 without pasting credentials into chat. One engine suffices; live provider/auth compatibility is unverified.
 
@@ -109,7 +121,8 @@ Do not migrate an existing native installation with these commands.
 
 Resume claims identify their owner by PID, process start time, boot identity and PID namespace through
 the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters
-existing claim reconciliation; inaccessible identity evidence does not establish that the owner died.
+existing claim reconciliation. Boot/start mismatches are checked before the protected namespace link;
+inaccessible identity evidence for a matching lifetime does not establish that the owner died.
 This removes the bare-PID liveness check for native and container resumes. The native macOS process
 identity implementation remains pending alongside its existing platform runtime gap.
 
@@ -120,6 +133,9 @@ image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
+The prepared successor also checks the running daemon's environment and owned listening socket,
+using a non-default internal port and fictional advertised certificate name. This remains unrun
+and does not test host port publication or client-device access.
 
 An explicit `--native-sandbox-binary /path/to/diagnostic-executable` additionally copies an ordinary
 installed native diagnostic into the disposable image and exercises the application-generated task

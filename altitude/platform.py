@@ -33,6 +33,7 @@ INSTALL = {"gh": "sudo apt install gh", "git": "sudo apt install git"}
 # variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
 CONTAINER_MARKER = Path("/etc/altitude/container")
 CONTAINER_PROJECTS = Path("/home/altitude/Projects")
+CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
 IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
 
 
@@ -83,8 +84,17 @@ def container_shell_command() -> str | None:
     if not containerized():
         return None
     return ("podman exec -it --user 1000 --env HOME=/home/altitude "
+            f"--env PATH={CONTAINER_USER_PATH} "
             "--env XDG_RUNTIME_DIR=/run/user/1000 --workdir /home/altitude "
-            f"{shlex.quote(socket.gethostname())} bash")
+            f"{shlex.quote(socket.gethostname())} bash --noprofile --norc")
+
+
+def container_git_guards() -> tuple[Path, Path, str] | None:
+    """Image hooks and persistent consent receipts outside task-writable project/state roots."""
+    if not containerized():
+        return None
+    from . import config
+    return config.SOURCE / "hooks", config.HOME / ".config/altitude/git-guards", "/usr/bin/python3"
 
 
 def require_container_project(path: Path, *, folder: bool = False) -> None:
@@ -201,7 +211,8 @@ def cleanup_container_pause(home: Path) -> list[int]:
                 continue
             descriptor = os.pidfd_open(int(path.name))
             try:
-                if path.stat().st_uid != os.getuid() or (path / "exe").resolve() != Path(shutil.which("podman")):
+                if (path.stat().st_uid != os.getuid() or (path / "exe").resolve() != Path(shutil.which("podman"))
+                        or ("HOME=" + str(home)).encode() not in (path / "environ").read_bytes().split(b"\0")):
                     raise RuntimeError("Fixture pause helper identity changed; preserve it for inspection")
                 signal.pidfd_send_signal(descriptor, signal.SIGKILL)
                 poller = select.poll()
@@ -565,6 +576,11 @@ def process_identity_live(identity: object) -> bool:
     if any(not isinstance(identity.get(key), str) or not identity[key] for key in ("start", "boot", "namespace")):
         return False
     try:
+        # Issue #543: a recycled PID can belong to another UID whose namespace is unreadable.
+        # Disprove ownership from public lifetime facts before asking for that protected evidence.
+        if ((PROC / "sys/kernel/random/boot_id").read_text().strip() != identity["boot"]
+                or process_start(identity["pid"]) != identity["start"]):
+            return False
         return process_identity(identity["pid"]) == identity and process_running(identity["pid"], identity["start"]) is True
     except (FileNotFoundError, ProcessLookupError):
         return False

@@ -4,10 +4,11 @@ import shutil
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
-from altitude import config, dispatch, engines, git_policy, l3, project_setup as setup, server, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, l3, platform, project_setup as setup, server, state as S, tasks as T
 
 
 class ProjectSetup(AltitudeCase):
@@ -25,6 +26,16 @@ class ProjectSetup(AltitudeCase):
         setup.request(self.project, action, actor="operator", **kwargs)
         setup.run(self.project)
         return setup.observe(self.project)
+
+    def test_image_launch_guard_preflight_repairs_project_and_task_without_native_installation(self):
+        task, worktree = self.blocked_owner()
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(config, "RELEASE", {"version": "fixture"})
+        self.patch(config, "INSTALL_PREFIX", Path("/"))
+        self.patch(config, "INSTALL_CONFIG", self.tmp / "missing-install.json")
+        setup.ensure_guards(self.project, slug=task["slug"])
+        for checkout in (self.repo, worktree):
+            self.assertEqual(git_policy.require_hooks_installed(checkout), config.SOURCE / "hooks")
 
     def step(self, name, view=None):
         return next(s for s in (view or setup.observe(self.project))["steps"] if s["id"] == name)

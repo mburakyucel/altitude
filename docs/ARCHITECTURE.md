@@ -8,7 +8,8 @@ runtime/bootstrap operations. Browser terminal, host speech and native activatio
 refuse every peer in that deployment. Source merges remain ordinary project delivery; application
 activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
 manager. Immutable resources and persistent home/projects have separate lifetimes. Image startup,
-local HTTPS and elevation-file inventory pass on the recorded Linux tuple; final-image engine
+local HTTPS and elevation-file inventory passed on `03ca1a9`; [container evidence](CONTAINERS.md)
+names the exact archive. Later revisions have not run natively; final-image engine
 confinement, full workflow/lifecycle and Mac runtime evidence remain pending. Resume-claim ownership
 uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
 

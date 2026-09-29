@@ -71,7 +71,8 @@ from altitude import access, config, platform, tls
 assert platform.containerized()
 assert os.getuid() == 1000
 assert config.HOST == '0.0.0.0', config.HOST
-assert config.PUBLIC_HOST == 'localhost', config.PUBLIC_HOST
+assert config.PUBLIC_HOST == 'container-fixture.invalid', config.PUBLIC_HOST
+assert config.PORT == 19443, config.PORT
 context = ssl.create_default_context(cafile=str(config.TLS_DIR / 'ca.crt'))
 base = 'https://localhost:' + str(config.PORT)
 def request(path, body=None):
@@ -91,13 +92,24 @@ assert machine['deployment'] == 'container' and not machine['terminal'] and not 
 assert request('/api/overview')['update']['managed'] == 'image'
 service = platform.status()
 assert service['ActiveState'] == 'active'
-daemon_status = (Path('/proc') / service['MainPID'] / 'status').read_text().splitlines()
+daemon_proc = Path('/proc') / service['MainPID']
+environment = dict(item.split(b'=', 1) for item in (daemon_proc / 'environ').read_bytes().split(b'\0') if b'=' in item)
+expected = {'ALTITUDE_HOST':'0.0.0.0', 'ALTITUDE_PUBLIC_HOST':'container-fixture.invalid', 'ALTITUDE_PORT':'19443'}
+service_environment = {key:environment.get(key.encode(), b'').decode() for key in expected}
+assert service_environment == expected, service_environment
+listeners = [row.split() for row in (daemon_proc / 'net/tcp').read_text().splitlines()[1:]]
+assert any(row[1] == '00000000:4BF3' and row[3] == '0A'
+           and platform.holds(int(service['MainPID']), 'socket:[' + row[9] + ']') for row in listeners), listeners
+certificate = ssl._ssl._test_decode_cert(str(config.TLS_DIR / 'server.crt'))
+assert ('DNS', 'container-fixture.invalid') in certificate['subjectAltName'], certificate
+daemon_status = (daemon_proc / 'status').read_text().splitlines()
 assert next(line.split()[1] for line in daemon_status if line.startswith('NoNewPrivs:')) == '1'
 for key in ['Seccomp:', 'CapEff:']:
     line = next(line for line in Path('/proc/self/status').read_text().splitlines() if line.startswith(key))
     assert line.split()[1] == ('2' if key == 'Seccomp:' else '0000000000000000'), line
 print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges':True,
-    'certificate':tls.info(), 'service':service}, indent=2))
+    'certificate':tls.info(), 'service':service, 'service_environment':service_environment,
+    'daemon_wildcard_listener':True, 'advertised_certificate_san':True}, indent=2))
 '''
 
 
@@ -151,6 +163,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                 container.local_volume(volume)
             ident = call(["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
                           "--security-opt=unmask=/proc/*", "--memory=512m", "--cpus=1", "--pids-limit=256",
+                          "--env", "ALTITUDE_PORT=19443", "--env", "ALTITUDE_PUBLIC_HOST=container-fixture.invalid",
                           "--volume", "fixture-home:/home/altitude:nocopy",
                           "--volume", "fixture-projects:/home/altitude/Projects:nocopy", image["Id"]]).strip()
             result["container"] = ident

@@ -29,9 +29,13 @@ class TestProcessOwnership(AltitudeCase):
             self.assertFalse(platform.process_identity_live(identity))
             stat.unlink()
             self.assertFalse(platform.process_identity_live(identity))
-        with mock.patch.object(platform, "process_identity", side_effect=PermissionError("inspection unavailable")):
-            with self.assertRaises(PermissionError):
-                platform.process_identity_live(identity)
+            write_stat()
+            with mock.patch.object(platform.os, "readlink", side_effect=PermissionError("other UID")) as readlink:
+                self.assertFalse(platform.process_identity_live({**identity, "start": "old-start"}))
+                self.assertFalse(platform.process_identity_live({**identity, "boot": "old-boot"}))
+                readlink.assert_not_called()
+                with self.assertRaises(PermissionError):
+                    platform.process_identity_live(identity)
         self.assertFalse(platform.process_identity_live(None))
         self.assertFalse(dispatch._claim_owner_live({"owner_pid": os.getpid()}))
 
