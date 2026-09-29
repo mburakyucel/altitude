@@ -500,7 +500,8 @@ Review records retain original findings and separate owner dispositions for each
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
 A finding the owner leaves `open` stays visibly unresolved, blocks merge and prevents replacing its
-review; only evidence-backed fixed/dismissed outcomes clear an assessment.
+review; only evidence-backed fixed/dismissed outcomes clear an assessment. An additional review of the
+same subject replaces nothing, so earlier reviews stay in the merge gate with their original authority.
 Proposal assessment records the proposal identity and dispositions, including an explicitly selected
 revised proposal when relevant. Later proposal/source/context changes require L2 assessment or deliberate review.
 The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an

@@ -1400,6 +1400,8 @@ alt task review assess --review-id <proposal-review-id> --proposal-message <revi
 alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
+# Review new material while earlier reviews and their open findings stay in the merge gate:
+alt task review request --subject proposal --additional --focus "Challenge the security addendum"
 # Select the reviewer for one request, or re-select a request still waiting to run:
 alt task review request --subject proposal --engine <engine> --model <model> --focus "Challenge the wording"
 alt task review request --previous <waiting-id> --model <model>
@@ -1434,6 +1436,11 @@ saved and shown with its unresolved findings, but it does not clear the review. 
 merge while any current assessment has an open finding, and a new request cannot replace that review
 until a later `assess` by the current owner gives evidence-backed `fixed`/`dismissed` outcomes. That
 assessment then faces the ordinary freshness checks; withdrawal authority is unchanged.
+`--additional` requests another review of the subject that replaces none, for example of a proposal
+addendum. It needs every current review finished and assessed, cannot name `--previous`, and has its
+own focus and requester. Earlier reviews keep their open findings, requester, focus and withdrawal
+authority, and still block merge however the additional review turns out. Retrying or re-running the
+additional review with `--previous` replaces only it.
 With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; post the outcome explanation before assessment so it is included in the final context.
 For a held PR, reassess after reading the operator's merge approval, including any conditions.

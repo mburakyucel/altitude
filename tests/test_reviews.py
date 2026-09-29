@@ -721,6 +721,70 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError):
             reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_additional_review_leaves_open_findings_and_their_authority_in_the_merge_gate(self):
+        # Container proposal deadlock (2026-09-28): an honestly open assessment refused replacement and a plain
+        # request returned the old review, so a later security addendum had no supported independent review.
+        task = S.load_task(self.project, self.slug)
+        task.update(hold_merge="Operator review before merge")
+        S.save_task(self.project, task)
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: run the owner in a rootless container")
+        original = self.run_review(self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal",
+                                                focus="Challenge the isolation boundary"), proposal_id=proposal["id"])
+        reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs real Linux evidence."}])
+        for actor in ("l2", T.OPERATOR_MESSAGE_ROLE):
+            with self.subTest(actor=actor), self.assertRaisesRegex(T.TransitionError, "open findings"):
+                self.request(actor=actor, previous=original["id"])
+        self.assertEqual(self.request(subject="proposal")["id"], original["id"])
+        with self.assertRaisesRegex(T.TransitionError, "replaces no review"):
+            self.request(subject="proposal", additional=True, previous=original["id"])
+        self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 1)
+
+        addendum = T.message(self.project, self.slug, "l2", "Addendum: hide host processes from the container")
+        requested = self.request(subject="proposal", additional=True, focus="Challenge the process-visibility addendum",
+                                 request_id="additional")
+        self.assertEqual((requested["requested_by"], requested["previous"], requested["additional"]), ("l2", None, True))
+        self.assertEqual(requested["focus"], "Challenge the process-visibility addendum")
+        self.assertEqual(self.request(subject="proposal", additional=True, focus="Challenge the process-visibility addendum",
+                                      request_id="additional")["id"], "additional")
+        with self.assertRaisesRegex(T.TransitionError, "different focus"):
+            self.request(subject="proposal", focus="Challenge the process-visibility addendum", request_id="additional")
+        # A second additional request while this one waits returns it instead of stacking reviewers.
+        self.assertEqual(self.request(subject="proposal", additional=True)["id"], "additional")
+        self.engine.side_effect = lambda prompt, **kwargs: (kwargs["on_start"]({"unit": "u", "pid": 1, "started_ticks": "1"}) and
+                                                            {"termination_confirmed": True, "text": "No findings", "findings": []})
+        failed = self.run_review(requested, proposal_id="missing-proposal")
+        self.assertEqual(failed["state"], "failed")
+        with self.assertRaisesRegex(T.TransitionError, "existing review"):
+            self.request(subject="proposal", additional=True)
+        # Retrying the additional review replaces only it; the original stays current.
+        retried = self.request(previous=failed["id"])
+        self.assertEqual((retried["subject"], retried["requested_by"]), ("proposal", "l2"))
+        clean = self.run_review(retried, proposal_id=addendum["id"])
+        self.assertEqual((clean["state"], clean["result"]["findings"]), ("completed", []))
+        with self.assertRaisesRegex(T.TransitionError, "Assess the completed review"):
+            self.request(subject="proposal", additional=True)
+        reviews.assess(self.project, self.slug, clean["id"], actor="l2", expected_attempt=1, dispositions=[],
+                       reason="Checked the addendum review")
+
+        # The clean additional review does not clear the original's open finding, operator authority or hold.
+        with self.assertRaisesRegex(T.TransitionError, f"{original['id']} \\(proposal\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        with self.assertRaisesRegex(T.TransitionError, "Only the operator"):
+            reviews.withdraw(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Covered")
+        reviews.withdraw(self.project, self.slug, clean["id"], actor="l2", expected_attempt=1, reason="Addendum dropped")
+        with self.assertRaisesRegex(T.TransitionError, "unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        view = reviews.view(self.project, self.slug)
+        [kept] = [row for row in view["history"] if row["id"] == original["id"]]
+        self.assertEqual((kept["unresolved"], kept["requested_by"], kept["focus"]),
+                         (["f1"], T.OPERATOR_MESSAGE_ROLE, "Challenge the isolation boundary"))
+        self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], clean["id"])
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review before merge")
+        reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
+        reviews.require_merge(self.project, self.slug, self.pair())
+
     def test_new_code_context_or_merge_pair_invalidates_assessment(self):
         result = self.run_review()
         self.assess(result)
