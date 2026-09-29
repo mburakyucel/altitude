@@ -166,33 +166,45 @@ address" for a type of name its limits leave open.
 
 #### Set up a phone
 
-On the computer running Altitude, locally or over SSH, run:
+On a device that already trusts Altitude, open **Settings → Devices** and tap **Add a phone** in the
+Certificate card. Or, on the computer running Altitude, locally or over SSH, run:
 
 ```sh
 alt tls-share
 ```
 
-It reads the address, port and certificate folder from the running Altitude service itself, so
-the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
+Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
+and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
+fingerprint, an iPhone profile download, a plain certificate download for Android and other
+devices, and the steps below. The link serves only that page and the public CA certificate, as a
+configuration profile holding only the certificate or as the certificate file; it never serves a
+key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
+the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new
+**Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
+then use another channel.
+
+`alt tls-share` reads the address, port and certificate folder from the running Altitude service
+itself, so the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
 `ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
-service's address, and offers only a certificate the service proves it serves under. For ten
-minutes it offers the certificate at a plain-HTTP link on the service's address and prints the
-steps below with the CA's real name and fingerprint. It serves nothing else; Ctrl-C closes it
-sooner. A firewall on that computer can block the link's port; then use another channel.
+service's address, and offers only a certificate the service proves it serves under. **Add a phone**
+is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
+in any terminal, including Altitude's own.
 
-It stops with the reason when the service is not installed or not running, serves plain HTTP,
-listens only on loopback (`ALTITUDE_HOST` must be the private-network address the phone opens,
-which takes effect when the service restarts), does not answer, or answers without proving that
-certificate. It reads the Linux user service or, on a Mac, the source service's LaunchAgent, whose address
-comes from `ALTITUDE_HOST` when it is installed: `ALTITUDE_HOST=<address> make install-service`.
+Both stop with the reason when the service serves plain HTTP or listens only on loopback
+(`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
+service restarts). `alt tls-share` also stops when the service is not installed or not running,
+does not answer, or answers without proving that certificate. It reads the Linux user service or,
+on a Mac, the source service's LaunchAgent, whose address comes from `ALTITUDE_HOST` when it is
+installed: `ALTITUDE_HOST=<address> make install-service`.
 
-On an iPhone or iPad:
+The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
+iPad:
 
-1. Open the link in Safari and tap **Allow**. Open Settings → **Profile Downloaded**.
-2. Before tapping **Install**, check that it contains only a **Certificate** with the printed name,
-   and that **More Details** → that certificate shows the printed SHA-256. If anything differs, tap
-   **Remove** and stop: someone else answered the link.
+1. Tap **Download the profile**, then **Allow**. Open Settings → **Profile Downloaded**.
+2. Before tapping **Install**, check that it contains only a **Certificate** with the name shown on
+   the trusted screen, and that **More Details** → that certificate shows the same SHA-256. If
+   anything differs, tap **Remove** and stop: someone else answered the link.
 3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
    Trust Settings**. Installing the profile alone does not enable TLS trust.
    [Apple guidance](https://support.apple.com/en-us/102390).
@@ -203,7 +215,7 @@ Safari may remember an earlier "visit this website" exception, which can hide mi
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
 every site and unpairs Safari.
 
-On Android, open the link in Chrome and install the file under Settings → Security → Encryption &
+On Android, tap **Download the certificate** in Chrome and install the file under Settings → Security → Encryption &
 credentials → Install a certificate → **CA certificate** (names vary by device), comparing the
 fingerprint where the device shows it. Firefox for Android also needs its third-party CA setting.
 [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).

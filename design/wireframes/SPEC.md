@@ -1288,12 +1288,33 @@ the current one) with **Cancel** and a red **Remove**; removing the current devi
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
 With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. To add a phone, run this on the computer running Altitude; it gives a ten-minute link and the
-steps:", the copyable `alt tls-share` command, "Before installing it on the phone, check that its name
-and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
+once. Add a phone shows a QR code for its camera, or run `alt tls-share` on the computer running
+Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
+name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
 CA) and Expires. An unreadable certificate shows "Could not read the certificate: <reason>" in red;
-without HTTPS or a CA file the card is absent. `web/e2e/certificate.pw.ts` walks these at both widths.
+without HTTPS or a CA file the card is absent.
+
+| Add a phone state | What appears and what actions do |
+| --- | --- |
+| Ready | **Add a phone**. |
+| Opening | **Opening…**, disabled. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
+| Closing | **Closing…**, disabled, while the service closes the link. |
+| Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
+| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
+| Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
+
+The phone page the QR code opens is served by the share link itself, light or dark with the phone:
+**Add this phone to Altitude**, "This lets the phone recognise your Altitude as genuine. Your phone
+asks you to approve each step.", a grey card with the CA name, its SHA-256 in four monospace rows and
+"It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.", then
+**iPhone or iPad** with a full-width blue **Download the profile** and four numbered steps (Allow and
+Close; Settings › Profile Downloaded, check the certificate name and More Details SHA-256, Install
+with the passcode, or Remove; Certificate Trust Settings; open the HTTPS address in a new Private tab
+with no warning, then pair), and **Android and other devices** with a grey **Download the
+certificate** and two steps. It names no step as automatic. `web/e2e/certificate.pw.ts` walks the
+card, every Add a phone state and the phone page at both widths.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
@@ -1373,7 +1394,8 @@ a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the c
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
 field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning. To set up a phone, run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+after it opens without a warning. To set up a phone, use Add a phone in Settings › Devices on a paired
+device, or run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |
