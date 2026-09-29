@@ -296,6 +296,8 @@ refusals and retained task Stop/holds using real storage/Git and fixture engines
 walks the read-only recovery notice through admitted, replacement-paused, continued and unavailable
 identity states using fictional API/storage. Neither suite establishes native image or deployment
 browser acceptance; rerun the image gate on the exact candidate under authorized runtime access.
+Its `--lifecycle` option adds finite native job/descendant, daemon restart, same-container restart
+and retained-volume replacement checks. It uses fictional data and never invokes an engine.
 
 Device results name their evidence class; a result in one class never stands in for another.
 

@@ -114,7 +114,8 @@ print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges'
 '''
 
 
-def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | None = None) -> dict:
+def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | None = None,
+        lifecycle: bool = False) -> dict:
     evidence.mkdir(parents=True, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix="altitude-container-gate-"))
     result = {"passed": False, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -162,11 +163,12 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             result["image"] = {key: image.get(key) for key in ("Id", "Digest", "Architecture", "Labels")}
             for volume in ("fixture-home", "fixture-projects"):
                 container.local_volume(volume)
-            ident = call(["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
+            create = ["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
                           "--security-opt=unmask=/proc/*", "--memory=512m", "--cpus=1", "--pids-limit=256",
                           "--env", "ALTITUDE_PORT=19443", "--env", "ALTITUDE_PUBLIC_HOST=container-fixture.invalid",
                           "--volume", "fixture-home:/home/altitude:nocopy",
-                          "--volume", "fixture-projects:/home/altitude/Projects:nocopy", image["Id"]]).strip()
+                          "--volume", "fixture-projects:/home/altitude/Projects:nocopy", image["Id"]]
+            ident = call(create).strip()
             result["container"] = ident
             result["container_inspect"] = json.loads(call(["inspect", ident]))[0]
             call(["start", ident])
@@ -211,6 +213,38 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
                            ident, "python3", "-c", PROBE], timeout=30)
             result["bootstrap"] = json.loads(output)
+            if lifecycle:
+                source = Path(__file__).resolve().parent.parent / "tests/container_admission_probe.py"
+                result["admission_probe_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+                result["admission"] = []
+                def probe(stage):
+                    output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude",
+                        "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident, "python3", "-c",
+                        source.read_text(), stage], timeout=60)
+                    result["admission"].append(json.loads(output))
+                def start_ready():
+                    call(["start", ident])
+                    for attempt in range(30):
+                        try:
+                            call(["exec", "--user", "1000", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
+                                  ident, "systemctl", "--user", "is-active", "altitude.service"], timeout=5)
+                            return
+                        except RuntimeError:
+                            if attempt == 29:
+                                raise
+                            time.sleep(1)
+                probe("prepare")
+                call(["stop", "--time", "10", ident])
+                start_ready()
+                probe("restarted")  # Continues before replacement: the new identity must close admission again.
+                call(["stop", "--time", "10", ident])
+                call(["rm", ident])
+                ident = call(create).strip()
+                result["replacement_container"] = ident
+                start_ready()
+                probe("replaced")
+                result["uncovered"].remove("Stop/restart/recreation and volume lock concurrency")
+                result["uncovered"].extend(["full task Stop/resume across image replacement", "volume lock concurrency"])
             result["passed"] = True
         except Exception as exc:
             result["error"] = str(exc)
@@ -253,7 +287,10 @@ if __name__ == "__main__":
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--native-sandbox-binary", type=Path,
                         help="optional installed native diagnostic executable; copied as test tooling, never used for a provider session")
+    parser.add_argument("--lifecycle", action="store_true",
+                        help="also test daemon/container restart, job descendants and replacement admission using fictional data")
     args = parser.parse_args()
-    outcome = run(args.archive.resolve(), args.sha256, args.results.resolve(), native_binary=args.native_sandbox_binary)
+    outcome = run(args.archive.resolve(), args.sha256, args.results.resolve(), native_binary=args.native_sandbox_binary,
+                  lifecycle=args.lifecycle)
     print(json.dumps(outcome, indent=2))
     raise SystemExit(0 if outcome["passed"] else 1)

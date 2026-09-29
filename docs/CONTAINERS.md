@@ -142,6 +142,12 @@ after those calls return. Neither a quiet status nor a pause proves that a backu
 stop the controller before copying both volumes. Native and Mac validation of this admission
 increment remains pending; the earlier exact image evidence above does not cover this later code.
 
+The reusable image gate's `--lifecycle` lane checks daemon and same-container restart, independent
+fixture-job survival and descendant cleanup, then replacement with retained project data and TLS
+identity. It checks paused provider refusal and rejects Continue for the previous instance before
+accepting the replacement. This is a prepared fixture lane; record an actual run before claiming it
+passes. It does not establish full application task recovery, backup restore or a version upgrade.
+
 Use task Stop for owned task work before stopping the whole container. Host `stop` stops the selected
 container; `remove` refuses a running one and retains both volumes. A new controller can use those
 volumes after the old controller stops. Registrations, settings, sessions and holds persist there;
