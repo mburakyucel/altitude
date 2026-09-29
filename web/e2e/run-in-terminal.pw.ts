@@ -101,7 +101,15 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await walk.state("05b-kept-printing", { visible: [printing, printing.getByRole("button", { name: "Copy command" })], hidden: [] });
   await printing.getByRole("button", { name: "Dismiss" }).click();
   await page.locator(".terminal-screen").click();
-  await page.keyboard.press("Control+C");
+  // The next chat command needs the shell's prompt. On a loaded runner an interrupt pressed into a screen that is
+  // still scrolling can miss the shell, so it is pressed again until the prompt is back (an extra one only reprompts).
+  const lastRow = async () => (await output.locator(":scope > div").allInnerTexts()).map((row) => row.trimEnd())
+    .filter(Boolean).at(-1);
+  await expect(async () => {
+    await page.keyboard.press("Control+C");
+    await expect.poll(lastRow, { timeout: 2_000 }).toMatch(/prepare-index-migration \$$/);
+  }).toPass({ timeout: 20_000 });
+  await settled(page);
 
   // When Altitude can't tell the owner, the command is still typed and the operator is asked to reply instead.
   await page.route("**/api/terminal/*/command", (route) => route.fulfill({
