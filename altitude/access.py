@@ -100,6 +100,15 @@ def design_pass(project: str, device_id: str, day: int | None = None) -> str:
     return f"p-{device_id}-{mac.hexdigest()[:32]}"
 
 
+def voice_owner(device_id: str) -> str:
+    """An opaque name for the paired device that opened a host voice recording. A page replaying its recording
+    after the host forgot it presents this name, so the replay stays with that device even when the browser
+    was paired again meanwhile."""
+    if machine_key() is None:
+        prepare()
+    return hmac.new(machine_key().encode(), f"voice\0{device_id}".encode(), "sha256").hexdigest()[:32]
+
+
 def design_pass_valid(project: str, presented: str) -> bool:
     device_id = presented[2:].rpartition("-")[0]
     today = int(time.time() // 86400)

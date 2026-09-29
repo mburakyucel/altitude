@@ -17,17 +17,14 @@
 .voice-option + .voice-option { border-top: 1px solid var(--hairline); }
 .voice-choice { display: flex; gap: 12px; align-items: center; font-weight: 600; cursor: pointer; min-height: 44px; }
 .voice-choice input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
-.voice-option > p, .voice-endpoint, .voice-host { margin-left: 30px; }
+.voice-option > p, .choice-fields, .voice-host { margin-left: 30px; }
 .voice-host { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .voice-host .btn { align-self: flex-start; min-height: 44px; }
 .voice-host progress { width: 100%; height: 8px; accent-color: var(--accent); }
-.voice-endpoint { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-.voice-endpoint label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
-.voice-endpoint input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); }
-.voice-endpoint .btn { align-self: flex-start; min-height: 44px; }
-.voice-key-set { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: var(--text-meta); color: var(--text-muted); }
-.voice-key-set .link { text-decoration: underline; }
-.voice-endpoint .voice-hosted { align-self: flex-start; min-height: 44px; }
+.choice-fields { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.choice-fields label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
+.choice-fields input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); }
+.choice-fields .btn { align-self: flex-start; min-height: 44px; }
 .settings-card fieldset:disabled { opacity: .6; }
 .settings-card > [role] { margin-top: 12px; }
 .settings-section { display: flex; flex-direction: column; gap: 14px; }

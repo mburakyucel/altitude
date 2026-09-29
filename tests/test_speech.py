@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 
 from tests.support import AltitudeCase
-from altitude import config, platform, server, speech, speech_worker, state as S, terminal
+from altitude import access, config, platform, server, speech, speech_worker, state as S, terminal
 
 #: Answers like the worker: the text is how many samples the recording holds. `argv[1]` picks a failure.
 FAKE_WORKER = r'''
@@ -132,7 +132,7 @@ class TestRecordings(SpeechCase):
         ident = host.open("phone")["id"]
         with self.assertRaises(speech.SpeechError) as caught:
             self.text(host, ident, 0, 800, "laptop")
-        self.assertEqual(caught.exception.status, 410)
+        self.assertEqual(caught.exception.status, 403)
         host.close(ident, "laptop")
         self.text(host, ident, 0, 800, "phone")
 
@@ -509,14 +509,15 @@ class TestHostVoiceRoutes(SpeechCase):
 
     def post(self, path: str, body: bytes = b"{}", content_type="application/json", **headers):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
-        connection.request("POST", path, body=body, headers={"Content-Type": content_type, **headers})
+        headers = {"Content-Type": content_type, "X-Voice-Selection": server.voice_view()["selection"], **headers}
+        connection.request("POST", path, body=body, headers=headers)
         response = connection.getresponse()
         payload = json.loads(response.read())
         connection.close()
         return response.status, payload
 
     def start(self):
-        return self.post("/api/voice/live", **{"X-Voice-Selection": server.voice_view()["selection"]})
+        return self.post("/api/voice/live")
 
     def test_settings_reports_host_voice_and_its_state(self):
         view = server.voice_view()
@@ -534,6 +535,35 @@ class TestHostVoiceRoutes(SpeechCase):
         self.assertEqual(self.post(f"{base}?seq=3", b"", "application/octet-stream")[0], 409)
         self.assertEqual(self.post(f"/api/voice/live/{opened['id']}/cancel"), (200, {"ok": True}))
         self.assertEqual(self.post(f"{base}?seq=2", b"", "application/octet-stream")[0], 410)
+
+    def test_audio_needs_the_selection_it_started_with(self):
+        self.runtime()
+        selection = server.voice_view()["selection"]
+        ident = self.start()[1]["id"]
+        chunk = {"X-Voice-Selection": selection}
+        self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=0", b"\0\0" * 800, "application/octet-stream",
+                                   **chunk)[0], 200)
+        S.write_json(config.ROOT / "settings.json", {"voice": "browser"})
+        status, payload = self.post(f"/api/voice/live/{ident}/audio?seq=1", b"\0\0" * 800, "application/octet-stream",
+                                    **chunk)
+        self.assertEqual((status, payload["error"]), (409, "Voice settings changed. Record again with the new setting."))
+        S.write_json(config.ROOT / "settings.json", {"voice": "host"})
+        self.patch(speech, "runtime", return_value=speech.ROOT / "runtime-updated")
+        self.assertNotEqual(server.voice_view()["selection"], selection, "a new runtime is a new selection")
+        self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=1", b"", "application/octet-stream",
+                                   **chunk)[0], 409)
+
+    def test_a_replay_stays_with_the_device_that_opened_the_first_recording(self):
+        self.runtime()
+        status, opened = self.start()
+        self.assertEqual(status, 200)
+        owner = opened["owner"]
+        self.assertEqual(owner, access.voice_owner(None))
+        self.assertNotEqual(access.voice_owner("another-device"), owner, "each paired device has its own name")
+        self.post(f"/api/voice/live/{opened['id']}/cancel")
+        self.assertEqual(self.post("/api/voice/live", **{"X-Voice-Owner": owner})[0], 200)
+        status, payload = self.post("/api/voice/live", **{"X-Voice-Owner": access.voice_owner("another-device")})
+        self.assertEqual((status, payload["error"]), (403, "Voice stopped: this recording belongs to another device."))
 
     def test_starting_needs_the_current_selection_and_a_set_up_runtime(self):
         self.assertEqual(self.post("/api/voice/live", **{"X-Voice-Selection": "stale"})[0], 409)

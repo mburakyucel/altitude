@@ -319,7 +319,7 @@ format. `scripts/punctuation` records how.
 
 ## Host voice components downloaded at setup
 
-The Altitude archive does not include these. `alt voice setup` (or **Set up voice** in Settings)
+The Altitude archive does not include these. `alt voice setup` (or **Set up voice** in first run or Settings)
 downloads them from their publishers, pinned by checksum, into `~/.altitude/speech`; each keeps its own
 licence.
 

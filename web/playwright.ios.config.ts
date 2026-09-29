@@ -4,7 +4,7 @@ import base from "./playwright.config";
 // Opt-in emulated iPhone lane (`make ui-ios`): the same walkthroughs in Playwright's WebKit with
 // iPhone metrics, touch and user agent. It is desktop WebKit evidence, not iOS Safari, Home Screen,
 // microphone or certificate-trust evidence. Tests tagged @chromium need a Chromium-only harness
-// capability (MediaRecorder, Notification, clipboard-write permission, CDP or a replaceable
+// capability (Notification, clipboard-write permission, CDP or a replaceable
 // getUserMedia) and stay with the required phone/desktop projects; docs/DEVELOPMENT.md lists them.
 export default defineConfig({
   ...base,

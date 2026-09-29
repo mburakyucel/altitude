@@ -2,7 +2,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { ChatView } from "../data/api";
-import { FakeMediaRecorder, installVoiceBrowser } from "../components/voiceTest";
+import { HostCapture } from "../components/hostCapture";
+import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "../components/voiceTest";
 
 /*
  * The project conversation (SPEC.md §3.3, §3.4, §4.1, §4.2): rows, system lines and groups, the states
@@ -111,8 +112,10 @@ function projectChats(post: (body: { project: string; text: string }) => Respons
     ...chatView,
     history: [{ role: "assistant", text: `${name} history`, trigger: "chat", turn_id: `${name}-saved`, at: ago(5) }],
   }])) as Record<string, ChatView>;
+  const voice = hostVoiceServer({ words: "spoken words", final: "spoken words" });
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith("/api/voice/live")) return voice.fetch(input, init);
     if (url === "/api/overview") return jsonResponse({ ...overview, projects: names.map((name) => ({ name, managed: true })) });
     if (url.startsWith("/api/project/")) return jsonResponse({ ...project, name: url.split("/").pop(), tasks: [], archive: [] });
     if (url.startsWith("/api/chat/")) return jsonResponse(chats[url.split("?")[0]!.split("/").pop()!]);
@@ -120,7 +123,7 @@ function projectChats(post: (body: { project: string; text: string }) => Respons
     return jsonResponse({ error: "unexpected request" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { chats, fetchMock };
+  return { chats, fetchMock, voice };
 }
 
 function liveReply() {
@@ -353,22 +356,28 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
   });
 
   it("releases the source microphone on switching without sending or transcribing its recording", async () => {
-    const { fetchMock } = projectChats(() => { throw new Error("No recording should be submitted"); });
+    const { fetchMock, voice } = projectChats(() => { throw new Error("No recording should be submitted"); });
     const { track } = installVoiceBrowser();
     setViewport(width);
     const { router, user } = renderApp({ route: "/projects/alpha-project" });
     await screen.findByText("alpha-project history");
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    speak();
+    await screen.findByText("Listening… Stop to add text, or Send.");
+    await waitFor(() => expect(field("alpha")).toHaveValue("spoken words"));
     expect(track.stop).not.toHaveBeenCalled();
     await act(() => router.navigate("/projects/beta-project"));
     await screen.findByText("beta-project history");
-    expect(FakeMediaRecorder.instances[0]?.state).toBe("inactive");
+    expect(HostCapture.retained.size).toBe(0);
     expect(track.stop).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
     expect(field("beta")).toHaveValue("");
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+    // The host drops the recording; no last words are asked for and nothing is sent.
+    await waitFor(() => expect(voice.calls.at(-1)?.path).toBe("/api/voice/live/rec-1/cancel"));
+    expect(voice.audio.some((call) => call.final)).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url, init]) => init?.method === "POST" && !String(url).startsWith("/api/voice/live"))).toEqual([]);
   });
 
   it("retains independent drafts across project and route remounts, including manual clearing", async () => {

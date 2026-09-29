@@ -79,7 +79,6 @@ function mockFetch(fixtures: Fixtures = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(fixtures.overview ?? overview);
-    if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken check" });
     if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
