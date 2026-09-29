@@ -495,8 +495,11 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0
 ```
 
 `RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's
-installation must fail, and the candidate's installer run over what it left must start the service
-and keep its settings, TLS identity and fictional data, then uninstall. `v0.1.0-rc.1` is such a
+installation must fail and leave an interrupted activation that the candidate's installer refuses.
+The phase then runs the cleanup [setup](SETUP.md#install-the-application) gives for that machine
+(disable and remove the unit, reload systemd, `alt recover`), and the candidate's installer run over
+what is left must start the service and keep its settings, TLS identity and fictional data, then
+uninstall. `v0.1.0-rc.1` is such a
 baseline, since systemd refuses the unit it writes:
 
 ```sh

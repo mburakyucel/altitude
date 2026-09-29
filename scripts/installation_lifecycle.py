@@ -5,7 +5,7 @@ Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
 The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
 its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
-failed. `bootstrap` runs the built install.sh through its public curl | sh command against a release
+failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
 server on this machine's loopback, whose name the root wrapper points here.
 """
 from __future__ import annotations
@@ -287,11 +287,12 @@ class Lifecycle:
         self.result["passed"] = True
 
     def recovery(self):
-        """A baseline whose activation fails, then the candidate's installer over what it left.
+        """A baseline whose activation fails, the documented cleanup, then the candidate's installer over what it left.
 
-        The published v0.1.0-rc.1 fails at service start; later installers must keep its settings and TLS identity."""
+        The published v0.1.0-rc.1 fails at service start and leaves its refused unit and an interrupted activation;
+        after docs/SETUP.md's steps, the candidate must install and keep its settings, TLS identity and data."""
         old, old_sha, _, _, new, new_sha, _, after = self.prepare()
-        self.result["limits"][0] = ("Published-release baseline whose installation fails, then the candidate installed over it; "
+        self.result["limits"][0] = ("Published-release baseline whose installation fails, docs/SETUP.md's cleanup, then the candidate installed over it; "
                                     "the guest runs the published files offline, not its own GitHub download; "
                                     "the candidate installs with its install.py, which its install.sh downloads and runs")
         self.run("failed-install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", old,
@@ -305,6 +306,17 @@ class Lifecycle:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("Fictional retained installation acceptance data\n")
         retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
+        assert (self.prefix / "pending.json").is_file(), "The failed installation left no interrupted activation"
+        refused = self.run("refused-install", "/usr/bin/python3", "-B", self.candidate / "install.py", "--archive", new,
+                           "--sha256", new_sha, success=False)
+        assert "Interrupted activation exists" in refused, refused
+        # docs/SETUP.md's steps for a machine that ran the failed release.
+        unit = self.home / ".config/systemd/user/altitude.service"
+        self.run("disable-unit", "systemctl", "--user", "disable", "altitude.service")
+        self.run("remove-unit", "rm", unit)
+        self.run("daemon-reload", "systemctl", "--user", "daemon-reload")
+        self.run("recover", self.alt, "recover", timeout=180)
+        assert not (self.prefix / "pending.json").exists(), "alt recover left the interrupted activation"
         self.run("install", "/usr/bin/python3", "-B", self.candidate / "install.py", "--archive", new, "--sha256", new_sha)
         self.healthy("installed", after)
         self.doctor("installed", after)
