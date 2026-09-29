@@ -856,13 +856,77 @@ class TestReviews(AltitudeCase):
                                   context_ids=[])
         self.assertEqual(refused["state"], "failed")
         self.assertIn("proposal exceeds 64 KiB", refused["error"])
-        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Further constraint. " * 700)
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Further constraint. " * 11000)
         oversized = self.run_review(self.request(previous=refused["id"]), proposal_id=proposal["id"], context_ids=[proposal["id"]])
         self.assertEqual(oversized["state"], "failed")
-        self.assertIn("Review context exceeds 64 KiB", oversized["error"])
-        self.assertIn("the proposal is bounded separately", oversized["error"])
+        self.assertRegex(oversized["error"], r"Review context is \d+ bytes, over its 256 KiB bound \(the proposal is bounded separately\)\. "
+                                             r"Mandatory authority, corrections and decisions alone are \d+ bytes")
         self.assertEqual(self.engine.call_count, 1)
         with self.assertRaisesRegex(T.TransitionError, f"{result['id']} \\(proposal\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_complete_mandatory_history_and_selected_pair_capture_for_changes_review(self):
+        # Container implementation capture (I-20260927-193716): 43 authority messages and 21 decisions alone
+        # exceeded the 64 KiB context, so the approved proposal plus native result (~100 KB) could not be reviewed.
+        decisions = []
+        for n in range(21):
+            task = T.block(self.project, self.slug, f"Decision {n}?", actor="l2", expected_attempt=1)
+            answer = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, f"Answer {n}: keep the protection.")
+            T.resume(self.project, self.slug, agent_id="owner-one", expected_claim=T.claim_resume(self.project, self.slug)["id"],
+                     input_delivered=True)
+            decisions.append(T.resolve_question(self.project, self.slug, task["questions"][-1]["id"], 1, answer["id"],
+                                                disposition="answered", expected_attempt=1,
+                                                reason=f"Decision {n} keeps rootless isolation on Linux and Mac. " * 8))
+        authority = [row for row in T.task_messages(self.project, self.slug) if row["role"] == T.OPERATOR_MESSAGE_ROLE]
+        authority += [T.message(self.project, self.slug, *((T.OPERATOR_MESSAGE_ROLE,) if n % 2 else ("l3",)),
+                                f"Authority {n}: keep “exact” host protections and every onboarding path. " * 30,
+                                **({} if n % 2 else {"by": "l3"})) for n in range(22)]
+        evidence = [T.message(self.project, self.slug, "l2", f"Probe {n} evidence. " * 800, expected_attempt=1) for n in range(20)]
+        approved = T.message(self.project, self.slug, "l2", "# Approved v5\n" + "Rootless Podman with private proc. " * 880,
+                             expected_attempt=1)
+        native = T.message(self.project, self.slug, "l2", "Native image result: archive verified. " * 45, expected_attempt=1)
+        self.assertEqual(len(authority), 43)
+        captured = {}
+        def inspect(prompt, **kwargs):
+            captured["context"] = (kwargs["snapshot"] / "context.json").read_text()
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = inspect
+        first = self.run_review(context_ids=[approved["id"], native["id"]])
+
+        self.assertEqual(first["state"], "completed")
+        context = json.loads(captured["context"])
+        mandatory = {**context, "messages": [row for row in context["messages"] if row["role"] != "l2"]}
+        self.assertGreater(len(json.dumps(mandatory, ensure_ascii=False, indent=2).encode()), 65536)
+        self.assertGreater(len(captured["context"].encode()), 96 * 1024)
+        self.assertLessEqual(len(captured["context"].encode()), reviews.CONTEXT_LIMIT)
+        rows = {row["id"]: row for row in context["messages"]}
+        # Every original record is present with its exact text; only unselected owner evidence is left out.
+        self.assertEqual({row["id"]: row["text"] for row in authority + [approved, native]}, {i: rows[i]["text"] for i in rows})
+        self.assertFalse(set(rows) & {row["id"] for row in evidence})
+        self.assertEqual(context["decisions"], [q["resolution"] for q in S.load_task(self.project, self.slug)["questions"]])
+        self.assertEqual(len(context["decisions"]), 21)
+        snapshot = first["snapshot"]
+        live = S.load_task(self.project, self.slug)
+        live["project"] = self.project
+        identity, _ = reviews._identity(self.project, live)
+        self.assertEqual(snapshot["context_hash"], identity["context_hash"])
+        self.assertEqual(snapshot["captured_context_hash"], reviews._hash(context))
+        self.assertEqual(snapshot["input_hash"], reviews._hash({"tree": snapshot["tree"], "context": captured["context"],
+                                                                "patch": hashlib.sha256((S.task_dir(self.project, self.slug) / "reviews"
+                                                                    / first["id"] / "snapshot" / "changes.patch").read_bytes()).hexdigest()}))
+        reviews.assess(self.project, self.slug, first["id"], actor="l2", expected_attempt=1, reason="Checked the implementation",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs native Mac evidence."}])
+
+        # At the bound, default-all owner evidence refuses without launching and names the useful selection.
+        refused = self.run_review(self.request(additional=True))
+        self.assertEqual(refused["state"], "failed")
+        self.assertRegex(refused["error"], r"^Review context is \d+ bytes, over its 256 KiB bound\. Select relevant L2 evidence")
+        self.assertEqual(self.engine.call_count, 1)
+        # A deliberate same-reviewer retry with the complete selection runs; the earlier open finding stays in the gate.
+        retry = self.run_review(self.request(previous=refused["id"]), context_ids=[approved["id"], native["id"]])
+        self.assertEqual((retry["state"], retry["engine"], retry["model"]), ("completed", first["engine"], first["model"]))
+        self.assertEqual(retry["snapshot"]["context_hash"], snapshot["context_hash"])
+        with self.assertRaisesRegex(T.TransitionError, f"{first['id']} \\(changes\\) has unresolved findings: f1"):
             reviews.require_merge(self.project, self.slug, self.pair())
 
     def test_new_code_context_or_merge_pair_invalidates_assessment(self):
