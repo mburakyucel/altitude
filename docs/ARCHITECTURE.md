@@ -297,8 +297,9 @@ setting is refused. It fetches `/api/health` over HTTPS trusting only that direc
 requires the answer from the service's main process before offering those bytes. Settings → Devices
 → **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
 cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
-keeps one window at a time, and closes it on `share-close` with its link, which the page sends on
-Close, expiry or leaving the page. The page keeps the window only in component state, never in a
+keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
+the page sends on Close (confirming only once it succeeds) or when it is left, including while the
+window is still opening. The page keeps the window only in component state, never in a
 query cache. `alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).

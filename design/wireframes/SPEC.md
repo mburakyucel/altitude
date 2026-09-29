@@ -1300,7 +1300,9 @@ without HTTPS or a CA file the card is absent.
 | Ready | **Add a phone**. |
 | Opening | **Opening…**, disabled. |
 | Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
-| Closed | **Close**, the end of the ten minutes or a new window closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". Leaving the page also closes the link. |
+| Closing | **Closing…**, disabled, while the service closes the link. |
+| Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
+| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
 | Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
 
 The phone page the QR code opens is served by the share link itself, light or dark with the phone:
