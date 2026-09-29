@@ -16,9 +16,12 @@ disposable Ubuntu 24.04 virtual machine, but a clean physical machine and updati
 published release to another are not yet verified; live engine providers are not tested; on macOS
 `install.sh` stops before downloading anything.
 
-Recovery: a `v0.1.0-rc.1` installation failed at service start; run this release's `install.sh`,
-which keeps configuration, TLS identity and data. A failed activation restores the previous version;
-`alt recover` completes an interrupted one. A faulty release is followed by a new version.
+Recovery: a `v0.1.0-rc.1` installation failed at service start and left its refused service unit
+and an interrupted activation, which block `alt recover`, updates and uninstall. Remove that unit,
+run `alt recover`, then run this release's `install.sh`; configuration, TLS identity and data are
+kept (see [setup](docs/SETUP.md#install-the-application)). A failed activation restores the
+previous version; `alt recover` completes an interrupted one. A faulty release is followed by a new
+version.
 
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes

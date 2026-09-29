@@ -45,8 +45,17 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/re
 ```
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
-installation fails at service start. Its failed activation keeps configuration, TLS identity and
-data; install `v0.1.0-rc.2` over it with the command above.
+installation fails at service start and leaves that unit and an interrupted activation behind.
+Until they are cleared, `alt recover`, updates and uninstall stop at the refused unit. On a machine
+that ran it, remove the unit and complete the activation's recovery, then run the command above;
+configuration, TLS identity and data are kept:
+
+```sh
+systemctl --user disable altitude.service
+rm ~/.config/systemd/user/altitude.service
+systemctl --user daemon-reload
+~/.local/bin/alt recover
+```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
