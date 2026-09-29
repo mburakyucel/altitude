@@ -316,8 +316,11 @@ def handoff(project: str, slug: str, request: dict) -> dict:
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
                            engine: str | None = None, expected_attempt: int | None = None,
-                           generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
+                           generation: object = T._UNSET, stop_id: object = T._UNSET,
+                           deliver_reason: bool = True) -> dict:
     """Persist one L3/operator request for altd; this process never touches Git or a worker.
+
+    A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
     worker identity snapshot prevents a delayed resume, stop, or reject from applying to a replacement session.
@@ -343,8 +346,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                     raise T.TransitionError("Refresh the stopped task before continuing this session.")
         previous = task.get("daemon_request") or {}
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
-                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None) == (
-            operation, reason, actor, engine, expected_attempt)
+                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
+                previous.get("deliver_reason") if operation == "resume" else None) == (
+            operation, reason, actor, engine, expected_attempt, deliver_reason if operation == "resume" else None)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}
@@ -373,6 +377,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                    "block_id": task.get("block_id"),
                    "resume_request": task.get("resume_request"),
                    "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
+        if operation == "resume":
+            request["deliver_reason"] = deliver_reason
         if operation == "handoff":
             request.update(engine=engine, attempt=expected_attempt)
         task["daemon_request"] = request

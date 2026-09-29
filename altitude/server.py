@@ -336,7 +336,8 @@ def request_daemon_task_operation(project: str, slug: str, operation: str, reaso
                                   generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
     """Persist an operator request before scheduling its one daemon-side runner."""
     observed = {key: value for key, value in (("generation", generation), ("stop_id", stop_id)) if value is not T._UNSET}
-    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, **observed)
+    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, deliver_reason=False,
+                                             **observed)
     if result.get("queued"):
         try:
             spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
