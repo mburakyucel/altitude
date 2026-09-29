@@ -122,6 +122,31 @@ class TestStrandedReports(AltitudeCase):
             self.assertIn((f"finished:{self.project}:{slug}", "report_turn", "blocked"),
                           [(c["key"], c["fn"], c["state"]) for c in calls])
 
+    def test_owner_block_beside_report_file_gets_no_report_turn(self):
+        """PR #621's owner delivered (clearing l3_handled), blocked for merge review, was resumed by an L3 message
+        and blocked again."""
+        slug = "owner-blocked"
+        d = S.task_dir(self.project, slug)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "report.json").write_text(json.dumps(self.clean_report("held for review")))
+        S.save_task(self.project, {"slug": slug, "title": slug, "state": "running", "created": S.now(),
+                                   "updated": S.now(), "attempt": 1, "verified": None, "l3_handled": None,
+                                   "prs": [621], "hold_merge": "operator review", "blocked_reason": None})
+        question = "Review PR #621 and approve its merge or request changes"
+        calls = self.record_spawns()
+        for _ in range(2):
+            T.block(self.project, slug, question, actor="l2")
+            server.resume_stranded_reports(self.project)
+            T.resume(self.project, slug, actor="l3", reason="task message")
+        T.block(self.project, slug, question, actor="l2")
+        server.resume_stranded_reports(self.project)
+
+        task = S.load_task(self.project, slug)
+        self.assertEqual(calls, [])
+        self.assertEqual((task["state"], task["blocked_reason"], task["hold_merge"]),
+                         ("blocked", question, "operator review"))
+        self.assertIsNone(task["l3_handled"])
+
     def test_concurrent_resume_skips_task_without_aborting_scan(self):
         for slug in ("race", "z-after"):
             self.save_blocked(slug, json.dumps(self.clean_report()), self.verified())

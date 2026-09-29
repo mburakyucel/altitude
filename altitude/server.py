@@ -969,6 +969,10 @@ def resume_stranded_reports(project: str) -> None:
             continue
         if t.get("report_after") and not T.report_current(t, report_path):
             continue
+        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
+                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
+        if t["state"] == "blocked" and last_block and last_block.get("by") == "l2":
+            continue  # The owner's own block, even beside a report file, is a question, not a landed report.
         retry = _report_retries.get((project, t["slug"]))
         if (retry and retry[0] == json.dumps(T.report_owner(t), sort_keys=True)
                 and time.monotonic() < retry[2]):
@@ -984,8 +988,6 @@ def resume_stranded_reports(project: str) -> None:
         except (OSError, ValueError) as e:
             log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
             report = None
-        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
-                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
         if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
                 and not report.get("blocked") and "attempt" in v and v.get("attempt") == t.get("attempt")
                 and last_block and last_block.get("frm") == "running"):
