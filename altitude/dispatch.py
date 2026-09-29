@@ -346,8 +346,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                     raise T.TransitionError("Refresh the stopped task before continuing this session.")
         previous = task.get("daemon_request") or {}
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
-                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None) == (
-            operation, reason, actor, engine, expected_attempt)
+                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
+                previous.get("deliver_reason") if operation == "resume" else None) == (
+            operation, reason, actor, engine, expected_attempt, deliver_reason if operation == "resume" else None)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}

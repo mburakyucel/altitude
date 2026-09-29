@@ -306,6 +306,18 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(seen["prompt"], T.render_inbox([later]))
         self.assertEqual(sum(row["id"] == request["id"] for row in T.task_messages(self.project, self.slug)), 1)
 
+    def test_a_button_resume_is_not_the_same_request_as_an_authored_one(self):
+        self.block()
+        text = "Resume requested from the task conversation"
+        button = dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                 deliver_reason=False)
+        self.assertFalse(button["request"]["deliver_reason"])
+        with self.assertRaisesRegex(T.TransitionError, "already queued"):
+            dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE)
+        again = dispatch.request_task_operation(self.project, self.slug, "resume", text, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                deliver_reason=False)
+        self.assertEqual((again["idempotent"], again["request"]["id"]), (True, button["request"]["id"]))
+
     def test_an_operator_resume_row_is_not_an_answer(self):
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
                        "--for-operator", env=self.worker_env())
