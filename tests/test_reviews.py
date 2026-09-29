@@ -449,6 +449,7 @@ class TestReviews(AltitudeCase):
         result = self.run_review(context_ids=[original["id"]])
         self.assertEqual({row["id"] for row in captured["messages"]},
                          {original["id"], coordinator["id"], correction["id"]})
+        self.assertEqual(captured["request"], "Keep the public result stable.\n", "a brief without the request keeps it")
         self.assertNotIn(owner["id"], result["snapshot"]["context_ids"])
         self.assertEqual(result["coverage"], "current")
         self.assertEqual(result["snapshot"]["captured_context_hash"], reviews._hash(captured))
