@@ -5,7 +5,8 @@ import { walkthrough } from "./walkthrough";
 /**
  * Chat commands (SPEC.md §3.3) against real shells: a `run` block in the task conversation and in project
  * chat opens that conversation's terminal with the command typed at the prompt and nothing run until
- * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter runs it, a
+ * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter (the phone's
+ * Enter key) runs it, a
  * program in the foreground, output that never settles, the terminal off, a reload typing nothing, no
  * terminal for a finished task, the project terminal, a plain code block, an unsafe block and a refused
  * copy. The saved messages and the shell's profile are the only fixtures.
@@ -56,13 +57,24 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
     hidden: [output.getByText("ran-42", { exact: true })],
   });
 
-  await page.keyboard.press("Enter");
+  // On phone the key row's Enter runs it without focusing the screen, so the soft keyboard stays closed;
+  // desktop has no key row, and the screen already has focus for the keyboard's Enter.
+  const enter = page.getByRole("toolbar", { name: "Terminal keys" }).getByRole("button", { name: "Enter" });
+  if (phone) {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await enter.click();
+    expect(await page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"))).toBe(false);
+  } else {
+    await expect(enter).toBeHidden();
+    await page.keyboard.press("Enter");
+  }
   await walk.state("04-enter-runs", { visible: [output.getByText("ran-42", { exact: true })], hidden: [] });
   // Once the shell is back at its prompt, the task's owner is told the command it handed over has run.
   await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).notices, { timeout: 10_000 })
     .toEqual([expect.stringContaining("looks finished in the task terminal: `echo ran-$((20+22))`")]);
 
   // A program in the foreground would receive the keystrokes, so nothing is typed.
+  await page.locator(".terminal-screen").click();
   await page.keyboard.type("sleep 300");
   await page.keyboard.press("Enter");
   await conversation();

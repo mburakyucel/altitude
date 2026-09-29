@@ -306,6 +306,10 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       <button type="button" aria-label="Paste" onPointerDown={(event) => event.preventDefault()} onClick={() => void paste()}>
         <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M7 4h6v2H7zM6 5H5a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1h-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>
       </button>
+      {/* The operator's Enter without the soft keyboard: it leaves focus where it is, so the keyboard stays closed. */}
+      <button type="button" className="terminal-enter" aria-label="Enter" onPointerDown={(event) => event.preventDefault()} onClick={() => send.current("\r")}>
+        <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M15 5v5a2 2 0 01-2 2H5M8.5 8.5L5 12l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
     </div> : null}
   </>;
 }
