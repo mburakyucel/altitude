@@ -38,14 +38,24 @@ def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def following(version: str) -> str:
+    """The next release candidate after VERSION, so an update to it is never a downgrade."""
+    match = re.fullmatch(r"(v0\.\d+\.\d+)(?:-rc\.(\d+))?", version)
+    base, candidate = match.group(1), match.group(2)
+    if candidate:
+        return f"{base}-rc.{int(candidate) + 1}"
+    minor, patch = base[3:].split(".")
+    return f"v0.{minor}.{int(patch) + 1}-rc.1"
+
+
 def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
     """A declared, checksum-valid startup failure, never a published artifact."""
     release = json.loads((package / "release.json").read_text())
-    release["version"] = "v0.0.0-rc.3"
+    release["version"] = following(release["version"])
     (package / "bin/alt").write_text(
         "#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n"
         "(Path.home() / 'results/failed-startup.json').write_text(json.dumps("
-        "{'pid': os.getpid(), 'argv': sys.argv[1:], 'version': 'v0.0.0-rc.3'}))\n"
+        f"{{'pid': os.getpid(), 'argv': sys.argv[1:], 'version': {release['version']!r}}}))\n"
         "raise SystemExit('intentional lifecycle startup failure')\n")
     release["files"]["bin/alt"] = digest(package / "bin/alt")
     write_json(package / "release.json", release)
@@ -61,10 +71,13 @@ def boot_id() -> str:
 
 
 class Lifecycle:
-    def __init__(self, baseline: Path, candidate: Path, results: Path, expected_commit: str):
+    def __init__(self, baseline: Path, candidate: Path, results: Path, commits: str):
         self.baseline, self.candidate, self.results = baseline, candidate, results
         self.state = results / "reboot-state.json"  # what reboot-verify needs from reboot-install
-        self.expected_commit = expected_commit
+        # BASELINE..CANDIDATE when the baseline is a published release; one commit when both share a source.
+        baseline_commit, _, candidate_commit = commits.rpartition("..")
+        self.expected = {"baseline": baseline_commit or candidate_commit, "candidate": candidate_commit}
+        published = self.expected["baseline"] != self.expected["candidate"]
         self.home = Path.home()
         self.prefix = self.home / ".local/share/altitude"
         self.alt = self.home / ".local/bin/alt"
@@ -72,7 +85,9 @@ class Lifecycle:
         self.settings = self.home / ".config/altitude/install.json"
         self.env = dict(os.environ)
         self.result = {"passed": False, "steps": [], "artifacts": [], "limits": [
-            "Same-source version transition; no cross-release storage migration",
+            "Published-release baseline updated to the candidate; the guest runs the published files offline, not its own GitHub download; "
+            "no storage migration (no application state is created)"
+            if published else "Same-source version transition; no cross-release storage migration",
             "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
             "No live provider, native worker confinement or macOS acceptance",
         ]}
@@ -109,7 +124,7 @@ class Lifecycle:
         spec.loader.exec_module(installer)
         package = self.home / f"{name}-package"
         release = installer.extract(archive, checksum, package)
-        assert release["commit"] == self.expected_commit, "Archive commit differs from selected source"
+        assert release["commit"] == self.expected[name], f"{name} archive commit differs from its selected source"
         assert digest(folder / "install.py") == digest(package / "altitude/installation.py")
         write_json(self.results / f"{name}-manifest.json", release)
         self.result["artifacts"].append({"kind": name, "filename": archive.name,
@@ -167,7 +182,7 @@ class Lifecycle:
         })
         old, old_sha, package, before = self.archive(self.baseline, "baseline")
         new, new_sha, new_package, after = self.archive(self.candidate, "candidate")
-        assert before["version"] != after["version"] and after["version"] != "v0.0.0-rc.3"
+        assert before["version"] != after["version"]
         self.run("user-manager", "systemctl", "--user", "show", "--property=Version")
         self.run("host-tools", "/usr/bin/python3", "--version")
         with socket.socket() as sock:
@@ -183,9 +198,11 @@ class Lifecycle:
         fixture.chmod(0o755)
         # Discover configured executable settings from the packaged engine seam.
         # No application module is mocked or patched for native acceptance.
-        keys = json.loads(self.run("engine-settings", "/usr/bin/python3", "-B", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
-            "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
+        # Both packages count: a candidate that adds an engine must still reach only the fixture.
+        keys = {key for step, source in (("engine-settings", package), ("candidate-engine-settings", new_package))
+                for key in json.loads(self.run(step, "/usr/bin/python3", "-B", "-c",
+                    "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
+                    "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", source))}
         assert keys, "Package exposes no engine executable settings"
         self.env.update({key: str(fixture) for key in keys})
         return old, old_sha, package, before, new, new_sha, new_package, after
