@@ -254,9 +254,10 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 
 def logged_job_command(name: str, command: str, *, log: Path, status: Path, env: dict[str, str],
-                       timeout: int) -> list[str]:
+                       timeout: int, properties: tuple[str, ...] = ()) -> list[str]:
     """One shell command as a job that appends its own output to `log` and writes its exit status to `status`
-    (whole, by renaming), so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it."""
+    (whole, by renaming), so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds
+    it; `properties` adds resource limits for everything the job starts."""
     runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2.tmp" && mv "$2.tmp" "$2"; exit "$status"'
     if _darwin():
         return _entry("launch", json.dumps({
@@ -265,7 +266,7 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
     return [SYSTEMD_RUN, "--user", "--wait", "--collect", "--quiet", f"--unit={name}", "--same-dir",
             "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
             f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
-            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
+            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}", *properties,
             "--", *_scrub(env), "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
 
 
@@ -1286,6 +1287,25 @@ def _tcp_handles(pid: int) -> set[str]:
 
 def _socket_port(value: int) -> int:
     return int.from_bytes((value & 0xFFFF).to_bytes(2, sys.byteorder), "big")
+
+
+# --- Validation runner ---------------------------------------------------------------------------------------------
+
+KVM = Path("/dev/kvm")
+
+
+def validation_unavailable() -> str | None:
+    """Why this host cannot run the validation runner's rootless Podman containers, or None when it can. macOS
+    runs Podman inside a virtual machine of its own and has no KVM, so the runner is not implemented there."""
+    if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
+        return "validation runs need Linux x86_64 for now"
+    missing = [tool for tool in ("podman", "slirp4netns") if not shutil.which(tool)]
+    return f"validation runs need {' and '.join(missing)} on this computer" if missing else None
+
+
+def validation_runroot() -> str:
+    """Podman's runtime folder for the runner, in the user's runtime directory: Podman limits its length."""
+    return f"/run/user/{os.getuid()}/altitude-validation"
 
 
 # --- Host speech -------------------------------------------------------------------------------------------------

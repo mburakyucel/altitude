@@ -141,16 +141,10 @@ CODEX_PATCH_NOTE = (
     "sandbox and its configured writable roots."
 )
 BROWSER_VERIFICATION_NOTE = (
-    "[altitude] Browser capability: worker launch does not establish browser-sandbox availability. "
-    "Before deployment verification requiring a browser sandbox, preflight the intended browser in this "
-    "worker with that sandbox enabled, blank/local fictional content, a finite timeout, and disposable writable "
-    "profile/config/cache directories; clean up afterwards. Playwright requires explicit chromiumSandbox:true. "
-    "If launch fails, report browser sandbox capability unavailable with the launch evidence and block "
-    "with --fault before proceeding with dependent verification. Preserve required browser protections and "
-    "worker confinement; a project's sandbox-disabled fictional test harness is not deployment authorization. "
-    "Namespace-visible SUID helper ownership does not establish host ownership; do not chmod/chown the helper "
-    "or bypass either sandbox. Host diagnostics require the existing purpose/question/machine-grant workflow; "
-    "a grant for diagnostics does not authorize verification outside worker confinement.\n\n"
+    "[altitude] Browser sandbox: run verification that needs the browser's own sandbox with `alt task validate`, "
+    "in a disposable container where Playwright's Chromium keeps it; launch with chromiumSandbox:true. Never "
+    "disable either sandbox, add sandbox-bypass flags or chmod/chown a SUID helper. If the runner is unavailable or "
+    "the browser refuses its sandbox there, report the evidence and block with --fault.\n\n"
 )
 
 
@@ -784,16 +778,16 @@ def machine_files(folder: Path, unit: str) -> tuple[Path, Path]:
 
 
 def machine_command(command: str, *, cwd: Path, folder: Path, unit: str, identity: dict,
-                    timeout: int) -> str | None:
+                    timeout: int, properties: tuple[str, ...] = ()) -> str | None:
     """Run one command as the operator's user outside the worker sandbox and wait for its job; return why the
     launch failed, if it did. The job writes its output and exit status itself (`machine_files`), so the result
-    survives Altitude restarting while it runs; `machine_outcome` reads it."""
+    survives Altitude restarting while it runs; `machine_outcome` reads it. `properties` adds resource limits."""
     log, status = machine_files(folder, unit)
     folder.mkdir(parents=True, exist_ok=True)
     env = codex_env(identity, retain_user_bus=True)
     try:
         run = subprocess.run(platform.logged_job_command(unit, command, log=log, status=status, env=env,
-                                                         timeout=timeout),
+                                                         timeout=timeout, properties=properties),
                              cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout + 30)
         return (run.stderr or run.stdout).strip()[:300] or None
     except (OSError, subprocess.SubprocessError) as exc:

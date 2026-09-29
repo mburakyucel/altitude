@@ -302,6 +302,16 @@ before running `systemctl --user daemon-reload` from the operator terminal. This
 without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
 never counts as successful preservation.
 
+## Validation runs
+
+Task owners run installation VMs, containers and sandboxed-browser checks through the
+[validation runner](DEVELOPMENT.md#validation-runner): one disposable rootless Podman container at a
+time, started by altd as the operator's account. Its image, image layers and the cached Ubuntu cloud
+image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 GiB free there, and its own area is removed
+when it ends; the first run builds the image, which takes several minutes. Settings → **Validation
+runs** turns the runner off: a running run stops and its container and files are removed. Each run
+appears on its task as a machine run with purpose `validation`.
+
 ## Voice input
 
 Dictation turns speech into draft text in every conversation. One machine setting selects how; typing

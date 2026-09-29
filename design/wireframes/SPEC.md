@@ -1322,6 +1322,12 @@ A **Terminal** switch row (off after install) says "Every paired browser can run
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
+A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
+containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
+Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
+refuses new ones. Where the runner is unavailable the switch is off and disabled and the copy reads "Not
+available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
+unavailable at both widths.
 An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
 or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest

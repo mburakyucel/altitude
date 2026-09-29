@@ -969,7 +969,18 @@ altd follows every unfinished row's unit to its end (`server.settle_interrupted_
 from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
-not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent job with Altitude's
+not caller identity. Both engines share the verb; only the launcher is host-specific.
+Installation VMs, containers and sandboxed-browser checks need no grant: `POST /api/task/validate`
+lets the running owner's current attempt, from a process in its own worker job, run one command
+against its committed `HEAD` in a disposable rootless Podman container. altd starts that container
+from its own deployed image, with fixed flags and limits, and keeps the runner's storage beside
+Altitude's home, outside every worker's writable roots. The run is recorded like a machine run with
+purpose `validation`, and results reach the task folder without following links. The worker's own
+confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
+storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
+admitting a run, altd records interrupted runs and removes what they left. See the
+[validation runner](DEVELOPMENT.md#validation-runner).
+Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
@@ -1492,12 +1503,10 @@ worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
 That sandbox-disabled launch belongs only to Altitude's fictional local UI harness. The shared worker
-launcher supplies fresh and resumed owners with a browser capability instruction: preflight required
-browser isolation in the intended worker before deployment verification, retaining both protections,
-and fault-block if unavailable. It is instruction delivery, not an automatic browser probe or an OS
-capability guarantee. Namespace-visible SUID helper ownership cannot establish host package ownership;
-host diagnosis follows existing machine authority. No browser broker or new permission path exists.
-See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-recovery).
+launcher tells fresh and resumed owners to run verification that needs the browser's own sandbox
+through `alt task validate`, where Playwright's Chromium keeps it, and to fault-block if the runner is
+unavailable or the browser refuses its sandbox there. `make browser-sandbox` records the protections
+Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. Pushing the approved tag runs the release

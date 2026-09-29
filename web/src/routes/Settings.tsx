@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
@@ -163,29 +163,47 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   </>;
 }
 
-/** The operator's terminal, off after install: one switch for this computer. */
-function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
-  const client = useQueryClient();
+/** One on/off setting for this computer; a failed change keeps the switch where it was and says why. */
+function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: {
+  id: string; title: string; detail: string; enabled: boolean | undefined; unavailable?: string | null;
+  save: (on: boolean) => Promise<unknown>;
+}) {
   const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
   const change = async (on: boolean) => {
     setSave({ status: "saving" });
     try {
-      client.setQueryData(["machine"], await saveTerminalAccess(on));
-      await client.invalidateQueries({ queryKey: ["terminal"] });
+      await send(on);
       setSave({ status: "idle" });
     } catch (error) {
       setSave({ status: "failed", error: error as Error });
     }
   };
   return <div className="settings-row settings-switch-row">
-    <label htmlFor="terminal-switch">
-      <strong>Terminal</strong>{" "}
-      <small>Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
+    <label htmlFor={id}>
+      <strong>{title}</strong>{" "}
+      <small>{unavailable ? `Not available here: ${unavailable}.` : detail}</small>
       {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
     </label>
-    <input id="terminal-switch" type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
-      disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+    <input id={id} type="checkbox" role="switch" className="settings-switch" checked={!unavailable && (enabled ?? false)}
+      disabled={enabled === undefined || Boolean(unavailable) || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
   </div>;
+}
+
+/** The operator's terminal, off after install, and the agents' validation runs, on after install. */
+function MachineSwitches({ machine }: { machine: Machine | undefined }) {
+  const client = useQueryClient();
+  return <>
+    <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
+      detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
+      save={async (on) => {
+        client.setQueryData(["machine"], await saveTerminalAccess(on));
+        await client.invalidateQueries({ queryKey: ["terminal"] });
+      }} />
+    <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
+      unavailable={machine?.validation_unavailable}
+      detail="Agents test installs, containers and browsers in throwaway containers on this computer, and each run is recorded on its task. Turning this off stops a running one."
+      save={async (on) => { client.setQueryData(["machine"], await saveValidationAccess(on)); }} />
+  </>;
 }
 
 /** A date without its time: a device's last use is recorded at most daily. */
@@ -476,7 +494,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           <Link className="settings-row" to="/settings/devices" state={state}>
             <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
-          <TerminalSwitch enabled={machine.data?.terminal} />
+          <MachineSwitches machine={machine.data} />
           {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
         </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>
