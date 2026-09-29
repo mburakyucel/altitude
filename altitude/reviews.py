@@ -14,8 +14,8 @@ from pathlib import Path, PurePosixPath
 
 from . import config, engines, state as S, tasks as T
 
-# Complete mandatory history of a long task plus its selected evidence (I-20260927-193716); the
-# captured-input tool reads up to 2 MiB, and this keeps a review's context within reviewer windows.
+# Room for a long task's complete mandatory history plus selected evidence (I-20260927-193716), well
+# under the captured-input tool's 2 MiB file limit, while keeping a review's context finite.
 CONTEXT_LIMIT = 256 * 1024
 
 _inflight: set[tuple[str, str, str]] = set()

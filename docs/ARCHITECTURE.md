@@ -477,7 +477,7 @@ remaining content, so removed content is bounded before creating the diff. Conte
 request, original authority messages and corrections, decisions,
 and default-all or selected L2 evidence; its captured `context.json` holds one copy of each input, so
 the request is omitted when the brief contains it verbatim, and is bounded to 256 KiB: room for a long
-task's complete authority and decisions plus selected evidence, within reviewer context windows. Nothing
+task's complete authority and decisions plus selected evidence, well under the reviewer's 2 MiB file read. Nothing
 is dropped or summarized; beyond the bound capture refuses with the size and whether mandatory records
 alone exceed it. Proposal capture
 also binds the exact original L2 message and text against the committed head's source tree, even before
