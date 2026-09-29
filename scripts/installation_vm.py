@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG]
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery]]
 
 Builds two synthetic release versions from one committed revision (default HEAD) and runs the
 harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. With
@@ -13,7 +13,9 @@ the harness prerequisites and is then unplugged; the other is restricted to the 
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest; then a third installs the baseline, the VM restarts and the harness
-checks that the service came back on its own before removing it.
+checks that the service came back on its own before removing it. --recovery instead runs only the
+recovery phase: the published baseline's installation must fail, and the candidate installed over it
+must start and keep its settings, TLS identity and data.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations
@@ -250,6 +252,24 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
             stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
 
 
+def lifecycle(machine: Machine, commits: str, results: Path, record: dict) -> None:
+    """The lifecycle, then install.sh's bootstrap, then an install that must survive the VM's restart."""
+    exits = record["harness_exit"]
+    for phase in ("all", "bootstrap", "reboot-install"):
+        note(f"running the {phase} phase")
+        exits[phase] = harness(machine, commits, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
+        if exits[phase]:
+            return
+    note("restarting the VM")
+    record["boot_id_after_restart"] = machine.reboot(time.monotonic() + 300)
+    # The online card stays unplugged across the guest's restart.
+    record["reachable"]["after_restart"] = reachable(machine)
+    if any(record["reachable"]["after_restart"].values()):
+        raise SystemExit(f"The guest is not isolated after its restart: {record['reachable']}")
+    note("running the reboot-verify phase")
+    exits["reboot-verify"] = harness(machine, commits, "reboot-verify", results / "harness-reboot-verify.log")
+
+
 def published(tag: str, folder: Path) -> dict:
     """The published release's files, each matching its SHA256SUMS line, and the commit its tag names.
 
@@ -302,13 +322,13 @@ def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline"
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)
 
 
-def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None) -> int:
+def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False) -> int:
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
     git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
-              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "passed": False}
+              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
@@ -351,27 +371,18 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         # Each phase creates, uses and deletes its own disposable account inside the guest.
         exits = record["harness_exit"] = {}
         try:
-            for phase in ("all", "bootstrap", "reboot-install"):
-                note(f"running the {phase} phase")
-                exits[phase] = harness(machine, commits, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
-                if exits[phase]:
-                    break
+            if recovery:
+                note("running the recovery phase")
+                exits["recovery"] = harness(machine, commits, "recovery", results / "harness-recovery.log")
             else:
-                note("restarting the VM")
-                record["boot_id_after_restart"] = machine.reboot(time.monotonic() + 300)
-                # The online card stays unplugged across the guest's restart.
-                record["reachable"]["after_restart"] = reachable(machine)
-                if any(record["reachable"]["after_restart"].values()):
-                    raise SystemExit(f"The guest is not isolated after its restart: {record['reachable']}")
-                note("running the reboot-verify phase")
-                exits["reboot-verify"] = harness(machine, commits, "reboot-verify", results / "harness-reboot-verify.log")
+                lifecycle(machine, commits, results, record)
         finally:
             note(f"harness exits {exits}; copying its results")
             try:
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        record["passed"] = list(exits.values()) == [0, 0, 0, 0] and "uncopied_results" not in record
+        record["passed"] = list(exits.values()) == [0] * (1 if recovery else 4) and "uncopied_results" not in record
     finally:
         try:
             if machine:
@@ -394,9 +405,13 @@ def main() -> int:
     parser.add_argument("results", type=Path)
     parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
     parser.add_argument("--baseline-release", metavar="TAG", help="published release to install first and update from")
+    parser.add_argument("--recovery", action="store_true",
+                        help="install the candidate over the published baseline's failed installation instead")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
                         help="where the verified base image is kept between runs")
     args = parser.parse_args()
+    if args.recovery and not args.baseline_release:
+        parser.error("--recovery needs --baseline-release")
     # A stop request still deletes the VM and writes the record.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     missing = missing_prerequisites()
@@ -409,7 +424,7 @@ def main() -> int:
     if resolved.returncode:
         print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
-    return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release)
+    return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery)
 
 
 if __name__ == "__main__":

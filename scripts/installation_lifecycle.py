@@ -4,8 +4,9 @@
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
 The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
-its check after the VM restarts. `bootstrap` runs the built install.sh through its public curl | sh
-command against a release server on this machine's loopback, whose name the root wrapper points here.
+its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
+failed. `bootstrap` runs the built install.sh through its public curl | sh command against a release
+server on this machine's loopback, whose name the root wrapper points here.
 """
 from __future__ import annotations
 
@@ -285,6 +286,31 @@ class Lifecycle:
         self.uninstall({})
         self.result["passed"] = True
 
+    def recovery(self):
+        """A baseline whose activation fails, then the candidate's installer over what it left.
+
+        The published v0.1.0-rc.1 fails at service start; later installers must keep its settings and TLS identity."""
+        old, old_sha, _, _, new, new_sha, _, after = self.prepare()
+        self.result["limits"][0] = ("Published-release baseline whose installation fails, then the candidate installed over it; "
+                                    "the guest runs the published files offline, not its own GitHub download; "
+                                    "the candidate installs with its install.py, which its install.sh downloads and runs")
+        self.run("failed-install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", old,
+                 "--sha256", old_sha, success=False, timeout=180)
+        left = sorted(str(path.relative_to(self.home)) for root in (self.prefix, self.settings.parent)
+                      if root.exists() for path in root.rglob("*"))
+        write_json(self.results / "failed-install-files.json", left)
+        assert self.settings.is_file() and (self.tls / "ca.crt").is_file(), "The failed installation kept no settings or TLS identity"
+        sentinels = [self.home / ".altitude/fictional/history.jsonl", self.home / "Projects/fictional/worktree/notes.txt"]
+        for path in sentinels:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("Fictional retained installation acceptance data\n")
+        retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
+        self.run("install", "/usr/bin/python3", "-B", self.candidate / "install.py", "--archive", new, "--sha256", new_sha)
+        self.healthy("installed", after)
+        self.doctor("installed", after)
+        assert all(digest(path) == value for path, value in retained.items()), "Installing over the failed release changed retained data"
+        self.uninstall(retained)
+
     def bootstrap(self):
         """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
         old, old_sha, _, before, *_ = self.prepare()
@@ -350,7 +376,7 @@ class Lifecycle:
     def execute(self, phase: str = "all"):
         try:
             {"all": self.exercise, "bootstrap": self.bootstrap, "reboot-install": self.reboot_install,
-             "reboot-verify": self.reboot_verify}[phase]()
+             "reboot-verify": self.reboot_verify, "recovery": self.recovery}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise
