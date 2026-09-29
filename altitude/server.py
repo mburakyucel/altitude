@@ -1172,6 +1172,28 @@ def tick() -> None:
     morning_digest()
 
 
+SELF_DEPLOY_FETCH_GRACE_SECONDS = 300
+_fetch_failing_since: dict[str, float] = {}  # project → monotonic time its self-deploy fetches started failing
+
+
+def self_deploy(project: str) -> None:
+    # Activation: a sole running worker's merge must activate without another dispatch or report.
+    try:
+        with dispatch.publication_settlement(project):
+            dispatch.self_deploy_fast_forward(project)
+    except git_policy.FetchError as e:
+        # #602: a fetch that recovers on a later tick is not an incident; one failing past the grace period is.
+        since = _fetch_failing_since.setdefault(project, time.monotonic())
+        if time.monotonic() - since < SELF_DEPLOY_FETCH_GRACE_SECONDS:
+            log(f"[{project}] self-deploy fetch failed; retrying next tick: {e}")
+        else:
+            incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+        return
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+    _fetch_failing_since.pop(project, None)
+
+
 def tick_project(project: str) -> None:
     if audit.path(project).exists():
         spawn(f"audit:{project}", audit.run, project)
@@ -1179,12 +1201,7 @@ def tick_project(project: str) -> None:
         project_setup.maintain(project)
     except (OSError, ValueError, RuntimeError) as exc:
         log(f"[{project}] setup check unavailable: {exc}")
-    # Activation: a sole running worker's merge must activate without another dispatch or report.
-    try:
-        with dispatch.publication_settlement(project):
-            dispatch.self_deploy_fast_forward(project)
-    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+    self_deploy(project)
     try:
         images.collect(project)
     except (images.ImageError, OSError) as e:
