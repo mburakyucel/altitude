@@ -771,7 +771,7 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         rows = _pending_rows(task, path)
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
         request = task.get("daemon_request") or {}
-        if expected_daemon_request and not request.get("message_id"):
+        if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
             # I-20260927-193716: the reason that authorizes a resume reaches the owner as the requester's message.
             # Its request was the wake, so a batch restored after a failed launch holds it without waking again.
             reason = {"id": request["id"], "at": _conversation_time(), "role": request["actor"],
@@ -1821,7 +1821,7 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
 
 def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
     if source == "task":
-        # A resume reason authorizes that resume only; the UI's Resume sends fixed text nobody wrote as an answer.
+        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
         return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
     if source != "project":
         raise TransitionError("resolution source must be task or project")

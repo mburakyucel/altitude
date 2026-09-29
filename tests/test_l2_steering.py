@@ -288,10 +288,8 @@ class TestL2Steering(AltitudeCase):
                 failed_resume = self.view(task)
                 self.assertEqual(failed_resume["steering"]["state"], "stopped")
                 self.assertEqual(failed_resume["session_id"], task["session_id"])
-                # The operator's Continue reaches the session as its own message in the same batch.
-                self.assertEqual([(row["role"], row["delivery"]["state"]) for row in failed_resume["messages"]],
-                                 [("burak", "unconfirmed")] * 3)
-                self.assertEqual(failed_resume["messages"][-1]["id"], S.load_task(self.project, task["slug"])["daemon_request"]["id"])
+                # Continue sends no authored reason, so the conversation keeps only the operator's two messages.
+                self.assertEqual([row["delivery"]["state"] for row in failed_resume["messages"]], ["unconfirmed", "unconfirmed"])
                 self.assertFalse(any(row["delivery"]["removable"] for row in failed_resume["messages"]))
                 with self.assertRaises(T.TransitionError):
                     T.remove_message(self.project, task["slug"], row["id"])

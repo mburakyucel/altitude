@@ -312,7 +312,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         [question] = T.question_views(self.project, self.slug)
         request = dispatch.request_task_operation(self.project, self.slug, "resume",
-                                                  "Resume requested from the task conversation",
+                                                  "Go ahead with the blue one.",
                                                   actor=T.OPERATOR_MESSAGE_ROLE)["request"]
         self.quiet_launch()
         self.patch(engines, "resume_l2", side_effect=lambda _engine, _name, session_id, _prompt, **_kw: (
@@ -321,7 +321,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(T.task_messages(self.project, self.slug)[-1]["id"], request["id"])
         with self.assertRaisesRegex(T.TransitionError, "original message"):
             T.resolve_question(self.project, self.slug, question["id"], question["revision"], request["id"],
-                               disposition="answered", reason="Clicked Resume", expected_attempt=1)
+                               disposition="answered", reason="Resume reason", expected_attempt=1)
 
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")

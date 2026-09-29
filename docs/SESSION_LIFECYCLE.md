@@ -502,8 +502,8 @@ operator-required proposal, security or product decisions. A member that exists 
 Altitude rule or mechanism re-asks a settled decision stays open until settled, and L3 also owns
 repairing that friction through an existing owner or one task.
 For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
-An explicit resume's reason is part of the claimed batch: the claim appends it once to the conversation as
-the requester's message, keyed by the request id, and the owner reads it last, headed "Resumed by
+An explicit `task resume --reason` is part of the claimed batch: the claim appends it once to the conversation as
+the requester's message, keyed by the request id, and the owner reads it after the messages already waiting, headed "Resumed by
 <actor> at <time> with this reason". It shares the batch's delivery receipts and failure restoration,
 wakes nothing by itself and is never decision or approval evidence.
 A resume with no request and an empty inbox continues from the owner's progress file.
