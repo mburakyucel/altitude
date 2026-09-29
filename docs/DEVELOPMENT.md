@@ -278,7 +278,7 @@ blocks automating it.
 
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
-| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, systemd unit parsing (the image has no `systemd-analyze`, so that regression skips), native macOS, container deployment | In use |
+| Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built `install.sh` through its public command against a release server inside the guest, on Ubuntu 24.04 x86_64 | Login/logout, the download from GitHub's published release, cross-release migration, other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
