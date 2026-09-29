@@ -102,26 +102,59 @@ export function Bubble({ text, at, pending = false, receipt, images, children }:
   );
 }
 
-/** A reply: left-aligned prose, no bubble; `from` labels the L3's or the L2's replies on the task page. */
+/** A reply: left-aligned prose, no bubble. */
 export function Reply({
   text,
   at,
-  from,
   role,
   children,
 }: {
   text: string;
   at?: string | null;
-  from?: string;
   role?: string;
   children?: ReactNode;
 }) {
   return (
     <MessageRow at={at} role={role}>
       <div className="reply">
-        {from ? <span className="reply-from">{from}</span> : null}
         <Prose text={text} />
         {children}
+      </div>
+    </MessageRow>
+  );
+}
+
+/**
+ * A message L3 sent the L2 on the task page: one compact line, "L3 messaged the L2", whose Show opens
+ * the complete original text and images in place (SPEC.md §3.10). The record keeps every word.
+ */
+export function Coordination({
+  text,
+  at,
+  images = 0,
+  onOpen,
+  children,
+}: {
+  text: string;
+  at?: string | null;
+  images?: number;
+  onOpen?: () => void;
+  children?: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <MessageRow at={at} role="l3">
+      <div className="coordination" data-open={open || undefined}>
+        <div className="coordination-line">
+          <span className="sys-dot" aria-hidden />
+          <span>L3 messaged the L2{images ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}</span>
+          <button type="button" className="link" aria-expanded={open}
+            onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}>{open ? "Hide" : "Show"}</button>
+        </div>
+        {open ? <div className="coordination-body">
+          <Prose text={text} />
+          {children}
+        </div> : null}
       </div>
     </MessageRow>
   );

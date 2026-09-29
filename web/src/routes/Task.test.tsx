@@ -153,6 +153,26 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it("folds a long L3 coordination message to one line and opens its original in place", async () => {
+    setViewport(1440);
+    const text = "Grant recorded for the fictional sandbox run. Keep it through landing.\n\nSee [the guide](https://example.com/guide).";
+    stub({ ...running, messages: [...running.messages.slice(0, 2),
+      { id: "m-3", at: "2026-08-30T09:00:00Z", role: "l3", text, images: [{ id: "img-1", name: "shot.png", mime_type: "image/png", size: 10, width: 4, height: 4, source_message_id: "m-0" }] }] });
+    renderApp({ route });
+    const convo = await screen.findByRole("region", { name: "Task conversation" });
+    const row = convo.querySelector<HTMLElement>('[data-role="l3"]')!;
+    expect(row).toHaveTextContent("L3 messaged the L2 · 1 image");
+    expect(within(row).queryByText(/Grant recorded/)).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Show" }));
+    expect(within(row).getByRole("button", { name: "Hide" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(row).getByText(/Grant recorded for the fictional sandbox run/)).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "the guide" })).toHaveAttribute("href", "https://example.com/guide");
+    fireEvent.click(within(row).getByRole("button", { name: "Hide" }));
+    expect(within(row).queryByLabelText("Message images")).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Show" }));
+    expect(within(row).getByLabelText("Message images")).toBeInTheDocument();
+  });
+
   it.each([200, 500])("reconciles by identity before response %i without hiding repeated text or changing recovery", async (status) => {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });
@@ -270,7 +290,13 @@ describe("Task on desktop", () => {
     const reply = convo.querySelector('[data-role="l2"]');
     expect(reply).toHaveTextContent("I will use one focused PR.");
     expect(reply?.querySelector(".bubble")).toBeNull();
-    expect(convo.querySelector('[data-role="l3"]')).toHaveTextContent("L3Answered from the brief.");
+    const coordination = convo.querySelector<HTMLElement>('[data-role="l3"]')!;
+    expect(coordination).toHaveTextContent("L3 messaged the L2Show");
+    expect(within(coordination).queryByText("Answered from the brief.")).toBeNull();
+    fireEvent.click(within(coordination).getByRole("button", { name: "Show" }));
+    expect(within(coordination).getByText("Answered from the brief.")).toBeInTheDocument();
+    fireEvent.click(within(coordination).getByRole("button", { name: "Hide" }));
+    expect(within(coordination).queryByText("Answered from the brief.")).toBeNull();
     const days = within(convo).getAllByRole("separator").map((n) => n.textContent);
     expect(days).toHaveLength(2);
     expect(days[0]).toMatch(/Aug 29$/);
@@ -448,7 +474,7 @@ describe("Task on desktop", () => {
     expect(turn).toHaveAttribute("data-turn", "operator");
     expect(turn.querySelector(".conversation-turn")).toHaveTextContent("Your turn · 1 question");
     // Anchored at m-2, shown after the last message.
-    expect(turn.previousElementSibling).toHaveTextContent("Answered from the brief.");
+    expect(turn.previousElementSibling).toHaveTextContent("L3 messaged the L2");
     expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
     expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
     expect(document.querySelector(".task-line")).toBeNull();
