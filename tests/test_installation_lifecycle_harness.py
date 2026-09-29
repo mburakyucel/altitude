@@ -155,3 +155,62 @@ class TestInstallationVm(AltitudeCase):
         self.assertIn("qemu-system-x86_64", result.stderr)
         self.assertIn("sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", result.stderr)
         self.assertFalse((self.tmp / "results").exists())
+
+    def test_published_baseline_accepts_only_the_checked_release_its_tag_names(self):
+        from scripts import installation_vm as vm
+        archive, checksum = test_installation.Installation.archive(self, "v0.1.0-rc.2")
+        commit = installation.extract(archive, checksum, self.tmp / "inspected")["commit"]
+        assets = self.tmp / "assets"
+        assets.mkdir()
+        name = "altitude-v0.1.0-rc.2.tar.gz"
+        shutil.copyfile(archive, assets / name)
+        (assets / (name + ".sha256")).write_text(checksum + "\n")
+        (assets / "install.py").write_text("installer\n")
+        (assets / "install.sh").write_text("script\n")
+        write_sums = lambda: (assets / "SHA256SUMS").write_text("".join(
+            f"{hashlib.sha256((assets / name).read_bytes()).hexdigest()}  {name}\n"
+            for name in (name, "install.py", "install.sh")))
+        write_sums()
+        native = subprocess.run
+        tags = {"refs": f"{'a' * 40}\trefs/tags/v0.1.0-rc.2\n{commit}\trefs/tags/v0.1.0-rc.2^{{}}\n"}
+
+        def run(command, **kwargs):
+            if command[0] == "gh":
+                self.assertEqual(command[command.index("--repo") + 1], "example/altitude")
+                shutil.copytree(assets, command[command.index("--dir") + 1], dirs_exist_ok=True)
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[:3] == ["git", "remote", "get-url"]:
+                return subprocess.CompletedProcess(command, 0, "git@github.com:example/altitude.git\n", "")
+            if command[:2] == ["git", "ls-remote"]:
+                return subprocess.CompletedProcess(command, 0, tags["refs"], "")
+            return native(command, **kwargs)
+
+        def attempt(name):
+            with mock.patch.object(vm.subprocess, "run", side_effect=run):
+                return vm.published("v0.1.0-rc.2", self.tmp / name)
+
+        # An annotated tag's peeled commit is the one the archive must declare.
+        self.assertEqual(attempt("good"), {"release": "v0.1.0-rc.2", "commit": commit,
+                                           "sha256": dict(reversed(line.split()) for line in
+                                                          (assets / "SHA256SUMS").read_text().splitlines())})
+        self.assertEqual(vm.next_minor("v0.1.0-rc.2"), "v0.2.0-rc.1")
+        tags["refs"] = f"{commit}\trefs/tags/v0.1.0-rc.2\n"  # lightweight tag
+        self.assertEqual(attempt("lightweight")["commit"], commit)
+        tags["refs"] = f"{'b' * 40}\trefs/tags/v0.1.0-rc.2\n"
+        with self.assertRaisesRegex(SystemExit, "declares v0.1.0-rc.2 at"):
+            attempt("other-commit")
+        tags["refs"] = ""
+        with self.assertRaisesRegex(SystemExit, "no tag"):
+            attempt("no-tag")
+        tags["refs"] = f"{commit}\trefs/tags/v0.1.0-rc.2\n"
+        (assets / "extra.txt").write_text("unlisted\n")
+        with self.assertRaisesRegex(SystemExit, "assets differ"):
+            attempt("extra")
+        (assets / "extra.txt").unlink()
+        (assets / "install.sh").write_text("substituted\n")
+        with self.assertRaisesRegex(SystemExit, "install.sh differs"):
+            attempt("substituted")
+        (assets / "install.sh").write_text("script\n")
+        (assets / (name + ".sha256")).write_text("0" * 64 + "\n")
+        with self.assertRaisesRegex(SystemExit, ".sha256 differs"):
+            attempt("checksum-file")

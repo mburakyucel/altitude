@@ -85,7 +85,8 @@ class Lifecycle:
         self.settings = self.home / ".config/altitude/install.json"
         self.env = dict(os.environ)
         self.result = {"passed": False, "steps": [], "artifacts": [], "limits": [
-            "Published-release baseline updated to the candidate; the guest runs the published files offline, not its own GitHub download"
+            "Published-release baseline updated to the candidate; the guest runs the published files offline, not its own GitHub download; "
+            "no storage migration (no application state is created)"
             if published else "Same-source version transition; no cross-release storage migration",
             "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
             "No live provider, native worker confinement or macOS acceptance",
@@ -197,9 +198,11 @@ class Lifecycle:
         fixture.chmod(0o755)
         # Discover configured executable settings from the packaged engine seam.
         # No application module is mocked or patched for native acceptance.
-        keys = json.loads(self.run("engine-settings", "/usr/bin/python3", "-B", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
-            "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
+        # Both packages count: a candidate that adds an engine must still reach only the fixture.
+        keys = {key for step, source in (("engine-settings", package), ("candidate-engine-settings", new_package))
+                for key in json.loads(self.run(step, "/usr/bin/python3", "-B", "-c",
+                    "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
+                    "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", source))}
         assert keys, "Package exposes no engine executable settings"
         self.env.update({key: str(fixture) for key in keys})
         return old, old_sha, package, before, new, new_sha, new_package, after

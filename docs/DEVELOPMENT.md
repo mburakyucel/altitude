@@ -281,7 +281,7 @@ blocks automating it.
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, other distributions | In use through an owner's machine grant |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
@@ -485,7 +485,7 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 
 `BASELINE=<tag>` makes a published release the baseline: the runner downloads its assets with `gh`
 (the operator's GitHub login, so a private repository works), checks each against the release's
-`SHA256SUMS` and the archive's commit against the tag, and builds only the candidate from `SOURCE`,
+`SHA256SUMS` and the archive's declared version and commit against the tag, and builds only the candidate from `SOURCE`,
 under the next minor version so the update is never a downgrade. Every phase then installs the
 published files, `install.sh` included, and updates from them to the candidate. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:

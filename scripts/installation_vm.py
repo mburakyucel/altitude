@@ -29,6 +29,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from urllib.request import urlopen
@@ -254,26 +255,41 @@ def published(tag: str, folder: Path) -> dict:
 
     gh downloads the assets with the operator's GitHub login, so a private repository's release works too."""
     checkout = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(checkout))
+    from altitude.installation import VERSION
+    from altitude.server import repository_url
+    if not VERSION.fullmatch(tag):
+        raise SystemExit(f"{tag} is not a release version")
+    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout
+    repository = repository_url(git("remote", "get-url", "origin").strip()).removeprefix("https://github.com/")
     folder.mkdir(parents=True)
-    subprocess.run(["gh", "release", "download", tag, "--dir", str(folder)], cwd=checkout, check=True,
-                   capture_output=True, timeout=600)
+    fetched = subprocess.run(["gh", "release", "download", tag, "--repo", repository, "--dir", str(folder)],
+                             capture_output=True, text=True, timeout=600)
+    if fetched.returncode or not (folder / "SHA256SUMS").is_file():
+        raise SystemExit(f"Cannot download {repository} release {tag}: {fetched.stderr.strip() or 'no SHA256SUMS'}")
     sums = dict(reversed(line.split()) for line in (folder / "SHA256SUMS").read_text().splitlines())
-    archive = next(name for name in sums if name.endswith(".tar.gz"))
-    if {path.name for path in folder.iterdir()} != {*sums, "SHA256SUMS", archive + ".sha256"}:
+    archive = f"altitude-{tag}.tar.gz"
+    if archive not in sums or {path.name for path in folder.iterdir()} != {*sums, "SHA256SUMS", archive + ".sha256"}:
         raise SystemExit(f"{tag} assets differ from its SHA256SUMS: {sorted(p.name for p in folder.iterdir())}")
     for name, digest in sums.items():
         if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
             raise SystemExit(f"{tag}/{name} differs from the release's SHA256SUMS")
     if (folder / (archive + ".sha256")).read_text().strip() != sums[archive]:
         raise SystemExit(f"{tag}/{archive}.sha256 differs from the release's SHA256SUMS")
-    refs = subprocess.run(["git", "ls-remote", "--tags", "origin", tag, f"{tag}^{{}}"], cwd=checkout,
-                          capture_output=True, text=True, check=True).stdout.splitlines()
+    refs = git("ls-remote", "--tags", "origin", tag, f"{tag}^{{}}").splitlines()
     # An annotated tag's peeled line names the commit; a lightweight tag names it directly.
-    commit = ([line.split()[0] for line in refs if line.endswith("^{}")] or [line.split()[0] for line in refs])[0]
-    return {"release": tag, "commit": commit, "sha256": sums}
+    commits = [line.split()[0] for line in refs if line.endswith("^{}")] or [line.split()[0] for line in refs]
+    if not commits:
+        raise SystemExit(f"origin has no tag {tag}")
+    with tarfile.open(folder / archive) as bundle:
+        release = json.load(bundle.extractfile("release.json"))
+    if (release["version"], release["commit"]) != (tag, commits[0]):
+        raise SystemExit(f"{archive} declares {release['version']} at {release['commit']}, not {tag} at {commits[0]}")
+    return {"release": tag, "commit": commits[0], "sha256": sums}
 
 
 def next_minor(version: str) -> str:
+    """A synthetic candidate label newer than the published VERSION."""
     return f"v0.{int(version.split('.')[1]) + 1}.0-rc.1"
 
 
