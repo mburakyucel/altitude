@@ -14,6 +14,10 @@ from pathlib import Path, PurePosixPath
 
 from . import config, engines, state as S, tasks as T
 
+# Complete mandatory history of a long task plus its selected evidence (I-20260927-193716); the
+# captured-input tool reads up to 2 MiB, and this keeps a review's context within reviewer windows.
+CONTEXT_LIMIT = 256 * 1024
+
 _inflight: set[tuple[str, str, str]] = set()
 _inflight_lock = threading.Lock()
 
@@ -395,9 +399,15 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         captured["messages"] = [{**{k: v for k, v in r.items() if k != "text"}, "text_file": "proposal.md"}
                                 if r["id"] == proposal_id else r for r in context["messages"]]
     text = json.dumps(captured, ensure_ascii=False, indent=2)
-    if len(text.encode()) > 65536:
-        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included"
-                                + (" and the proposal is bounded separately." if proposal else "."))
+    if len(text.encode()) > CONTEXT_LIMIT:
+        # Authority, corrections and decisions are never dropped, so only optional L2 evidence can shrink it.
+        mandatory = len(json.dumps({**captured, "messages": [r for r in captured["messages"] if r["role"] != "l2" or r["id"] == proposal_id]},
+                                   ensure_ascii=False, indent=2).encode())
+        raise T.TransitionError(f"Review context is {len(text.encode())} bytes, over its 256 KiB bound"
+                                + (" (the proposal is bounded separately)" if proposal else "") + ". "
+                                + (f"Mandatory authority, corrections and decisions alone are {mandatory} bytes, so selecting less L2 evidence "
+                                   "cannot make it fit; report the capture fault." if mandatory > CONTEXT_LIMIT else
+                                   "Select relevant L2 evidence with --context-message; authority messages remain included."))
     if len(proposal_text) > 65536:
         raise T.TransitionError("The proposal exceeds 64 KiB. Publish a proposal of at most 64 KiB and name it with --proposal-message.")
     folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]

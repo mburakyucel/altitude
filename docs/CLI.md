@@ -1425,8 +1425,11 @@ main and commit before retrying.
 `run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and
-fails explicitly beyond 64 KiB; a proposal review captures the exact proposal text separately as
-`proposal.md`, also bounded to 64 KiB, so the proposal never competes with retained authority.
+fails explicitly beyond 256 KiB, naming its size; when authority, corrections and decisions alone exceed
+the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
+that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
+captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
+competes with retained authority.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
