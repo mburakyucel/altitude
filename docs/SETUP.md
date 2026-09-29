@@ -201,15 +201,26 @@ installed: `ALTITUDE_HOST=<address> make install-service`.
 The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
 iPad:
 
-1. Tap **Download the profile**, then **Allow**. Open Settings → **Profile Downloaded**.
+1. Open the share link in **Safari**, even if scanning the QR code opened another browser.
+   Tap **Download the profile**, then **Allow**. After the download completes, open Settings →
+   **Profile Downloaded**. Scanning the QR code alone does not download a profile.
 2. Before tapping **Install**, check that it contains only a **Certificate** with the name shown on
    the trusted screen, and that **More Details** → that certificate shows the same SHA-256. If
-   anything differs, tap **Remove** and stop: someone else answered the link.
+   anything differs, tap **Remove** and stop: someone else answered the link. If the certificate
+   details cannot be viewed, stop before installing and report what the phone shows.
 3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
    Trust Settings**. Installing the profile alone does not enable TLS trust.
    [Apple guidance](https://support.apple.com/en-us/102390).
 4. Open the HTTPS address in a new Private tab. It must load with no warning; then
    [pair](#pair-each-device) and add the Home Screen app.
+
+**No Profile Downloaded?** The shortcut appears after a profile download; it is not a permanent
+Settings item. Check **Settings → General → VPN & Device Management** for profiles as well.
+[Apple deletes an uninstalled profile after eight minutes](https://support.apple.com/en-us/102400).
+If no profile is present, return to the share page in Safari and download again; open a new sharing
+window if the ten-minute link has closed. If no **Allow** prompt appears or the download fails,
+report the browser, iOS version and exact message. A working download link does not establish that
+iOS accepted a profile. Do not change certificate trust or disable device protections to diagnose this.
 
 Safari may remember an earlier "visit this website" exception, which can hide missing trust in an
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
