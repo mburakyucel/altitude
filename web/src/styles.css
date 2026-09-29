@@ -1801,8 +1801,17 @@
 }
 .coordination-line {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
+}
+.coordination-line .sys-dot {
+  align-self: flex-start;
+  margin-top: 0.55lh;
+  translate: 0 -50%;
+}
+.coordination-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .coordination-line .link {
   font-size: var(--text-meta);

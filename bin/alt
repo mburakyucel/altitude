@@ -356,6 +356,7 @@ def main(argv=None) -> None:
     ms = ts.add_parser("message", help="message the existing L2; resumes blocked/open-PR owners or L3 correction of a contradicted report")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     ms.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
+    ms.add_argument("--summary", help="L3: one line (up to 100 characters) saying what the message is about")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
@@ -724,7 +725,9 @@ def main(argv=None) -> None:
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
-            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else T.OPERATOR_MESSAGE_ROLE, _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids)
+            if ACTOR == "l3" and not (args.summary or "").strip():
+                sys.exit("alt task message: L3 adds --summary '<one line saying what the message is about>'")
+            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else T.OPERATOR_MESSAGE_ROLE, _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids, summary=args.summary)
             out(message)
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]

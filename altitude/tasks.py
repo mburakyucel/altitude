@@ -33,6 +33,7 @@ class TransitionError(Exception):
 
 
 TASK_MESSAGE_ROLES = (config.OPERATOR_ACTOR, "l2", "l3")
+SUMMARY_LIMIT = 100  # one folded conversation row on a phone
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
 
@@ -473,15 +474,21 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             group_id: str | None = None, group_revision: int | None = None,
             stop_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
-            request_id: str | None = None, request_digest: str | None = None) -> dict:
+            request_id: str | None = None, request_digest: str | None = None,
+            summary: str | None = None) -> dict:
     """Append one message to the task conversation. The operator's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
-    the current one."""
+    the current one. L3's one-line `summary` describes its message in the conversation's folded row."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
     if not text and not (uploads or image_ids):
         raise TransitionError("task message is empty")
+    summary = " ".join(str(summary or "").split())
+    if summary and role != "l3":
+        raise TransitionError("only L3's coordination messages carry a summary")
+    if len(summary) > SUMMARY_LIMIT:
+        raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if request_id:
@@ -502,6 +509,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         if _ensure_question(project, task):
             S.save_task(project, task)
         row = {"id": request_id or uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
+        if summary:
+            row["summary"] = summary
         # #277: a coordinator's waiting update is discussion, not evidence that the fault is repaired.
         wake_blocked = wake_blocked and not (role == "l3" and task.get("fault"))
         if not wake_blocked:
@@ -2206,7 +2215,7 @@ def block_question(task: dict) -> str:
                           for q in task.get("questions", []) if q["status"] == "open")
     return (f"Task `{slug}` blocked and asks: {task['blocked_reason'][:800]}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
-            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\"` so its owner "
+            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\" --summary \"<one line>\"` so its owner "
             "can record the resolution. This notification grants no operator authority. Keep operator-required "
             "proposal, security and product decisions open; do not re-escalate members already addressed to the operator. "
             f"For a new operator choice use `alt task escalate {slug}` with its question and recommendation. "

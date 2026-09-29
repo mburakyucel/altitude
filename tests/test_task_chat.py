@@ -255,9 +255,21 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(task["state"], "running")
         for key in ("waiting_on", "escalated", "fault"):
             self.assertNotIn(key, task, f"{key} leaves with the block")
-        out = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.", env={"ALTITUDE_ACTOR": "l3"})
+        unsummarised = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.",
+                                env={"ALTITUDE_ACTOR": "l3"})
+        self.assertNotEqual(unsummarised.returncode, 0)
+        self.assertIn("--summary", unsummarised.stderr)
+        out = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.",
+                       "--summary", "  Keep the\n tests  ", env={"ALTITUDE_ACTOR": "l3"})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(T.task_messages(self.project, self.slug)[-1]["role"], "l3")
+        latest = T.task_messages(self.project, self.slug)[-1]
+        self.assertEqual((latest["role"], latest["text"], latest["summary"]), ("l3", "Also keep the tests.", "Keep the tests"))
+        self.assertEqual(T.pending(self.project, self.slug)[-1]["text"], "Also keep the tests.",
+                         "the owner receives the complete original text")
+        with self.assertRaisesRegex(T.TransitionError, "100 characters"):
+            T.message(self.project, self.slug, "l3", "Too long.", summary="x" * 101)
+        with self.assertRaisesRegex(T.TransitionError, "only L3"):
+            T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Mine.", summary="Operator line")
 
     def test_resume_without_a_message_continues_from_the_progress_file(self):
         self.block()
