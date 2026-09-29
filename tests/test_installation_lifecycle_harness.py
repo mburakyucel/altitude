@@ -139,6 +139,25 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertIn("installed over it", result["limits"][0])
 
 
+    def test_recovery_runs_the_documented_cleanup_only_after_the_candidate_is_refused(self):
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, f"{'b' * 40}..{'a' * 40}")
+        harness.home = self.tmp / "home"
+        harness.prefix, harness.settings, harness.tls = (harness.home / "prefix", harness.home / "config/install.json",
+                                                         harness.home / "config/tls")
+        for path in (harness.settings, harness.tls / "ca.crt", harness.prefix / "pending.json"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n")
+        releases = ({"version": "v0.1.0-rc.1"}, {"version": "v0.2.0-rc.1"})
+        with mock.patch.object(harness, "prepare", return_value=("old", "1", None, releases[0], "new", "2", None, releases[1])), \
+                mock.patch.object(harness, "run", return_value="installed") as run:
+            with self.assertRaisesRegex(AssertionError, "installed"):
+                harness.execute("recovery")
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["failed-install", "refused-install"])
+        self.assertTrue((harness.prefix / "pending.json").exists())
+
+
 class TestInstallationVm(AltitudeCase):
     """The VM runner's guest configuration and refusal; no VM, image download or KVM access."""
 
