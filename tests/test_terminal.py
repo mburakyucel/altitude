@@ -313,6 +313,150 @@ class TestTerminalLifecycle(TerminalCase):
         self.assertNotIn((self.project, None), terminal._terminals)
 
 
+class TestHandedCommand(TerminalCase):
+    """A command the page typed from the owner's `run` block: the owner hears once the operator has run it."""
+
+    def setUp(self):
+        super().setUp()
+        self.turn(True)
+        self.ident = self.open(self.slug)
+
+    def hand(self, text):
+        terminal.hand(self.project, self.slug, self.ident, text)
+        self.type(text, self.slug)
+
+    def notices(self):
+        return [row["text"] for row in T.pending(self.project, self.slug) if row.get("by") == "terminal"]
+
+    def notice(self):
+        self.wait(self.notices)
+        [text] = self.notices()
+        return text
+
+    def test_the_owner_hears_once_the_command_has_run_not_while_it_runs(self):
+        self.hand("sleep 1.5; echo slept-$((4*4))")
+        self.output(self.slug, until="slept-$((4*4))")
+        time.sleep(1.5)  # typed but not run: nothing to report
+        self.assertEqual(self.notices(), [])
+        self.type("\r", self.slug)
+        self.output(self.slug, until="slept-16")
+        self.assertEqual(self.notices(), [])  # quiet while sleep holds the foreground
+        text = self.notice()
+        self.assertIn("the command you handed the operator looks finished in the task terminal: "
+                      "`sleep 1.5; echo slept-$((4*4))`", text)
+        self.assertIn("alt task terminal", text)
+        self.assertIn("slept-16", terminal.owner_output(self.project, self.slug)["text"])
+
+    def test_a_failed_command_is_reported_as_run_and_the_owner_reads_how(self):
+        self.hand("ls /no-such-folder-here")
+        self.type("\r", self.slug)
+        self.assertIn("looks finished", self.notice())
+        self.assertIn("No such file or directory", terminal.owner_output(self.project, self.slug)["text"])
+
+    def test_a_shell_builtin_counts_once_the_shell_is_back(self):
+        self.hand("cd /")
+        self.type("\r", self.slug)
+        self.assertIn("looks finished", self.notice())
+
+    def test_ctrl_c_before_enter_drops_the_command_so_a_later_enter_is_not_it(self):
+        self.hand("echo handed")
+        self.type("\x03", self.slug)
+        self.type("echo other\r", self.slug)
+        self.output(self.slug, until="other\r\n")
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)
+        self.assertEqual(self.notices(), [])
+
+    def test_the_shell_exiting_is_not_the_command_finishing(self):
+        self.hand("sleep 30")
+        self.type("\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.assertIn("the task terminal ended (closed) before the command you handed the operator finished: "
+                      "`sleep 30`", self.notice())
+
+    def test_a_command_never_run_is_reported_when_the_terminal_ends(self):
+        self.hand("echo never")
+        term = self.current(self.slug)
+        terminal.close(self.project, self.slug)
+        self.gone(term)
+        self.assertIn("the task terminal ended (closed) before the operator ran the command you handed them: "
+                      "`echo never`", self.notice())
+
+    def test_a_command_that_ends_the_shell_is_reported_as_the_terminal_ending(self):
+        self.hand("exit 4")
+        term = self.current(self.slug)
+        self.type("\r", self.slug)
+        self.gone(term)
+        self.assertIn("the task terminal ended (exited", self.notice())
+
+    def test_a_suspended_command_has_not_finished_until_it_ends(self):
+        self.hand("sleep 2")
+        self.type("\r", self.slug)
+        self.wait(lambda: terminal.status(self.project, self.slug)["busy"] == "sleep")
+        time.sleep(terminal.POLL_SECONDS * 3)  # the reader has seen sleep hold the foreground
+        self.type("\x1a", self.slug)
+        self.output(self.slug, until="Stopped")
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # the shell holds the terminal; sleep is suspended
+        self.assertEqual(self.notices(), [])
+        self.type("fg\r", self.slug)
+        self.assertIn("looks finished", self.notice())
+
+    def test_a_notice_goes_only_to_the_attempt_that_handed_the_command(self):
+        self.hand("true")
+        task = S.load_task(self.project, self.slug)
+        task["attempt"] += 1
+        S.save_task(self.project, task)
+        self.type("\r", self.slug)
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + 1)
+        self.assertEqual(self.notices(), [])
+        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal",
+                                   attempt=task["attempt"] - 1))
+
+    def test_the_terminal_keeps_printing_while_its_notice_waits_for_the_project(self):
+        self.hand("echo first")
+        with S.project_lock(self.project):
+            self.type("\r", self.slug)
+            time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # the notice is waiting for this lock
+            self.type("echo second-$((1+1))\r", self.slug)
+            self.output(self.slug, until="second-2")
+            self.assertEqual(self.notices(), [])
+        self.assertIn("`echo first`", self.notice())
+
+    def test_a_blocked_owner_is_woken_and_one_stopped_or_faulted_is_not(self):
+        T.block(self.project, self.slug, "Waiting for the operator's command in the task terminal.", actor="l2")
+        self.hand("true")
+        self.type("\r", self.slug)
+        self.assertIn("finished", self.notice())
+        with S.project_lock(self.project):  # the notice and its wake are one change
+            task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["resume_request"], T.pending(self.project, self.slug)[-1]["id"])
+        for hold in ({"stop_id": "stopped"}, {"fault": {"kind": "system_fault"}}):
+            with self.subTest(hold=hold):
+                task = S.load_task(self.project, self.slug)
+                task.pop("resume_request", None)
+                task.update(hold)
+                S.save_task(self.project, task)
+                row = T.notify(self.project, self.slug, "Terminal: notice", by="terminal", attempt=task["attempt"])
+                task = S.load_task(self.project, self.slug)
+                self.assertNotIn("resume_request", task)
+                self.assertIn(row["id"], [pending["id"] for pending in T.pending(self.project, self.slug)])
+                for key in hold:
+                    task.pop(key)
+                S.save_task(self.project, task)
+
+    def test_a_finished_task_gets_no_notice_and_a_project_terminal_takes_no_command(self):
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "done"
+        S.save_task(self.project, task)
+        self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal", attempt=task["attempt"]))
+        self.open()
+        with self.assertRaises(terminal.TerminalError) as caught:
+            terminal.hand(self.project, None, terminal.status(self.project, None)["id"], "echo x")
+        self.assertEqual(caught.exception.status, 400)
+
+
 class TestOwnerOutput(TerminalCase):
     def test_the_owner_reads_its_task_terminal_as_text_until_a_new_terminal_or_the_task_ends(self):
         self.turn(True)
@@ -613,6 +757,8 @@ class TestTerminalHttp(TerminalCase):
         self.request("POST", f"{base}/resize", {**at, "cols": 90, "rows": 20})
         self.request("POST", f"{base}/resize", {**at, "cols": 0, "rows": 20}, status=400)
         self.request("POST", f"{base}/input", {"task": self.slug, "data": "ls\n"}, status=400)  # names no terminal
+        self.request("POST", f"{base}/command", {**at, "text": "echo 20 90"})
+        self.request("POST", f"{base}/command", {**at, "text": ""}, status=400)
         self.request("POST", f"{base}/input", {**at, "data": "stty size; exit 5\n"})
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
         self.addCleanup(connection.close)

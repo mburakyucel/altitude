@@ -185,7 +185,8 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         T.resolve_question(self.project, self.slug, question["id"], question["revision"], original["id"],
                            expected_attempt=1, disposition="answered", reason="The operator selected the existing path")
         coordinator = T.message(self.project, self.slug, "l3", "Keep this coordination record")
-        control = T.enqueue(self.project, self.slug, "Keep this control record")
+        control = T.notify(self.project, self.slug, "Keep this control record", by="terminal",
+                           attempt=S.load_task(self.project, self.slug)["attempt"])
         forged = T.message(self.project, self.slug, "burak", "Not an original operator message", by="l3")
         for row in (original, coordinator, control, forged):
             with self.subTest(row=row["text"]), self.assertRaises(T.TransitionError):

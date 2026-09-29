@@ -569,11 +569,23 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         return row
 
 
-def enqueue(project: str, slug: str, text: str, *, by: str = "altitude") -> dict:
-    """Leave control-plane text for the worker's next checkpoint without a conversation entry."""
-    row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
+def notify(project: str, slug: str, text: str, *, by: str, attempt: int) -> dict | None:
+    """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
+    that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
+    session, or one on a later attempt than the notice's, gets none."""
     with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt:
+            return None
+        row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)
+        if task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault"):
+            task["resume_request"] = row["id"]
+            task["resume_after"] = task.get("resume_after") or S.now()
+            task.pop("resume_failed", None)
+            S.save_task(project, task)
+            S.append_event(project, slug, "resume-requested", by=by, reason="notice", message_id=row["id"])
+            S.regen_state_md(project)
     return row
 
 
