@@ -1,8 +1,9 @@
 """The macOS counterpart of systemd/altitude.service: run this checkout's altd as the login's LaunchAgent.
 
-`make install-service` runs it on a Mac. The agent carries the unit's settings; its PATH is the one this command
-runs with, so the service finds the same Python, OpenSSL 3, gh and coding CLIs as the operator's shell. A checkout
-on a branch other than main runs and self-deploys that branch (ALTITUDE_SOURCE_BRANCH)."""
+`make install-service` runs it on a Mac. The agent carries the unit's settings. It listens on ALTITUDE_HOST from this
+command's environment, 127.0.0.1 by default as for `make run`; its PATH is the one this command runs with, so the
+service finds the same Python, OpenSSL 3, gh and coding CLIs as the operator's shell. A checkout on a branch other
+than main runs and self-deploys that branch (ALTITUDE_SOURCE_BRANCH)."""
 import os
 import plistlib
 import subprocess
@@ -22,7 +23,7 @@ def main() -> int:
     log = str(platform.logs_dir() / "altd.log")
     branch = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
                             check=True).stdout.strip()
-    environment = {"ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": "8890", "ALTITUDE_SERVICE": "1",
+    environment = {"ALTITUDE_HOST": os.environ.get("ALTITUDE_HOST") or "127.0.0.1", "ALTITUDE_PORT": "8890", "ALTITUDE_SERVICE": "1",
                    # This installation's own choice: its incidents become issues on the public tracker.
                    "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY": "mburakyucel/altitude", "PATH": os.environ["PATH"]}
     if branch != "main":

@@ -27,7 +27,7 @@ audit-history:  ## scan reachable Git history for unpublishable material; exact 
 	@python3 scripts/audit_history.py --findings "$${AUDIT_FINDINGS:-$${ALTITUDE_HOME:-$$HOME/.altitude}/altitude/history-audit/$$(date -u +%Y%m%dT%H%M%SZ).json}" $(if $(AUDIT_SINCE),--since "$(AUDIT_SINCE)") $(if $(AUDIT_WORDS),--words "$(AUDIT_WORDS)")
 restart:        ## safely rebuild the SPA, restart the user service, and verify the app
 	python3 scripts/restart_altitude.py
-install-service: ## user-level systemd unit, or a LaunchAgent on macOS (binds ALTITUDE_HOST from it) — run `make web` first so web/dist exists
+install-service: ## user-level systemd unit (binds ALTITUDE_HOST from the unit), or a LaunchAgent on macOS (ALTITUDE_HOST from the environment, default 127.0.0.1) — run `make web` first so web/dist exists
 	bin/alt install-git-guards
 	if [ "$$(uname -s)" = Darwin ]; then python3 scripts/source_launch_agent.py; else \
 	mkdir -p ~/.config/systemd/user && cp systemd/altitude.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now altitude && systemctl --user status altitude --no-pager | head -5; fi
