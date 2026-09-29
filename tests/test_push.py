@@ -27,9 +27,11 @@ class _Service(http.server.BaseHTTPRequestHandler):
         size = int(self.headers.get("Content-Length") or 0)
         self.server.requests.append({"path": self.path, "body": self.rfile.read(size),
                                      "headers": {name.lower(): value for name, value in self.headers.items()}})
+        body = self.server.body if self.server.status >= 300 else b""
         self.send_response(self.server.status)
-        self.send_header("Content-Length", "0")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass
@@ -65,7 +67,7 @@ class TestPush(AltitudeCase):
         context.load_cert_chain(config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key")
         self.service = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Service)
         self.service.socket = context.wrap_socket(self.service.socket, server_side=True)
-        self.service.requests, self.service.status = [], 201
+        self.service.requests, self.service.status, self.service.body = [], 201, b""
         threading.Thread(target=self.service.serve_forever, daemon=True).start()
         self.addCleanup(self.service.server_close)
         self.addCleanup(self.service.shutdown)
@@ -96,6 +98,9 @@ class TestPush(AltitudeCase):
         self.assertEqual(json.loads(_unpad(header)), {"typ": "JWT", "alg": "ES256"})
         self.assertEqual(json.loads(_unpad(claims))["aud"], f"https://127.0.0.1:{self.service.server_address[1]}")
         self.assertEqual(json.loads(_unpad(claims))["sub"], push.CONTACT)
+        # Apple refuses a contact without a real domain: altitude@localhost drew 403 BadJwtToken.
+        self.assertRegex(push.CONTACT, r"^mailto:[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+        self.assertNotIn("localhost", push.CONTACT)
 
         # The service can check the signature, which is the whole point of sending one.
         public = self.tmp / "vapid.pub"
@@ -161,6 +166,36 @@ class TestPush(AltitudeCase):
         push.notify()
         self.assertEqual(len(self.service.requests), 3)
 
+    def test_a_refusal_is_recorded_with_its_reason_once_and_clears_when_a_push_gets_through(self):
+        push.subscribe(self.endpoint)
+        self.service.status, self.service.body = 403, b'{"reason":"BadJwtToken"}'
+        self.decision("Choose backup retention", "How long should backups stay?")
+        notes = []
+        for _ in range(3):
+            push.notify(notes.append)
+        self.assertEqual(len(self.service.requests), 3)  # tried each tick, so a fix on either side needs no step
+        self.assertEqual(notes, ["push to %s refused with 403 BadJwtToken" % self.endpoint.split("/")[2]])
+        self.assertEqual(push.refused(), [{"host": self.endpoint.split("/")[2], "reason": "403 BadJwtToken"}])
+
+        self.service.status = 201
+        push.notify(notes.append)
+        self.assertEqual(notes[1:], ["push to %s delivered again" % self.endpoint.split("/")[2]])
+        self.assertEqual(push.refused(), [])
+        push.notify(notes.append)
+        self.assertEqual((len(notes), len(self.service.requests)), (2, 4))
+
+    def test_a_refusal_without_a_reason_and_a_resubscribed_device_start_clean(self):
+        push.subscribe(self.endpoint)
+        self.service.status, self.service.body = 400, b"Bad request\n  no detail"
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.assertEqual(push.refused()[0]["reason"], "400 Bad request no detail")
+        push.subscribe(self.endpoint)  # turning alerts off and on again subscribes afresh
+        self.assertEqual(push.refused(), [])
+        push.notify()
+        push.forget(self.endpoint)
+        self.assertNotIn(self.endpoint, (self.tmp / "push.json").read_text())
+
     def test_a_second_device_does_not_silence_a_decision_the_first_is_still_owed(self):
         push.subscribe(self.endpoint)
         self.decision("Choose backup retention", "How long should backups stay?")
@@ -219,12 +254,16 @@ class TestAlertsAPI(AltitudeCase):
 
     def test_the_page_reads_the_key_and_registers_and_drops_its_endpoint(self):
         status, out = self.call("GET", "/api/alerts")
-        self.assertEqual(status, 200)
+        self.assertEqual((status, out["refused"]), (200, []))
         self.assertEqual(len(base64.urlsafe_b64decode(out["key"] + "=" * (-len(out["key"]) % 4))), 65)
 
         endpoint = "https://push.example/wake/device-1"
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint}), (200, {"push": True}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [endpoint])
+        record = json.loads((self.tmp / "push.json").read_text())
+        S.atomic_write(self.tmp / "push.json", json.dumps({**record, "refused": {endpoint: "403 BadJwtToken"}}))
+        self.assertEqual(self.call("GET", "/api/alerts")[1]["refused"],
+                         [{"host": "push.example", "reason": "403 BadJwtToken"}])  # the page says why
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "remove": True}),
                          (200, {"push": False}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [])

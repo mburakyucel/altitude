@@ -1970,9 +1970,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._terminal_get(parts, q)
             if api == "alerts":
                 try:  # without a key the page keeps alerting while it is open, and says so
-                    return self._json({"key": push.public_key()})
+                    return self._json({"key": push.public_key(), "refused": push.refused()})
                 except push.PushFailure as exc:
-                    return self._json({"key": None, "why": str(exc)})
+                    return self._json({"key": None, "why": str(exc), "refused": []})
             if api == "setup" and len(parts) == 3:
                 try:
                     return self._json(project_setup.observe(parts[2]))
