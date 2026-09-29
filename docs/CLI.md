@@ -623,8 +623,11 @@ Every other `alt` command that calls altd sends the machine key from the same st
 from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
 phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
-CA's name, scope, expiry and SHA-256 fingerprint that the phone checks before installing it. It serves nothing else
-and exits when the time is up or on Ctrl-C. See [set up a phone](SETUP.md#set-up-a-phone).
+link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and
+SHA-256 fingerprint that the phone checks before installing it. The link serves only a guided page,
+an iPhone configuration profile holding only the certificate, and the certificate file; it closes
+when the time is up or on Ctrl-C. Settings → Devices → **Add a phone** opens the same kind of link
+from the service. See [set up a phone](SETUP.md#set-up-a-phone).
 
 ## Project lifecycle
 

@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1602,6 +1602,19 @@ class Handler(BaseHTTPRequestHandler):
     def _devices_post(self, action: str, body: dict) -> None:
         if action == "code":
             return self._json(access.issue_code())
+        if action in ("share", "share-close"):
+            denied = self._terminal_denied(json_body=True, subject="Add a phone")
+            if denied:
+                return self._json({"error": denied}, 403)
+            if action == "share-close":
+                if body.keys() - {"link"} or not isinstance(body.get("link"), str):
+                    return self._json({"error": "Name the link to close."}, 400)
+                close_share(body["link"])
+                return self._json({"closed": True})
+            try:
+                return self._json(open_share())
+            except (tls.TLSFailure, OSError) as exc:
+                return self._json({"error": str(exc)}, 409)
         if action != "revoke" or not isinstance(body.get("id"), str):
             return self._json({"error": "unknown api"}, 404)
         try:
@@ -2994,6 +3007,35 @@ def certificate_view() -> dict | None:
     except (tls.TLSFailure, OSError) as exc:
         return {"error": str(exc)}
     return {**authority, "scope": tls.describe_scope(authority["scope"])}
+
+
+_SHARE: tls.Share | None = None
+_SHARE_LOCK = threading.Lock()
+
+
+def open_share() -> dict:
+    """Settings › Devices › Add a phone: one share window of the CA this service serves under, replacing an
+    earlier one, with its QR code and what the phone must match."""
+    global _SHARE
+    found = tls.located({"host": config.HOST, "port": config.PORT, "tls": config.TLS, "tls_dir": config.TLS_DIR})
+    ca = config.TLS_DIR / "ca.crt"
+    with _SHARE_LOCK:
+        if _SHARE is not None:
+            _SHARE.close()
+        tls.phone_address(found)
+        _SHARE = tls.Share(found, ca.read_bytes(), tls.identity(ca))
+        window = _SHARE
+    log("opened a ten-minute certificate share for a phone")
+    return {"link": window.link, "seconds": round(window.remaining()), "name": window.authority["name"],
+            "sha256": window.authority["sha256"],
+            "qr": ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(window.link)]}
+
+
+def close_share(link: str) -> None:
+    """Close the share window at `link` early; a page closing a window another page replaced leaves it open."""
+    with _SHARE_LOCK:
+        if _SHARE is not None and _SHARE.link == link:
+            _SHARE.close()
 
 
 def tls_init(ip: str | None = None) -> dict:

@@ -260,3 +260,100 @@ describe("Projects folder setting", () => {
     expect(saves).toEqual([{ path: "/home/ada" }]);
   });
 });
+
+describe("Add a phone", () => {
+  const FINGERPRINT = Array.from({ length: 32 }, (_, index) => (index + 16).toString(16).toUpperCase()).join(":");
+  function shareFixture(options: { seconds?: number; refuse?: string } = {}) {
+    const posts: { path: string; body: unknown }[] = [];
+    let opened = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === "POST") posts.push({ path, body: JSON.parse(String(init.body)) });
+      if (path === "/api/devices") return json({ devices: [], current: null,
+        certificate: { name: "Altitude local CA", expires: "Sep 25 04:00:00 2036 GMT", sha256: FINGERPRINT, scope: "Names under local." } });
+      if (path === "/api/devices/share") {
+        if (options.refuse) return json({ error: options.refuse }, 409);
+        opened += 1;
+        return json({ link: `http://192.168.1.20:4000${opened}/`, seconds: options.seconds ?? 600, name: "Altitude local CA",
+          sha256: FINGERPRINT, qr: ["1010101", "0101010", "1111111", "0000000", "1010101", "0101010", "1111111"] });
+      }
+      if (path === "/api/devices/share-close") return json({ closed: true });
+      if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+      if (path === "/api/machine") return json({ operator: null, incident_repository: null, altitude_repository: "fixture/altitude", terminal: false });
+      if (path === "/api/voice") return json(saved);
+      return json({}, 404);
+    }));
+    return posts;
+  }
+
+  it("shows the QR code with its time left, and Close or leaving the page closes the window", async () => {
+    const posts = shareFixture();
+    const { user } = renderApp({ route: "/settings/devices" });
+    const card = await screen.findByRole("region", { name: "Certificate" });
+    await user.click(within(card).getByRole("button", { name: "Add a phone" }));
+    expect(await within(card).findByRole("img", { name: "QR code for http://192.168.1.20:40001/" })).toBeInTheDocument();
+    expect(within(card).getByRole("timer")).toHaveTextContent(/^Closes in (10:00|9:5\d)$/);
+    expect(within(card).getByText("10 11 12 13 14 15 16 17", { exact: false })).toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Close" }));
+    expect(await within(card).findByRole("status")).toHaveTextContent("The link is closed.");
+    await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40001/" } }));
+    await user.click(within(card).getByRole("button", { name: "Add a phone" }));
+    await within(card).findByRole("img", { name: "QR code for http://192.168.1.20:40002/" });
+    await user.click(screen.getByRole("link", { name: "‹ Settings" }));
+    await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40002/" } }));
+  });
+
+  it("shows the window closed when its time runs out, as the service closes it itself", async () => {
+    const posts = shareFixture({ seconds: 1 });
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await screen.findByRole("img", { name: /^QR code/ });
+    expect(await screen.findByText("The link is closed.", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /^QR code/ })).toBeNull();
+    expect(posts.filter((post) => post.path === "/api/devices/share-close")).toHaveLength(0);
+  });
+
+  it("keeps the QR code and a retryable Close when the service could not close the link", async () => {
+    const posts = shareFixture();
+    const original = globalThis.fetch;
+    let refuse = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/devices/share-close" && refuse) return json({ error: "Could not reach Altitude." }, 503);
+      return original(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await user.click(await screen.findByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The link is still open: Could not reach Altitude.");
+    expect(screen.getByRole("img", { name: /^QR code/ })).toBeInTheDocument();
+    refuse = false;
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(await screen.findByText("The link is closed.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(posts.filter((post) => post.path === "/api/devices/share-close")).toHaveLength(1);
+  });
+
+  it("closes a window that finishes opening after the page was left", async () => {
+    const posts = shareFixture();
+    const original = globalThis.fetch;
+    let answer: () => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/devices/share") await new Promise<void>((resolve) => { answer = resolve; });
+      return original(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await screen.findByRole("button", { name: "Opening…" });
+    await user.click(screen.getByRole("link", { name: "‹ Settings" }));
+    answer();
+    await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40001/" } }));
+  });
+
+  it("shows why the service cannot offer the certificate and keeps the button", async () => {
+    shareFixture({ refuse: "The Altitude service is configured for 127.0.0.1, which only this computer can open." });
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("configured for 127.0.0.1");
+    expect(screen.getByRole("button", { name: "Add a phone" })).toBeEnabled();
+  });
+});

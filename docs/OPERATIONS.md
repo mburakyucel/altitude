@@ -407,8 +407,9 @@ browser fixtures do not establish it.
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a
 secure context, so the phone must trust the local CA used by Altitude's certificate. Follow the
-[phone setup](SETUP.md#set-up-a-phone): `alt tls-share` on the computer running Altitude offers the
-certificate for ten minutes, and the phone checks its name and SHA-256 before installing. The microphone button remains a typing-only hint on plain
+[phone setup](SETUP.md#set-up-a-phone): **Add a phone** in Settings → Devices on a device that
+already trusts Altitude, or `alt tls-share` on the computer running Altitude, shows a QR code that
+offers the certificate for ten minutes, and the phone checks its name and SHA-256 before installing. The microphone button remains a typing-only hint on plain
 HTTP or an unsupported browser. Safari's Share → Add to Home Screen gives Altitude a Home Screen
 icon with its mark; decision alerts on iPhone need Altitude opened from there.
 
@@ -416,8 +417,8 @@ For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-ne
 On the next start Altitude reissues its server certificate for that address under the same CA, so
 trusted devices need no new step. A generated CA refuses public addresses and names.
 `ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
-Install the CA on the phone with `alt tls-share`, which reads these settings from the running service
-rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
+Install the CA on the phone with **Add a phone** or `alt tls-share`, which reads these settings from
+the running service rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
 private tunnel and any firewall rule for your chosen interface/port separately, and bind Altitude to
 that interface directly. A forwarder on this machine in front of Altitude (an SSH tunnel, a reverse
 proxy, a container's published port) hides which process connects, so the terminal cannot tell an
