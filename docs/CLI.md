@@ -1025,6 +1025,10 @@ intent, not evidence that every helper used the requested level.
 For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
 `daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the
 worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.
+When altd claims a resume, the request's reason joins the task conversation once as a message from its
+actor (L3's folds as "Resumed the task") and reaches the resumed owner after the pending inbox rows,
+marked as the resume reason with its actor and time. A claim that fails before launch returns it to the
+inbox with the rest of the batch; a resume without a request, such as a message wake, adds nothing.
 A repeated reason after a genuine later lifecycle creates a new request against that lifecycle's identity.
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses

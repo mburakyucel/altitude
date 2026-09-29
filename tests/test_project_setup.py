@@ -61,7 +61,11 @@ class ProjectSetup(AltitudeCase):
                 self.assertFalse(current.get("dispatching"))
                 self.assertFalse(current.get("fault"))
                 self.assertFalse(current.get("resume_failed"))
-                self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
+                # The claimed resume reason returns to the inbox with the batch and is recorded once.
+                self.assertEqual([row["id"] for row in T.pending(self.project, slug)],
+                                 [first["id"], request["request"]["id"]])
+                self.assertEqual(sum(row["id"] == request["request"]["id"]
+                                     for row in T.task_messages(self.project, slug)), 1)
             self.assertEqual(dispatch.pending_task_operations(self.project), [slug])
             self.assertEqual(dispatch.resume_due(self.project), [])
             second = T.message(self.project, slug, "burak", "Also keep my draft", by="burak")
@@ -71,7 +75,9 @@ class ProjectSetup(AltitudeCase):
 
         def launch(_engine, _name, session_id, prompt, **_kwargs):
             self.assertEqual(session_id, "saved-session")
-            self.assertLess(prompt.index(first["text"]), prompt.index(second["text"]))
+            self.assertLess(prompt.index(first["text"]), prompt.index("Continue authorized work"))
+            self.assertLess(prompt.index("Continue authorized work"), prompt.index(second["text"]))
+            self.assertEqual(prompt.count("Continue authorized work"), 1)
             self.assertTrue(dispatch.run_task_operation(self.project, slug)["already_resuming"])
             return {"returncode": 0, "agent": {"id": "replacement", "sessionId": session_id, "input_delivered": True}}
 
@@ -173,7 +179,7 @@ class ProjectSetup(AltitudeCase):
         task, worktree = self.blocked_owner()
         slug = task["slug"]
         first = T.message(self.project, slug, "burak", "Continue", by="burak")
-        dispatch.request_task_operation(self.project, slug, "resume", "Authorized resume", actor="l3")
+        authorized = dispatch.request_task_operation(self.project, slug, "resume", "Authorized resume", actor="l3")
         with setup.operation_lock(self.project):
             self.assertTrue(dispatch.run_task_operation(self.project, slug)["held"])
         custom = self.repo / ".git/hooks/pre-commit"
@@ -186,7 +192,8 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual(current["daemon_request"]["status"], "failed")
         self.assertFalse(current.get("resume_claim"))
         self.assertEqual(dispatch.resume_due(self.project), [])
-        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
+        pending = [first["id"], authorized["request"]["id"]]
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], pending)
 
         custom.unlink()
         setup.ensure_guards(self.project, slug=slug)
@@ -200,7 +207,8 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual(current["daemon_request"]["status"], "failed")
         self.assertFalse(current.get("resume_claim"))
         self.assertEqual(dispatch.resume_due(self.project), [])
-        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [first["id"]])
+        repaired = S.load_task(self.project, slug)["daemon_request"]["id"]
+        self.assertEqual([row["id"] for row in T.pending(self.project, slug)], pending + [repaired])
 
     def test_fresh_setup_records_real_pending_running_and_verified_installation(self):
         requested = setup.request(self.project, "repair", actor="operator")

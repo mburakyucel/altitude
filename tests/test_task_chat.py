@@ -277,6 +277,35 @@ class TestTaskConversation(ChatCase):
         self.resume(seen)
         self.assertEqual(seen["prompt"], "Continue from your progress file.")
 
+    def test_resume_reason_reaches_the_faulted_owner_once_after_its_inbox(self):
+        # I-20260927-193716: the resumed owner saw only an earlier non-waking note and re-faulted.
+        self.block("Sandbox refused the container probe.")
+        task = S.load_task(self.project, self.slug)
+        task["fault"] = "worker"
+        S.save_task(self.project, task)
+        earlier = T.message(self.project, self.slug, "l3", "I will verify the fix before resuming.")
+        steering = T.message(self.project, self.slug, "burak", "Keep the probe finite.")
+        request = dispatch.request_task_operation(self.project, self.slug, "resume",
+                                                  "Fix merged and the probe now passes locally.", actor="l3")["request"]
+        seen = {}
+        self.quiet_launch()
+        self.patch(engines, "resume_l2", side_effect=lambda _engine, _name, session_id, prompt, **_kw: (
+            seen.update(prompt=prompt) or {"returncode": 0, "agent": {"id": "agent-new", "sessionId": session_id}}))
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "done")
+        reason = T.task_messages(self.project, self.slug)[-1]
+        self.assertEqual((reason["id"], reason["role"], reason["summary"], reason["text"]),
+                         (request["id"], "l3", "Resumed the task", "Fix merged and the probe now passes locally."))
+        self.assertEqual(seen["prompt"], T.render_inbox([earlier, steering, reason]))
+        self.assertIn(f"Resumed by L3 at {reason['at']} with this reason (message id {request['id']}):\n"
+                      "Fix merged and the probe now passes locally.", seen["prompt"])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+
+        self.block()
+        later = T.message(self.project, self.slug, "burak", "One more detail.")
+        self.resume(seen, worker="agent-later")
+        self.assertEqual(seen["prompt"], T.render_inbox([later]))
+        self.assertEqual(sum(row["id"] == request["id"] for row in T.task_messages(self.project, self.slug)), 1)
+
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")
         self.setenv("ALTITUDE_PROJECT", self.project)
