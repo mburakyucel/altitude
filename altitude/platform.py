@@ -152,9 +152,13 @@ def job_env(env: dict) -> dict:
 
 
 def job_control_paths() -> tuple[Path, ...]:
-    """Local user-manager endpoints a confined worker must not use to launch an unconfined job."""
+    """Deny the session bus and manager runtime, including its direct private socket.
+
+    Issue #543: native file masks reuse a descriptor consumed by the first bind-data operation.
+    Masking the manager directory uses a directory mount and keeps both control sockets denied.
+    """
     runtime = Path(f"/run/user/{os.getuid()}")
-    return runtime / "bus", runtime / "systemd/private"
+    return runtime / "bus", runtime / "systemd"
 
 
 def _scrub(env: dict[str, str]) -> list[str]:

@@ -899,7 +899,8 @@ on this single-account host can reach; the task record and the per-command log a
 not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
 hooks for inbox delivery and telemetry. Codex uses the native `altitude-task` permission profile, extending
 the workspace policy to retain protected configuration paths and temporary writes. Its explicit roots are
-the task worktree, its Git directories and Altitude state; both user-manager sockets are denied. The same
+the task worktree, its Git directories and Altitude state. The session bus and manager runtime directory
+(including its direct private socket) are denied; other runtime-directory paths keep their existing policy. The same
 generated profile supplies provider-free confinement checks. It stays inside the same unit boundary and
 uses the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a

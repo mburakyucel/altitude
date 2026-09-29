@@ -72,6 +72,20 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(parsed["permissions"]["altitude-task"]["workspace_roots"],
                          {str(config.ROOT.resolve()): True})
 
+    def test_control_socket_denials_cover_both_endpoints_without_two_file_masks(self):
+        runtime = Path(f"/run/user/{os.getuid()}")
+        endpoints = (runtime / "bus", runtime / "systemd/private")
+        with mock.patch.object(config, "project_path", return_value=self.repo):
+            profiles = [engines.codex_sandbox(self.worktree),
+                        engines.codex_l3_permissions(self.worktree, project=PROJECT)]
+        for settings in profiles:
+            parsed = tomllib.loads("\n".join(settings))
+            rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
+            denied = {Path(path) for path, access in rules.items() if access == "deny"}
+            self.assertEqual(denied, {runtime / "bus", runtime / "systemd"})
+            self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
+            self.assertFalse(any((runtime / "unrelated").is_relative_to(root) for root in denied))
+
     def _launch(self, *, thread="thr-1", actual_settings=False, **kw):
         procs = []
 
