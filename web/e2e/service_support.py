@@ -8,7 +8,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.support import SUITE  # imports the offline guards before application paths freeze
-from altitude import access, config, engines, installation, server, terminal
+from altitude import access, config, engines, installation, platform, server, terminal
 
 
 def configure(*, expected_error=lambda _message: False):
@@ -18,6 +18,9 @@ def configure(*, expected_error=lambda _message: False):
     # Host voice on every platform, so Settings starts from the same choice; voice journeys overlay
     # /api/voice and the live recording (hostVoice.ts), so no speech model is set up or run.
     (config.ROOT / "settings.json").write_text(json.dumps({"voice": "host"}) + "\n")
+    # Whether this computer can run voice is a host capability: pinned to the Linux runtime so every host renders
+    # the same composer and Settings.
+    platform.speech_runtime = lambda: (f"linux-x86_64-cp{sys.version_info.major}{sys.version_info.minor}", "")
     # server.spawn and Handler catch exceptions: forwarding tracebacks prevents false green.
     # A scenario may allow a specifically asserted existing failure; all others fail teardown.
     server.log = lambda message: print(message, file=sys.stderr) if (
