@@ -11,7 +11,7 @@ from unittest import mock
 from tests.support import AltitudeCase, REPO
 from tests import test_installation
 from altitude import installation
-from scripts.installation_lifecycle import Lifecycle, failed_archive
+from scripts.installation_lifecycle import Lifecycle, failed_archive, following
 
 
 class TestLifecycleHarness(AltitudeCase):
@@ -50,8 +50,20 @@ class TestLifecycleHarness(AltitudeCase):
         results.mkdir()
         harness = Lifecycle(artifacts, artifacts, results, "f" * 40)
         harness.home = self.tmp
-        with self.assertRaisesRegex(AssertionError, "differs from selected source"):
-            harness.archive(artifacts, "mismatched")
+        with self.assertRaisesRegex(AssertionError, "differs from its selected source"):
+            harness.archive(artifacts, "candidate")
+        # A published baseline names its own commit; the candidate still has to match the selected source.
+        commit = installation.extract(archive, checksum, self.tmp / "inspected")["commit"]
+        published = Lifecycle(artifacts, artifacts, results, f"{commit}..{'f' * 40}")
+        published.home = self.tmp
+        self.assertEqual(published.archive(artifacts, "baseline")[3]["commit"], commit)
+        self.assertIn("Published-release baseline", published.result["limits"][0])
+        with self.assertRaisesRegex(AssertionError, "candidate archive commit differs"):
+            published.archive(artifacts, "candidate")
+
+    def test_injected_failure_is_always_newer_than_the_candidate(self):
+        self.assertEqual([following(v) for v in ("v0.0.0-rc.2", "v0.2.0-rc.1", "v0.1.3")],
+                         ["v0.0.0-rc.3", "v0.2.0-rc.2", "v0.1.4-rc.1"])
 
     def test_non_disposable_account_refuses_before_any_application_or_service_command(self):
         results = self.tmp / "results"
