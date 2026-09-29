@@ -45,10 +45,9 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with a systemd user manager, or macOS 15 or newer on Apple silicon from the first
-release that includes the macOS runtime (v0.1.0-rc.1 does not), with Python 3.12 or newer, one
-command installs a published release as the account that will use Altitude. The preview has no
-stable release yet, so install the newest release candidate from its own tag:
+On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs a
+published release as the account that will use Altitude. The preview has no stable release yet, so
+install the newest release candidate from its own tag:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
@@ -59,9 +58,8 @@ installation fails at service start. Its failed activation keeps configuration, 
 data; install `v0.1.0-rc.2` over it with the command above.
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
-when something is missing: Linux x86_64 or a Mac with Apple silicon on macOS 15 or newer, not root,
-Python 3.12 or newer, `curl`, a SHA-256 tool, `openssl` (OpenSSL 3 on a Mac) and `systemctl --user` on
-Linux or a logged-in `gui` launchd domain on a Mac. It then downloads that release's archive and `install.py`, checks
+when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
+`openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
@@ -82,6 +80,11 @@ curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
+
+On macOS the command stops before downloading anything and reports the macOS version, chip and
+Python it found: macOS installation waits for native acceptance ([#551](https://github.com/mburakyucel/altitude/issues/551)).
+A Mac runs Altitude from a source checkout instead: build the web app, run `bin/alt tls-init`, then
+`make install-service`, which installs a LaunchAgent of your login ([operations](OPERATIONS.md)).
 
 The same installer runs by hand from the release files, for example offline or with a private
 archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
@@ -172,7 +175,8 @@ sooner. A firewall on that computer can block the link's port; then use another 
 It stops with the reason when the service is not installed or not running, serves plain HTTP,
 listens only on loopback (`ALTITUDE_HOST` must be the private-network address the phone opens,
 which takes effect when the service restarts), does not answer, or answers without proving that
-certificate. It needs the Linux user service; the native macOS service is not available yet.
+certificate. It reads the Linux user service or, on a Mac, the source service's LaunchAgent, whose address
+comes from `ALTITUDE_HOST` when it is installed: `ALTITUDE_HOST=<address> make install-service`.
 
 On an iPhone or iPad:
 

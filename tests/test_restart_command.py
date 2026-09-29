@@ -54,16 +54,15 @@ class TestRestartCommand(AltitudeCase):
             staging.mkdir(); (staging / "version").write_text("new")
             attempts = 0
 
-            def run(command, **_kwargs):
+            def restart_unit():
                 nonlocal attempts
                 attempts += 1
                 if attempts == 1:
                     raise restart.RestartError("simulated restart failure")
-                return mock.Mock(returncode=0)
 
             with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", dist), \
                     mock.patch.object(restart, "unit_properties", return_value={"MainPID": "10"}), \
-                    mock.patch.object(restart, "run", side_effect=run), \
+                    mock.patch.object(restart, "restart_unit", side_effect=restart_unit), \
                     mock.patch.object(restart, "diagnostics"):
                 with self.assertRaises(restart.RestartError):
                     restart.publish_and_restart(staging)

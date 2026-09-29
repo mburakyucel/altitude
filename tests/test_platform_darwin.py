@@ -4,6 +4,7 @@ import ctypes.util
 import json
 import os
 import plistlib
+import shlex
 import signal
 import subprocess
 import sys
@@ -157,16 +158,29 @@ class Service(DarwinCase):
         self.assertEqual(platform.job_logs_hint("altitude"), str(platform.logs_dir() / "altd.log"))
         self.assertEqual(platform.job_logs_hint("altitude-restart-1"), str(platform.logs_dir() / "altitude-restart-1.log"))
 
-    def test_the_source_checkout_service_stays_on_linux(self):
+    def test_the_source_service_restarts_itself_through_a_detached_job_and_keeps_tls_preparation_on_linux(self):
         from altitude import config, server, source_tls
         self.assertFalse(platform.source_service())
-        self.patch(config, "RELEASE", None)
-        with self.assertRaisesRegex(RuntimeError, "restart the source server by hand"):
-            server.restart_service()
         with self.assertRaisesRegex(RuntimeError, "Linux source service"):
             source_tls.prepare(self.tmp)
         with mock.patch.object(platform.sys, "platform", "linux"):
             self.assertTrue(platform.source_service())
+        unit = server._request_restart_unit()["unit"]
+        argv = next(command for command in self.launchd.commands if "launch" in command)
+        spec = json.loads(argv[argv.index("launch") + 1])
+        self.assertEqual((spec["label"], spec["mode"]), (f"dev.altitude.job.{unit}", "detached"))
+        self.assertEqual(spec["command"][-1], str(config.SOURCE / "scripts" / "restart_altitude.py"))
+
+    def test_a_restart_reads_the_agents_directory_environment_and_state(self):
+        path = platform.service_path()
+        path.parent.mkdir(parents=True)
+        path.write_bytes(plistlib.dumps({"Label": platform.LABEL, "WorkingDirectory": "/Users/x/Projects/altitude",
+                                         "EnvironmentVariables": {"ALTITUDE_PORT": "8890", "PATH": "/a b:/bin"}}))
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL, path=path)
+        unit = platform.service_unit()
+        self.assertEqual((unit["WorkingDirectory"], unit["ActiveState"], unit["MainPID"]),
+                         ("/Users/x/Projects/altitude", "active", "4242"))
+        self.assertEqual(shlex.split(unit["Environment"]), ["ALTITUDE_PORT=8890", "PATH=/a b:/bin"])
 
     def test_service_evidence_reports_state_exit_and_coalition_memory(self):
         self.patch(platform, "_members", return_value=[(10, "1"), (11, "2")])

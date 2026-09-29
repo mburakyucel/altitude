@@ -234,7 +234,8 @@ processes have not ended does, until they have gone. The seam
 reads processes and sockets through libproc and sysctl, finds Homebrew's libraries, and replaces
 `RLIMIT_AS`, which macOS rejects, with a watcher that kills a command past its memory footprint. The L3
 service-inspection shims remain Linux-specific outside it, and `platform.source_service()` keeps the
-source-checkout TLS setup and self-restart to Linux, refusing them on macOS with an explicit message;
+source-checkout TLS drop-in to Linux, refusing it on macOS with an explicit message (a source service restarts
+itself on both hosts through the seam);
 `tests/test_project_layers.py` keeps that count from rising. A pending installation
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance on a spare account
@@ -336,7 +337,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control | Isolation and landing |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
 | Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
@@ -344,7 +345,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
-| Source-checkout deployment (TLS drop-in, self-restart) | supported | refused with an explicit message; installed releases update the same way on both | Operations |
+| Source-checkout deployment | systemd unit (`make install-service`); TLS drop-in; self-restart | LaunchAgent (`make install-service`); self-restart through the seam; TLS drop-in refused with an explicit message | Operations |
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
 
 Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by

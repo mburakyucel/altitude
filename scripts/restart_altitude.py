@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import access, config, dispatch, git_policy, incidents, state as S  # noqa: E402
+from altitude import access, config, dispatch, git_policy, incidents, platform, state as S  # noqa: E402
 
 
 ROOT = config.REPO
@@ -44,12 +44,17 @@ def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None,
 
 
 def unit_properties() -> dict[str, str]:
-    result = run([
-        "systemctl", "--user", "show", SERVICE,
-        "--property=WorkingDirectory", "--property=Environment",
-        "--property=MainPID", "--property=ActiveState", "--property=SubState",
-    ], capture=True)
-    return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    try:
+        return platform.service_unit()
+    except RuntimeError as exc:
+        raise RestartError(str(exc)) from exc
+
+
+def restart_unit() -> None:
+    try:
+        platform.control("restart")
+    except (RuntimeError, ValueError) as exc:
+        raise RestartError(f"restarting {SERVICE} failed: {exc}") from exc
 
 
 def unit_environment() -> dict[str, str]:
@@ -73,7 +78,7 @@ def require_deployed_checkout() -> None:
             f"ALTITUDE_HOME points to {config.ROOT}, but {SERVICE} uses {service_home}; refusing the wrong state"
         )
     try:
-        git_policy.fetch_and_require_exact_base(ROOT)
+        git_policy.fetch_and_require_exact_base(ROOT, config.SOURCE_BRANCH)
     except git_policy.GitPolicyError as exc:
         raise RestartError(str(exc)) from exc
 
@@ -161,7 +166,7 @@ def wait_healthy(old_pid: int, timeout: int = 45) -> None:
             pid = int(props.get("MainPID", "0") or 0)
             if props.get("ActiveState") != "active" or not pid or (old_pid and pid == old_pid):
                 raise RestartError(
-                    f"systemd is {props.get('ActiveState')}/{props.get('SubState')} with PID {pid}"
+                    f"the service is {props.get('ActiveState')}/{props.get('SubState')} with PID {pid}"
                 )
             overview = json.loads(fetch("/api/overview"))
             if not isinstance(overview.get("projects"), list):
@@ -177,8 +182,10 @@ def wait_healthy(old_pid: int, timeout: int = 45) -> None:
 
 
 def diagnostics() -> None:
-    subprocess.run(["systemctl", "--user", "status", SERVICE, "--no-pager"], check=False)
-    subprocess.run(["journalctl", "--user", "-u", SERVICE, "-n", "30", "--no-pager"], check=False)
+    try:
+        print(platform.logs(), file=sys.stderr)
+    except RuntimeError as exc:
+        print(f"The service log is unavailable: {exc}", file=sys.stderr)
 
 
 def publish_and_restart(staging: Path) -> None:
@@ -193,7 +200,7 @@ def publish_and_restart(staging: Path) -> None:
         DIST.rename(backup)
     try:
         staging.rename(DIST)
-        run(["systemctl", "--user", "restart", SERVICE])
+        restart_unit()
         wait_healthy(old_pid)
     except Exception as exc:
         if DIST.exists():
@@ -201,7 +208,7 @@ def publish_and_restart(staging: Path) -> None:
         if had_previous and backup.exists():
             backup.rename(DIST)
         try:
-            run(["systemctl", "--user", "restart", SERVICE])
+            restart_unit()
         except RestartError:
             pass
         diagnostics()

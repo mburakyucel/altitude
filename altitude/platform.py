@@ -51,8 +51,8 @@ def require_supported() -> None:
 
 
 def source_service() -> bool:
-    """Whether a source-checkout service can prepare its TLS drop-in and restart itself: systemd only. Installed
-    releases update the same way on both hosts."""
+    """Whether a source-checkout service can prepare its TLS drop-in: systemd only. Source self-restart and
+    installed releases' updates work the same way on both hosts."""
     return not _darwin()
 
 
@@ -85,6 +85,22 @@ def status() -> dict[str, str]:
             "active", "inactive", "failed", "activating", "deactivating", "reloading"):
         raise RuntimeError("Cannot determine whether the Altitude user service is running")
     return values
+
+
+def service_unit() -> dict[str, str]:
+    """The service's definition and state as a restart checks them, in systemd's names: WorkingDirectory,
+    Environment (quoted KEY=value words), MainPID, ActiveState and SubState."""
+    if _darwin():
+        try:
+            agent = plistlib.loads(service_path().read_bytes())
+        except (OSError, plistlib.InvalidFileException, ValueError):
+            agent = {}
+        environment = agent.get("EnvironmentVariables") or {}
+        return {**_launchd_status(), "WorkingDirectory": agent.get("WorkingDirectory", ""),
+                "Environment": " ".join(shlex.quote(f"{key}={value}") for key, value in environment.items())}
+    result = run("systemctl", "--user", "show", SERVICE, "--property=WorkingDirectory", "--property=Environment",
+                 "--property=MainPID", "--property=ActiveState", "--property=SubState")
+    return dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
 
 
 #: The settings that say where the service listens and which HTTPS identity it serves.

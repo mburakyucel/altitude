@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
+  rights: `make install-service` makes it a background service of your login (it starts when you log in and
+  keeps running with the screen locked). Each agent job runs as its own background job that Stop ends
+  completely, and Claude Code jobs may write only in their task's worktree and their own state. `install.sh`
+  still stops on macOS: native acceptance is pending, so macOS is not yet a supported platform.
+
 ## v0.1.0-rc.2 — 2026-09-29
 
 Second release candidate of the early preview, for Linux x86_64 with a systemd user service
@@ -59,13 +65,6 @@ which keeps configuration, TLS identity and data. A failed activation restores t
   the merge gate. A held PR closed without merging stops asking for merge review.
 - A resume's reason reaches the resumed owner, and a failed fetch of main raises a self-deploy fault
   only after five minutes without a successful fetch.
-
-- Macs with Apple silicon on macOS 15 or newer install with the same command, without administrator
-  rights. Altitude runs as a background service of your login (it starts when you log in and keeps
-  running with the screen locked), each agent job runs as its own background job that Stop ends
-  completely, and Claude Code jobs may write only in their task's worktree and their own state. The
-  installer asks for Homebrew's OpenSSL 3 when macOS's own openssl is on PATH. Native acceptance on a
-  spare Mac account is still pending, so macOS is not yet a supported platform.
 
 ## v0.1.0-rc.1 — 2026-09-28
 
