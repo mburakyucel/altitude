@@ -339,8 +339,9 @@ function AddPhone() {
         return;
       }
       live.current.link = share.link;
-      setNow(Date.now());
-      setState({ status: "open", share, until: Date.now() + share.seconds * 1000 });
+      const opened = Date.now();
+      setNow(opened);
+      setState({ status: "open", share, until: opened + share.seconds * 1000 });
     } catch (error) {
       if (live.current.mounted) setState({ status: "failed", error: error as Error });
     }
