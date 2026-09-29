@@ -499,7 +499,7 @@ def main(argv=None) -> None:
         import urllib.request
         body = "" if setup_command or machine_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
@@ -515,29 +515,45 @@ def main(argv=None) -> None:
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                          headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
-        try:
-            context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
-            with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
-                result = json.load(response)
-                if review_run and not result.get("ok"):
-                    sys.exit(result.get("error", "Review execution failed"))
-                if terminal_read:
-                    out(result) if args.as_json else print(_terminal_text(result))
-                    return
-                if machine_run:
-                    sys.stdout.write(result["output"])
-                    print(f"[altitude] {result['unit']}: exit {result['exit']}"
-                          + (f"; {result['error']}" if result.get("error") else "")
-                          + ("; output truncated, read the log" if result.get("output_truncated") else "")
-                          + f"; log {result['log']}")
-                    sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
-                out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
-            sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
-        except OSError as exc:
-            sys.exit(f"alt {c}: altd unavailable: {exc}")
+        import http.client
+        import time
+        context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
+        # A restart can end a machine command's connection while its unit runs on; asking again with the same
+        # request waits for that command's result instead of running it again.
+        reconnect_until, reconnecting = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 120, False
+        while True:
+            try:
+                with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else 130) as response:
+                    result = json.load(response)
+                    if review_run and not result.get("ok"):
+                        sys.exit(result.get("error", "Review execution failed"))
+                    if terminal_read:
+                        out(result) if args.as_json else print(_terminal_text(result))
+                        return
+                    if machine_run:
+                        sys.stdout.write(result["output"])
+                        print(f"[altitude] {result['unit']}: exit {result['exit']}"
+                              + (f"; {result['error']}" if result.get("error") else "")
+                              + ("; output truncated, read the log" if result.get("output_truncated") else "")
+                              + f"; log {result['log']}")
+                        sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
+                    out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
+                sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                # urllib reports a failure to connect or send as URLError: altd never received that request.
+                if machine_run and (reconnecting or not isinstance(exc, urllib.error.URLError)) \
+                        and time.monotonic() < reconnect_until:
+                    if not reconnecting:
+                        print(f"[altitude] the connection to altd ended ({exc}); waiting for this command's result",
+                              file=sys.stderr)
+                    reconnecting = True
+                    time.sleep(2)
+                    continue
+                sys.exit(f"alt {c}: altd unavailable: {exc}")
+            break
         return
     if c in ("install", "update", "recover", "uninstall", "doctor", "service"):
         from altitude import installation

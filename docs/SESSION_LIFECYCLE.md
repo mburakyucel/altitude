@@ -1027,12 +1027,12 @@ machine access for one purpose; the owner resolves the answer, and L3 or the ope
 (`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision. `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
-carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit appends output
-to the task's `machine.log` and writes the exit status itself; altd completes the row in `machine.jsonl` and
-records the task event and the project log entry. A grant binds to one task attempt, survives resume, and is
+carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
+and exit status to the task folder itself; altd completes the row in `machine.jsonl` and records the task event
+and the project log entry. A grant binds to one task attempt, survives resume, and is
 revoked by the owner, L3 or the operator; a non-running task, a stale attempt, an earlier attempt's grant or a
-missing grant refuses with the reason. A command that restarts Altitude ends the CLI connection while the unit
-and its record continue; the owner verifies with a fresh command afterwards. The door is altd's
+missing grant refuses with the reason. When Altitude restarts during a command, the unit continues, the next
+altd completes its row from the saved exit status, and the CLI reconnects and prints that command's result. The door is altd's
 operator-trusted HTTP surface, reachable by every worker on this single-account host; altd checks the task
 record, not the calling process.
 
