@@ -930,6 +930,8 @@ merge on main, and replays only follow-up work onto current main before opening 
 The task retains every delivery; no-work retries open nothing, including work already on main.
 Each PR needs its own candidate checks, review and applicable hold release. Prior PR-specific
 approval does not release the next PR's hold. See [continuation commands and recovery](CLI.md#continue-after-a-pr-merges).
+A task PR closed without merging is likewise followed by a fresh PR from the same task on its next
+`alt land`; the closed PR is never reopened or edited.
 
 The attempt, engine, launch model, provider conversation and durable messages do not change because
 of a merge. Resume still uses the existing claim and Git isolation gates. A new resume claim discards
