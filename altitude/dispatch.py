@@ -1564,6 +1564,8 @@ def pull_after_done(project: str, task: dict) -> list[str]:
     """Fast-forward the deployment checkout after a task lands; a checkout it may not move is a fault, not a silent skip."""
     try:
         return self_deploy_fast_forward(project, task.get("slug"))
+    except git_policy.FetchError as e:
+        return [f"self-deploy fetch failed; the tick retries: {str(e)[:160]}"]
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         from . import incidents
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
