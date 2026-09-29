@@ -10,6 +10,8 @@ const RECONNECT_MS = 2_000;
 const RESIZE_MS = 100;
 /** The most one input request carries (altd refuses more than 64 KiB): a long paste goes in pieces, in order. */
 const INPUT_CHUNK = 16_384;
+/** A released swipe keeps scrolling, slowing by this share each frame, like the page's own scrolling. */
+const FLING_DECAY = 0.95;
 /** A chat command waits until the screen has drawn output and then stayed quiet this long: the prompt. */
 const SETTLE_MS = 300;
 /** A chat command not typed this long after its tap (no prompt yet, output that never settles, a slow check) is refused. */
@@ -169,6 +171,10 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         setCtrl(false);
       }
       pending += data;
+      // Input returns the screen to the prompt: xterm does so for typing, not for the key row. Only when scrolled
+      // back: at the bottom, xterm's viewport can still be a frame behind new output and would scroll back to it.
+      const { viewportY, baseY } = term.buffer.active;
+      if (viewportY !== baseY) term.scrollToBottom();
       void flush();
     };
     focus.current = () => term.focus();
@@ -184,6 +190,56 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     };
     host.current!.addEventListener("paste", unlatch, true);
     const input = term.onData((data) => send.current(data));
+
+    // xterm's viewport scrolls only by wheel, so a finger drag over the screen scrolls the scrollback here, as
+    // content scrolls anywhere else, and a released swipe flings on. It reaches only the display: no key or
+    // focus, so the soft keyboard stays as it is. Scrolled back, new output keeps the view; at the bottom it follows.
+    let drag: { y: number; at: number; speed: number } | null = null;
+    let rest = 0;
+    let fling = 0;
+    const scroll = (pixels: number): boolean => {
+      const cell = term.element!.querySelector(".xterm-screen")!.clientHeight / term.rows;
+      const lines = Math.trunc((rest + pixels) / cell);
+      rest += pixels - lines * cell;
+      const before = term.buffer.active.viewportY;
+      if (lines) term.scrollLines(-lines);
+      return !lines || term.buffer.active.viewportY !== before;
+    };
+    const touchStart = (event: TouchEvent) => {
+      cancelAnimationFrame(fling);
+      rest = 0;
+      drag = event.touches.length === 1 ? { y: event.touches[0]!.clientY, at: event.timeStamp, speed: 0 } : null;
+    };
+    const touchMove = (event: TouchEvent) => {
+      if (!drag || event.touches.length !== 1) return;
+      event.preventDefault();
+      const y = event.touches[0]!.clientY;
+      const elapsed = Math.max(event.timeStamp - drag.at, 1);
+      drag.speed = 0.8 * ((y - drag.y) / elapsed) + 0.2 * drag.speed;
+      scroll(y - drag.y);
+      drag.y = y;
+      drag.at = event.timeStamp;
+    };
+    const touchEnd = (event: TouchEvent) => {
+      if (!drag || event.touches.length) return;
+      // A finger that paused before lifting, or a touch the browser took over, stops where it is.
+      let speed = event.type === "touchend" && event.timeStamp - drag.at < 100 ? drag.speed : 0;
+      drag = null;
+      let last = performance.now();
+      const step = (now: number) => {
+        const elapsed = Math.max(now - last, 0);
+        speed *= FLING_DECAY ** (elapsed / 16);
+        if (Math.abs(speed) < 0.05 || !scroll(speed * elapsed)) return;
+        last = now;
+        fling = requestAnimationFrame(step);
+      };
+      fling = requestAnimationFrame(step);
+    };
+    const screen = host.current!;
+    screen.addEventListener("touchstart", touchStart, { passive: true });
+    screen.addEventListener("touchmove", touchMove, { passive: false });
+    screen.addEventListener("touchend", touchEnd);
+    screen.addEventListener("touchcancel", touchEnd);
 
     const size = () => {
       clearTimeout(resize);
@@ -202,7 +258,12 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       clearTimeout(retry);
       clearTimeout(resize);
       observer.disconnect();
-      host.current?.removeEventListener("paste", unlatch, true);
+      cancelAnimationFrame(fling);
+      screen.removeEventListener("paste", unlatch, true);
+      screen.removeEventListener("touchstart", touchStart);
+      screen.removeEventListener("touchmove", touchMove);
+      screen.removeEventListener("touchend", touchEnd);
+      screen.removeEventListener("touchcancel", touchEnd);
       source?.close();
       input.dispose();
       term.dispose();

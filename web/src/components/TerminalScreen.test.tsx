@@ -16,6 +16,7 @@ vi.mock("@xterm/xterm", () => ({
     dispose() {}
     hasSelection() { return false; }
     attachCustomKeyEventHandler() {}
+    buffer = { active: { viewportY: 0, baseY: 0 } };
     onData(listener: (data: string) => void) { term.data = listener; return { dispose() {} }; }
     paste(text: string) { term.data?.(text); }
   },

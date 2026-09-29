@@ -260,3 +260,140 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
   // An overview read still in flight at teardown would find its response disposed.
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
+
+/**
+ * A finger on the terminal screen: Chromium's touch input (real dispatch, hit testing and native gesture
+ * handling) or, in WebKit, which has neither touch drag input nor constructible touch events here, events
+ * carrying the finger's touches dispatched on the screen itself.
+ */
+async function finger(page: Page, x: number, y: number) {
+  const chromium = page.context().browser()?.browserType().name() === "chromium";
+  const input = chromium ? await page.context().newCDPSession(page) : null;
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", point?: { x: number; y: number }) => input
+    ? input.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [point] : [] })
+    : page.evaluate(({ type, point }) => {
+      const target = document.querySelector(".terminal-screen .xterm-screen")!;
+      const event = new Event(type.toLowerCase(), { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: point ? [{ identifier: 1, target, clientX: point.x, clientY: point.y }] : [] });
+      target.dispatchEvent(event);
+    }, { type, point });
+  await touch("touchStart", { x, y });
+  let at = { x, y };
+  return {
+    /** Moves in steps; a pause after the last step lets the finger rest, so lifting it does not fling. */
+    async move(dy: number, pause = 0) {
+      const from = at;
+      for (let step = 1; step <= 8; step++) {
+        at = { x, y: from.y + dy * step / 8 };
+        await touch("touchMove", at);
+      }
+      if (pause) await page.waitForTimeout(pause);
+    },
+    async lift() {
+      try { await touch("touchEnd"); } finally { await input?.detach(); }
+    },
+  };
+}
+
+test("the terminal scrolls back through its output by touch or wheel and follows new output at the bottom", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const phone = info.project.name === "phone";
+  const walk = walkthrough(page, info);
+  const output = page.locator(".terminal-screen .xterm-rows");
+  const screen = page.locator(".terminal-screen");
+  const row = (n: number) => output.getByText(`row-${String(n).padStart(3, "0")}`, { exact: true });
+  /** The first numbered row on screen. */
+  const top = async () => Number((await output.innerText()).match(/row-(\d{3})/)?.[1] ?? 0);
+  const inputs: string[] = [];
+  page.on("request", (sent) => { if (sent.url().endsWith("/input")) inputs.push(sent.postData() ?? ""); });
+  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+
+  await walk.open("/projects/atlas");
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(output).toContainText("Runs as you in ");
+  // A real shell prints several screens, then waits twice for a line sent from elsewhere so output arrives
+  // while this page is scrolled back and again at the bottom, without this page's typing moving the view.
+  await run(page, "seq -f 'row-%03g' 1 150; read -r; seq -f 'late-%03g' 1 40; read -r; echo followed-again");
+  await expect(row(150)).toBeVisible();
+  await walk.state("16-scroll-at-bottom", { visible: [row(150)], hidden: [row(1)] });
+  const box = (await screen.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 3;
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  inputs.length = 0;
+
+  if (phone) {
+    // A resting drag moves the text with the finger and stops when it lifts.
+    const drag = await finger(page, x, y);
+    await drag.move(340, 200);
+    await drag.lift();
+    await expect(row(150)).toBeHidden();
+    const rested = await top();
+    expect(rested).toBeGreaterThan(80);
+    await page.waitForTimeout(300);
+    expect(await top()).toBe(rested);
+    // A quick swipe flings on after the finger lifts, further than the finger moved.
+    const swipe = await finger(page, x, y);
+    await swipe.move(120);
+    await swipe.lift();
+    const lifted = await top();
+    await expect.poll(top, { timeout: 5_000 }).toBeLessThan(lifted);
+    // The fling has come to rest once the view holds still.
+    await expect.poll(async () => {
+      const before = await top();
+      await page.waitForTimeout(400);
+      return before === await top();
+    }, { timeout: 10_000 }).toBe(true);
+  } else {
+    await page.mouse.move(x, y);
+    await page.mouse.wheel(0, -1200);
+    await expect(row(150)).toBeHidden();
+  }
+  // A fast runner's fling can reach the first line.
+  const reading = await top();
+  expect(reading).toBeGreaterThan(0);
+  // Scrolling reaches only the display: nothing is typed and focus, and so the soft keyboard, stays away.
+  expect(inputs).toEqual([]);
+  expect(await page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false)).toBe(false);
+  await walk.state("17-scrolled-back", { visible: [row(reading)], hidden: [row(150)] });
+
+  // Output arriving while the operator reads earlier lines leaves them in place.
+  const terminal = await (await request.get("/api/terminal/atlas")).json();
+  expect((await request.post("/api/terminal/atlas/input", { data: { id: terminal.id, data: "\r" } })).ok()).toBe(true);
+  await page.waitForTimeout(1_000);
+  expect(await top()).toBe(reading);
+  await walk.state("18-new-output-keeps-view", { visible: [row(reading)], hidden: [output.getByText("late-040")] });
+
+  // Back at the bottom the screen follows new output again: moving on until one more move changes nothing.
+  const down = async () => {
+    if (phone) {
+      const drag = await finger(page, x, box.y + box.height - 40);
+      await drag.move(-(box.height - 80), 150);
+      await drag.lift();
+    } else await page.mouse.wheel(0, 1_200);
+    // The screen draws on the next frame.
+    await page.waitForTimeout(100);
+  };
+  await expect(async () => {
+    await down();
+    const shown = await output.innerText();
+    await down();
+    expect(await output.innerText()).toBe(shown);
+  }).toPass({ timeout: 30_000 });
+  await expect(output.getByText("late-040")).toBeVisible();
+  expect((await request.post("/api/terminal/atlas/input", { data: { id: terminal.id, data: "\r" } })).ok()).toBe(true);
+  await expect(output.getByText("followed-again")).toBeVisible();
+  await walk.state("19-back-at-bottom-follows", { visible: [output.getByText("followed-again")], hidden: [row(reading)] });
+
+  if (phone) {
+    // A key row key returns to the prompt, as typing does.
+    const drag = await finger(page, x, y);
+    await drag.move(340, 200);
+    await drag.lift();
+    await expect(output.getByText("followed-again")).toBeHidden();
+    await page.getByRole("toolbar", { name: "Terminal keys" }).getByRole("button", { name: "Left" }).click();
+    await expect(output.getByText("followed-again")).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/atlas$/);
+});
