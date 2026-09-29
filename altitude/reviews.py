@@ -237,7 +237,7 @@ def view(project, slug):
 
 
 def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
-            engine=None, model=None):
+            engine=None, model=None, additional=False):
     from . import dispatch, route
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         raise T.TransitionError("A stable review request identity is required.")
@@ -246,6 +246,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
     if any(value is not None and not (isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}", value))
            for value in (engine, model)):
         raise T.TransitionError("A selected review engine or model must be a plain name.")
+    if additional and previous:
+        raise T.TransitionError("An additional review replaces no review; name --previous only to replace one.")
     with merge_lock(project, slug, wait=False), dispatch.launch_lock(), S.project_lock(project):
         task = S.load_task(project, slug)
         task["project"] = project
@@ -270,12 +272,13 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         if repeated:
             if (repeated.get("focus", "") != focus or repeated.get("source_id") != source_id
                     or repeated.get("previous") != previous or repeated.get("subject", "changes") != subject
-                    or repeated.get("selection") != selection):
+                    or repeated.get("selection") != selection or repeated.get("additional", False) != additional):
                 raise T.TransitionError("That review request identity already has a different focus or selection.")
             return _project_review(repeated, task, None)
         if prior and _unresolved(prior):
             # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
-            raise T.TransitionError("Fix or dismiss the review's open findings with evidence before requesting another.")
+            raise T.TransitionError("Fix or dismiss the review's open findings with evidence before replacing it, "
+                                    "or request an additional review that leaves them in the merge gate.")
         if why := _eligible(task, subject):
             raise T.TransitionError(why)
         latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
@@ -283,7 +286,8 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         reselect = bool(latest and previous == latest["id"] and latest["state"] == "requested"
                         and (engine or model) and selection != latest.get("selection"))
         if latest and not reselect:
-            if previous != latest["id"] or latest["state"] in ("requested", "running"):
+            # An additional review adds to an assessed latest review; every other request names what it replaces.
+            if previous != latest["id"] and not additional or latest["state"] in ("requested", "running"):
                 if (engine or model) and latest.get("selection") != selection:
                     raise T.TransitionError("Another review request is open. Name it with --previous to select a different reviewer.")
                 return _project_review(latest, task, None)
@@ -306,7 +310,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 raise T.TransitionError("The review source must be an original owner or operator message.")
             requester = source["role"]
         # An owner retry cannot turn an operator requirement into an owner-waivable request.
-        if latest and latest.get("requested_by") == T.OPERATOR_MESSAGE_ROLE and latest["state"] != "withdrawn":
+        if not additional and latest and latest.get("requested_by") == T.OPERATOR_MESSAGE_ROLE and latest["state"] != "withdrawn":
             requester = T.OPERATOR_MESSAGE_ROLE
         at = T._conversation_time()
         row = {"id": request_id, "requested_at": at, "requested_by": requester, "source_id": source_id,
@@ -315,9 +319,10 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                "engine_label": choice.get("label"), "same_engine": bool(choice.get("same_engine")),
                "fallback_reason": choice.get("fallback_reason", ""), "allowance_known": bool(choice.get("allowance_known")),
                "owner": {k: task.get(k) for k in ("attempt", "l2_engine")},
-               "delivered": actor == "l2", "previous": previous,
+               "delivered": actor == "l2", "previous": previous, "additional": additional,
                "message": {"id": request_id, "at": at, "role": "system", "by": requester,
-                           "review_id": request_id, "text": f"Adversarial {subject} review requested. Prepare a committed source checkpoint, "
+                           "review_id": request_id, "text": f"{'Additional adversarial' if additional else 'Adversarial'} {subject} review requested. "
+                           + ("Current reviews and their open findings stay in the merge gate. " if additional else "") + "Prepare a committed source checkpoint, "
                            f"then run alt task review run --review-id {request_id}"
                            + (" --proposal-message <original-L2-proposal-id>" if subject == "proposal" else "")
                            + ". Preserve open approval questions; this request authorizes only review and assessment, not implementation. "
