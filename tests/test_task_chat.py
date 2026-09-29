@@ -191,6 +191,50 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(len(self.l3_queue()), 3, "a revised question carries new coordinator context")
 
+    def test_an_operator_question_reworded_into_a_wait_leaves_the_operators_turn(self):
+        """The close-device sequence: operator-directed questions later revised into waits on L3 or an external event."""
+        questions = self.tmp / "questions.json"
+        questions.write_text(json.dumps({"questions": [{"question": "Publish rc.2 now?"},
+                                                       {"question": "Rerun mirror CI on the new image?"}]}))
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Release decisions.",
+                       "--questions-file", str(questions), "--for-operator", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        rc2, mirror = T.question_views(self.project, self.slug)
+        self.assertEqual(len(T.decisions(self.project)), 2)
+        T.resume(self.project, self.slug)
+        questions.write_text(json.dumps({"questions": [
+            {"id": rc2["id"], "question": "Waiting for L3 to publish rc.2."},
+            {"id": mirror["id"], "question": mirror["detail"]}]}))
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Release waits.",
+                       "--questions-file", str(questions), env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual({q["id"]: (q["revision"], q["audience"]) for q in T.question_views(self.project, self.slug)
+                          if q["status"] == "open"}, {rc2["id"]: (2, "l3"), mirror["id"]: (1, "operator")},
+                         "an unchanged operator question stays the operator's; the reworded wait does not")
+        self.assertEqual([c["id"] for c in T.decisions(self.project)], [mirror["id"]])
+        T.resume(self.project, self.slug)
+        questions.write_text(json.dumps({"questions": [
+            {"id": mirror["id"], "question": "Waiting for the next mirror CI run."}]}))
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Release waits.",
+                       "--questions-file", str(questions), env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual({q["audience"] for q in task["questions"] if q["status"] == "open"}, {"l3"})
+        self.assertEqual((T.decisions(self.project), task["waiting_on"]), ([], "l3"))
+        self.assertEqual(T.block_status(self.project, task)[0], "waiting-l3")
+        notifications = self.l3_queue()
+        self.assertEqual([row["trigger"] for row in notifications], ["block"] * 3)
+        self.assertIn(f"{mirror['id']} revision 2 (authority: l3): Waiting for the next mirror CI run.",
+                      notifications[-1]["text"])
+        T.resume(self.project, self.slug)
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Approve publishing rc.2?",
+                       env=self.worker_env())
+        self.assertEqual(out.returncode, 1, "two open members still need their ids")
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Release waits.",
+                       "--for-operator", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(len(T.decisions(self.project)), 2, "an explicit operator block still brings waits to the operator")
+
     def test_mixed_operator_block_notifies_scope_context_without_approving_proposal(self):
         task = S.load_task(self.project, self.slug)
         task.update(paths=["tests/"], hold_merge="Operator security review")
