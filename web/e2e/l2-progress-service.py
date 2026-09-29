@@ -84,9 +84,6 @@ def main():
 
         def do_POST(self):
             nonlocal denied
-            if self.path == "/api/transcribe":
-                self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                return self._json({"text": "spoken correction"})
             if self.path == "/api/task/action" and denied:
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 return self._json({"error": "Fixture permission denied"}, 403)

@@ -14,7 +14,11 @@ const unmet = [
   { key: "git", label: "Git installed", state: "met", detail: null, command: null },
 ];
 
-function mockFetch(options: { refuseRepository?: boolean } = {}) {
+type Host = { state: "unavailable"; reason: string } | { state: "absent" | "setting-up" | "ready"; download_bytes: number };
+
+function mockFetch(options: { refuseRepository?: boolean; host?: Host; backend?: "host" | "browser" } = {}) {
+  const voice = { backend: options.backend ?? (options.host?.state === "unavailable" ? "browser" : "host"), selection: "fixture-1",
+    host: options.host ?? { state: "absent", download_bytes: 698_435_338 } as Host };
   const machine = { operator: "Ada Fixture" as string | null, incident_repository: null as string | null, altitude_repository: "product-fixture/altitude" };
   let checks = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -35,13 +39,21 @@ function mockFetch(options: { refuseRepository?: boolean } = {}) {
       machine.incident_repository = body.repository;
       return response(machine);
     }
+    if (url.endsWith("/api/voice/host")) {
+      voice.host = { state: "setting-up", download_bytes: 698_435_338 };
+      return response(voice);
+    }
+    if (url.endsWith("/api/voice")) {
+      if (body) { voice.backend = body.backend; voice.selection = `fixture-${body.backend}`; }
+      return response(voice);
+    }
     return response({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 const posted = (fetchMock: ReturnType<typeof mockFetch>, path: string) =>
-  fetchMock.mock.calls.filter(([url]) => String(url).includes(path)).map(([, init]) => JSON.parse(String(init?.body)));
+  fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(path) && init?.method === "POST").map(([, init]) => JSON.parse(String(init?.body)));
 
 describe("First run onboarding", () => {
   it("starts with the name filled in, saves it on Continue and moves to the prerequisites", async () => {
@@ -86,7 +98,7 @@ describe("First run onboarding", () => {
     expect(screen.queryByLabelText("Repository")).toBeNull();
     expect(screen.getByText(/Only the system-level cause and a fictional or redacted/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
+    await screen.findByRole("heading", { name: "Voice to text" });
     expect(posted(fetchMock, "/api/incident-reports")).toEqual([]);
   });
 
@@ -100,7 +112,7 @@ describe("First run onboarding", () => {
     await user.clear(repository);
     await user.type(repository, "fork-fixture/altitude");
     await user.click(screen.getByRole("button", { name: "Save and continue" }));
-    await screen.findByRole("heading", { name: "Add your projects" });
+    await screen.findByRole("heading", { name: "Voice to text" });
     expect(posted(fetchMock, "/api/incident-reports")).toEqual([{ repository: "fork-fixture/altitude" }]);
   });
 
@@ -120,11 +132,65 @@ describe("First run onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Skip" }));
     await user.click(await screen.findByRole("button", { name: "Continue anyway" }));
     await user.click(await screen.findByRole("button", { name: "Skip" }));
+    await screen.findByRole("heading", { name: "Voice to text" });
+    await user.click(await screen.findByRole("button", { name: "Skip" }));
     await screen.findByRole("heading", { name: "Add your projects" });
     expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "‹ Back" }));
-    expect(router.state.location.search).toBe("?step=incidents");
+    expect(router.state.location.search).toBe("?step=voice");
     expect(posted(fetchMock, "/api/operator-name")).toEqual([]);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/api/voice") && init?.method === "POST")).toEqual([]);
+  });
+
+  it("offers the one-time voice download, starts it in the background and moves on", async () => {
+    const fetchMock = mockFetch();
+    const { user, router } = renderApp({ route: "/projects?step=voice" });
+    expect(await screen.findByText("Voice to text runs on this computer. It needs a one-time download of about 698 MB.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use browser recognition instead" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set up voice" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
+    expect(router.state.location.search).toBe("?step=projects");
+    expect(posted(fetchMock, "/api/voice/host")).toEqual([{ action: "setup" }]);
+    expect(posted(fetchMock, "/api/voice")).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "‹ Back" }));
+    expect(await screen.findByText("Voice to text is being set up on this computer. It continues in the background.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
+  });
+
+  it("chooses browser recognition instead, and setting up from browser selects this computer first", async () => {
+    const fetchMock = mockFetch();
+    const { user } = renderApp({ route: "/projects?step=voice" });
+    await user.click(await screen.findByRole("button", { name: "Use browser recognition instead" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
+    expect(posted(fetchMock, "/api/voice")).toEqual([{ backend: "browser", selection: "fixture-1" }]);
+    await user.click(screen.getByRole("button", { name: "‹ Back" }));
+    await user.click(await screen.findByRole("button", { name: "Set up voice" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
+    expect(posted(fetchMock, "/api/voice").at(-1)).toEqual({ backend: "host", selection: "fixture-browser" });
+    expect(posted(fetchMock, "/api/voice/host")).toEqual([{ action: "setup" }]);
+  });
+
+  it("says when voice cannot run on this computer and keeps browser recognition", async () => {
+    mockFetch({ host: { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" } });
+    const { user } = renderApp({ route: "/projects?step=voice" });
+    expect(await screen.findByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 only for now.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Set up voice|Use browser recognition/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
+  });
+
+  it("keeps the step and its choices when setup cannot start", async () => {
+    const fetchMock = mockFetch();
+    const answer = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).endsWith("/api/voice/host") ? response({ error: "Voice setup could not start." }, 503) : answer(input, init));
+    const { user } = renderApp({ route: "/projects?step=voice" });
+    await user.click(await screen.findByRole("button", { name: "Set up voice" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice setup could not start.");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    await screen.findByRole("heading", { name: "Add your projects" });
   });
 
   it("keeps Skip when the machine settings cannot be read", async () => {

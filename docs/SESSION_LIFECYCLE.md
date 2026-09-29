@@ -683,13 +683,13 @@ hold requires approval of that renewed requirement. Failed reconciliation follow
 
 Voice capture does not add a lifecycle state. Browser recognition of English is punctuated and
 capitalized on the device by a bundled model as each phrase is finalized; Altitude never rewrites
-dictated words. With the default browser backend, recognized words
-appear in the read-only draft while listening and **Stop** lands them once the last phrase is
-punctuated, without a transcription step;
-with host voice, the microphone streams to this computer, words appear in the read-only draft
-while listening and **Stop** lands the host's final words about half a second later; a recording
-that stops early keeps the words already shown and says why. With your speech service, **Stop**
-transcribes the bounded recording into the editable draft. The send arrow lands or transcribes, appends and sends at once. Both sending paths use
+dictated words. With host voice, the microphone streams to this computer, words appear in the
+read-only draft while listening and **Stop** lands the host's final words about half a second later;
+the recording keeps going through a lost connection and its words catch up, and after Stop or Send it
+waits at most two minutes for the connection. With browser recognition, recognized words appear in
+the read-only draft while listening and **Stop** lands them once the last phrase is punctuated. A
+recording that stops early keeps the words already shown and says why. The send arrow lands, appends
+and sends at once. Both sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.

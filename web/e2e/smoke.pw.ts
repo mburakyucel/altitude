@@ -116,18 +116,24 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("heading", { name: "Routing now", exact: true })).toBeVisible();
     } else if (route === "/settings") {
       await expect(main.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-      await expect(main.getByRole("link", { name: "Voice input Your speech service · speech.example.test", exact: true })).toBeVisible();
+      // The fixture service chooses host voice; its setup state is this machine's, read from the service.
+      const voice = await (await request.get("/api/voice")).json();
+      expect(voice.backend).toBe("host");
+      const summary = voice.host.state === "ready" ? "This computer" : "This computer · not set up";
+      await expect(main.getByRole("link", { name: `Voice input ${summary}`, exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Network", exact: true })).toBeVisible();
       await expect(main.getByRole("link", { name: /^Projects folder / })).toHaveAttribute("href", "/settings/projects-folder");
       await expect(main.getByRole("radio")).toHaveCount(0);
       await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
-      await expect(main.getByRole("radio", { name: "Your speech service", exact: true })).toBeChecked();
-      await expect(main.getByRole("radio")).toHaveCount(3);
+      await expect(main.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
+      await expect(main.getByRole("radio", { name: "Browser recognition", exact: true })).not.toBeChecked();
+      await expect(main.getByRole("radio")).toHaveCount(2);
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
-      await expect(main.getByLabel("Service URL")).toHaveValue("https://speech.example.test/v1/audio/transcriptions");
-      await expect(main.getByLabel("API key (optional)")).toHaveCount(0);
+      const host = (await (await request.get("/api/voice")).json()).host;
+      if (host.state === "unavailable") await expect(main.getByText(`Not available on this computer: ${host.reason}.`, { exact: true })).toBeVisible();
+      else if (host.state === "absent") await expect(main.getByRole("button", { name: "Set up voice", exact: true })).toBeEnabled();
       await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
     } else if (route === "/settings/projects-folder") {
       await expect(main.getByRole("heading", { name: "Projects folder", exact: true })).toBeVisible();

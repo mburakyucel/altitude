@@ -333,8 +333,11 @@ class Host:
             raise SpeechError("Voice received a malformed recording.", 400)
         with self.changed:
             recording = self.recordings.get(ident)
-            if recording is None or recording.device != device:
+            if recording is None:
+                # The page still holds the audio and replays it into a new recording.
                 raise SpeechError("Voice stopped: this recording has ended.", 410)
+            if recording.device != device:
+                raise SpeechError("Voice stopped: this recording belongs to another device.", 403)
             recording.seen = time.monotonic()
             if seq == recording.seq:
                 if final and recording.final is None and recording.error is None:

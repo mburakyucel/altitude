@@ -7,7 +7,7 @@ import Composer from "./Composer";
 import type { ComposerProps } from "./Composer";
 import type { ImageSubmission } from "./ImageDraft";
 import { ImageViewerHost, MessageImages } from "./MessageImages";
-import { installVoiceBrowser } from "./voiceTest";
+import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "./voiceTest";
 
 const capability = { available: true, max_count: 4, max_bytes: 10 << 20, max_total_bytes: 20 << 20, max_pixels: 25_000_000, max_dimension: 8192 };
 const image = () => new File(["fictional raster"], "screen.png", { type: "image/png" });
@@ -35,8 +35,21 @@ function browser(available = true) {
     onload: (() => void) | null = null;
     set src(_url: string) { queueMicrotask(() => this.onload?.()); }
   });
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("transcribe") ? json({ text: "the spoken explanation" }) : json({ ...capability, available, reason: available ? undefined : "Image decoder unavailable." })));
+  vi.stubGlobal("fetch", vi.fn(async () => json({ ...capability, available, reason: available ? undefined : "Image decoder unavailable." })));
   return revoke;
+}
+
+/** This computer's speech service, answering `final` at the end; every other request reads image input. */
+function hostVoice(final: string) {
+  return hostVoiceServer({ final, fallback: async () => json(capability) }).install();
+}
+
+/** Start host voice and say half a second, so Send and Stop act on a listening capture. */
+async function listen(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Start voice input" }));
+  await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+  speak();
+  await screen.findByText("Listening… Stop to add text, or Send.");
 }
 
 /** jsdom has no modal dialogs; opening only needs the dialog shown. */
@@ -62,12 +75,7 @@ describe("image draft admission", () => {
   it("voice navigation retains image bytes and the original retry callback without clearing another draft", async () => {
     browser();
     installVoiceBrowser();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("transcribe")) { await gate; return json({ text: "spoken" }); }
-      return json(capability);
-    }));
+    const server = hostVoice("spoken");
     const original = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission) => {
       if (original.mock.calls.length === 1) throw new TypeError("Lost image receipt");
     });
@@ -76,12 +84,13 @@ describe("image draft admission", () => {
     const first = render(<Harness onSubmit={original} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(user);
+    server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
     render(<Harness initial="Other unsent recovery" onSubmit={destination} />);
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
-    await act(async () => release());
+    await act(async () => server.reconnect());
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm send.");
     expect(original).toHaveBeenCalledOnce();
     const sent = original.mock.calls[0]?.[2];
@@ -191,18 +200,17 @@ describe("image draft admission", () => {
   it("keeps previews through voice cancel, and sends only a nonempty transcript with images", async () => {
     browser();
     installVoiceBrowser();
+    hostVoice("the spoken explanation");
     const onSubmit = vi.fn();
     const user = userEvent.setup();
     render(<Harness onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
     expect(screen.queryByRole("button", { name: "Add images" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
     expect(screen.getByLabelText("Selected images")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit.mock.calls[0]?.[0]).toBe("Explain this the spoken explanation");
@@ -262,14 +270,13 @@ describe("image draft admission", () => {
 
   it.each(["", null])("voice Send with transcript %s retains images and sends nothing", async (transcript) => {
     browser(); installVoiceBrowser();
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("transcribe")
-      ? transcript === null ? json({ error: "unavailable" }, 503) : json({ text: transcript })
-      : json(capability)));
+    const server = hostVoice(transcript ?? "");
     const onSubmit = vi.fn(); const user = userEvent.setup();
     render(<Harness onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce()); await select();
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
+    await waitFor(() => expect(server.audio).toHaveLength(1));
+    if (transcript === null) server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled());
     expect(onSubmit).not.toHaveBeenCalled();

@@ -483,12 +483,34 @@ def _run_setting(project: str | None, setting: str) -> dict:
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
-                     "actor": request["actor"], "reason": request["reason"], setting: config.public_voice(request[setting]),
+                     "actor": request["actor"], "reason": request["reason"], setting: request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
         S.write_json(path, request)
         return request
+
+
+def forget_speech_service() -> None:
+    """Delete a speech-service URL and key saved before that option was removed, once, at daemon start. The event
+    names only the removal, never the URL or key."""
+    with config.projects_lock():
+        settings = config.machine_settings()
+        receipt = config.ROOT / "voice-request.json"
+        request = S.read_json(receipt, {})
+        stale_setting = isinstance(settings.get("voice"), dict)
+        stale_receipt = isinstance(request.get("voice"), dict) or isinstance(request.get("result_voice"), dict)
+        if not stale_setting and not stale_receipt:
+            return
+        if stale_setting:
+            del settings["voice"]
+            S.write_json(config.ROOT / "settings.json", settings)
+        receipt.unlink(missing_ok=True)
+        events = config.ROOT / "events.jsonl"
+        rows = events.read_text().splitlines() if events.exists() else []
+        event = {"at": S.now(), "kind": "machine-set", "project": None, "actor": "altd",
+                 "reason": "speech-service option removed", "voice": None, "status": "done"}
+        S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
 
 
 def pending_task_operations(project: str) -> list[str]:

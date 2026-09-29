@@ -73,6 +73,8 @@ test.describe("last project", () => {
     await firstRun.getByRole("button", { name: "Skip" }).click();
     await firstRun.getByRole("button", { name: /^Continue/ }).click();
     await firstRun.getByRole("button", { name: "Skip" }).click();
+    await expect(firstRun.getByRole("heading", { name: "Voice to text" })).toBeVisible();
+    await firstRun.getByRole("button", { name: "Skip" }).click();
     const row = firstRun.getByRole("listitem").filter({ hasText: "sample-project" });
     await walk.state("01-last-project-removed", { visible: [firstRun, row.getByRole("button", { name: "Add project", exact: true })], hidden: [page.getByRole("button", { name: "More actions" })] });
     expect(await page.evaluate(() => localStorage.getItem("altitude.project"))).toBeNull();
