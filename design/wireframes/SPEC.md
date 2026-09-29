@@ -914,12 +914,15 @@ release completing, springing back, resistance past either end and reduced motio
 gesture exclusions and retained reading state.
 
 A message L3 sent the L2 is coordination, not conversation with the operator: it reads as one
-left-aligned muted line with a dot, **L3 messaged the L2**, "· N images" when it carries images, and
-**Show** (44px target on phone). Show opens the complete original message in place, with its links
-and images, and becomes **Hide**; the time sits in the gutter like any row. Opening one stops
-bottom-following so the reader keeps their place. Nothing is summarised or shortened: the stored
-message is the L2's input and authority evidence. Questions L3 brings to the operator keep their
-question cards. `web/e2e/task-page.pw.ts` walks folded, open and folded-again on phone and desktop.
+left-aligned muted line with a dot, **L3 ·** and the one-line summary L3 wrote when sending (for
+example "L3 · Resolve conflicts, keep the review hold"), "· N images" when it carries images, and
+**Show** (44px target on phone). A message saved without a summary reads **L3 messaged the L2**. A
+summary longer than the phone width wraps; it is never cut. Show opens the complete original message
+in place, with its links and images, and becomes **Hide**; the time sits in the gutter like any row.
+Opening one stops bottom-following so the reader keeps their place. The stored message is never
+shortened: it is the L2's input and authority evidence. Questions L3 brings to the operator keep
+their question cards. `web/e2e/task-page.pw.ts` walks summarised and unsummarised rows folded, open
+and folded again on phone and desktop.
 The composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
 Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."

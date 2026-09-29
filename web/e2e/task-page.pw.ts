@@ -198,7 +198,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
 });
 
-test("a long L3 coordination message folds to one line and opens in place", async ({ page, request }, info) => {
+test("a long L3 coordination message folds to its summary line and opens in place", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -211,27 +211,30 @@ test("a long L3 coordination message folds to one line and opens in place", asyn
     + "rules. Keep the grant through its verification and landing; purpose grants cover relevant iteration, so do not revoke "
     + "between steps or re-ask the operator for this unchanged purpose. Revoke when this increment's approved sandbox work is "
     + "complete. Offline guest tests, 2 CPU/4 GiB, disposable overlay, fixture engines and no host service changes remain.";
+  const summary = "Grant re-recorded; run the sandbox check and keep the grant through landing";
   const rows = [
+    TaskMessageSchema.parse({ id: "coord-0", at, role: "l3", by: "l3", text: "Saved before summaries: continue from the brief." }),
     TaskMessageSchema.parse({ id: "coord-1", at, role: "operator", text: "Please finish the sandbox check." }),
-    TaskMessageSchema.parse({ id: "coord-2", at, role: "l3", by: "l3", text: coordination }),
+    TaskMessageSchema.parse({ id: "coord-2", at, role: "l3", by: "l3", text: coordination, summary }),
     TaskMessageSchema.parse({ id: "coord-3", at, role: "l2", by: "l2", text: "Running the sandbox check now; I will report when it lands." }),
   ];
   await overlay(page, project.name, { ...base, messages: rows });
   await walk.open(taskPath(project.name, base.slug));
   await v.showConversation();
-  const row = v.conversation.locator('[data-role="l3"]');
+  const [legacy, row] = [v.conversation.locator('[data-role="l3"]').first(), v.conversation.locator('[data-role="l3"]').last()];
   const show = row.getByRole("button", { name: "Show", exact: true });
   const hide = row.getByRole("button", { name: "Hide", exact: true });
   const original = row.getByText(/Sandbox grant re-recorded/);
   await walk.state("01-coordination-folded", {
-    visible: [row.getByText("L3 messaged the L2", { exact: true }), show, v.conversation.getByText("Please finish the sandbox check."),
-      v.conversation.getByText(/Running the sandbox check now/), v.composer],
-    hidden: [original, hide],
+    visible: [row.getByText(`L3 · ${summary}`, { exact: true }), show, legacy.getByText("L3 messaged the L2", { exact: true }),
+      v.conversation.getByText("Please finish the sandbox check."), v.conversation.getByText(/Running the sandbox check now/), v.composer],
+    hidden: [original, hide, legacy.getByText(/Saved before summaries/)],
   });
-  expect((await row.boundingBox())!.height).toBeLessThan(60);
+  // The summary wraps on a phone rather than being cut; it stays a compact row either way.
+  expect((await row.boundingBox())!.height).toBeLessThan(v.phone ? 80 : 60);
   await walk.state("02-coordination-open", {
     action: () => show.click(),
-    visible: [original, hide, v.conversation.getByText(/Running the sandbox check now/)],
+    visible: [original, hide, row.getByText(`L3 · ${summary}`, { exact: true }), v.conversation.getByText(/Running the sandbox check now/)],
     hidden: [show],
   });
   await expect(hide).toHaveAttribute("aria-expanded", "true");
@@ -239,6 +242,11 @@ test("a long L3 coordination message folds to one line and opens in place", asyn
     action: () => hide.click(),
     visible: [show, v.composer],
     hidden: [original, hide],
+  });
+  await walk.state("04-unsummarised-open", {
+    action: () => legacy.getByRole("button", { name: "Show", exact: true }).click(),
+    visible: [legacy.getByText("L3 messaged the L2", { exact: true }), legacy.getByText("Saved before summaries: continue from the brief.")],
+    hidden: [original],
   });
 });
 

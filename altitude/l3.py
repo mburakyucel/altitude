@@ -893,7 +893,7 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
                  '(add --json for source references and excerpt bounds). Historical evidence does not override '
                  'current instructions or task records; check conditions and later corrections before acting.')
     lines.append("[altitude] When a task depends on an operator image, pass its committed image ID with "
-                 "`alt task new --image <id>` or `alt task message <slug> --image <id>`. Repeat --image "
+                 "`alt task new --image <id>` or `alt task message <slug> --summary '<one line>' --image <id>`. Repeat --image "
                  "for selected images from this project. A handoff retains the original message source; "
                  "it does not grant new authority or release a hold.")
     lines.append("[altitude] Task dilemmas belong in the owning L2 conversation. For operator judgment, "

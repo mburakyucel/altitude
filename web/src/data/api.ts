@@ -429,6 +429,7 @@ export const TaskMessageSchema = z
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    summary: z.string().nullish(),
     review_id: z.string().nullish(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),

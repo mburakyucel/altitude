@@ -153,15 +153,15 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
-  it("folds a long L3 coordination message to one line and opens its original in place", async () => {
+  it("folds a long L3 coordination message to its summary line and opens its original in place", async () => {
     setViewport(1440);
     const text = "Grant recorded for the fictional sandbox run. Keep it through landing.\n\nSee [the guide](https://example.com/guide).";
     stub({ ...running, messages: [...running.messages.slice(0, 2),
-      { id: "m-3", at: "2026-08-30T09:00:00Z", role: "l3", text, images: [{ id: "img-1", name: "shot.png", mime_type: "image/png", size: 10, width: 4, height: 4, source_message_id: "m-0" }] }] });
+      { id: "m-3", at: "2026-08-30T09:00:00Z", role: "l3", text, summary: "Sandbox grant recorded", images: [{ id: "img-1", name: "shot.png", mime_type: "image/png", size: 10, width: 4, height: 4, source_message_id: "m-0" }] }] });
     renderApp({ route });
     const convo = await screen.findByRole("region", { name: "Task conversation" });
     const row = convo.querySelector<HTMLElement>('[data-role="l3"]')!;
-    expect(row).toHaveTextContent("L3 messaged the L2 · 1 image");
+    expect(row).toHaveTextContent("L3 · Sandbox grant recorded · 1 imageShow");
     expect(within(row).queryByText(/Grant recorded/)).toBeNull();
     fireEvent.click(within(row).getByRole("button", { name: "Show" }));
     expect(within(row).getByRole("button", { name: "Hide" })).toHaveAttribute("aria-expanded", "true");

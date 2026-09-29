@@ -344,7 +344,7 @@ class TestImageConversations(AltitudeCase):
         self.assertEqual(task["images"], [ref])
         self.assertEqual(task["hold_merge"], "Operator review")
         result = server.l3_verb_request(self.project, {"kind": "alt", "args": [
-            "task", "message", self.slug, "Use the discussed image.", "--image", ref["id"]]})
+            "task", "message", self.slug, "Use the discussed image.", "--summary", "Use the discussed image", "--image", ref["id"]]})
         self.assertEqual(result["returncode"], 0, result["stderr"])
         message = T.task_messages(self.project, self.slug)[-1]
         self.assertEqual((message["role"], message["images"]), ("l3", [ref]))

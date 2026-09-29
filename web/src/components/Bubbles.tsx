@@ -125,17 +125,20 @@ export function Reply({
 }
 
 /**
- * A message L3 sent the L2 on the task page: one compact line, "L3 messaged the L2", whose Show opens
- * the complete original text and images in place (SPEC.md §3.10). The record keeps every word.
+ * A message L3 sent the L2 on the task page: one compact line, "L3 · <summary>" or "L3 messaged the L2"
+ * without one, whose Show opens the complete original text and images in place (SPEC.md §3.10).
+ * The record keeps every word.
  */
 export function Coordination({
   text,
+  summary,
   at,
   images = 0,
   onOpen,
   children,
 }: {
   text: string;
+  summary?: string | null;
   at?: string | null;
   images?: number;
   onOpen?: () => void;
@@ -147,7 +150,7 @@ export function Coordination({
       <div className="coordination" data-open={open || undefined}>
         <div className="coordination-line">
           <span className="sys-dot" aria-hidden />
-          <span>L3 messaged the L2{images ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}</span>
+          <span className="coordination-label">{summary ? `L3 · ${summary}` : "L3 messaged the L2"}{images ? ` · ${images} image${images === 1 ? "" : "s"}` : ""}</span>
           <button type="button" className="link" aria-expanded={open}
             onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}>{open ? "Hide" : "Show"}</button>
         </div>

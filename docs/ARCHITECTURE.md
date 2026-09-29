@@ -2222,9 +2222,11 @@ its engine as the engine seam reports them, the last PR with whether it merged a
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's rows as prose
-under day dividers. Each message L3 sent the L2 is one compact "L3 messaged the L2" line (with an
-image count when it carries images) whose Show opens the complete stored text and images in place;
-the task record, the L2's inbox and authority checks keep every word. Then come the open question group at the end of the conversation (closed groups
+under day dividers. Each message L3 sent the L2 is one compact line: "L3 ·" and the one-line
+`summary` L3 supplied with `alt task message --summary`, or "L3 messaged the L2" for a message saved
+without one, with an image count when it carries images. Its Show opens the complete stored text and
+images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
+is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first

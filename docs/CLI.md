@@ -555,7 +555,7 @@ operator's shell selects the project by inserting `--project example` after `alt
    its `checkout_archive` branch and SHA. A successful preservation leaves clean main at `origin/main`
    and keeps the task blocked. Snapshot commits live only on the local archive branch.
 4. Give the owner the branch, SHA and authorized reconciliation scope with
-   `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
+   `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR." --summary "Reconcile the archived edits"`
    For a faulted task, this L3 message records scope without waking it; request
    `alt task resume reconcile-edits --reason "Archive and reconciliation scope verified"` separately.
    The owner inspects the snapshot before applying authorized changes and selecting what to publish.
@@ -841,7 +841,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ```text
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
-alt task message <slug> <text>|- [--file <path>] [--image <id>]
+alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
 alt task reply [<slug>] <text>|- [--file <path>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
@@ -866,7 +866,12 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
-`alt task message <slug> 'Resolve the conflicts and retain the review hold.'` continues a reported
+L3's `alt task message` requires `--summary`: one plain line, up to 100 characters, saying what the
+message is about. The task conversation shows it as the message's folded row, and Show opens the
+original text; the summary is stored beside that text and changes nothing the owner receives. Only
+L3's messages carry a summary.
+
+`alt task message <slug> 'Resolve the conflicts and retain the review hold.' --summary 'Resolve conflicts, keep the review hold'` continues a reported
 owner whose recorded PR is still open. `alt task resume <slug> --reason 'Continue the existing PR'`
 is the equivalent coordinator/operator continuation without a new conversation message. Both use
 the daemon's existing resume path and retain the attempt, provider session, worktree, branch, PR,
@@ -875,7 +880,7 @@ queued resume receipt means accepted work; inspect `alt task status <slug>` for 
 state or a capacity/recovery wait. Repeating the same outstanding coordinator resume request reuses
 its receipt. Separate messages remain separate, even when their text matches.
 
-L3 also uses `alt task message <slug> 'Correct the report and retain the pending acceptance.'`
+L3 also uses `alt task message <slug> 'Correct the report and retain the pending acceptance.' --summary 'Correct the report'`
 or `alt task resume <slug> --reason 'Correct the contradicted report'` when the current verifier
 verdict is `contradicted`, including after every delivery PR is merged. This correction path checks
 the recorded report owner and delivery, requires the existing owner session and worktree, and needs
@@ -1036,7 +1041,7 @@ The daemon accepts only existing committed images from the current project; ther
 arbitrary download or cross-project relay. For example:
 
 ```sh
-alt task message fix-layout 'Match the spacing shown in this screenshot.' --image <image-id>
+alt task message fix-layout 'Match the spacing shown in this screenshot.' --summary 'Match the screenshot spacing' --image <image-id>
 ```
 
 The task receives the actual managed image content through its engine adapter and retains the
