@@ -19,6 +19,7 @@
 .terminal-screen .xterm { height: 100%; }
 .terminal-keys { display: flex; flex: none; gap: 6px; padding: 8px 8px 0; }
 .terminal-keys button { min-width: 0; min-height: var(--target-min); flex: 1 1 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-weight: 500; }
+.terminal-keys .terminal-enter { flex-grow: 1.5; border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .terminal-keys button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
 
 /* Live session | Terminal in the desktop task panel. */

@@ -72,7 +72,7 @@ function endNotice(status: TerminalStatus): string | null {
 export default function Terminal({ project, task, keys, head, closeIcon, onLeave }: {
   project: string;
   task?: string;
-  /** The phone key row: Esc, Tab, Ctrl, arrows and Paste. */
+  /** The phone key row: Esc, Tab, Ctrl, arrows, Paste and Enter. */
   keys: boolean;
   head: (close: ReactNode) => ReactNode;
   /** Close as a × (the phone task tab) rather than a button. */

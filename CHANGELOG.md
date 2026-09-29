@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- On phone the terminal's key row ends with an **Enter** key: one tap runs what is typed at the
+  prompt, such as a command opened from chat, a `read` answer or a password, without opening the
+  soft keyboard.
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes
   and percent signs. `v0.1.0-rc.1` wrote that path in quotes, so systemd refused the unit and

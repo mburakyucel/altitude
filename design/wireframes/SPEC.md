@@ -284,7 +284,7 @@ a task or project conversation offer Open in terminal; elsewhere (Live session, 
 | A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
 | Owner not told | In a task terminal the page first tells Altitude the command so its owner hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run.", with **Copy command** and ×. |
 | Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
-| Enter | Only the operator's Enter runs it. |
+| Enter | Only the operator's Enter runs it: the keyboard's, or on phone the key row's **Enter** (§3.10), which runs the typed command without opening the soft keyboard. |
 
 Phone (390×844) and desktop (1440×900) evidence: `web/e2e/run-in-terminal.pw.ts` walks these states
 against real shells from saved task and project messages.
@@ -1003,7 +1003,10 @@ the tab row, whose active Terminal tab carries a × (**Close terminal**); phone 
 title and **Close**. Then any notice and the dark screen filling the rest (edge to edge on phone),
 whose first line, dimmed, says "Runs as you in <folder>"; on phone a key row of Esc, Tab, a sticky
 Ctrl (pressed state), the four arrows and **Paste** (reads the clipboard), each an equal-width 44px
-target. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
+target, and last a wider accent-filled **Enter** (return-arrow icon) that sends the Return key, as
+the keyboard's would, for a typed command, a `read` or a password prompt. Enter leaves focus where it
+is, so the soft keyboard does not open for it. Desktop has no key row: its keyboard's Enter does the
+same. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
 terminal keeps running when the page leaves; returning replays up to 256 KB. When the shell ends,
 however it ends, the view returns to where the operator was — Live session on a task, the project for
 the project terminal — and keeps no output; the next visit opens a fresh shell.
