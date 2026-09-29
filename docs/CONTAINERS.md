@@ -9,6 +9,10 @@ That same image passed the native diagnostic task/coordinator permission matrix 
 environment/listener/certificate checks. Its admission lane also passed daemon and same-container
 restart, independent fixture-job survival/descendant Stop, and replacement with retained fixture
 project/certificate and explicit Continue. This evidence applies to that exact source and Linux tuple.
+The `--workflow` lane on harness `499038e` passed against the same archive: registered project,
+coordinator connection/resumption, real systemd task jobs, Stop, saved draft/session/merge hold,
+queued steering and deliberate continuation after replacement. Its synchronous driver owns separate
+fictional state; this does not establish background daemon scheduling or full onboarding.
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
@@ -162,7 +166,8 @@ Use task Stop for owned task work before stopping the whole container. Host `sto
 container; `remove` refuses a running one and retains both volumes. A new controller can use those
 volumes after the old controller stops. Registrations, settings, sessions and holds persist there;
 recreation cannot preserve processes. Automatic replay is not an update/recovery strategy. Native
-primitive Stop/descendant and recreation checks pass; full task Stop/resume across replacement remains pending.
+primitive Stop/descendant and recreation checks pass. The deterministic task workflow also passes
+Stop/resume across planned replacement; destruction during a running task or launch remains unverified.
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
