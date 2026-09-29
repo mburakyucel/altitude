@@ -92,7 +92,7 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertFalse((self.tmp / "results").exists())
 
     def test_shell_entry_accepts_each_phase_and_still_requires_root(self):
-        for phase in ("bootstrap", "reboot-install", "reboot-verify"):
+        for phase in ("bootstrap", "reboot-install", "reboot-verify", "recovery"):
             with self.subTest(phase=phase):
                 result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
                                          "b", "c", str(self.tmp / "results"), "a" * 40, phase],
@@ -117,6 +117,26 @@ class TestLifecycleHarness(AltitudeCase):
                 harness.execute("reboot-verify")
             run.assert_not_called()
         self.assertFalse(json.loads((results / "reboot-verify-result.json").read_text())["passed"])
+
+
+    def test_recovery_refuses_a_failed_installation_that_kept_nothing_to_retain(self):
+        # Without settings and a TLS identity left behind, "installing over it keeps them" proves nothing.
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, f"{'b' * 40}..{'a' * 40}")
+        harness.home = self.tmp / "home"
+        harness.prefix, harness.settings, harness.tls = (harness.home / "prefix", harness.home / "config/install.json",
+                                                         harness.home / "config/tls")
+        releases = ({"version": "v0.1.0-rc.1"}, {"version": "v0.2.0-rc.1"})
+        with mock.patch.object(harness, "prepare", return_value=("old", "1", None, releases[0], "new", "2", None, releases[1])), \
+                mock.patch.object(harness, "run", return_value="") as run:
+            with self.assertRaisesRegex(AssertionError, "kept no settings or TLS identity"):
+                harness.execute("recovery")
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["failed-install"])
+        self.assertFalse(run.call_args.kwargs["success"])
+        result = json.loads((results / "recovery-result.json").read_text())
+        self.assertFalse(result["passed"])
+        self.assertIn("installed over it", result["limits"][0])
 
 
 class TestInstallationVm(AltitudeCase):
@@ -154,6 +174,13 @@ class TestInstallationVm(AltitudeCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("qemu-system-x86_64", result.stderr)
         self.assertIn("sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", result.stderr)
+        self.assertFalse((self.tmp / "results").exists())
+
+    def test_recovery_needs_a_published_baseline(self):
+        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"), str(self.tmp / "results"),
+                                 "--recovery"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--recovery needs --baseline-release", result.stderr)
         self.assertFalse((self.tmp / "results").exists())
 
     def test_published_baseline_accepts_only_the_checked_release_its_tag_names(self):

@@ -281,7 +281,7 @@ blocks automating it.
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use through an owner's machine grant |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use through an owner's machine grant |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
@@ -494,6 +494,15 @@ offline, so the published files run exactly, but its own anonymous download from
 make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0-rc.2
 ```
 
+`RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's
+installation must fail, and the candidate's installer run over what it left must start the service
+and keep its settings, TLS identity and fictional data, then uninstall. `v0.1.0-rc.1` is such a
+baseline, since systemd refuses the unit it writes:
+
+```sh
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0-rc.1 RECOVERY=1
+```
+
 The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
 installed Ubuntu cloud-image keyring and caches it under `~/.cache/altitude-installation-vm`. Each
 run boots a copy-on-write overlay with 2 CPUs, 4 GiB of memory and a 12 GiB disk, logs in with a
@@ -505,7 +514,7 @@ listener it opens on the host's loopback. Through the online card both must answ
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
 probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap` and
 `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
-commit, published baseline release with its commit and checksums when used, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+commit, published baseline release with its commit and checksums when used, whether it was a recovery run, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
 while the restarted guest waits for its unplugged card. An Altitude worker cannot
