@@ -1223,8 +1223,9 @@ a reading with model rows but no account windows says "No account windows report
 
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
-in `--danger`, with the router's reason below. Rows wrap within the card. Session rows show their
-kind and task, engine and model when supplied, context meter and recorded status, and a snapshot
+in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
+Altitude runs: each project's coordinator (L3) and its live task owners (L2). Session rows show their
+kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
 process list.
 

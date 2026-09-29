@@ -2957,22 +2957,6 @@ def task_view(project: str, slug: str) -> dict:
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 
-def install_statusline() -> dict:
-    """Wrap the global statusline so interactive sessions feed the quota monitor. Edits ~/.claude/settings.json."""
-    settings = Path.home() / ".claude" / "settings.json"
-    cur = S.read_json(settings, {}) or {}
-    sl = cur.get("statusLine") or {}
-    wrapper = str(config.HOOKS / "statusline-monitor.sh")
-    if sl.get("command") == wrapper:
-        return {"ok": True, "already": True}
-    orig = sl.get("command")
-    cur["statusLine"] = {"type": "command", "command": wrapper}
-    if orig:
-        cur.setdefault("env", {})["ALTITUDE_ORIG_STATUSLINE"] = orig
-    S.write_json(settings, cur)
-    return {"ok": True, "wrapped": orig}
-
-
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     dispatch.forget_speech_service()

@@ -23,6 +23,9 @@ def main():
                           "last_turn": S.now(), "turns": 4,
                           "sessions": {config.ENGINES[0]: {"session_id": "fixture-project-session", "turns": 4,
                                          "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
+    # An unrelated interactive session's statusline snapshot, as an earlier global wrapper left it.
+    S.write_json(config.MONITOR_DIR / "statusline-unrelated.json", {
+        "session_id": "unrelated", "cwd": "/home/someone/unrelated-folder", "context_window": {"used_percentage": 9}})
 
     def task(title, state):
         row = T.new(project, title, "Fictional browser acceptance work, never sent to a live provider.")

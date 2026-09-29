@@ -441,10 +441,9 @@ repair cannot make this choice for you. See the
 | `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
-zero usage. Codex readings come from its app-server integration. For Claude usage readings,
-`alt install-statusline` installs a global CLI statusline hook and an interactive session supplies
-the snapshot; inspect your existing settings before choosing that optional installation. Unknown
-readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
+zero usage. The daemon reads both accounts itself: Codex through its app-server integration and
+Claude through its headless usage command. Neither needs an interactive session or a change to your
+global CLI settings. Unknown readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
 configured order when weekly readings are unknown or incomparable, retaining a current L3 option
 in that tier. It never invents separate model allowances from a shared account reading.
 

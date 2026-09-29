@@ -44,7 +44,11 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   // Eight reloads and one read that fails three retries first: longer than Playwright's default 30s.
   test.setTimeout(120_000);
   const walk = walkthrough(page, info);
-  const seats = (await (await request.get("/api/monitor")).json()).seats as Seat[];
+  const baseline = await (await request.get("/api/monitor")).json();
+  const seats = baseline.seats as Seat[];
+  // The fixture leaves an unrelated session's snapshot in the monitor directory; only Altitude's sessions are rows.
+  expect((baseline.sessions as Json[]).map((row) => row.kind).sort()).toEqual(["l2", "l2", "l2", "l3"]);
+  expect(JSON.stringify(baseline)).not.toContain("unrelated-folder");
   expect(seats.length, "the seam reports at least one configured engine").toBeGreaterThan(0);
   const loading = page.getByLabel("Loading", { exact: true });
   const routing = page.getByRole("heading", { name: "Routing now", exact: true });
@@ -64,6 +68,8 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   await walk.state("02-ready", { action: async () => { release(); }, visible: [seatsHead, routing, sessions], hidden: [loading, error] });
   await page.unroute("**/api/monitor*");
   for (const seat of seats) await expect(page.getByRole("region", { name: seat.label, exact: true })).toBeVisible();
+  await expect(page.locator(".monitor-session")).toHaveCount(4);
+  await expect(page.locator(".monitor-session-title", { hasText: /^atlas$/ })).toBeVisible();
   await fitsInViewport(page);
 
   // Error: every read fails until Retry is pressed; the app retries three times first.
