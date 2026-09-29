@@ -1482,17 +1482,22 @@ def _git_dirs(cwd: Path) -> list[Path]:
 
 
 def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
-    """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
+    """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
 
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
-    reports. Everything else is readable. Network stays on for `git push`, `gh`, and the repository's own tests.
+    reports. The workspace base retains protected configuration paths and temporary directories.
+    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets stay denied.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
     """
-    roots = [Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()]
-    return ['sandbox_mode="workspace-write"',
-            "sandbox_workspace_write.writable_roots=" + json.dumps([str(root) for root in roots]),
-            "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
+    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
+    profile = "altitude-task"
+    workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
+    denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in platform.job_control_paths())
+    return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
+            f"permissions.{profile}.workspace_roots={workspace_roots}",
+            f'permissions.{profile}.filesystem={{":root"="read",{denied}}}',
+            f"permissions.{profile}.network.enabled=true", 'approval_policy="never"']
 
 
 def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
@@ -1503,11 +1508,11 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     use authenticated GitHub directly, connect to the user bus, or write a checkout.
     """
     profile = "altitude-l3"
-    bus = f"/run/user/{os.getuid()}/bus"
     from .l3 import verb_socket_path
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read", bus: "deny"}
+             str(config.project_path(project).resolve()): "read",
+             **{str(path): "deny" for path in platform.job_control_paths()}}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's

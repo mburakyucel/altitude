@@ -151,6 +151,12 @@ def job_env(env: dict) -> dict:
     return env
 
 
+def job_control_paths() -> tuple[Path, ...]:
+    """Local user-manager endpoints a confined worker must not use to launch an unconfined job."""
+    runtime = Path(f"/run/user/{os.getuid()}")
+    return runtime / "bus", runtime / "systemd/private"
+
+
 def _scrub(env: dict[str, str]) -> list[str]:
     # A transient service inherits the user manager's environment, not the launching client's. Clear it completely
     # and reconstruct only the already-sanitized child environment so task identity survives without ambient manager

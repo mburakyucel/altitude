@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,25 +49,39 @@ class TestCodexAdapter(AltitudeCase):
         # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
         # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
         settings = engines.codex_sandbox(self.worktree, extra_roots=engines._git_dirs(self.worktree))
-        roots_setting = next(s for s in settings if s.startswith("sandbox_workspace_write.writable_roots="))
-        roots = json.loads(roots_setting.split("=", 1)[1])
+        parsed = tomllib.loads("\n".join(settings))
+        self.assertEqual(parsed["default_permissions"], "altitude-task")
+        profile = parsed["permissions"]["altitude-task"]
+        roots = list(profile["workspace_roots"])
         self.assertEqual(roots, [str(self.worktree.resolve()), str((self.repo / ".git").resolve()),
                                  str((self.repo / ".git" / "worktrees" / "wt").resolve()),
                                  str(config.ROOT.resolve())])
         self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
-        self.assertIn('sandbox_mode="workspace-write"', settings)
-        self.assertIn("sandbox_workspace_write.network_access=true", settings)
+        self.assertTrue(all(profile["workspace_roots"].values()))
+        self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
+        self.assertEqual(profile["filesystem"], {":root": "read",
+                         **{str(path): "deny" for path in platform.job_control_paths()}})
+        self.assertTrue(profile["network"]["enabled"])
+        self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
+        self.assertNotIn("sandbox_workspace_write", parsed)
         self.assertIn('approval_policy="never"', settings)
 
-    def _launch(self, *, thread="thr-1", **kw):
+    def test_repeated_workspace_roots_produce_a_valid_profile(self):
+        settings = engines.codex_sandbox(config.ROOT, extra_roots=[config.ROOT])
+        parsed = tomllib.loads("\n".join(settings))
+        self.assertEqual(parsed["permissions"]["altitude-task"]["workspace_roots"],
+                         {str(config.ROOT.resolve()): True})
+
+    def _launch(self, *, thread="thr-1", actual_settings=False, **kw):
         procs = []
 
         def popen(cmd, **pkw):
             procs.append(FakeProcess(cmd, stdout=pkw["stdout"], thread=thread))
             return procs[-1]
 
+        settings = engines.codex_sandbox(self.worktree, extra_roots=[self.repo / ".git"]) if actual_settings else ["s1", "s2"]
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(engines, "codex_sandbox", return_value=["s1", "s2"]), \
+             mock.patch.object(engines, "codex_sandbox", return_value=settings), \
              mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
              mock.patch.object(platform, "job_command",
                                side_effect=lambda unit, command, env: ["svc", unit, *command]), \
@@ -74,6 +89,18 @@ class TestCodexAdapter(AltitudeCase):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
                                    extra_env={"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "1"}, **kw)
         return res, procs
+
+    def test_fresh_and_resumed_tasks_select_the_generated_profile(self):
+        for resume in (None, "thr-1"):
+            with self.subTest(resume=resume):
+                _, procs = self._launch(actual_settings=True, resume=resume)
+                command = procs[0].cmd
+                settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c"]
+                parsed = tomllib.loads("\n".join(settings))
+                self.assertEqual(parsed["default_permissions"], "altitude-task")
+                self.assertNotIn("sandbox_mode", parsed)
+                self.assertNotIn("--sandbox", command)
+                self.assertNotIn("--ignore-user-config", command, "retain native user customization")
 
     def test_fresh_turn_runs_codex_exec_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"
