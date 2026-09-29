@@ -424,6 +424,16 @@ checked PR, independently of which integration executes a turn. Both roles use t
 preferences or explicit pins and can operate with one installed engine and one available model.
 The [setup guide](SETUP.md) describes the current manual configuration.
 
+Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitude's own
+coordination commands do not depend on the permission classifier. Native deny/ask rules,
+worker confinement and Altitude's role, task-attempt, merge-hold and machine-grant checks still
+apply. Other external commands retain their native permission checks. The other launcher already
+admits coordination within its network-enabled workspace-write sandbox. The allowance is shared
+by Linux and macOS launches; it grants no additional filesystem or service access.
+Running-task messages retain their existing hook delivery. Hook context does not establish user
+authorization for the native classifier, so operator-requested external actions remain an open
+part of [issue #612](https://github.com/mburakyucel/altitude/issues/612).
+
 | Module | Integration responsibility |
 | --- | --- |
 | [`engines.py`](../altitude/engines.py) | Launch/resume/stop workers; engine arguments, environment and permissions; session identity, output, model/context observations and usage-limit signals. |
