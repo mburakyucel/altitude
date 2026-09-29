@@ -971,8 +971,10 @@ executes the command in a job of its own through `engines.machine_command`, with
 reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
 the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches
 the service manager, it can also stop or reconfigure its own job: the time limit bounds an ordinary command,
-not one that works against it. The unit appends output and exit status to the task folder itself, and altd completes `machine.jsonl`
-and adds a task event and a project event per command. The owner, L3 and the operator can revoke
+not one that works against it. The unit writes its output and exit status to the task folder itself, and altd completes `machine.jsonl`
+and adds a task event and a project event per command. The ledger is also the one-at-a-time record: at startup
+altd follows every unfinished row's unit to its end (`server.settle_interrupted_machine_commands`) and completes it
+from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
 not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent job with Altitude's

@@ -1701,13 +1701,19 @@ first, then runs the command as the operator in a transient user unit outside ev
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
 runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
-appends output to `machine.log` in the task folder and records the exit status, so a command that
-restarts Altitude keeps its row and unit. The CLI prints the output and a status line, then exits
-with the command's status (124 on timeout). Each run completes its `machine.jsonl` row and adds a
-`machine-run` task event and a `machine-run` project event with the command, unit, exit status and
-purpose. A missing grant, a non-running task, a stale attempt, a grant from an earlier attempt or a
-revoked grant refuses with the reason; no exit status within the limit is reported as a timeout or
-an explicit uncertainty, never as success. `alt task status <slug> --brief` shows the active purpose.
+writes its output to `<unit>.log` and its exit status to `<unit>.exit` in the task folder, so the
+result outlives altd. The CLI prints the output and a status line, then exits with the command's
+status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit
+recorded, and adds a `machine-run` task event and a `machine-run` project event with the command,
+unit, exit status and purpose. When Altitude restarts during a command, including one the command
+restarts itself, the next altd follows every unfinished row's unit to its end and completes the
+row and events from that saved status; the CLI tags its call with a request id, reconnects with it
+and prints the same command's result without running it again. A missing grant, a non-running
+task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason,
+as does a request id from an earlier attempt. A unit stopped at the limit is reported as a timeout,
+and any other end without an exit status, including one that happened unseen while altd restarted,
+as an explicit uncertainty with its reason, never as success. When altd cannot be reached at all,
+the CLI fails at once. `alt task status <slug> --brief` shows the active purpose.
 
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,

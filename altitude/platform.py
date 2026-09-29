@@ -255,9 +255,9 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 def logged_job_command(name: str, command: str, *, log: Path, status: Path, env: dict[str, str],
                        timeout: int) -> list[str]:
-    """One shell command as a job that appends its own output to `log` and writes its exit status to `status`,
-    so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it."""
-    runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2"; exit "$status"'
+    """One shell command as a job that appends its own output to `log` and writes its exit status to `status`
+    (whole, by renaming), so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it."""
+    runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2.tmp" && mv "$2.tmp" "$2"; exit "$status"'
     if _darwin():
         return _entry("launch", json.dumps({
             "label": _label(name), "mode": "logged", "env": env, "runtime_max": timeout, "log": str(log),
