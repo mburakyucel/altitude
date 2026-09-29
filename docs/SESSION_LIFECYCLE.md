@@ -944,15 +944,15 @@ report handoff. Existing restart adoption and merge activation observe the conti
 ## Engine containment
 
 Every fresh and resumed owner receives the same browser capability instruction. Worker admission does
-not certify browser isolation. Before dependent deployment verification, the owner preflights the intended
-browser with its sandbox enabled, finite blank/local fictional content and disposable writable storage,
-then cleans up. Unavailable launch becomes an explicit capability fault through `alt task block --fault`;
-the owner preserves evidence and L3 owns supported recovery. Neither a fictional sandbox-disabled test
-harness nor a diagnostic machine grant authorizes bypassing required browser or worker protections.
-Namespace-visible helper ownership leaves host permissions unknown until authorized host diagnostics.
-This instruction takes effect on launches/resumes after normal source activation; running turns retain
-their delivered instructions. Deterministic launch fixtures prove delivery, not provider adherence or
-live browser isolation. See [the browser contract](DEVELOPMENT.md#browser-verification-and-recovery).
+not certify browser isolation, so verification that needs the browser's own sandbox runs through
+`alt task validate`, in a disposable container where Playwright's Chromium keeps it with
+`chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
+owner blocks through `alt task block --fault`, preserving the evidence, and L3 owns supported recovery.
+Neither a fictional sandbox-disabled test harness nor a machine grant authorizes bypassing required
+browser or worker protections. The instruction takes effect on launches/resumes after normal source
+activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
+delivery, not provider adherence or live browser isolation. See
+[browser verification](DEVELOPMENT.md#browser-verification).
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
 directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment

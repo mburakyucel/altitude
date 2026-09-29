@@ -2364,6 +2364,37 @@ def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
         return task
 
 
+def start_machine_run(project: str, slug: str, fields) -> dict:
+    """Number and record a command altd runs outside the worker sandbox (`machine.jsonl`) before its unit starts, so
+    a command that restarts altd keeps its number and unit. `fields(n)` gives the row's purpose, command and unit."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+        row = {"n": len(rows) + 1, **fields(len(rows) + 1), "exit": None, "timed_out": False, "started": S.now(), "finished": None,
+               "error": "still running or interrupted with altd"}
+        _append_jsonl(runs, row)
+    return row
+
+
+def finish_machine_run(project: str, slug: str, row: dict) -> None:
+    """Add the run's task and project events once, then replace its row with the outcome. The row is written last,
+    so an interruption between the writes leaves it unfinished to finish again, and a second finish keeps the
+    outcome the first one recorded."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        recorded = next((e for e in S.read_events(project, slug)
+                         if e["kind"] == "machine-run" and e.get("unit") == row["unit"]), None)
+        if recorded is None:
+            S.append_event(project, slug, "machine-run", actor="l2", **row)
+            S.project_log(project, "machine-run", slug=slug, command=row["command"], unit=row["unit"],
+                          exit=row["exit"], timed_out=row["timed_out"], purpose=row["purpose"])
+        else:
+            row = {key: value for key, value in recorded.items() if key not in ("at", "kind", "actor")}
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
+        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
+                                     for r in rows))
+
+
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
                          reason: str, actor: str, source: str = "task") -> dict:
     """Release a merge hold on the operator's own approval of the task's current PR.

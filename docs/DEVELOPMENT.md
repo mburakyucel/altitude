@@ -249,43 +249,71 @@ Chrome DevTools Protocol, with `Network.emulateNetworkConditions` for slow links
 and the script's finished load, never network idle: the change stream stays open. Report cold, warm
 and slow opens separately, and keep simulated links distinct from the operator's real connection.
 
-## Browser verification and recovery
+## Validation runner
 
-Worker confinement and the browser's own sandbox are separate protections. Worker launch and the
-fictional UI suite do not establish a supported path for verification requiring both. The shared
-launcher tells every fresh/resumed owner to check that capability before dependent deployment
-verification. This is an owner procedure, not automatic capability detection or permission to deploy.
+`alt task validate [--kvm] [--publish PORT] -- COMMAND` runs one validation command for the calling
+task's owner in a disposable rootless Podman container on this computer. The owner needs no machine
+grant, and ordinary worker confinement stays unchanged: altd, not the worker, starts the container.
+altd accepts the request only from a process in the task's current worker job. `make installation-vm`
+and `make browser-sandbox` call it automatically inside a task.
 
-Within the task's diagnostic authority, preflight the intended executable in the intended worker,
-using blank or local fictional content, a finite timeout, and disposable writable profile, config
-and cache directories. Keep the browser sandbox enabled: Playwright's
-[`chromiumSandbox`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox)
-defaults to false and must be explicitly true for this requirement. Record the browser/version,
-launch options, exit/result and cleanup in private task evidence. A successful launch alone does not
-prove every required browser protection; retain the isolation evidence the task requires before
-claiming verification. Do not navigate to a deployment while this prerequisite is unavailable.
+- **Image.** altd builds the only image from its own deployed `scripts/validation.Containerfile`
+  (Ubuntu 24.04 with QEMU, nested Podman, Node and Playwright's Chromium). The image is tagged by the
+  file's hash and is never built from a candidate.
+- **Candidate.** The container sees a throwaway clone of the worktree's committed `HEAD` at `/work`,
+  with the worktree's `origin/*` branches and tags. Uncommitted edits and the worktree itself stay
+  out, and Git hooks are not run.
+- **Container.** Every run uses fixed flags. The command runs as the image's non-root user,
+  mapped to the operator's account with `keep-id`. Networking uses `slirp4netns` with the host's
+  loopback unreachable. The container gets `/dev/fuse` and `/dev/net/tun`, plus `/dev/kvm` with
+  `--kvm`, and has no host mounts beyond the clone, `/results` and a copy-on-write view of the
+  cached Ubuntu cloud image. `--publish` forwards a container port to a free `127.0.0.1` port,
+  never Altitude's own.
+- **Limits.** One run at a time per machine, for up to an hour. Each run gets 8 GiB of memory without
+  swap, 4096 tasks and four CPUs, and needs 20 GiB free for the runner. Disk use is not otherwise
+  bounded.
+- **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
+  `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
+  home, and a path a worker replaced must not become a mount or a place the run writes.
+- **Results.** Regular files that the command writes to `/results` are copied to the task folder's
+  `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches that
+  folder from Altitude's home without following links. Links and oversized files are skipped and
+  listed. The run's container, clone and area are removed afterwards, including after a timeout, a stop
+  or an altd restart.
+- **Record.** Each run is recorded on its task like a [machine run](CLI.md#machine-access), with
+  purpose `validation`, the command, commit, image, exit and how it ended. A run that altd did not
+  see end is recorded as interrupted at the next start. The runner admits no run until that start has
+  removed everything earlier runs left, and stays closed, with the reason in altd's log, if it cannot.
+- **Switch.** Settings → **Validation runs** is on after install. Turning it off stops a running
+  run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
+  runner's storage, where a worker cannot turn it back on.
 
-Issue #441 reports system Chrome rejecting its
-SUID helper and read-only crash storage before navigation. The reporting Altitude version and host
-permissions are unknown. A bounded current-worker check with disposable writable storage reproduces
-the helper rejection; locked bundled Chromium also refuses with `No usable sandbox`. Neither emits
-the reported read-only crash-storage error. This establishes unavailable launches in that worker,
-not a host package defect or a universal browser limitation. No sandbox-preserving path is established.
+The runner is available on Linux x86_64 with `podman` and `slirp4netns`. KVM needs the operator's
+account to hold `/dev/kvm`, as it does during a desktop login. The runner is not implemented on
+macOS, where Podman runs inside a virtual machine of its own and there is no KVM; there
+`alt task validate` reports it unavailable and the Settings switch says why. Options the fixed container does not offer still need a
+[machine grant](CLI.md#machine-access).
 
-Linux [user namespaces](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) translate file
-ownership through UID/GID mappings; unmapped owners can appear as overflow IDs (`nobody:nogroup`).
-Namespace-visible ownership, mode 4755 and a single-ID mapping cannot establish actual host ownership.
-Writable crash storage addresses a separate prerequisite and does not repair browser isolation.
-Do not chmod/chown the helper, add sandbox-disabling flags or weaken worker confinement in response.
+### Browser verification
 
-On unavailable capability, checkpoint the failed launch and remaining verification, reply, and use
-`alt task block "$ALTITUDE_TASK" --fault --reason "Browser sandbox capability unavailable; L3 must establish a supported path preserving required browser and worker protections before verification resumes."`
-L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
-If host facts are necessary, request a bounded diagnostic purpose through the existing operator
-question, resolution and L3 machine-grant workflow. A diagnostic grant authorizes neither host repair
-nor verification outside worker confinement. Recovery requires evidence in the intended worker;
-without it, retain the capability block and present the exact remaining decision. Altitude's local
-fictional harness exception grants no authority for another project's verification.
+Worker confinement and the browser's own sandbox are separate protections. A worker cannot give
+Playwright's bundled Chromium the user namespaces its sandbox needs, but the validation container
+can. Run verification that needs the browser sandbox through `alt task validate`, and launch with
+[`chromiumSandbox: true`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox),
+because Playwright defaults it to false. Use blank or local fictional content, a finite timeout, and a
+disposable profile.
+
+`make browser-sandbox` is the check. It launches Chromium this way against a local fictional page and
+writes `browser-sandbox.json` to the run's results: browser version, launch options,
+`chrome://sandbox` and each renderer's user, seccomp mode and user/PID namespaces. It passes only when
+Chromium reports itself adequately sandboxed and every renderer runs as a non-root user under
+seccomp, in its own namespaces. A successful launch alone does not prove every protection a task
+needs. Keep the isolation evidence the task requires.
+
+Never disable either sandbox, add sandbox-bypass flags, or chmod/chown a SUID helper. If the runner is
+unavailable, or the browser refuses its sandbox inside it, checkpoint the evidence and block with
+`--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
+Altitude's local fictional harness exception grants no authority for another project's verification.
 
 ## Validation environments
 
@@ -299,8 +327,9 @@ blocks automating it.
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use through an owner's machine grant |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
+| Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
@@ -538,10 +567,12 @@ probe that cannot run, stops the run. After the lifecycle passes, the runner run
 commit, published baseline release with its commit and checksums when used, whether it was a recovery run, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
-while the restarted guest waits for its unplugged card. An Altitude worker cannot
-launch VMs from its sandbox; an owner runs this through a
-recorded [machine grant](CLI.md#machine-access) whose purpose names these VMs. The runner never touches the
-host's Altitude service, trust stores or network configuration.
+while the restarted guest waits for its unplugged card. Inside a task, `make installation-vm` runs this
+through the [validation runner](#validation-runner) with KVM. The committed `SOURCE` (default `HEAD`)
+is built inside the container, results go to the task folder's `validation/<n>/`, and the cloud image
+is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
+need the operator's own shell or a [machine grant](CLI.md#machine-access). The runner never touches
+the host's Altitude service, trust stores or network configuration.
 
 ## CI and candidate identity
 

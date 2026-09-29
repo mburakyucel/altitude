@@ -740,6 +740,7 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 const MachineSchema = z.object({
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true),
+  validation: z.boolean().default(true), validation_unavailable: z.string().nullish(),
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
@@ -761,6 +762,11 @@ export async function saveIncidentReports(repository: string | null): Promise<Ma
 /** Turn the operator's terminal on or off for this computer; off also closes every open terminal. */
 export async function saveTerminalAccess(enabled: boolean): Promise<Machine> {
   return MachineSchema.parse(await post("/api/terminal-access", { enabled }));
+}
+
+/** Let task owners run validation containers on this computer, or not; off also stops a running one. */
+export async function saveValidationAccess(enabled: boolean): Promise<Machine> {
+  return MachineSchema.parse(await post("/api/validation-access", { enabled }));
 }
 
 /** Turn the daemon's twice-daily check for a newer release on or off; off also hides the notice. */

@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1707,6 +1707,20 @@ class Handler(BaseHTTPRequestHandler):
             log(f"update request failed: {exc!r}")
             return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
 
+    def _validation_post(self, body: dict) -> None:
+        """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
+        denied = self._terminal_denied(json_body=True, subject="Validation")
+        if denied:
+            return self._json({"error": denied}, 403)
+        if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
+            return self._json({"error": "Choose on or off."}, 400)
+        try:
+            validation.set_enabled(body["enabled"])
+        except OSError as exc:
+            return self._json({"error": f"Could not save the validation switch: {exc.strerror}"}, 400)
+        log(f"validation runs turned {'on' if body['enabled'] else 'off'} by the operator")
+        return self._json(machine_view())
+
     def _terminal_post(self, parts: list[str], body: dict) -> None:
         denied = self._terminal_denied(json_body=True)
         if denied:
@@ -1975,6 +1989,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._devices_post(parts[2], o)
             if api in ("update", "update-check"):
                 return self._update_post(parts, o)
+            if parts == ["api", "validation-access"]:
+                return self._validation_post(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2016,6 +2032,20 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("alt task terminal: unsupported fields")
                     return self._json(owner_terminal_output(o["project"], o["slug"], o.get("attempt"),
                                                             self.client_address, self.connection.getsockname()))
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "task", "validate"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
+                        raise ValueError("alt task validate: unsupported fields")
+                    peer, local = self.client_address, self.connection.getsockname()
+
+                    def owner(task: dict) -> bool:
+                        return task_owner_connection(o["project"], o["slug"], task, peer, local)
+                    return self._json(validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                                     kvm=o.get("kvm", False), publish=o.get("publish"), owner=owner))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
@@ -2519,10 +2549,11 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name, incident publication, the terminal and update-check switches, as First run and
-    Settings show them."""
+    """The operator's name, incident publication, the terminal, validation and update-check switches, as First run
+    and Settings show them."""
     return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
+            "validation": validation.enabled(), "validation_unavailable": platform.validation_unavailable(),
             "update_check": config.machine_settings().get("update_check") is not False}
 
 
@@ -2679,7 +2710,9 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
     for project in config.load_projects():
         for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
             try:
-                rows = [row for row in _machine_rows(runs) if row["finished"] is None]
+                # the validation runner records its own interrupted runs (validation.reconcile)
+                rows = [row for row in _machine_rows(runs) if row["finished"] is None
+                        and not row["unit"].startswith(validation.UNIT_PREFIX)]
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 log(f"machine commands: cannot read {runs}: {exc}")
                 continue
@@ -2691,6 +2724,13 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
     return threads
 
 
+def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, local: tuple) -> bool:
+    """Whether this connection comes from a process in the task's current worker job, so another agent holding this
+    machine's key cannot act as the owner."""
+    return bool(task.get("agent_id")) and terminal.owner_connection(
+        peer, local, engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug)))
+
+
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
     """The task terminal's output for the task's running owner: read-only, and only to a connection from a process in
     that owner's current worker job, so another agent holding this machine's key cannot read it."""
@@ -2698,8 +2738,7 @@ def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple,
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
         raise PermissionError("alt task terminal: only the running owner's current attempt may read its terminal")
-    unit = engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug))
-    if not terminal.owner_connection(peer, local, unit):
+    if not task_owner_connection(project, slug, task, peer, local):
         raise PermissionError("alt task terminal: only this task's owner may read its terminal")
     return terminal.owner_output(project, slug)
 
@@ -2979,6 +3018,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, host), name="timers", daemon=True).start()
+        threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")

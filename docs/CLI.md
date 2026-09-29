@@ -1685,7 +1685,8 @@ operator-only; approval mode cannot combine with it or `--why`.
 
 A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
 or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant:
+under a machine grant. Installation VMs, containers and sandboxed-browser checks run through
+[validation runs](#validation-runs) instead, with no grant:
 
 ```text
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
@@ -1728,6 +1729,24 @@ the CLI fails at once. `alt task status <slug> --brief` shows the active purpose
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
+
+### Validation runs
+
+```text
+alt task validate [--kvm] [--publish PORT] -- <command>
+```
+
+The current owner runs one command against its task's committed `HEAD` in a disposable rootless
+container that altd starts from its own image. No grant is needed; the Settings switch **Validation
+runs** turns the verb off for the whole computer. `--kvm` adds `/dev/kvm`; `--publish` forwards a
+container port to a free loopback port and prints it. The command runs in `/work`, and whatever it
+writes to `/results` is copied to the task folder's `validation/<n>/`, and its output to
+`validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose `validation`, and adds the
+same `machine-run` events as `alt task run`. The CLI prints the output, a status line with the results path, and exits with the command's
+status (124 on timeout). altd accepts the request only from a process in the task's current worker
+job. A non-running task, a stale attempt, another caller, a turned-off switch, missing KVM, low disk
+or a run already in progress refuses with the reason. The
+[validation runner](DEVELOPMENT.md#validation-runner) describes the container, its limits and cleanup.
 
 ### Reading the task terminal
 
