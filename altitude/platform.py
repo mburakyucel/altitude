@@ -329,6 +329,27 @@ def container_runtime() -> dict:
         raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
 
 
+def container_user_environment() -> dict[str, str]:
+    """Keep Podman and its environment-stripped OCI children on the same user bus (#543)."""
+    environment = dict(os.environ)
+    canonical = Path(f"/run/user/{os.getuid()}/bus")
+    runtime = Path(environment.get("XDG_RUNTIME_DIR", str(canonical.parent)))
+    address = f"unix:path={canonical}"
+    if not runtime.is_absolute() or environment.get("DBUS_SESSION_BUS_ADDRESS", address) != address:
+        raise RuntimeError("Podman requires the local user runtime bus, not a redirected bus address")
+    try:
+        if (runtime / "bus").resolve(strict=True) != canonical:
+            raise RuntimeError("Podman runtime bus must resolve to the local user bus")
+        directory, bus = runtime.lstat(), canonical.lstat()
+    except OSError as exc:
+        raise RuntimeError("Local user bus is unavailable; restore the login session before using containers") from exc
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or \
+            directory.st_mode & 0o022 or not stat.S_ISSOCK(bus.st_mode) or bus.st_uid != os.getuid():
+        raise RuntimeError("Local user bus ownership/type is invalid; refuse container operations")
+    environment.update(XDG_RUNTIME_DIR=str(runtime), DBUS_SESSION_BUS_ADDRESS=address)
+    return environment
+
+
 def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False) -> str:
     """Only the local rootless controller; callers select exact task/image/volume resources."""
     if os.getuid() == 0:
@@ -336,7 +357,7 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
     result = subprocess.run(["podman", "--remote=false", *arguments], text=True,
-                            capture_output=not interactive, timeout=timeout)
+                            capture_output=not interactive, timeout=timeout, env=container_user_environment())
     if result.returncode:
         error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
                              f"{(result.stderr or '').strip()[-2000:]}")

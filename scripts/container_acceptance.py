@@ -30,6 +30,11 @@ def environment(root: Path):
              "XDG_CONFIG_HOME": "config", "XDG_CACHE_HOME": "cache"}
     for child in names.values():
         (root / child).mkdir(mode=0o700)
+    # Podman passes only XDG_RUNTIME_DIR to crun delete. A private replacement
+    # loses the real user bus and crun falls back to the system manager (#543).
+    # Preserve the same already-used bus for stripped children while retaining
+    # private pause-process, OCI and storage state (all keyed by this directory).
+    (root / "runtime/bus").symlink_to(f"/run/user/{os.getuid()}/bus")
     os.environ.clear()
     os.environ.update({key: str(root / child) for key, child in names.items()})
     os.environ.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", LANG="C.UTF-8",

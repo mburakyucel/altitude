@@ -2,6 +2,12 @@
 
 ## Container deployment boundary
 
+The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
+Disposable fixture runtimes retain private storage/process metadata and link only that same user
+bus into their runtime directory. This keeps environment-stripped OCI cleanup on the intended bus;
+native proof against host system-manager authorization attempts remains pending in the
+[container evidence](CONTAINERS.md#evidence).
+
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
 inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
 runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes

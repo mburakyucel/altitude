@@ -19,6 +19,10 @@ without confirmed worker identity faults without replay. This is not evidence of
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
+Host authorization acceptance is also open: desktop authentication prompts were reported during
+native gates. Source inspection identifies a fixture runtime-directory error that can send crun
+cleanup to the host system manager. Successful fixture exits and cleanup do not establish absence
+of those requests. Exact host-event correlation and a fail-on-attempt native guard remain required.
 
 ## Boundary
 
@@ -191,6 +195,12 @@ image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
+The launcher requires the runtime directory's bus to resolve to the local account's owned user-bus
+socket. The gate links that socket into its private runtime directory, retaining isolated pause,
+OCI and storage state. Podman 4.9.3 passes only the runtime directory to `crun delete`; a private
+directory without that link loses the user bus and crun 1.14.1 can fall back to the system manager.
+The preflight refuses a missing or redirected bus, but is not proof against a later bus failure or
+an unobserved runtime-child authorization attempt. Native verification of this correction is pending.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

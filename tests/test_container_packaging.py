@@ -1,12 +1,65 @@
 """Real volume lock contention and release/launcher contracts, without calling a host runtime."""
 import json
 import os
+import stat
 from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import config, engines, platform
 from scripts import container, container_acceptance
+
+
+class TestContainerBusIdentity(AltitudeCase):
+    def test_fixture_runtime_retains_bus_for_environment_stripped_children(self):
+        root = self.tmp / "gate"
+        root.mkdir()
+        before = dict(os.environ)
+        with container_acceptance.environment(root):
+            self.assertEqual(os.environ["XDG_RUNTIME_DIR"], str(root / "runtime"))
+            self.assertEqual(os.environ["DBUS_SESSION_BUS_ADDRESS"],
+                             f"unix:path=/run/user/{os.getuid()}/bus")
+            # Podman's DeleteContainer drops the explicit bus address. Its remaining
+            # XDG runtime must still resolve to the same user bus, without a fallback.
+            self.assertEqual(os.readlink(root / "runtime/bus"), f"/run/user/{os.getuid()}/bus")
+            for key in ('HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
+                self.assertTrue(Path(os.environ[key]).is_relative_to(root))
+        self.assertEqual(os.environ, before)
+
+    def test_unsafe_bus_or_runtime_refuses_even_cleanup_before_podman(self):
+        for variables in ({"XDG_RUNTIME_DIR": "relative"},
+                          {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/dbus/system_bus_socket"}):
+            with self.subTest(variables=variables), mock.patch.dict(os.environ, variables, clear=True), \
+                 mock.patch.object(os, "getuid", return_value=1000), \
+                 mock.patch.object(platform.subprocess, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "local user runtime"):
+                    platform.container_command(["rm", "--force", "fixture"])
+                run.assert_not_called()
+
+    def test_missing_bus_refuses_and_valid_user_bus_is_passed_to_podman(self):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, "getuid", return_value=1000), \
+             mock.patch.object(Path, "lstat", side_effect=FileNotFoundError), \
+             mock.patch.object(platform.subprocess, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "user bus is unavailable"):
+                platform.container_command(["stop", "fixture"])
+            run.assert_not_called()
+        metadata = [mock.Mock(st_mode=stat.S_IFDIR | 0o700, st_uid=1000),
+                    mock.Mock(st_mode=stat.S_IFSOCK | 0o600, st_uid=1000)]
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, "getuid", return_value=1000), \
+             mock.patch.object(Path, "resolve", return_value=Path('/run/user/1000/bus')), \
+             mock.patch.object(Path, "lstat", side_effect=metadata), \
+             mock.patch.object(platform.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="ok")) as run:
+            self.assertEqual(platform.container_command(["stop", "fixture"]), "ok")
+            self.assertEqual(run.call_args.kwargs["env"]["XDG_RUNTIME_DIR"], "/run/user/1000")
+
+    def test_private_runtime_cannot_link_to_another_bus(self):
+        with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": "/tmp/fixture-runtime"}, clear=True), \
+             mock.patch.object(os, "getuid", return_value=1000), \
+             mock.patch.object(Path, "resolve", return_value=Path('/run/dbus/system_bus_socket')), \
+             mock.patch.object(platform.subprocess, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "must resolve to the local user bus"):
+                platform.container_command(["rm", "--force", "fixture"])
+            run.assert_not_called()
 
 
 class TestFixtureCleanup(AltitudeCase):
