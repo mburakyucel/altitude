@@ -4,6 +4,7 @@ This is the runtime guide for an already configured installation. New users shou
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
 its checkout path, PATH and tunnel binding need deliberate configuration for another machine.
+On a Mac, `make install-service` writes the same settings as a LaunchAgent for the checkout (`scripts/source_launch_agent.py`), with the PATH it runs with and, when the checkout is not on `main`, that branch as `ALTITUDE_SOURCE_BRANCH`. A source service on a Mac does not restart itself after a self-deploy: run `make install-service` again.
 Private archives generate their own user service; they do not install that source template.
 
 ## Runtime and inspection

@@ -119,6 +119,24 @@ class TestSelfDeploy(AltitudeCase):
         self.assertTrue(any("restart pending" in n for n in notes), notes)
         self.assertEqual(dispatch.pull_after_done("altitude", {"slug": "landed"}), [])  # nothing new → silent
 
+    def test_the_running_checkout_follows_the_branch_the_operator_chose(self):
+        git("checkout", "-qb", "trial", cwd=self.repo)
+        git("push", "-q", "origin", "trial", cwd=self.repo)
+        other = self.tmp / "other"
+        git("clone", "-q", "-b", "trial", str(self.tmp / "origin.git"), str(other), cwd=self.tmp)
+        (other / "trial.txt").write_text("on trial\n")
+        git("add", "-A", cwd=other)
+        git("commit", "-qm", "trial change", cwd=other)
+        git("push", "-q", "origin", "trial", cwd=other)
+        with mock.patch("altitude.incidents.system_fault"):  # main is the default: another branch is refused
+            self.assertTrue(any("self-deploy refused" in note
+                                for note in dispatch.pull_after_done("altitude", {"slug": "landed"})))
+        self.patch(config, "REPO", self.repo)
+        self.patch(config, "SOURCE_BRANCH", "trial")
+        notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
+        self.assertTrue((self.repo / "trial.txt").exists(), notes)
+        self.assertTrue(any(note.startswith("self-deploy: trial ") for note in notes), notes)
+
     def test_not_self_deploy_projects_are_untouched(self):
         self.register("other", path=self.tmp / "nowhere")
         self.assertEqual(dispatch.pull_after_done("other", {"slug": "x"}), [])

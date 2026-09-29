@@ -41,6 +41,8 @@ if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is
     SOURCE = (REPO / ".altitude-source/current").resolve()
 # Incident issue target's initial value; the `incident_repository` machine setting replaces it (incident_repository()).
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
+# The branch a source service runs and self-deploys: main unless the operator chooses another.
+SOURCE_BRANCH = os.environ.get("ALTITUDE_SOURCE_BRANCH") or "main"
 #: Altitude's own repository: the destination First run fills in when the operator turns incident publishing on.
 ALTITUDE_REPOSITORY = "mburakyucel/altitude"
 # A repository whose base commit ships this workflow requires its PR `check` on the exact candidate head.
