@@ -4,6 +4,9 @@ The [container candidate](CONTAINERS.md) consumes this same checksummed applicat
 its container packaging. Image labels retain release/source/archive identity. Building an image neither
 publishes it nor establishes runtime or architecture acceptance. Native release/installer publication
 and its optional hosted workflow remain independent of container validation.
+Each rebuilt image also needs bootstrap/admission evidence: an empty-volume first start, preserved
+same-container restart state, replacement requiring host Continue, and protected receipt writes.
+Passing an earlier image gate does not validate later lifecycle changes.
 
 Altitude uses versioned archives and source checkpoints. A release identifies a validated commit
 and its notes. The operator decides when to publish it. No release or tag is created by running

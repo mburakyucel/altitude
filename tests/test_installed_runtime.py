@@ -107,6 +107,8 @@ class InstalledRuntime(AltitudeCase):
         self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
         self.patch(config, "INSTALL_PREFIX", Path("/"))
         self.patch(config, "HOME", self.tmp / "image-home")
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        platform._lifecycle_write("a" * 32, False)
         self.assert_dispatch_and_resume(self.source / "hooks")
 
     def assert_dispatch_and_resume(self, expected):
@@ -136,6 +138,26 @@ class InstalledRuntime(AltitudeCase):
         self.assertTrue(stopped["stop_id"])
         self.assertFalse(engines.worker_live(stopped["l2_engine"], stopped, job_root=None))
         self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
+
+    def test_image_pause_keeps_stop_available_and_global_continue_does_not_release_task_stop(self):
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
+        self.patch(config, "INSTALL_PREFIX", Path("/"))
+        self.patch(config, "HOME", self.tmp / "image-home")
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        self.patch(platform, "status", return_value={"ActiveState": "active"})
+        platform._lifecycle_write("a" * 32, False)
+        task = T.new(self.project, "Image Stop", "Preserve task authority", hold_merge="Operator review")
+        dispatch.run(self.project, task["slug"])
+        platform.change_container_lifecycle("pause", "a" * 32)
+        stopped = dispatch.stop(self.project, task["slug"], reason="Stop this task")
+        self.assertTrue(stopped["stop_id"])
+        self.assertFalse(engines.worker_live(stopped["l2_engine"], stopped, job_root=None))
+        platform.change_container_lifecycle("continue", "a" * 32)
+        self.assertEqual(dispatch.resume(self.project, task["slug"]), {"waiting": True})
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual(current["stop_id"], stopped["stop_id"])
+        self.assertEqual(current["hold_merge"], "Operator review")
 
     def test_missing_guard_resources_refuse_dispatch_before_launch(self):
         (self.prefix / "hooks/pre-commit").unlink()

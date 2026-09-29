@@ -3,6 +3,9 @@
 The [container lifecycle](CONTAINERS.md#lifecycle-and-recovery) uses host image replacement instead
 of native application updates or source activation. Browser terminal and host voice are explicitly
 unavailable. Container runtime, complete onboarding and backup/recovery acceptance remain pending.
+The host launcher exposes `status`, `pause` and `continue`. Replacement pauses new provider work;
+Continue releases eligible queued work without clearing task holds. Pause leaves Stop and already
+admitted work available. Stop the controller for a consistent backup; status alone cannot certify one.
 
 This is the runtime guide for an already configured installation. New users should start with
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).

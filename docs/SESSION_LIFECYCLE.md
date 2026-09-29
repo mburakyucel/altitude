@@ -1294,6 +1294,23 @@ worker records travel with it. Task state changes and stop/resume records are th
 parser error or incomplete final JSONL record is displayed as viewer evidence and retried on the next poll; it
 never changes task or worker state.
 
+## Container continuation
+
+The [image lifecycle](CONTAINERS.md#lifecycle-and-recovery) pauses new provider work after container
+replacement until the operator runs the host launcher's Continue. Restarting the same container
+preserves its prior admission. Fresh empty home and project volumes initialize once before the
+application starts; imported, restored or incomplete state never silently becomes fresh.
+
+Task dispatch/resume, coordinator chat/report turns, independent reviews, setup connection and
+conversation audit enter the same admission lease before taking their work. Engine primitives
+check that lease too. A later Pause permits an already admitted call to finish but rejects new
+ones. Queued messages, review requests and resume generations remain unconsumed on refusal;
+report refusals do not consume failure backoff. Stop and report bookkeeping do not need admission.
+Old resume claims still reconcile while paused: known workers can be adopted, prelaunch claims
+released, and genuinely uncertain launches reported through existing recovery. Global Continue
+does not clear a task Stop, question, usage limit or merge/review hold. Native behavior is unchanged;
+Mac container lifecycle evidence remains pending.
+
 ## Operator terminal
 
 The container deployment explicitly refuses terminal routes and owner transcript reads for every

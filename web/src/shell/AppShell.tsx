@@ -11,6 +11,7 @@ import { PhoneHeader } from "./PhoneHeader";
 import { managedProjects } from "./projects";
 import { Rail } from "./Rail";
 import { RestartBanner } from "./RestartBanner";
+import { ContainerNotice } from "./ContainerNotice";
 import { setSelectedProject, useSelectedProject } from "./scope";
 import { TabBar } from "./TabBar";
 import { UpdateNotice } from "./UpdateNotice";
@@ -90,6 +91,7 @@ export default function AppShell() {
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />
+          <ContainerNotice lifecycle={overview.data?.lifecycle} />
           <UpdateNotice update={overview.data?.update} />
           {((!projectPage && !taskPage && !taskLive && !taskTerminal && !projectTerminal) || missingProject) && !location.pathname.startsWith("/settings") ? <PhoneHeader overview={overview} /> : null}
         </>
@@ -97,7 +99,7 @@ export default function AppShell() {
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />
       )}
       <main className="shell-main">
-        {phone ? null : <><RestartBanner restart={overview.data?.restart} /><UpdateNotice update={overview.data?.update} /></>}
+        {phone ? null : <><RestartBanner restart={overview.data?.restart} /><ContainerNotice lifecycle={overview.data?.lifecycle} /><UpdateNotice update={overview.data?.update} /></>}
         {missingProject ? (
           <div className="page first-run-page">
             {projects.length ? <>

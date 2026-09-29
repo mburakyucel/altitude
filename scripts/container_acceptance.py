@@ -89,6 +89,7 @@ for attempt in range(16):
         time.sleep(.25)
 machine = request('/api/machine')
 assert machine['deployment'] == 'container' and not machine['terminal'] and not machine['update_check']
+assert machine['lifecycle']['ready'], machine['lifecycle']
 assert request('/api/overview')['update']['managed'] == 'image'
 service = platform.status()
 assert service['ActiveState'] == 'active'

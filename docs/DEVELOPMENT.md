@@ -289,6 +289,14 @@ blocks automating it.
 
 ## Device evidence
 
+Container admission regressions run with
+`python3 -m unittest tests.test_container_admission tests.test_installed_runtime tests.test_resume_priority`.
+They cover receipt/instance recovery, pause/launch races, lease release after process exit, caller
+refusals and retained task Stop/holds using real storage/Git and fixture engines. `container.pw.ts`
+walks the read-only recovery notice through admitted, replacement-paused, continued and unavailable
+identity states using fictional API/storage. Neither suite establishes native image or deployment
+browser acceptance; rerun the image gate on the exact candidate under authorized runtime access.
+
 Device results name their evidence class; a result in one class never stands in for another.
 
 | Class | Runs | Establishes | Does not establish |

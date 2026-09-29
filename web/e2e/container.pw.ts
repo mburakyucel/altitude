@@ -4,6 +4,24 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "container-service.py" });
 
+test("container replacement explains queued work and clears only after host continuation", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const notice = page.getByRole("status", { name: "Container work paused" });
+  await walk.open("/settings");
+  await walk.state("01-admitted", { visible: [page.getByText("Terminal unavailable", { exact: true })], hidden: [notice] });
+  await request.post("/fixture/replace");
+  await page.reload();
+  await walk.state("02-replacement-paused", { visible: [notice, page.getByText(/Messages and task requests stay queued/),
+    page.getByText(/After checking recovery, run on the host/)], hidden: [notice.getByRole("button")] });
+  await request.post("/fixture/continue");
+  await page.reload();
+  await walk.state("03-host-continued", { visible: [page.getByText("Terminal unavailable", { exact: true })], hidden: [notice] });
+  await request.post("/fixture/identity-unavailable");
+  await page.reload();
+  await walk.state("04-identity-unavailable", { visible: [notice, page.getByText(/Repair image startup before continuing/)],
+    hidden: [page.getByText(/After checking recovery, run on the host/)] });
+});
+
 test("container settings explain unavailable actions and container-only setup", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/settings");
@@ -20,7 +38,7 @@ test("container settings explain unavailable actions and container-only setup", 
     expect((await response.json()).error).toMatch(/container|image-managed/);
   }
   await walk.open("/settings/voice");
-  const host = page.getByRole("radio", { name: "This computer — live text" });
+  const host = page.getByRole("radio", { name: "This computer", exact: true });
   await expect(host).toBeDisabled();
   await walk.state("02-host-voice-unavailable", {
     visible: [host, page.getByText(/Host voice is unavailable in this container/)],

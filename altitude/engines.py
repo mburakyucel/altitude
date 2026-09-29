@@ -189,6 +189,7 @@ def session_timeout(engine: str) -> int:
     return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
 
 
+@config.admitted_provider
 def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
     """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
 
@@ -577,6 +578,7 @@ def claude_settings() -> Path:
     return p
 
 
+@config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
@@ -1657,6 +1659,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
                          persona=persona, model=model, extra_env=extra_env, start_timeout=start_timeout)
 
 
+@config.admitted_provider
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None,
@@ -1902,6 +1905,7 @@ def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
     return bool(row and row.get("state") == "working")
 
 
+@config.admitted_provider
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
                sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
@@ -2202,6 +2206,7 @@ def _review_object(text: str) -> dict:
     raise ValueError("The review answer holds no JSON object.")
 
 
+@config.admitted_provider
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
            on_start=None, on_wait=None) -> dict:
     """One focused review without a duration cutoff; callbacks retain owner/caller cancellation."""

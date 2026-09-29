@@ -7,6 +7,9 @@ native task/coordinator sandbox feasibility gate passes on the recorded Linux tu
 application workflow, lifecycle/recovery, complete onboarding and real Mac ARM64 evidence remain open.
 The [candidate build and bootstrap gate](CONTAINERS.md) are under validation. Containerized Linux does
 not establish native macOS, Xcode or iOS build support. No container-security advantage is assumed.
+The candidate implements host-side continuation after replacement, preserving ordinary restart
+admission and task holds. Workspace fixtures and the read-only notice are separate from the pending
+native lifecycle, backup/update/recovery and deployment-browser acceptance.
 
 ## Friends-and-family readiness priorities
 

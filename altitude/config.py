@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from . import platform
 
@@ -398,6 +399,37 @@ def restart_lock(*, exclusive: bool = False):
             yield True
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+_provider_admitted = ContextVar("provider_admitted", default=None)
+
+
+class AdmissionPaused(RuntimeError):
+    """No provider was invoked; caller state must remain eligible for deliberate continuation."""
+
+
+@contextmanager
+def provider_admission():
+    if _provider_admitted.get() == os.getpid():
+        yield None
+        return
+    with platform.container_admission() as why:
+        token = _provider_admitted.set(os.getpid() if not why else None)
+        try:
+            yield why
+        finally:
+            _provider_admitted.reset(token)
+
+
+def admitted_provider(function):
+    """Last common gate, including callers outside the daemon's ordinary work queues."""
+    @functools.wraps(function)
+    def admitted(*args, **kwargs):
+        with provider_admission() as why:
+            if why:
+                raise AdmissionPaused(why)
+            return function(*args, **kwargs)
+    return admitted
 
 
 def restart_in_progress() -> bool:

@@ -338,9 +338,16 @@ export const UpdateSchema = z.object({
   attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
 });
 
+const ContainerLifecycleSchema = z.object({
+  ready: z.boolean(), reason: z.string().nullable(), instance: z.string().nullable(),
+  continue_command: z.string().optional(), admitted_calls_active: z.boolean().optional(),
+});
+export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
+
 export const OverviewSchema = z
   .object({
     deployment: z.enum(["native", "container"]).optional(),
+    lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
     wip: WipSchema,
@@ -730,6 +737,7 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 }
 
 const MachineSchema = z.object({
+  lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true),
   terminal_unavailable: z.string().nullish(), deployment: z.enum(["native", "container"]).optional(),

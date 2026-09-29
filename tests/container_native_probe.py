@@ -41,6 +41,7 @@ targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': g
            'state': config.ROOT, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,
            'guard_consent': platform.container_git_guards()[1],
+           'lifecycle_receipt': platform._lifecycle_directory(),
            'protected_codex': workspace / '.codex', 'protected_agents': workspace / '.agents',
            'temporary': Path('/tmp/task-native-write')}
 for path in targets.values():

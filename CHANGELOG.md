@@ -8,6 +8,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - The Linux container candidate packages the verified release with rootless Podman, real user
   services and persistent home/project volumes. Image mode refuses browser terminal, host voice
   and native application updates, and labels setup commands and paths by their container context.
+  Replacement pauses new AI work until host-side Continue; ordinary restarts preserve admission,
+  messages stay queued while paused, and task Stop/review holds remain in force.
   Full runtime, lifecycle/recovery, onboarding and Mac acceptance remain pending; see
   [the container boundary and validation limits](docs/CONTAINERS.md).
 

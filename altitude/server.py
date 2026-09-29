@@ -2449,6 +2449,7 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
+            "lifecycle": platform.container_lifecycle(),
             "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
@@ -2518,7 +2519,7 @@ def save_projects_folder(body: dict) -> dict:
 def machine_view() -> dict:
     """The operator's name, incident publication, the terminal and update-check switches, as First run and
     Settings show them."""
-    return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
+    return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
             "terminal_unavailable": platform.container_unavailable("Terminal"),
             "container_shell": platform.container_shell_command(),

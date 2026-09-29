@@ -250,8 +250,8 @@ def _fault(project: str, detail: str) -> None:
 
 def run(project: str) -> None:
     from . import server
-    with config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project, wait=True):
-        if not attached or not active or config.restart_in_progress() or not config.is_managed(project):
+    with config.provider_admission() as held, config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project, wait=True):
+        if held or not attached or not active or config.restart_in_progress() or not config.is_managed(project):
             return
         operation = read(project).get("operation") or {}
         if operation.get("state") not in ("pending", "running"):

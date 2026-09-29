@@ -79,6 +79,14 @@ requirements, including accessible control names, minimum targets, and contrast 
 
 ## 2. Information architecture
 
+The container recovery notice uses the shell's existing status-banner treatment on phone and
+desktop. While globally paused it says new AI work is paused, messages/task requests stay queued,
+and Stop remains available. It labels the displayed Continue command as a host action and offers
+no browser mutation button. An unavailable instance shows repair guidance instead of a command.
+The notice is absent while loading, in native mode, and after the overview reports admitted work;
+no dismissal or additional browser storage is introduced. Container deployment walkthroughs remain
+distinct from the fictional local UI harness.
+
 ### 2.1 Routes
 
 | Route | Page | Replaces |

@@ -23,6 +23,7 @@ import stat
 import struct
 import subprocess
 import sys
+import uuid
 
 
 SERVICE = "altitude.service"
@@ -32,6 +33,7 @@ INSTALL = {"gh": "sudo apt install gh", "git": "sudo apt install git"}
 # Image-owned identity, outside every persistent/writable application volume. Neither an environment
 # variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
 CONTAINER_MARKER = Path("/etc/altitude/container")
+CONTAINER_INSTANCE = Path("/etc/altitude/instance")
 CONTAINER_PROJECTS = Path("/home/altitude/Projects")
 CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
 IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
@@ -61,7 +63,7 @@ def container_unavailable(subject: str) -> str | None:
     if subject == "Terminal":
         return "Browser terminal is unavailable in this container. Use podman exec from a host terminal."
     if subject == "Voice":
-        return "Host voice is unavailable in this container. Use browser recognition where supported."
+        return "Host voice is unavailable in this container. Use browser recognition where supported"
     return IMAGE_MANAGED
 
 
@@ -105,6 +107,139 @@ def require_container_project(path: Path, *, folder: bool = False) -> None:
             raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
 
 
+def _container_instance() -> str:
+    info = CONTAINER_INSTANCE.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError("Container instance identity is not root-owned and immutable to the application")
+    value = CONTAINER_INSTANCE.read_text().strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", value):
+        raise ValueError("Container instance identity is invalid")
+    return value
+
+
+def _lifecycle_directory() -> Path:
+    from . import config
+    return config.HOME / ".config/altitude"
+
+
+@contextmanager
+def _lifecycle_lock(name: str, operation: int):
+    directory = _lifecycle_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(directory / name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("Container lifecycle lock must be a regular file")
+        fcntl.flock(fd, operation)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _lifecycle_write(instance: str, paused: bool) -> None:
+    from . import state as S
+    S.write_json(_lifecycle_directory() / "lifecycle.json", {"instance": instance, "paused": paused})
+
+
+def _lifecycle_state() -> dict:
+    # #543: missing/invalid state must not let replacement or restore replay provider work.
+    instance = None
+    reason = "Container recovery is paused. Run the host launcher Continue after checking saved work."
+    try:
+        instance = _container_instance()
+        record = json.loads((_lifecycle_directory() / "lifecycle.json").read_text())
+        if not isinstance(record, dict) or type(record.get("paused")) is not bool:
+            raise ValueError("Invalid lifecycle receipt")
+        if record.get("instance") == instance:
+            if not record["paused"]:
+                return {"instance": instance, "ready": True, "reason": None}
+            reason = "New AI work is paused. Run the host launcher Continue to release queued work."
+    except (OSError, ValueError):
+        pass
+    if instance is None:
+        reason = "Container identity is unavailable. Repair image startup before continuing."
+    return {"instance": instance, "ready": False, "reason": reason}
+
+
+def container_lifecycle() -> dict | None:
+    if not containerized():
+        return None
+    try:
+        with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+            state = _lifecycle_state()
+            if state["instance"]:
+                state["continue_command"] = "python3 scripts/container.py continue --name " + shlex.quote(socket.gethostname())
+            try:
+                with _lifecycle_lock("lifecycle-launches.lock", fcntl.LOCK_EX | fcntl.LOCK_NB):
+                    state["admitted_calls_active"] = False
+            except BlockingIOError:
+                state["admitted_calls_active"] = True
+            # Detached workers outlive admission calls; this is never a backup/drained certificate.
+            state["work_notice"] = "Previously started workers may still run. Stop the container before a consistent backup."
+            return state
+    except (OSError, ValueError) as exc:
+        return {"instance": None, "ready": False, "reason": f"Container lifecycle state is unavailable: {exc}"}
+
+
+@contextmanager
+def container_admission():
+    """A lease covers pre-claim work through launch; pause rejects only later admissions.
+
+    Receipt locking serializes the check with pause. The shared lease is held independently until
+    the admitted call returns, including synchronous provider turns, and is released on process exit.
+    """
+    if not containerized():
+        yield None
+        return
+    with ExitStack() as active:
+        try:
+            with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+                why = _lifecycle_state()["reason"]
+                if not why:
+                    active.enter_context(_lifecycle_lock("lifecycle-launches.lock", fcntl.LOCK_SH))
+        except (OSError, ValueError) as exc:
+            why = f"Container lifecycle state is unavailable: {exc}"
+        yield why
+
+
+def change_container_lifecycle(action: str, expected: str) -> dict:
+    """Host-exec administration only: no CLI agent verb or HTTP mutation route."""
+    from . import config
+    actor = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
+    if actor != config.OPERATOR_ACTOR or any(os.environ.get(key) for key in
+            ("ALTITUDE_TASK", "ALTITUDE_SESSION_KEY", "ALTITUDE_L3_TOKEN")):
+        raise PermissionError("Container continuation requires the operator's host terminal")
+    if not containerized() or action not in ("pause", "continue"):
+        raise ValueError("Select pause or continue for an Altitude container")
+    if action == "continue" and status().get("ActiveState") != "active":
+        raise RuntimeError("The application service is not ready; repair startup before continuing")
+    with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+        instance = _container_instance()
+        if expected != instance:
+            raise ValueError("The container changed; inspect its status before continuing")
+        _lifecycle_write(instance, action == "pause")
+    return container_lifecycle()
+
+
+def _initialize_container_lifecycle(home: Path, projects: Path) -> None:
+    """Before the user manager: keep identity in this container layer, outside persistent volumes."""
+    if not CONTAINER_INSTANCE.exists():
+        temporary = CONTAINER_INSTANCE.with_name("instance-" + uuid.uuid4().hex)
+        temporary.write_text(uuid.uuid4().hex + "\n")
+        temporary.chmod(0o444)
+        os.replace(temporary, CONTAINER_INSTANCE)
+    instance = _container_instance()
+    fresh = (set(p.name for p in home.iterdir()) <= {".altitude-instance.lock", "Projects"}
+             and set(p.name for p in projects.iterdir()) <= {".altitude-projects.lock"})
+    if fresh:
+        # Do not traverse an application-owned home as root. No user shell, hooks or mutable code.
+        subprocess.run([sys.executable, "-B", "-c",
+            "from altitude.platform import _lifecycle_write; "
+            f"_lifecycle_write({instance!r}, False)"], check=True, timeout=10,
+            cwd=Path(__file__).resolve().parent.parent, user=1000, group=1000, extra_groups=(),
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"})
+
+
 @contextmanager
 def container_volume_locks(home: Path, projects: Path):
     """Hold both controller-volume locks, including across user-manager/daemon restarts.
@@ -145,6 +280,7 @@ def container_bootstrap() -> None:
         for directory in (home, projects):
             os.chown(directory, 1000, 1000)
             directory.chmod(0o700)
+        _initialize_container_lifecycle(home, projects)
         notify = os.environ.get("NOTIFY_SOCKET")
         if not notify:
             raise RuntimeError("Container bootstrap must run as its notification service")

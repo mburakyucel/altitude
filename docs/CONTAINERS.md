@@ -113,6 +113,35 @@ Application and OS dependencies belong to one image. Source-project merges do no
 restart it. Native installation/update/recovery commands and Monitor Restart refuse before scheduling
 work. Periodic native update checks/notices are disabled; stale restart receipts cannot hold admission.
 
+The root bootstrap records an instance identity in the container layer before starting the user
+manager. It admits genuinely empty home **and** project volumes once, as the application user.
+The persistent receipt lives beside private configuration, outside task-writable state/projects.
+Same-container and daemon restarts keep the previous admitted/paused state. A replacement,
+restored home, or missing/corrupt receipt pauses new AI work until deliberate host continuation.
+Neither chat messages nor task Continue bypass that global pause; their requests remain queued.
+Stop, worker observation, claim reconciliation and report processing remain available. An ambiguous
+interrupted launch still requires its existing recovery decision; global Continue clears no task hold.
+
+From the source checkout on the **host**, select the container you operate:
+
+```sh
+python3 scripts/container.py status --name altitude
+python3 scripts/container.py pause --name altitude
+python3 scripts/container.py continue --name altitude
+```
+
+Continue checks the active application service and the observed instance identity before releasing
+queued coordinator turns, reports and authorized task requests. The browser shows this host action
+while paused and removes the notice after a fresh admitted status. It offers no lifecycle mutation
+route. Task/coordinator credentials refuse the host action; same-UID trust limits remain unchanged.
+These controls manage Altitude launch admission, not arbitrary programs running as the same user.
+
+Pause rejects new admissions atomically. Calls admitted earlier can finish, including a launch
+already preparing its claim; status reports admitted calls still active. Detached workers can remain
+after those calls return. Neither a quiet status nor a pause proves that a backup is consistent:
+stop the controller before copying both volumes. Native and Mac validation of this admission
+increment remains pending; the earlier exact image evidence above does not cover this later code.
+
 Use task Stop for owned task work before stopping the whole container. Host `stop` stops the selected
 container; `remove` refuses a running one and retains both volumes. A new controller can use those
 volumes after the old controller stops. Registrations, settings, sessions and holds persist there;

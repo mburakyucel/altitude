@@ -557,6 +557,11 @@ def _finish_task_operation(project: str, slug: str, request_id: str | None, stat
 
 
 def run_task_operation(project: str, slug: str) -> dict:
+    with config.provider_admission() as held:
+        return _run_task_operation(project, slug, admission_held=held)
+
+
+def _run_task_operation(project: str, slug: str, *, admission_held: str | None = None) -> dict:
     """Execute one durable request in altd, once, against the worker identity the caller observed.
 
     I-20260904-062512: ``executing`` is a durable fence. Task transitions re-check its id, state,
@@ -598,6 +603,8 @@ def run_task_operation(project: str, slug: str) -> dict:
                 terminal = ("refused", f"task changed to {state}")
             else:
                 terminal = None
+                if admission_held and operation in ("resume", "handoff") and not task.get("resume_claim"):
+                    return {"pending": True, "request": request, "held": admission_held}
                 if status == "pending":
                     request.update({"status": "executing", "started_at": S.now()})
                     task["daemon_request"] = request
@@ -844,7 +851,9 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
-    with launch_lock(), config.restart_lock() as ready:
+    with config.provider_admission() as held, launch_lock(), config.restart_lock() as ready:
+        if held:
+            raise T.TransitionError(held)
         if not ready or config.restart_in_progress():
             raise T.TransitionError("Altitude is restarting; retry shortly")
         return _run(project, slug, model)
@@ -1005,16 +1014,20 @@ def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> 
     claim = S.load_task(project, slug).get("resume_claim") or {}
     if claim and _claim_owner_live(claim):
         return {"already_resuming": True}
-    with launch_lock(), config.restart_lock() as ready:
+    with config.provider_admission() as held, launch_lock(), config.restart_lock() as ready:
+        if held and not S.load_task(project, slug).get("resume_claim"):
+            return {"held": held}
         if not ready or config.restart_in_progress():
             return {"held": "Altitude is restarting; retry shortly"}
         try:
-            return _resume(project, slug, daemon_request_id=daemon_request_id)
+            return _resume(project, slug, daemon_request_id=daemon_request_id,
+                           **({"admission_held": held} if held else {}))
         except T.TransitionError as exc:
             raise ResumeFailure(str(exc)) from exc  # lifecycle cancellation must not become workflow:resume
 
 
-def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
+def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
+            admission_held: str | None = None) -> dict:
     """Start a blocked task's provider session again in its worktree, with whatever waits in its inbox.
 
     This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
@@ -1042,6 +1055,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
                                       daemon_fence=daemon_fence)
     if recovered is not None:
         return recovered
+    if admission_held:
+        return {"held": admission_held}  # Reconcile the old claim without claiming or launching new work.
     task = S.load_task(project, slug)
     if task.get("stop_id") and not task.get("resume_after") and daemon_request_id is None:
         return {"waiting": True}

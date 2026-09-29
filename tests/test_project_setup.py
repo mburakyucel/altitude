@@ -33,6 +33,8 @@ class ProjectSetup(AltitudeCase):
         self.patch(config, "RELEASE", {"version": "fixture"})
         self.patch(config, "INSTALL_PREFIX", Path("/"))
         self.patch(config, "INSTALL_CONFIG", self.tmp / "missing-install.json")
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        platform._lifecycle_write("a" * 32, False)
         setup.ensure_guards(self.project, slug=task["slug"])
         for checkout in (self.repo, worktree):
             self.assertEqual(git_policy.require_hooks_installed(checkout), config.SOURCE / "hooks")

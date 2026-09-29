@@ -12,6 +12,12 @@ local HTTPS, elevation-file inventory and the native diagnostic permission matri
 `171d802`; [container evidence](CONTAINERS.md) names the exact archive and limits. Provider-session
 confinement parity, full workflow/lifecycle and Mac runtime evidence remain pending. Resume-claim ownership
 uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
+Container admission has one persistent receipt and a root-owned container-instance identity.
+The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
+gate every provider launch, with early checks before queue/claim consumption. A replacement waits
+for host-side Continue. Same-container restarts retain admission. Existing task holds, Stop and
+reconciliation remain independent of this global gate. The read-only browser notice uses the
+existing overview poll; it adds no retained browser state or host command route.
 
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,

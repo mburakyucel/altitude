@@ -111,6 +111,17 @@ def execute(instance: str, command: list[str], *, interactive: bool = False) -> 
                                        value["Id"], *command], timeout=3600 if interactive else 30, interactive=interactive)
 
 
+def lifecycle(instance: str, action: str = "status") -> dict:
+    prefix = "import sys,json; sys.path.insert(0,'/opt/altitude'); from altitude import platform; "
+    observed = json.loads(execute(instance, ["python3", "-c", prefix + "print(json.dumps(platform.container_lifecycle()))"]))
+    if action == "status":
+        return observed
+    if not observed or not observed.get("instance"):
+        raise ValueError("Container identity is unavailable; repair its startup before continuing")
+    return json.loads(execute(instance, ["python3", "-c", prefix +
+        "print(json.dumps(platform.change_container_lifecycle(sys.argv[1],sys.argv[2])))", action, observed["instance"]]))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -127,7 +138,7 @@ def main() -> None:
     run.add_argument("--public-host", default="localhost")
     run.add_argument("--port", type=int, default=8890)
     sub.add_parser("preflight", help="check local rootless-runtime prerequisites without starting containers")
-    for action in ("status", "stop", "remove", "pair", "shell", "certificate"):
+    for action in ("status", "pause", "continue", "stop", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
         if action == "certificate":
@@ -141,7 +152,12 @@ def main() -> None:
         elif args.action == "start":
             print(start(args.image, args.name, args.home_volume, args.projects_volume, args.bind, args.public_host, args.port))
         elif args.action == "status":
-            print(json.dumps(owned(args.name)["State"], indent=2))
+            state = owned(args.name)["State"]
+            print(json.dumps({"container": state, "lifecycle": lifecycle(args.name) if state["Running"] else None}, indent=2))
+        elif args.action in ("pause", "continue"):
+            print(json.dumps(lifecycle(args.name, args.action), indent=2))
+            if args.action == "continue":
+                print("Queued coordinator work and authorized task requests may now run; existing holds still apply.")
         elif args.action in ("stop", "remove"):
             value = owned(args.name)
             if args.action == "remove" and value["State"]["Running"]:
