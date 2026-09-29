@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, state as S, tasks as T
+from . import config, engines, git_policy, l3, platform, state as S, tasks as T
 
 
 class SetupError(git_policy.GitPolicyError):
@@ -307,7 +307,9 @@ def maintain(project: str) -> None:
     if (record.get("operation") or {}).get("state") == "failed":
         return
     view = observe(project)
-    if any(s.get("action") == "repair" and (s["id"].startswith("guards") or
+    first_turn_pending = platform.containerized() and not record.get("intro") and any(
+        s["id"] == "coordinator" and s["status"] == "pending" for s in view["steps"])
+    if first_turn_pending or any(s.get("action") == "repair" and (s["id"].startswith("guards") or
            s["id"] == "coordinator" and not record.get("intro")) for s in view["steps"]):
         request(project, "repair", actor="altd")
         run(project)

@@ -502,6 +502,31 @@ class ProjectSetup(AltitudeCase):
             self.assertEqual(self.step("coordinator")["status"], "complete")
             self.assertEqual(l3.info(self.project)["session_id"], "repaired-session")
 
+    def test_container_paused_intro_is_maintained_once_after_global_continue(self):
+        self.perform()
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        self.patch(platform, "container_ready")
+        platform._lifecycle_write("a" * 32, True)
+        def spawn(_key, fn, *args):
+            fn(*args)
+            return True
+        with mock.patch.object(server, "spawn", side_effect=spawn), \
+             mock.patch.object(engines, "installation", side_effect=lambda engine: {"available": engine == "claude", "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", return_value={"text": "Ready", "session_id": "fixture-session"}) as provider:
+            server.start_l3(self.project)
+            setup.maintain(self.project)
+            self.assertFalse(setup.read(self.project).get("intro"))
+            self.assertEqual(l3.queued(self.project), [])
+            provider.assert_not_called()
+            platform.change_container_lifecycle("continue", "a" * 32)
+            setup.maintain(self.project)
+            setup.maintain(self.project)
+            provider.assert_called_once()
+            self.assertEqual(setup.read(self.project)["intro"]["state"], "complete")
+            self.assertEqual(l3.info(self.project)["session_id"], "fixture-session")
+
     def test_retry_reads_as_checking_until_the_first_reply_is_saved(self):
         self.perform()
         setup.save(self.project, start_requested=True, intro={"state": "failed", "error": "Authentication rejected"})

@@ -8,7 +8,7 @@ import threading
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import audit, config, dispatch, engines, l3, platform, project_setup, reviews, server, state as S, tasks as T
+from altitude import audit, config, dispatch, engines, l3, platform, project_setup, reviews, server, state as S, tasks as T, tls
 from scripts import container
 
 
@@ -21,6 +21,7 @@ class ContainerAdmission(AltitudeCase):
         self.patch(platform, "containerized", return_value=True)
         self.identity = self.patch(platform, "_container_instance", return_value="a" * 32)
         self.patch(platform, "status", return_value={"ActiveState": "active"})
+        self.patch(platform, "container_ready")
         platform._lifecycle_write("a" * 32, False)
 
     def change(self, action):
@@ -52,9 +53,41 @@ class ContainerAdmission(AltitudeCase):
                 self.assertFalse(platform.container_lifecycle()["ready"])
                 with config.provider_admission() as held:
                     self.assertTrue(held)
-        with mock.patch.object(platform, "status", return_value={"ActiveState": "failed"}):
+        with mock.patch.object(platform, "container_ready", side_effect=RuntimeError("not ready")):
             with self.assertRaisesRegex(RuntimeError, "not ready"):
                 self.change("continue")
+
+    def test_same_container_restore_is_not_replacement_and_is_explicitly_unsupported(self):
+        receipt = platform._lifecycle_directory() / "lifecycle.json"
+        backup = receipt.read_bytes()
+        self.change("pause")
+        receipt.write_bytes(backup)
+        self.assertTrue(platform.container_lifecycle()["ready"])
+        self.identity.return_value = "b" * 32  # Supported restore creates a new container.
+        self.assertFalse(platform.container_lifecycle()["ready"])
+
+    def test_native_report_restart_keeps_its_existing_queue_behavior(self):
+        with mock.patch.object(platform, "containerized", return_value=False), \
+             mock.patch.object(config, "restart_in_progress", return_value=True):
+            result = l3.turn(self.project, "Native report", trigger="report-landed")
+        self.assertIn("queued", result)
+        self.assertNotIn("held", result)
+        self.assertEqual(len(l3.queued(self.project)), 1)
+
+    def test_coordinator_start_waits_without_failed_intro_or_duplicate_queued_turn(self):
+        self.change("pause")
+        with mock.patch.object(server, "server_l3_turn", side_effect=AssertionError("premature intro")):
+            server.start_l3(self.project)
+            server.start_l3(self.project)
+        record = project_setup.read(self.project)
+        self.assertTrue(record["start_requested"])
+        self.assertFalse(record.get("intro"))
+        self.assertEqual(l3.queued(self.project), [])
+        self.change("continue")
+        with mock.patch.object(server, "server_l3_turn", return_value={"completed": True}) as intro:
+            server.start_l3(self.project)
+        intro.assert_called_once()
+        self.assertEqual(project_setup.read(self.project)["intro"]["state"], "complete")
 
     def test_native_does_not_read_receipts_or_instance_identity(self):
         with mock.patch.object(platform, "containerized", return_value=False), \
@@ -219,13 +252,31 @@ with config.provider_admission() as held:
         calls = []
         def execute(instance, command):
             calls.append(command)
-            return json.dumps({"instance": "a" * 32, "ready": len(calls) > 1})
+            return json.dumps(platform.change_container_lifecycle(command[-2], command[-1]))
         with mock.patch.object(container, "execute", side_effect=execute):
-            self.assertTrue(container.lifecycle("fixture", "continue")["ready"])
-        self.assertEqual(calls[1][-2:], ["continue", "a" * 32])
+            observed = platform.container_lifecycle()["instance"]
+            self.assertIn("--instance " + observed, platform.container_lifecycle()["continue_command"])
+            self.identity.return_value = "b" * 32
+            with self.assertRaisesRegex(ValueError, "container changed"):
+                container.lifecycle("fixture", "continue", expected=observed)
+            self.assertFalse(platform.container_lifecycle()["ready"])
+            with self.assertRaisesRegex(ValueError, "Pass --instance"):
+                container.lifecycle("fixture", "continue")
+            self.assertTrue(container.lifecycle("fixture", "continue", expected="b" * 32)["ready"])
+        self.assertEqual(calls[0][-2:], ["continue", "a" * 32])
 
 
 class FreshImageInitialization(AltitudeCase):
+    def test_readiness_proves_local_service_https_not_just_active_unit(self):
+        found = {"pid": 123, "tls": True, "port": 19443, "tls_dir": self.tmp,
+                 "url": "https://fixture.invalid:19443"}
+        with mock.patch.object(tls, "service", return_value=found), mock.patch.object(tls, "_proven") as proven:
+            platform.container_ready()
+            proven.assert_called_once_with({**found, "url": "https://localhost:19443"})
+            proven.side_effect = tls.TLSFailure("HTTPS not ready")
+            with self.assertRaisesRegex(tls.TLSFailure, "not ready"):
+                platform.container_ready()
+
     def test_only_empty_home_and_projects_initialize_without_an_operator(self):
         home, projects = self.tmp / "home", self.tmp / "home/Projects"
         projects.mkdir(parents=True)

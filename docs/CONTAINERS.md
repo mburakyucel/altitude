@@ -116,8 +116,10 @@ work. Periodic native update checks/notices are disabled; stale restart receipts
 The root bootstrap records an instance identity in the container layer before starting the user
 manager. It admits genuinely empty home **and** project volumes once, as the application user.
 The persistent receipt lives beside private configuration, outside task-writable state/projects.
-Same-container and daemon restarts keep the previous admitted/paused state. A replacement,
-restored home, or missing/corrupt receipt pauses new AI work until deliberate host continuation.
+Same-container and daemon restarts keep the previous admitted/paused state. A replacement or
+missing/corrupt receipt pauses new AI work until deliberate host continuation. Restore a home
+backup into a **new container**: an admitted receipt restored into its original container still
+matches that instance and can release work automatically. Same-container restore is unsupported.
 Neither chat messages nor task Continue bypass that global pause; their requests remain queued.
 Stop, worker observation, claim reconciliation and report processing remain available. An ambiguous
 interrupted launch still requires its existing recovery decision; global Continue clears no task hold.
@@ -127,14 +129,19 @@ From the source checkout on the **host**, select the container you operate:
 ```sh
 python3 scripts/container.py status --name altitude
 python3 scripts/container.py pause --name altitude
-python3 scripts/container.py continue --name altitude
+python3 scripts/container.py continue --name altitude --instance INSTANCE_FROM_STATUS
 ```
 
-Continue checks the active application service and the observed instance identity before releasing
+Replace `INSTANCE_FROM_STATUS` with the instance shown by the status you inspected, or copy the
+complete command from the browser notice. Continue proves local HTTPS health against the service's
+CA and PID, then checks that inspected instance before releasing
 queued coordinator turns, reports and authorized task requests. The browser shows this host action
 while paused and removes the notice after a fresh admitted status. It offers no lifecycle mutation
 route. Task/coordinator credentials refuse the host action; same-UID trust limits remain unchanged.
-These controls manage Altitude launch admission, not arbitrary programs running as the same user.
+Policy-confined workers running as the application UID can rewrite the receipt directly. These
+controls manage Altitude launch admission and are not a security boundary against those workers.
+The OS-sandboxed engine's receipt-directory denial is included in the new native probe, but remains
+unverified until that probe runs on this candidate. The earlier image result predates this receipt.
 
 Pause rejects new admissions atomically. Calls admitted earlier can finish, including a launch
 already preparing its claim; status reports admitted calls still active. Detached workers can remain

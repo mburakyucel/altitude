@@ -970,7 +970,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
             lifecycle = platform.container_lifecycle()
             why = lifecycle["reason"] if lifecycle and not lifecycle["ready"] else "Altitude is restarting"
-            if trigger == "report-landed":
+            if lifecycle and not lifecycle["ready"] and trigger == "report-landed":
                 return {"completed": False, "held": True, "error": why}
             row = queue_message(project, prompt, trigger=trigger, role=config.OPERATOR_ACTOR if trigger == "chat" else "server",
                                 slug=slug)

@@ -228,6 +228,9 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                         try:
                             call(["exec", "--user", "1000", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
                                   ident, "systemctl", "--user", "is-active", "altitude.service"], timeout=5)
+                            call(["exec", "--user", "1000", "--env", "HOME=/home/altitude",
+                                  "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident, "python3", "-c",
+                                  "import sys; sys.path.insert(0,'/opt/altitude'); from altitude import platform; platform.container_ready()"], timeout=15)
                             return
                         except RuntimeError:
                             if attempt == 29:

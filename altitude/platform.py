@@ -168,7 +168,8 @@ def container_lifecycle() -> dict | None:
         with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
             state = _lifecycle_state()
             if state["instance"]:
-                state["continue_command"] = "python3 scripts/container.py continue --name " + shlex.quote(socket.gethostname())
+                state["continue_command"] = ("python3 scripts/container.py continue --name " +
+                    shlex.quote(socket.gethostname()) + " --instance " + state["instance"])
             try:
                 with _lifecycle_lock("lifecycle-launches.lock", fcntl.LOCK_EX | fcntl.LOCK_NB):
                     state["admitted_calls_active"] = False
@@ -211,14 +212,24 @@ def change_container_lifecycle(action: str, expected: str) -> dict:
         raise PermissionError("Container continuation requires the operator's host terminal")
     if not containerized() or action not in ("pause", "continue"):
         raise ValueError("Select pause or continue for an Altitude container")
-    if action == "continue" and status().get("ActiveState") != "active":
-        raise RuntimeError("The application service is not ready; repair startup before continuing")
+    if action == "continue":
+        container_ready()
     with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
         instance = _container_instance()
         if expected != instance:
             raise ValueError("The container changed; inspect its status before continuing")
         _lifecycle_write(instance, action == "pause")
     return container_lifecycle()
+
+
+def container_ready() -> None:
+    """A running unit alone does not establish readiness (#543); prove its local HTTPS process."""
+    from . import tls
+    found = tls.service()
+    if not found["tls"]:
+        raise RuntimeError("The container application must serve HTTPS before continuing")
+    # Published DNS may resolve only on the host. The image certificate also covers localhost.
+    tls._proven({**found, "url": f"https://localhost:{found['port']}"})
 
 
 def _initialize_container_lifecycle(home: Path, projects: Path) -> None:

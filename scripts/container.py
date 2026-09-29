@@ -111,8 +111,13 @@ def execute(instance: str, command: list[str], *, interactive: bool = False) -> 
                                        value["Id"], *command], timeout=3600 if interactive else 30, interactive=interactive)
 
 
-def lifecycle(instance: str, action: str = "status") -> dict:
+def lifecycle(instance: str, action: str = "status", *, expected: str | None = None) -> dict:
     prefix = "import sys,json; sys.path.insert(0,'/opt/altitude'); from altitude import platform; "
+    if action == "continue":
+        if not expected or not re.fullmatch(r"[0-9a-f]{32}", expected):
+            raise ValueError("Pass --instance with the identity from the status or browser notice you inspected")
+        return json.loads(execute(instance, ["python3", "-c", prefix +
+            "print(json.dumps(platform.change_container_lifecycle(sys.argv[1],sys.argv[2])))", action, expected]))
     observed = json.loads(execute(instance, ["python3", "-c", prefix + "print(json.dumps(platform.container_lifecycle()))"]))
     if action == "status":
         return observed
@@ -141,6 +146,8 @@ def main() -> None:
     for action in ("status", "pause", "continue", "stop", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
+        if action == "continue":
+            command.add_argument("--instance", required=True, help="instance identity shown in the status you inspected")
         if action == "certificate":
             command.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
@@ -155,7 +162,7 @@ def main() -> None:
             state = owned(args.name)["State"]
             print(json.dumps({"container": state, "lifecycle": lifecycle(args.name) if state["Running"] else None}, indent=2))
         elif args.action in ("pause", "continue"):
-            print(json.dumps(lifecycle(args.name, args.action), indent=2))
+            print(json.dumps(lifecycle(args.name, args.action, expected=getattr(args, "instance", None)), indent=2))
             if args.action == "continue":
                 print("Queued coordinator work and authorized task requests may now run; existing holds still apply.")
         elif args.action in ("stop", "remove"):

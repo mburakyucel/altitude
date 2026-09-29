@@ -17,6 +17,7 @@ def identity():
     return instance["value"]
 platform._container_instance = identity
 platform.status = lambda: {"ActiveState": "active"}
+platform.container_ready = lambda: None
 platform._lifecycle_write(instance["value"], False)
 S.write_json(config.ROOT / "settings.json", {"voice": "browser", "operator_name": "Alex"})
 

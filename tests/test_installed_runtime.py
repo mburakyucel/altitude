@@ -146,6 +146,7 @@ class InstalledRuntime(AltitudeCase):
         self.patch(config, "HOME", self.tmp / "image-home")
         self.patch(platform, "_container_instance", return_value="a" * 32)
         self.patch(platform, "status", return_value={"ActiveState": "active"})
+        self.patch(platform, "container_ready")
         platform._lifecycle_write("a" * 32, False)
         task = T.new(self.project, "Image Stop", "Preserve task authority", hold_merge="Operator review")
         dispatch.run(self.project, task["slug"])

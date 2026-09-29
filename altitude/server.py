@@ -581,6 +581,14 @@ def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
 
 
 def start_l3(project: str) -> None:
+    with config.provider_admission() as held:
+        if held:
+            project_setup.save(project, start_requested=True)
+            return  # Setup maintenance retries this unclaimed first turn after host continuation.
+        _start_l3(project)
+
+
+def _start_l3(project: str) -> None:
     if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
         if l3.queue_path(project).exists():

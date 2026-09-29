@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, "/opt/altitude")
-from altitude import config, platform, state as S
+from altitude import config, platform, state as S, tls
 
 assert platform.containerized() and os.getuid() == 1000
 stage = sys.argv[1]
@@ -44,6 +44,13 @@ def eventually(check):
         time.sleep(.1)
     raise AssertionError("Timed out waiting for the fictional native transition")
 
+def ready():
+    try:
+        platform.container_ready()
+        return True
+    except (OSError, RuntimeError, tls.TLSFailure):
+        return False
+
 if stage == "prepare":
     initial = state()
     assert initial["ready"], initial
@@ -67,6 +74,7 @@ if stage == "prepare":
         assert not change("pause")["ready"]
         refused()
         subprocess.run([platform.SYSTEMCTL, "--user", "restart", platform.SERVICE], check=True, timeout=20)
+        eventually(ready)
         assert not state()["ready"] and state()["instance"] == initial["instance"]
         assert platform.job_active(unit, dict(os.environ))
         assert all(Path(f"/proc/{pid}").exists() for pid in pids)
