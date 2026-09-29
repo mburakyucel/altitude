@@ -385,9 +385,21 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         context["limitations"] = context.get("limitations", []) + [
             "Paths over 2 MiB in the base or candidate are not captured in source or changes.patch: "
             + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(omitted.items())) + "."]
-    text = json.dumps(context, ensure_ascii=False, indent=2)
+    # The reviewer receives one copy of each input: the brief embeds the request, and the proposal
+    # under review is its own file with its own bound, like changes.patch (I-20260927-193716).
+    captured = {k: v for k, v in context.items() if k != "request" or v.strip() not in context["brief"]}
+    proposal_text = b""
+    if proposal:
+        proposal_text = context["proposal"]["text"].encode()
+        captured["proposal"] = {"id": proposal_id, "at": context["proposal"]["at"], "file": "proposal.md"}
+        captured["messages"] = [{**{k: v for k, v in r.items() if k != "text"}, "text_file": "proposal.md"}
+                                if r["id"] == proposal_id else r for r in context["messages"]]
+    text = json.dumps(captured, ensure_ascii=False, indent=2)
     if len(text.encode()) > 65536:
-        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included.")
+        raise T.TransitionError("Review context exceeds 64 KiB. Select relevant L2 evidence with --context-message; authority messages remain included"
+                                + (" and the proposal is bounded separately." if proposal else "."))
+    if len(proposal_text) > 65536:
+        raise T.TransitionError("The proposal exceeds 64 KiB. Publish a proposal of at most 64 KiB and name it with --proposal-message.")
     folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
     snapshot = folder / "snapshot"
     snapshot.mkdir(parents=True, exist_ok=False)
@@ -412,13 +424,16 @@ def _capture(project, task, review, context_ids, proposal_id=None):
     (snapshot / "changes.patch").write_bytes(patch)
     (snapshot / "context.json").write_text(text)
     (snapshot / "l1.md").write_text((config.PERSONAS / "l1.md").read_text())
+    inputs = {"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}
+    if proposal:
+        (snapshot / "proposal.md").write_bytes(proposal_text)
+        inputs["proposal"] = hashlib.sha256(proposal_text).hexdigest()
+        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
     identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
-                    captured_context_hash=_hash(context), selected_owner_evidence=context_ids is not None,
+                    captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
                     omitted=[{"path": path, "size": size} for path, size in sorted(omitted.items())],
-                    input_hash=_hash({"tree": identity["tree"], "context": text, "patch": hashlib.sha256(patch).hexdigest()}))
-    if proposal:
-        identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
+                    input_hash=_hash(inputs))
     runtime = folder / "runtime"
     runtime.mkdir()
     return identity, snapshot, runtime
@@ -427,8 +442,8 @@ def _capture(project, task, review, context_ids, proposal_id=None):
 def review_prompt(snapshot, focus, subject="changes"):
     rules = engines.repository_rules(snapshot / "source")
     return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
-              "then context.json and changes.patch. Give a relatively quick, focused independent adversarial review. "
-              + ("Review the exact proposal in context.json against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
+              "then context.json and " + ("proposal.md" if subject == "proposal" else "changes.patch") + ". Give a relatively quick, focused independent adversarial review. "
+              + ("Review the exact proposal in proposal.md, the message context.json names, against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
               "Start with the brief, decisions, diff and requested focus. Check the main correctness, regression, "
               "security and acceptance risks; follow affected callers and tests when needed to substantiate a finding. "
               "Avoid unrelated exploration, cosmetic suggestions and repeated passes without new evidence. "
