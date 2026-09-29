@@ -170,16 +170,18 @@ while the app sends its next request cannot strand that request in Chromium; `ro
 guards this.
 
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
-no test requests a physical microphone. Image-input voice journeys retain real capture and
-MediaRecorder while holding `AudioContext.resume()` pending: an output-device/renderer
-failure cannot strand their microphone fixture in `AudioContext.resume()`. They assert the
-listening phase before the recorded interval; the Stop control also exists during startup.
-The cancel, transcription, image send, navigation and denied states run at both viewports.
-Fixture services set a fictional speech service URL so those journeys keep the upload path;
+no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
+(conversation, project isolation, task lifecycle, L2 progress, image input, file references,
+cross-engine review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
+fixture host in `web/e2e/hostVoice.ts`: the page's real audio worklet hears Chromium's fake
+microphone, and the fixture can hold, replace or fail the final words, drop the connection or forget
+the recording, so no speech model runs. Image-input voice journeys also hold `AudioContext.resume()`
+pending: an output-device/renderer failure cannot strand their microphone fixture there. The cancel,
+transcription, image send, navigation and denied states run at both viewports.
 `voice-recognition.pw.ts` overlays `GET /api/voice` with `browser` and installs a page-level fake
 `SpeechRecognition` it drives itself (Playwright's Chromium has no vendor recognition), walking
 words while listening, landed, Send at once, cancel, failed, denied and no-recognizer states at
-both viewports. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
+both viewports, and asserts that nothing reaches `/api/voice/live`. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
 `host-voice.pw.ts` overlays `/api/voice` with `host` and answers `/api/voice/live` from a page-level
 fixture, so no model runs; the page's real audio worklet turns the synthetic microphone into 16 kHz
 chunks. It walks starting, live words, transcribing, landed, cancel, Send, stopped, busy, needs
@@ -312,7 +314,7 @@ make ui-ios
 `@phone-only` walkthroughs, with WebKit's mock microphone granted. Results and the HTML report stay
 under ignored `web/ui-artifacts/ios/`; record the WebKit version from the report with any result.
 Tests tagged `@chromium` need a harness capability this WebKit build lacks and run only in the
-required projects: `MediaRecorder` (voice upload journeys), the `Notification` API, the
+required projects: the `Notification` API, the
 `clipboard-write` permission, a CDP session (manifest parsing, touch-drag swipes, transfer sizes and cache hits), or a replaceable
 `navigator.mediaDevices.getUserMedia`. Give a new walkthrough that tag only for one of these
 reasons. Where only one step needs Chromium, the step checks `browserName` and the rest of the test
@@ -320,7 +322,7 @@ still runs: route smoke omits its wheel overscroll, which mobile WebKit does not
 metadata omits Chromium's manifest parser.
 
 Two observed engine differences matter when reading voice results: this WebKit build has no
-`SpeechRecognition` or `MediaRecorder`, and an `AudioContext` created after an awaited microphone
+`SpeechRecognition`, and an `AudioContext` created after an awaited microphone
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
 

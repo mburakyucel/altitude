@@ -489,7 +489,10 @@ and diff, and the capture names it with its size. Both trees accept at most 1000
 remaining content, so removed content is bounded before creating the diff. Context includes the brief,
 request, original authority messages and corrections, decisions,
 and default-all or selected L2 evidence; its captured `context.json` holds one copy of each input, so
-the request is omitted when the brief contains it verbatim, and is bounded to 64 KiB. Proposal capture
+the request is omitted when the brief contains it verbatim, and is bounded to 256 KiB: room for a long
+task's complete authority and decisions plus selected evidence, well under the reviewer's 2 MiB file read. Nothing
+is dropped or summarized; beyond the bound capture refuses with the size and whether mandatory records
+alone exceed it. Proposal capture
 also binds the exact original L2 message and text against the committed head's source tree, even before
 code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
 `context.json` names the proposal message and points to the file. Identity and freshness hash the
@@ -852,6 +855,14 @@ deployment advances separately after delivery and on daemon ticks, through the g
 of clean main. Dirty, diverged, ahead or off-main deployment remains untouched and reports its own
 failure; otherwise valid isolated tasks continue. Publication retains its current-candidate checks,
 ownership boundaries and review holds.
+
+A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
+such failure and retries it on the next tick. It raises the `self-deploy` system fault only once fetches
+have failed for five minutes without a success in between, carrying the latest fetch error. The
+post-delivery fast-forward returns a note for a failed fetch and leaves the retry to the tick. Every
+other self-deploy failure, including a dirty, diverged, ahead or off-main checkout and a failed
+fast-forward, raises the fault immediately. The failure start is held in daemon memory, so a restart
+starts a new grace period.
 
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses
@@ -1790,9 +1801,9 @@ records speech, drafts, raw samples or device identifiers, uploads data, or chan
 The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.
 The report identifies the loaded script basename and browser/Home Screen mode, without the origin
 or conversation URL. The microphone
-stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
-endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
-server whose backend or endpoint URL changed shows the server's words and reads the backend again.
+stream feeds the waveform and carries the same permission the recognizer needs. With `host`, the
+composer streams samples as described under [host voice](#host-voice); a 409 from a server whose
+backend or runtime changed shows the server's words and reads the backend again.
 A successful Settings read or save updates the document's cached selection for the next capture;
 saving cancels an older Settings query, and an earlier composer read cannot overwrite the saved
 selection. Each recording holds its initial identity.
@@ -2051,46 +2062,30 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `browser` (the default), `host`, or a speech-service object with `url`, optional
-`model` and optional `key`; any other stored value reads as `browser`. `GET /api/voice` reports
-backend, URL, model, a `key_set` boolean, an opaque selection identity over backend and destination,
-and `host`, where host voice stands on this computer; it never returns the key. `alt machine set --voice` requests a change through the same durable request that
-carries `wip`, and the CLI, `machine show` and the event log show a key only as `set`.
+settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
+speech manifest names a runtime this computer can run, and `browser` elsewhere (macOS for now).
+`GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
+the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
+default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
-(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the three
-backend choices and names the saved service's host in its summary. Project three-dot menus and the
-desktop operator row open Settings. `POST /api/voice` saves through the same durable request/apply
-path as the CLI, with no restart or provider probe. Browser recognition saves immediately; the
-speech-service URL uses Save service, with model and key behind a hosted-provider disclosure that
-opens when either is saved. Its key is write-only, retained only for an unchanged URL; editing the
-URL clears retention, and a blank replacement removes the key. Failed saves leave the persisted
-choice unchanged. A changed backend or URL asks the person to reload settings; concurrent model/key
-edits keep last-writer semantics. Fresh settings reads update the form as well as the composer's
-selection. The form owns saving/error/saved state and disables inputs before sending, independently
-of query notifications. It adopts a successful save's selection before enabling edits. Its later
-cache notification does not reset subsequent edits; a different settings read still refreshes the
-form.
+(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
+choices, This computer and Browser recognition, each saved immediately. Project three-dot menus and the
+desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` through the same
+durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
+matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
+persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
+First run offers the same choice as its Voice step (see the design spec §3.12); a setup failure there
+never blocks onboarding.
 
-`POST /api/transcribe` is a bounded adapter for the speech service. It accepts the browser's
-declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers), limits the
-upload to 16 MiB and posts the recording unchanged as one OpenAI-compatible `audio/transcriptions`
-multipart request (bearer key when configured, `whisper-1` unless a model is named), returning the
-service's `text`. The service decodes the container; Altitude runs no converter. A redirect is
-refused so the key never follows it, and the URL carries no credentials or query string. With
-`browser` it refuses uploads so a page that read the backend earlier reads it again. It never writes
-audio to disk and neither owns nor starts a speech model. The upload's `X-Voice-Selection`
-identifies the backend and destination selected at capture start. Missing or stale selections are
-refused before forwarding audio; accepted requests use one settings snapshot. No old settings are
-retained for replay. The typed draft survives a refused upload.
-
-An unsupported media type, a timeout, an unreachable service, an HTTP refusal and a reply without
-text become concise client errors that name the configured service URL, so the person can fix it;
-diagnostics stay in the private server log, and the key appears in neither. The composer announces
-recording and transcribing, restores the editable field after cancel or error, and leaves the
-microphone as progressive enhancement. Phone access uses an explicitly configured private HTTPS
-address whose certificate covers that address. Safari can use the microphone after the CA is trusted
-on the phone; typing remains available without speech services.
+Altitude sends no recording to a speech service of its own configuration. On start,
+`dispatch.forget_speech_service()` deletes a stored speech-service setting and any pending or applied
+`voice-request.json` naming one, with its key, under the projects lock, and appends one event without
+URL or key; a machine with nothing stale is left untouched, so the step is idempotent. The machine then
+uses the default. Phone access uses an explicitly configured private HTTPS address whose certificate
+covers that address. Safari can use the microphone after the CA is trusted on the phone; typing
+remains available without voice.
 
 #### Host voice
 
@@ -2143,6 +2138,27 @@ recording belongs to the paired device that opened it; at most two are active (a
 each up to ten minutes, and one without a request for 30 seconds is dropped. Audio stays in memory for
 its recording only. The live and setup routes refuse other sites and Altitude's own agents, as the
 terminal does; the daemon stops the worker on shutdown.
+
+Every live and audio request carries the page's `X-Voice-Selection`; the server checks it against the
+current setting, including the runtime digest, before reading audio (409 otherwise). An unknown
+recording answers 410 and a recording opened by another paired device answers 403. Opening a recording
+also answers `owner`, an opaque name for the paired device (an HMAC of its id under the machine key); a
+replay presents it as `X-Voice-Owner`, so a browser paired again as another device during an outage is
+refused (403) rather than continuing the recording.
+`web/src/components/hostCapture.ts` keeps recording through a lost connection. Each recording's
+samples stay in page memory only, up to its ten-minute limit, and at most two recordings are retained
+at once; a third microphone tap asks the person to wait. Requests are sequential: a lost request is
+sent again with the same number, bytes and `final` flag after a backoff of half a second doubling to
+three seconds, so the server's repeat rule makes retries harmless. A 410 (the server restarted or
+dropped the idle recording) opens a new recording and replays the retained samples from the start
+while the selection is unchanged; a busy answer while reopening is retried. During replay the shown
+words hold ("Catching up…") until the replay passes the point already shown and its transcript is as long,
+because the host acknowledges audio before transcribing it; text never shrinks.
+401, 403 and 409 end the recording and keep the words shown. After Stop or Send the page waits at most
+two minutes for the connection ("Waiting for connection…", with Cancel); then it discards the audio,
+keeps the words already shown and says the last words were not added, and a voice Send returns its
+text unsent to the conversation it was sent from. A microphone that ends stops the recording and keeps
+its words. Nothing is written to storage.
 
 ### Design evidence
 

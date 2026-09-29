@@ -4,7 +4,8 @@ import { walkthrough } from "./walkthrough";
 
 /**
  * The operator's terminal (SPEC.md §3.10) against real shells on real pseudo-terminals. Every state is
- * walked at both widths: off, the Settings switch, running, keys and tab completion, copy and paste, a
+ * walked at both widths: off, the Settings switch, running, keys and tab completion, copy and paste, the
+ * phone's Enter key at a prompt and a hidden password prompt, a
  * running command's close confirmation, reconnecting, typing stopped after failed input, a non-zero and a
  * clean exit, task finished, restart pending, refused, closed elsewhere, Altitude restarted and Close.
  * Only the agent check and the restart notice are fixtures.
@@ -86,9 +87,27 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await expect(output).toContainText("echo twice-$((1+1))");
   await page.waitForTimeout(500);
   await expect(output).not.toContainText("pasted-14");
-  await page.keyboard.press("Enter");
+  // The phone's Enter key runs the line as the keyboard's Return would, and leaves the soft keyboard closed.
+  const enter = keys.getByRole("button", { name: "Enter" });
+  const screenFocused = () => page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"));
+  if (phone) {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await enter.click();
+    expect(await screenFocused()).toBe(false);
+  } else await page.keyboard.press("Enter");
   await expect(output).toContainText("pasted-14");
   await expect(output).toContainText("twice-2");
+  if (phone) {
+    // A hidden password prompt (as sudo shows) takes its answer with the same key.
+    await run(page, "read -rs -p 'Password: ' secret; echo; echo got-${#secret}-$secret");
+    await expect(output).toContainText("Password:");
+    await page.evaluate(() => navigator.clipboard.writeText("hunter2"));
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await keys.getByRole("button", { name: "Paste" }).click();
+    await enter.click();
+    await expect(output).toContainText("got-7-hunter2");
+    await walk.state("03b-enter-key", { visible: [enter], hidden: [] });
+  }
   if (!phone) {
     // Ctrl+C with text selected copies it; the line being typed is not interrupted.
     await page.evaluate(() => navigator.clipboard.writeText(""));

@@ -705,19 +705,14 @@ booleans and nonnumeric values are rejected. Reset removes the override and rest
 The same request path selects the transcription backend every composer uses:
 
 ```sh
-alt machine set --voice browser --reason 'Recognize in the browser'   # the default
 alt machine set --voice host --reason 'Transcribe on this computer'
-alt machine set --voice http://127.0.0.1:8080/v1/audio/transcriptions --reason 'My speech server'
-alt machine set --voice https://api.example.com/v1/audio/transcriptions --voice-model whisper-1 --voice-key-file - --reason 'Hosted transcription' < key.txt
+alt machine set --voice browser --reason 'Recognize in the browser'
 alt machine set --unset-voice --reason 'Back to the default'
 ```
 
-`--voice` accepts `browser`, `host` or the `http(s)` URL of an OpenAI-compatible speech service, without
-credentials or a query string; `--voice-model` and `--voice-key-file` (a file, or `-` for stdin)
-accompany a URL only, so the key is never on a command line. `machine show` reports `voice` with
-a key shown as `set`; the key itself stays in the private settings and request files under the
-runtime home and never appears in output, events or logs. See [voice input](OPERATIONS.md#voice-input) for what each
-backend needs, where audio goes and how to run a speech service.
+`--voice` accepts `host` or `browser`. Without a saved choice, the backend is `host` where this computer
+can run the speech model and `browser` elsewhere; `machine show` reports the backend in effect. See
+[voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
 
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 698 MB),
@@ -1025,6 +1020,11 @@ intent, not evidence that every helper used the requested level.
 For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
 `daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the
 worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.
+When altd claims a resume requested with `task resume --reason`, the reason joins the task conversation
+once as a message from its actor (L3's folds as "Resumed the task") and reaches the resumed owner after
+the pending inbox rows, marked as the resume reason with its actor and time. A claim that fails before launch returns it to the
+inbox with the rest of the batch. A message wake and the task page's Resume and Continue buttons,
+which send fixed text rather than an authored reason, add nothing.
 A repeated reason after a genuine later lifecycle creates a new request against that lifecycle's identity.
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
@@ -1425,8 +1425,11 @@ main and commit before retrying.
 `run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and
-fails explicitly beyond 64 KiB; a proposal review captures the exact proposal text separately as
-`proposal.md`, also bounded to 64 KiB, so the proposal never competes with retained authority.
+fails explicitly beyond 256 KiB, naming its size; when authority, corrections and decisions alone exceed
+the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
+that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
+captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
+competes with retained authority.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and

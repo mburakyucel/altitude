@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
-import { installVoiceBrowser } from "../components/voiceTest";
+import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "../components/voiceTest";
 import type { TaskView } from "../data/api";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -118,13 +118,25 @@ interface StubOptions {
   task?: () => Response;
 }
 
+/** This computer's speech service for the current test: its last words are "spoken detail". */
+let voice = hostVoiceServer({ final: "spoken detail" });
+
+/** Start host voice and say half a second, so Stop and Send act on a listening capture. */
+async function listen(user: { click: (element: Element) => Promise<void> }) {
+  await user.click(screen.getByRole("button", { name: "Start voice input" }));
+  await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+  speak();
+  await screen.findByText("Listening… Stop to add text, or Send.");
+}
+
 function stub(task: unknown, options: StubOptions = {}) {
   // The server keeps an accepted message on the task: the refetch after a send returns it.
   const sent: unknown[] = [];
+  voice = hostVoiceServer({ final: "spoken detail" });
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(options.overview ?? overview);
-    if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken detail" });
+    if (url.startsWith("/api/voice/live")) return voice.fetch(input, init);
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/task/")) {
@@ -746,8 +758,8 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     const field = screen.getByLabelText("Message the L2");
     await user.type(field, "Typed context.");
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await listen(user);
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Typed context. spoken detail"));
     // Landed: the draft is the only place the words appear (issue #195).
     expect(screen.queryByRole("region", { name: /transcript/i })).toBeNull();
@@ -763,22 +775,17 @@ describe("Task on desktop", () => {
     installVoiceBrowser();
     const task = { ...stuck, question: { ...decision } };
     const originalFetch = stub(task);
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes("/api/transcribe")) await gate;
-      return originalFetch(input, init);
-    }));
     const { user, router } = renderApp({ route: `${route}?question=q-timer&revision=1` });
     await user.type(await screen.findByLabelText("Message the L2"), "Original question reply");
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(user);
+    voice.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     await act(() => router.navigate("/monitor"));
     task.question = { ...decision, id: "q-other", revision: 2, question: "A newer unrelated question?" };
     await act(() => router.navigate(`${route}?question=q-other&revision=2`));
     await screen.findByText("A newer unrelated question?");
     expect(screen.getByLabelText("Message the L2")).toHaveValue("Original question reply");
-    await act(async () => release());
+    await act(async () => voice.reconnect());
     await waitFor(() => expect(originalFetch.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(true));
     const request = originalFetch.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
     expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ project: "altitude", slug: "fix-timer", text: "Original question reply spoken detail", question_id: "q-timer", revision: 1 });
@@ -787,12 +794,13 @@ describe("Task on desktop", () => {
   it("resets the composer when navigating between cached tasks", async () => {
     installVoiceBrowser();
     const other = { ...running, slug: "other-task", title: "Other task", messages: [] };
+    voice = hostVoiceServer({ final: "fix-timer only" });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.includes("/api/overview")) return jsonResponse(overview);
-        if (url.includes("/api/transcribe")) return jsonResponse({ text: "fix-timer only" });
+        if (url.startsWith("/api/voice/live")) return voice.fetch(input, init);
         if (url.includes("/api/task/altitude/other-task")) return jsonResponse(other);
         if (url.includes("/api/task/altitude/fix-timer")) return jsonResponse(running);
         return jsonResponse({ error: "not found" }, 404);
@@ -808,8 +816,8 @@ describe("Task on desktop", () => {
 
     const field = screen.getByLabelText("Message the L2");
     await user.type(field, "Fix-only draft");
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await listen(user);
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Fix-only draft fix-timer only"));
 
     await router.navigate("/projects/altitude/tasks/other-task");

@@ -51,7 +51,7 @@ class TestRequestBoundary(AltitudeCase):
                 status, reply = self.rename("Mallory", headers)
                 self.assertEqual((status, reply), (403, {"error": "Requests must come from Altitude's own page."}))
                 self.assertEqual(config.machine_settings().get("operator_name"), before)
-        status, _ = self.request("POST", "/api/transcribe", b"audio", {"Content-Type": "audio/webm",
+        status, _ = self.request("POST", "/api/voice/live", b"{}", {"Content-Type": "application/json",
                                                                        "Sec-Fetch-Site": "cross-site"})
         self.assertEqual(status, 403)
 

@@ -38,6 +38,10 @@ class GitPolicyError(RuntimeError):
     """A repository state or requested Git operation violates policy."""
 
 
+class FetchError(GitPolicyError):
+    """Fetching from the remote failed: transport, authentication or the remote itself."""
+
+
 @dataclass(frozen=True)
 class RepositoryState:
     """One non-fetching observation of a checkout relative to its remote base."""
@@ -177,16 +181,19 @@ def fetch_origin(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch one remote base and return its new immutable commit id."""
     root = Path(repo).resolve()
     env = dict(os.environ, LC_ALL="C")
-    result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
-    # #404: another worktree's fetch can win the remote ref's compare-and-swap.
-    # Require a fresh successful fetch, never infer success from the cached ref.
-    diagnostics = [line for line in (result.stderr or "").splitlines()
-                   if re.search(r"\b(?:error|fatal):", line)]
-    oid = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"
-    collision = rf"error: cannot lock ref '{re.escape(f'refs/remotes/origin/{base}')}': is at {oid} but expected {oid}"
-    if result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]):
+    try:
         result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
-    _output(result, f"git fetch origin {base}")
+        # #404: another worktree's fetch can win the remote ref's compare-and-swap.
+        # Require a fresh successful fetch, never infer success from the cached ref.
+        diagnostics = [line for line in (result.stderr or "").splitlines()
+                       if re.search(r"\b(?:error|fatal):", line)]
+        oid = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"
+        collision = rf"error: cannot lock ref '{re.escape(f'refs/remotes/origin/{base}')}': is at {oid} but expected {oid}"
+        if result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]):
+            result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
+        _output(result, f"git fetch origin {base}")
+    except GitPolicyError as exc:
+        raise FetchError(str(exc)) from exc
     return capture_origin_sha(root, base)
 
 

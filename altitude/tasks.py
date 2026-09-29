@@ -770,6 +770,17 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         _ensure_question(project, task)
         rows = _pending_rows(task, path)
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
+        request = task.get("daemon_request") or {}
+        if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
+            # I-20260927-193716: the reason that authorizes a resume reaches the owner as the requester's message.
+            # Its request was the wake, so a batch restored after a failed launch holds it without waking again.
+            reason = {"id": request["id"], "at": _conversation_time(), "role": request["actor"],
+                      "by": request["actor"], "text": request["reason"], "resume": True, "wake": False}
+            if request["actor"] == "l3":
+                reason["summary"] = "Resumed the task"
+            _append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", reason)
+            request["message_id"] = reason["id"]
+            rows.append(reason)
         claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_process": platform.process_identity(os.getpid()), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
@@ -893,7 +904,8 @@ def _sender(row: dict) -> str:
 def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them: the words, their sender and the id a decision cites.
     The worker already holds its persona, brief and its own questions; nothing else is repeated here."""
-    return "\n\n".join(f"Message from {_sender(row)} (message id {row['id']}"
+    return "\n\n".join((f"Resumed by {_sender(row)} at {row['at']} with this reason (message id {row['id']}"
+                        if row.get("resume") else f"Message from {_sender(row)} (message id {row['id']}")
                        + (f"; answers question {', '.join(row['answers'])}" if row.get("answers") else "")
                        + f"):\n{row['text']}"
                        + ("\nImages: " + ", ".join(f"{image['id']} ({image['name']})" for image in row["images"])
@@ -1809,7 +1821,8 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
 
 def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
     if source == "task":
-        return [row for row in task_messages(project, slug) if not row.get("removed_at")]
+        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
+        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"

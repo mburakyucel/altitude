@@ -1,6 +1,7 @@
 import { test } from "./fixtures";
-import { expect, type Page, type Route, type TestInfo } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
 import { fixtureProject } from "./fixture-data";
+import { READY, fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 /*
@@ -9,9 +10,6 @@ import { walkthrough } from "./walkthrough";
  * chunk with how many samples it has heard, so no model runs and nothing leaves the page. Its setup
  * states come from an overlaid /api/voice.
  */
-
-type HostState = Record<string, unknown>;
-const READY = { state: "ready", download_bytes: 698435338 };
 
 /** Hold the worklet until the test releases it, so Starting voice stays on screen. */
 const HOLD_WORKLET = `
@@ -38,52 +36,6 @@ function views(page: Page, info: TestInfo) {
     listening: main.locator('.composer[data-phase="listening"]'),
     transcribing: main.getByText("Transcribing…", { exact: true }),
   };
-}
-
-/** The fixture host: settings, setup actions and live recordings. */
-async function fixtureHost(page: Page, initial: HostState = READY) {
-  const host = {
-    state: initial,
-    backend: "host",
-    samples: 0,
-    chunks: [] as number[],
-    requests: [] as string[],
-    refuse: null as null | { status: number; error: string },
-    failAudio: null as null | { status: number; error: string },
-    holdFinal: null as null | Promise<void>,
-  };
-  const settings = () => ({ backend: host.backend, url: "", model: "", key_set: false, selection: `fixture-${host.backend}`, host: host.state });
-  await page.route((url) => url.pathname === "/api/voice", async (route: Route) => {
-    if (route.request().method() === "POST") host.backend = JSON.parse(route.request().postData() ?? "{}").backend;
-    await route.fulfill({ json: settings() });
-  });
-  await page.route((url) => url.pathname === "/api/voice/host", async (route) => {
-    const { action } = JSON.parse(route.request().postData() ?? "{}");
-    host.requests.push(action);
-    host.state = action === "setup" ? { state: "setting-up", download_bytes: 698435338, done_bytes: 0 } : { state: "absent", download_bytes: 698435338 };
-    await route.fulfill({ json: settings() });
-  });
-  await page.route((url) => url.pathname.startsWith("/api/voice/live"), async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    host.requests.push(path.replace(/^\/api\/voice\/live/, "live"));
-    if (path === "/api/voice/live") {
-      host.samples = 0;
-      host.chunks = [];
-      return host.refuse ? route.fulfill({ status: host.refuse.status, json: { error: host.refuse.error } }) : route.fulfill({ json: { id: "fixture" } });
-    }
-    if (path.endsWith("/cancel")) return route.fulfill({ json: { ok: true } });
-    if (host.failAudio) return route.fulfill({ status: host.failAudio.status, json: { error: host.failAudio.error } });
-    const samples = (route.request().postDataBuffer()?.length ?? 0) / 2;
-    host.samples += samples;
-    host.chunks.push(samples);
-    const final = new URL(route.request().url()).searchParams.get("final") === "1";
-    if (final) {
-      await host.holdFinal;
-      return route.fulfill({ json: { text: `Heard ${host.chunks.length} chunks.`, final: true } });
-    }
-    return route.fulfill({ json: { text: host.chunks.length > 1 ? "check the build" : "check" } });
-  });
-  return host;
 }
 
 test("host voice: Starting voice, live words, Transcribing, landed; Cancel and Send", async ({ page, request }, info) => {
@@ -135,7 +87,7 @@ test("host voice: Starting voice, live words, Transcribing, landed; Cancel and S
     hidden: [v.listening, v.wave, v.stop],
   });
   await expect(v.field).toHaveValue(/^Please Heard \d+ chunks\.$/);
-  await expect.poll(() => host.requests.at(-1)).toBe("live/fixture/cancel");
+  await expect.poll(() => host.requests.at(-1)).toBe(`live/${host.id}/cancel`);
 
   const sent: string[] = [];
   await page.route((url) => url.pathname === "/api/chat", async (route) => {
@@ -193,12 +145,12 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await setUp.click();
   const button = page.getByRole("button", { name: "Set up voice", exact: true });
   await walk.state("host-voice-09-settings-absent", {
-    visible: [page.getByRole("radio", { name: "This computer — live text", exact: true }), button,
+    visible: [page.getByRole("radio", { name: "This computer", exact: true }), button,
       page.getByText("Needs a one-time download of about 698 MB, checked against this release.", { exact: true }),
       page.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.", { exact: true })],
     hidden: [page.getByRole("progressbar")],
   });
-  await expect(page.getByRole("radio", { name: "This computer — live text", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
   await walk.state("host-voice-10-setting-up", {
     action: () => button.click(),
     visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByText("Setting up… 0 MB of 698 MB", { exact: true }),
@@ -225,4 +177,70 @@ test("host voice that cannot run here hides the mic and says why", async ({ page
     visible: [v.main.getByText("Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works.", { exact: true }), v.field],
     hidden: [v.mic],
   });
+});
+
+test("host voice through a lost connection: keeps recording, catches up, waits after Stop, then gives up", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const host = await fixtureHost(page);
+  await page.clock.install();
+  await walk.open(project.path);
+  const lost = v.main.getByText("Connection lost — still recording. Your words will catch up.", { exact: true });
+  const catchingUp = v.main.getByText("Catching up…", { exact: true });
+  const waiting = v.main.getByText("Waiting for connection…", { exact: true });
+  const listeningHint = v.main.getByText("Listening… Stop to add text, or Send.", { exact: true });
+
+  await v.field.fill("Draft");
+  await v.mic.click();
+  await expect(v.field).toHaveValue("Draft check the build", { timeout: 5000 });
+  await walk.state("host-voice-13-connection-lost", {
+    action: () => { host.offline = true; },
+    visible: [lost, v.listening, v.stop, v.cancel],
+    hidden: [listeningHint],
+  });
+  await expect(v.field).toHaveValue("Draft check the build");
+
+  // The host restarted meanwhile: it no longer knows the recording, so the page replays it into a new one.
+  let release = () => {};
+  host.holdAudio = new Promise((resolve) => { release = resolve; });
+  host.forget = true;
+  await walk.state("host-voice-14-catching-up", {
+    action: () => { host.offline = false; },
+    visible: [catchingUp, v.listening],
+    hidden: [lost, listeningHint],
+  });
+  await expect(v.field).toHaveValue("Draft check the build");
+  expect(host.opened).toBe(2);
+  release();
+  host.holdAudio = null;
+  await expect(listeningHint).toBeVisible({ timeout: 5000 });
+  await expect(v.field).toHaveValue("Draft check the build");
+
+  await walk.state("host-voice-15-waiting-for-connection", {
+    action: async () => { host.offline = true; await v.stop.click(); },
+    visible: [waiting, v.cancel],
+    hidden: [v.stop, listeningHint],
+  });
+  await walk.state("host-voice-16-waiting-cancelled", {
+    action: () => v.cancel.click(),
+    visible: [v.mic, v.field],
+    hidden: [waiting, v.cancel, v.wave],
+  });
+  await expect(v.field).toHaveValue("Draft");
+
+  host.offline = false;
+  await v.mic.click();
+  await expect(v.field).toHaveValue(/^Draft check/, { timeout: 5000 });
+  const shown = await v.field.inputValue();
+  host.offline = true;
+  await v.stop.click();
+  await expect(waiting).toBeVisible();
+  await walk.state("host-voice-17-connection-not-back", {
+    action: () => page.clock.fastForward(120_000),
+    visible: [v.main.getByText("Couldn't reach this computer: your recording's last words weren't added.", { exact: true }), v.mic],
+    hidden: [waiting, v.cancel],
+  });
+  await expect(v.field).toHaveValue(shown);
+  await expect(v.field).not.toHaveAttribute("readonly", "");
 });

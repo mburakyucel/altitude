@@ -657,8 +657,6 @@ export const ChatViewSchema = z
   })
   .passthrough();
 
-export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough();
-
 export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
@@ -693,14 +691,11 @@ const HostVoiceSchema = z.union([
     done_bytes: z.number().optional(), reason: z.string().optional(),
   }),
 ]);
-const VoiceSchema = z.object({
-  backend: z.enum(["browser", "host", "endpoint"]), selection: z.string(),
-  url: z.string(), model: z.string(), key_set: z.boolean(), host: HostVoiceSchema,
-});
+const VoiceSchema = z.object({ backend: z.enum(["browser", "host"]), selection: z.string(), host: HostVoiceSchema });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;
 export type HostVoice = z.infer<typeof HostVoiceSchema>;
-export type VoiceUpdate = { backend: VoiceBackend; selection: string; url?: string; model?: string; key?: string; keep_key?: boolean };
+export type VoiceUpdate = { backend: VoiceBackend; selection: string };
 
 /** Which backend this installation transcribes with; "browser" never uploads audio. */
 export async function readVoiceSettings(): Promise<VoiceSettings> {
@@ -838,15 +833,18 @@ export async function changeHostVoice(action: "setup" | "cancel" | "remove"): Pr
 const HostTextSchema = z.object({ text: z.string(), final: z.boolean().optional() }).passthrough();
 
 /** Start a host voice recording for the selection the page read. */
-export async function startHostVoice(selection: string, signal?: AbortSignal): Promise<{ id: string }> {
-  return z.object({ id: z.string() }).passthrough().parse(
-    await api("/api/voice/live", { method: "POST", body: "{}", headers: { "X-Voice-Selection": selection }, signal }));
+/** Opens a host recording. A replay names the `owner` its first recording answered, so it stays with that device. */
+export async function startHostVoice(selection: string, signal?: AbortSignal, owner?: string): Promise<{ id: string; owner: string }> {
+  const headers: Record<string, string> = { "X-Voice-Selection": selection };
+  if (owner) headers["X-Voice-Owner"] = owner;
+  return z.object({ id: z.string(), owner: z.string() }).passthrough().parse(
+    await api("/api/voice/live", { method: "POST", body: "{}", headers, signal }));
 }
 
 /** Chunk `seq` of 16 kHz 16-bit samples; answers the text so far, or the final text. */
-export async function sendHostVoice(id: string, seq: number, pcm: Int16Array, final: boolean, signal?: AbortSignal) {
+export async function sendHostVoice(id: string, selection: string, seq: number, pcm: Int16Array, final: boolean, signal?: AbortSignal) {
   return HostTextSchema.parse(await api(`/api/voice/live/${id}/audio?seq=${seq}&final=${final ? 1 : 0}`, {
-    method: "POST", body: pcm as Int16Array<ArrayBuffer>, headers: { "Content-Type": "application/octet-stream" }, signal,
+    method: "POST", body: pcm as Int16Array<ArrayBuffer>, headers: { "Content-Type": "application/octet-stream", "X-Voice-Selection": selection }, signal,
   }));
 }
 
@@ -860,19 +858,6 @@ export function usePrerequisites() {
     queryKey: ["prerequisites"], queryFn: async () => PrerequisitesSchema.parse(await api("/api/prerequisites")).items,
     refetchOnWindowFocus: false, retry: false, gcTime: 0,
   });
-}
-
-/** Upload one browser-native audio blob for the server to forward to the machine's speech service. */
-export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
-  const result = VoiceTranscriptSchema.parse(
-    await api("/api/transcribe", {
-      method: "POST",
-      body: audio,
-      headers: { "Content-Type": audio.type || "application/octet-stream", "X-Voice-Selection": selection },
-      signal,
-    }),
-  );
-  return result.text;
 }
 
 // ---- query hooks (20s polling) ---------------------------------------------------------

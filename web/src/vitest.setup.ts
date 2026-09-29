@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
+import { HostCapture } from "./components/hostCapture";
 import { presetVoiceBackend } from "./components/voiceBackend";
 import { punctuationFixture } from "./components/voiceTest";
 
@@ -20,13 +21,15 @@ class SilentEventSource extends EventTarget {
 
 beforeEach(() => {
   vi.stubGlobal("EventSource", SilentEventSource);
-  // Composers read the installation's voice backend once; tests name it instead (upload path by default).
-  presetVoiceBackend("endpoint");
+  // Composers read the installation's voice backend once; tests name it instead (host voice by default).
+  presetVoiceBackend("host");
   punctuationFixture.reset();
 });
 
 afterEach(() => {
   cleanup();
+  // A capture left sending must not hold one of the page's two slots for the next test.
+  HostCapture.retained.forEach((capture) => capture.cancel());
   localStorage.clear();
   sessionStorage.clear();
   vi.unstubAllGlobals();

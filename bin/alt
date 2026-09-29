@@ -60,13 +60,6 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     return payload, reason.strip()
 
 
-def _public_voice_request(request):
-    """A voice request as the terminal shows it: the endpoint key never leaves the private file."""
-    if not request:
-        return request
-    return {key: config.public_voice(value) if key in ("voice", "result_voice") else value for key, value in request.items()}
-
-
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
         return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
@@ -301,12 +294,10 @@ def main(argv=None) -> None:
     x = ms.add_parser("set"); x.add_argument("--reason", required=True)
     one = x.add_mutually_exclusive_group(required=True)
     one.add_argument("--wip", type=int); one.add_argument("--unset-wip", action="store_true")
-    one.add_argument("--voice", metavar="browser|host|URL", help="browser (default), host (live text from the speech model on this computer, after `alt voice setup`), or the URL of your speech service's OpenAI-compatible audio/transcriptions endpoint")
-    one.add_argument("--unset-voice", action="store_true", help="restore browser recognition")
+    one.add_argument("--voice", choices=("host", "browser"), help="host (live text from the speech model on this computer, after `alt voice setup`) or browser recognition")
+    one.add_argument("--unset-voice", action="store_true", help="restore the default: host where the speech model can run, else browser")
     one.add_argument("--projects-folder", metavar="PATH", help="the folder whose immediate subfolders First run offers to add")
     one.add_argument("--unset-projects-folder", action="store_true", help="return to ALTITUDE_ROOTS, default ~/Projects")
-    x.add_argument("--voice-model", metavar="MODEL", help=f"model name a hosted service expects (default {config.VOICE_DEFAULT_MODEL})")
-    x.add_argument("--voice-key-file", metavar="PATH", help="file holding the bearer key a hosted service expects, or - for stdin; the key never appears on a command line and stays in the private settings file")
     sub.add_parser("state")
     v = sub.add_parser("voice", help="host voice: the speech model on this computer")
     v.add_argument("vcmd", choices=("status", "setup", "remove"))
@@ -587,31 +578,23 @@ def main(argv=None) -> None:
     if c == "machine":
         from altitude import dispatch
         if args.mcmd == "set":
-            if (args.voice_model or args.voice_key_file) and (args.voice is None or args.voice in ("browser", "host")):
-                sys.exit("alt machine set: --voice-model and --voice-key-file accompany a speech service URL")
-            key = None
-            if args.voice_key_file:
-                key = (sys.stdin.read() if args.voice_key_file == "-" else Path(args.voice_key_file).read_text()).strip()
-                if not key:
-                    sys.exit("alt machine set: the voice key file is empty")
             if args.voice is not None or args.unset_voice:
-                value = None if args.unset_voice else args.voice if args.voice in ("browser", "host") else {
-                    "url": args.voice, **({"model": args.voice_model} if args.voice_model else {}),
-                    **({"key": key} if key else {})}
-                request = dispatch.request_setting(None, "voice", value, args.reason, actor=ACTOR)
-                out({**request, "request": _public_voice_request(request["request"])})
+                out(dispatch.request_setting(None, "voice", None if args.unset_voice else args.voice, args.reason, actor=ACTOR))
             elif args.projects_folder is not None or args.unset_projects_folder:
                 value = None if args.unset_projects_folder else str(Path(args.projects_folder).expanduser().absolute())
                 out(dispatch.request_setting(None, "projects_folder", value, args.reason, actor=ACTOR))
             else:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
-            voice = config.voice_setting()
+            # A receipt from before the speech-service removal can name a service key until altd next starts.
+            voice_request = S.read_json(config.ROOT / "voice-request.json", None)
+            if isinstance(voice_request, dict):
+                voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
-                 "voice": config.public_voice(voice),
-                 "voice_request": _public_voice_request(S.read_json(config.ROOT / "voice-request.json", None)),
+                 "voice": config.voice_setting(),
+                 "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "projects_folder_request": S.read_json(config.ROOT / "projects_folder-request.json", None)})
         return

@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "l2-progress-service.py" });
@@ -204,16 +205,15 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   const slug = initial.slug;
   const task = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json());
   const control = async (mode: string) => { expect((await request.post("/fixture/control", { data: { slug, mode } })).ok()).toBe(true); };
+  // Host voice hears Chromium's fake microphone through the fixture host; a named overlay denies the microphone.
+  const host = await fixtureHost(page);
+  host.final = "spoken correction";
   await page.addInitScript(() => {
     const state = window as typeof window & { denyFixtureMic?: boolean };
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+    const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async (constraints: MediaStreamConstraints) => {
       if (state.denyFixtureMic) throw new DOMException("Denied by fixture", "NotAllowedError");
-      const context = new AudioContext();
-      await context.resume();
-      const source = context.createOscillator();
-      const output = context.createMediaStreamDestination();
-      source.connect(output); source.start();
-      return output.stream;
+      return open(constraints);
     } });
   });
   let release!: () => void;
@@ -259,7 +259,7 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   await convo.getByRole("button", { name: "Start voice input" }).click();
   await walk.state("08-microphone-denied-typing-still-works", { visible: [convo.getByText("Microphone blocked in the browser. Typing works."), field, stop], hidden: [convo.getByRole("button", { name: "Stop voice input" })] });
   await expect(field).toBeEnabled();
-  await page.addInitScript(() => { Object.defineProperty(window, "MediaRecorder", { value: undefined, configurable: true }); });
+  await page.addInitScript(() => { Object.defineProperty(window, "AudioWorkletNode", { value: undefined, configurable: true }); });
   await page.reload();
   await walk.state("09-voice-unavailable-worker-stop-remains", { visible: [field, stop], hidden: [convo.getByRole("button", { name: "Start voice input" }), convo.getByRole("button", { name: "Stop voice input" })] });
 });
@@ -322,9 +322,11 @@ for (const index of [0, 1]) {
   });
 }
 
-test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", { tag: "@chromium" }, async ({ page, request }, info) => {
+test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", async ({ page, request }, info) => {
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const walk = walkthrough(page, info);
+  const host = await fixtureHost(page);
+  host.final = "spoken correction";
   await walk.open(`/projects/atlas/tasks/${slug}`);
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const live = page.getByRole("region", { name: "Live session", exact: true });
@@ -340,14 +342,13 @@ test("@phone-only changing views cancels a recording while committed voice Send 
   await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeHidden();
   await expect(field).toHaveValue("Typed correction.");
   await expect(field).not.toBeFocused();
+  expect(host.finals).toBe(0);
   let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/transcribe", async (route) => { await gate; await route.continue(); }, { times: 1 });
+  host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
   await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
   await expect(conversation.getByLabel("Recording time")).toHaveText(/0:0[1-9]/);
-  const submitted = page.waitForRequest("**/api/transcribe");
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  await submitted;
+  await expect.poll(() => host.finals).toBe(1);
   try {
     await tabs.getByRole("link", { name: "Live session", exact: true }).click();
     await expect(live).toBeVisible();
@@ -355,9 +356,7 @@ test("@phone-only changing views cancels a recording while committed voice Send 
     await page.keyboard.press("Escape");
     await walk.state("02-submitted-transcription-remains-owned-by-conversation", { visible: [live], hidden: [field] });
   } finally {
-    const finished = page.waitForResponse("**/api/transcribe");
     release();
-    await (await finished).finished();
   }
   await expect(live).toBeVisible();
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
