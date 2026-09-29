@@ -307,6 +307,11 @@ daemon scheduling, browser onboarding, interrupted-launch recovery or real provi
 Run `python3 -m unittest tests.test_container_workflow` before the authorized image gate: it runs
 the same workflow and CLI with a local-process platform adapter, without host services. Workspace
 results do not establish native systemd or image support; those require the gate's retained results.
+The `--recovery` lane injects resume claims through the real claim API, exits their owning process,
+then replaces the container. A prelaunch claim restores its message before explicit continuation;
+an uncertain launch records a recovery fault without replay. Workspace tests simulate the lost
+process lifetime; the native lane reads actual lifetime evidence. Neither simulates a real provider
+having acted before the interruption, nor establishes automatic recovery of a running task.
 
 Device results name their evidence class; a result in one class never stands in for another.
 

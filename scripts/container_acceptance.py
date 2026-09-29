@@ -115,7 +115,7 @@ print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges'
 
 
 def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | None = None,
-        lifecycle: bool = False, workflow: bool = False) -> dict:
+        lifecycle: bool = False, workflow: bool = False, recovery: bool = False) -> dict:
     evidence.mkdir(parents=True, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix="altitude-container-gate-"))
     result = {"passed": False, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -213,7 +213,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude", "--env", "XDG_RUNTIME_DIR=/run/user/1000",
                            ident, "python3", "-c", PROBE], timeout=30)
             result["bootstrap"] = json.loads(output)
-            if lifecycle or workflow:
+            if lifecycle or workflow or recovery:
                 source = Path(__file__).resolve().parent.parent / "tests/container_admission_probe.py"
                 result["admission_probe_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
                 result["admission"] = []
@@ -249,27 +249,34 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     probe("replaced")
                     result["uncovered"].remove("Stop/restart/recreation and volume lock concurrency")
                     result["uncovered"].extend(["full task Stop/resume across image replacement", "volume lock concurrency"])
-                if workflow:
+                if workflow or recovery:
                     source = Path(__file__).resolve().parent.parent / "tests/container_workflow_probe.py"
                     result["workflow_probe_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
                     result["workflow"] = []
-                    for stage in ("prepare", "replaced"):
-                        if stage == "replaced":
-                            call(["stop", "--time", "10", ident])
-                            call(["rm", ident])
-                            ident = call(create).strip()
-                            result["workflow_replacement_container"] = ident
-                            start_ready()
-                        output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude",
-                            "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident, "python3", "-c",
-                            source.read_text(), stage], timeout=60)
-                        result["workflow"].append(json.loads(output))
+                    scenarios = [("prepare", "replaced")] if workflow else []
+                    if recovery:
+                        scenarios += [("prepare-claim", "recover-claim"), ("prepare-launching", "recover-launching")]
+                    result["workflow_replacement_containers"] = []
+                    for stages in scenarios:
+                        for index, stage in enumerate(stages):
+                            if index:
+                                call(["stop", "--time", "10", ident])
+                                call(["rm", ident])
+                                ident = call(create).strip()
+                                result["workflow_replacement_containers"].append(ident)
+                                start_ready()
+                            output = call(["exec", "--user", "1000", "--env", "HOME=/home/altitude",
+                                "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident, "python3", "-c",
+                                source.read_text(), stage], timeout=60)
+                            result["workflow"].append({"stage": stage, **json.loads(output)})
                     result["uncovered"].remove("project/coordinator/task workflow")
                     if lifecycle:
                         result["uncovered"].remove("full task Stop/resume across image replacement")
                     result["uncovered"].extend(["daemon-driven workflow scheduling and browser onboarding",
-                        "interrupted launch and running-task recovery during replacement",
+                        "running-task recovery and actual provider launch interruption during replacement",
                         "other engine protocol and provider/session confinement compatibility"])
+                    if not recovery:
+                        result["uncovered"].append("native prelaunch and ambiguous-claim reconciliation after replacement")
             result["passed"] = True
         except Exception as exc:
             result["error"] = str(exc)
@@ -316,8 +323,10 @@ if __name__ == "__main__":
                         help="also test daemon/container restart, job descendants and replacement admission using fictional data")
     parser.add_argument("--workflow", action="store_true",
                         help="also test real application workflow with a deterministic CLI, native jobs and retained-volume replacement")
+    parser.add_argument("--recovery", action="store_true",
+                        help="also inject claimed/uncertain resume states and verify recovery after real container replacement")
     args = parser.parse_args()
     outcome = run(args.archive.resolve(), args.sha256, args.results.resolve(), native_binary=args.native_sandbox_binary,
-                  lifecycle=args.lifecycle, workflow=args.workflow)
+                  lifecycle=args.lifecycle, workflow=args.workflow, recovery=args.recovery)
     print(json.dumps(outcome, indent=2))
     raise SystemExit(0 if outcome["passed"] else 1)

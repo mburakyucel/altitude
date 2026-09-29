@@ -86,3 +86,27 @@ class ContainerWorkflow(AltitudeCase):
                 probe.resume(self.project, saved)
         self.assertEqual(S.load_task(self.project, saved["slug"])["session_id"], saved["session_id"])
         self.assertFalse(any(self.active(unit) for unit in self.units))
+
+    def interruption(self, *, launching):
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.tmp)
+        self.patch(config, "HOME", self.tmp / "image-home")
+        identity = self.patch(platform, "_container_instance", return_value="a" * 32)
+        self.patch(platform, "container_ready")
+        platform._lifecycle_write("a" * 32, False)
+        with probe.fixture_engine(self.tmp):
+            saved = probe.prepare(self.project, self.tmp / "workflow")
+            probe.claim_interruption(self.project, saved, launching=launching)
+            identity.return_value = "b" * 32
+            # Workspace simulation only. The native lane exits its real claim owner and
+            # recreates the container before checking its actual process-lifetime identity.
+            with mock.patch.object(platform, "process_identity_live", return_value=False):
+                result = probe.recover_interruption(self.project, saved, launching=launching)
+        self.assertFalse(any(self.active(unit) for unit in self.units))
+        return result
+
+    def test_prelaunch_interruption_restores_input_before_explicit_continuation(self):
+        self.assertTrue(self.interruption(launching=False)["dead_prelaunch_claim_reconciled_while_paused"])
+
+    def test_ambiguous_launch_retains_input_and_requires_recovery(self):
+        self.assertTrue(self.interruption(launching=True)["uncertain_launch_faulted_without_replay"])

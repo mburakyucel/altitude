@@ -65,7 +65,7 @@ def prepare(project, repo):
     (repo / "README.md").write_text("Fictional project.\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "Fictional initial commit")
-    origin = repo.with_name("workflow-origin.git")
+    origin = repo.with_name(repo.name + "-origin.git")
     git(repo, "init", "-q", "--bare", str(origin))
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-qu", "origin", "main")
@@ -144,6 +144,50 @@ def resume(project, saved, *, paused=False):
             engines.stop_l2_worker(current["l2_engine"], current["agent_id"], job_root=dispatch.l2_job_root(project, slug))
 
 
+def claim_interruption(project, saved, *, launching=False):
+    """Fault injection at the real persistent claim boundary; the native driver then exits.
+
+    No provider launch is performed by this injector. The launching case deliberately withholds
+    worker identity, representing the uncertainty that recovery must refuse to replay.
+    """
+    from altitude import state as S, tasks as T
+    claim = T.claim_resume(project, saved["slug"])
+    assert claim and saved["message_id"] in [row["id"] for row in claim["messages"]]
+    if launching:
+        T.update_resume_claim(project, saved["slug"], claim["id"], phase="launching")
+    return S.load_task(project, saved["slug"])["resume_claim"]
+
+
+def recover_interruption(project, saved, *, launching=False):
+    from altitude import dispatch, engines, platform, state as S, tasks as T
+    slug = saved["slug"]
+    assert not platform.container_lifecycle()["ready"]
+    before = S.load_task(project, slug)
+    assert not platform.process_identity_live(before["resume_claim"]["owner_process"])
+    if launching:
+        try:
+            dispatch.resume(project, slug)
+        except dispatch.ResumeFailure as error:
+            assert "ownership cannot be proven" in str(error), str(error)
+        else:
+            raise AssertionError("Uncertain launch replayed or silently succeeded")
+    else:
+        assert dispatch.resume(project, slug).get("held")
+    current = S.load_task(project, slug)
+    assert not current.get("resume_claim") and current["state"] == "blocked"
+    assert all(current[key] == saved[key] for key in ("session_id", "worktree", "hold_merge"))
+    assert saved["message_id"] in [row["id"] for row in T.pending(project, slug)]
+    assert engines.worker_termination(current, job_root=dispatch.l2_job_root(project, slug)) is True
+    inputs = Path(current["worktree"], "fixture-input.jsonl").read_text().splitlines()
+    assert len(inputs) == 1  # Neither recovery branch is allowed to start an engine while paused.
+    if launching:
+        assert current.get("fault"), current
+        assert not current.get("resume_after")
+        return {"uncertain_launch_faulted_without_replay": True, "saved_input_session_hold_retained": True}
+    result = resume(project, saved, paused=True)
+    return {**result, "dead_prelaunch_claim_reconciled_while_paused": True}
+
+
 if __name__ == "__main__":
     # The real image daemon keeps its fresh default state. Only this synchronous fixture driver
     # owns these records; no provider discovery or periodic background work can enter the lane.
@@ -152,14 +196,22 @@ if __name__ == "__main__":
     from altitude import config, platform, state as S
     assert platform.containerized() and os.getuid() == 1000
     config.ensure_root()
-    saved_path = config.ROOT / "workflow.json"
+    scenario = sys.argv[1].split("-", 1)[1] if "-" in sys.argv[1] else "workflow"
+    project = scenario + "-fixture"
+    saved_path = config.ROOT / (scenario + ".json")
     with fixture_engine(config.ROOT):
-        if sys.argv[1] == "prepare":
-            S.write_json(saved_path, prepare("workflow-fixture", platform.CONTAINER_PROJECTS / "workflow-fixture"))
+        if sys.argv[1] in ("prepare", "prepare-claim", "prepare-launching"):
+            saved = prepare(project, platform.CONTAINER_PROJECTS / project)
+            S.write_json(saved_path, saved)
+            if sys.argv[1] != "prepare":
+                claim_interruption(project, saved, launching=sys.argv[1] == "prepare-launching")
             result = {"prepared": True, "task_stopped_with_pending_message": True}
         elif sys.argv[1] == "replaced":
             assert not platform.container_lifecycle()["ready"]
-            result = resume("workflow-fixture", S.read_json(saved_path), paused=True)
+            result = resume(project, S.read_json(saved_path), paused=True)
+        elif sys.argv[1] in ("recover-claim", "recover-launching"):
+            result = recover_interruption(project, S.read_json(saved_path),
+                                          launching=sys.argv[1] == "recover-launching")
         else:
             raise ValueError("Unknown workflow stage")
     print(json.dumps(result))
