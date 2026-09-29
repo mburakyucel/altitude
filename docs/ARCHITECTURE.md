@@ -751,6 +751,8 @@ reconciliation. Dirty working files can prevent Git's rebase; landing does not a
 Conflicts and raised rebase errors abort back to the task branch with committed and working edits
 retained. Follow-up merge commits require owner reconciliation before landing, preserving edits
 made in merge resolutions. Work already present on main produces a truthful merged retry.
+A task PR closed without merging is not reopened: the next `alt land` opens a fresh PR from the
+task branch and records the closed PR as the preceding delivery evidence.
 
 The task's `delivery` records the current PR number/head, base SHA, publication branch and precise
 timestamp; a publication in progress has no number/head. `prs` retains every delivery number, and

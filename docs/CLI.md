@@ -1342,6 +1342,13 @@ same worktree. Follow-up merge commits require manual reconciliation first becau
 could drop merge-resolution edits. Unseen remote changes also require incorporation before
 continuation. Failures after reconciliation or push can be retried with `alt land`.
 
+A task PR closed without merging stays closed. The next `alt land` from the same task opens a fresh
+PR from the same branch with its own title and description, replacing the closed PR's remote commits
+under the recorded-tip lease; the owner rebases or resets the branch first so it carries only
+the intended work. The closed PR stays in `prs` and in the delivery event, and the fresh PR becomes
+the current delivery with its own checks, review and hold release. A closed PR whose branch is
+not the task's is refused.
+
 Task `prs` and delivery events preserve earlier PR/head/merge evidence. The current `delivery`
 receipt is recorded before waiting for checks; an unpublished delivery cannot complete the task.
 The landing result names no main run: the merged commit's push-triggered run rarely exists at that
