@@ -243,6 +243,9 @@ test("a grouped review keeps its current preview reachable after another member 
   await expect(saved.getByRole("heading", { name: "Conversation layout — implementation review", exact: true })).toBeVisible();
   await saved.close();
   await expect(card(page, review)).toBeInViewport();
+  // The answered member folds behind the open review until the group closes.
+  await expect(card(page, date).getByText("Decision recorded", { exact: true })).toBeHidden();
+  await page.getByRole("region", { name: "Task conversation", exact: true }).getByText("1 earlier question", { exact: true }).click();
   await expect(card(page, date).getByText("Decision recorded", { exact: true })).toBeVisible();
   expect((await request.post("/fixture/resolve-question", { data: { id: review.id } })).ok()).toBe(true);
   await walk.state("group-review-03-final-answer-removes-shortcuts", {

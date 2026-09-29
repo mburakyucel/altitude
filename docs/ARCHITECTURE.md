@@ -2031,7 +2031,10 @@ If a provider limit queues a fresh attempt, the existing dilemma remains answera
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
 or its recorded resolution. A queued task without a question retains its ordinary initial state.
 
-A direct L2 block publishes its question into that human thread. A block that publishes or revises
+A direct L2 block publishes its question into that human thread. A published or reworded member takes
+the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
+escalation away, and `waiting_on` names the operator only while one of the group's open members is
+theirs. A block that publishes or revises
 questions queues one L3 notification, including operator-directed blocks. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
@@ -2082,7 +2085,9 @@ recommendation. A remainder retains the question's audience without changing ind
 capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
-The shared question component appears on Needs you and at its conversation anchor. Choices and custom
+The shared question component appears on Needs you and at its conversation anchor. While a group has
+an open member, its closed members fold into one collapsed **N earlier questions** row, open when a
+link targets one of them; an open member addressed to L3 reads **L3 is handling this**. Choices and custom
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.

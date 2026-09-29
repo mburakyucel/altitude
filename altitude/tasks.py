@@ -1581,17 +1581,26 @@ def _validate_questions(payload: dict) -> list[dict]:
     return normalized
 
 
+def _audience(block: str, previous: dict | None, text: str) -> str:
+    """A member follows the audience of the block that publishes it. Re-parking an unchanged operator question keeps
+    it the operator's, so an escalation is never parked away; a reworded one, such as a wait on L3 or an external
+    event, leaves the operator's list."""
+    unchanged = previous is not None and previous["detail"].strip() == text.strip()
+    return "operator" if block == "operator" or (unchanged and previous["audience"] == "operator") else "l3"
+
+
 def _publish_question(task: dict, text: str, actor: str, *, recommendation: str | None = None,
                       label: str | None = None, why: str | None = None, force_revision: bool = False,
                       previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
-                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET) -> dict:
+                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET,
+                      audience: str | None = None) -> dict:
     questions = task.setdefault("questions", [])
     if previous is _UNSET:
         previous = questions[-1] if questions else None
     if design is _UNSET:
         design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
     groups = _store_groups(task)
-    audience = previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator"
+    audience = audience or (previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator")
     parsed = parse_dilemma(text)
     structured = options is not None
     selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
@@ -1644,7 +1653,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     return question
 
 
-def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, design: dict | None = None) -> list[dict]:
+def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audience: str, *,
+                       design: dict | None = None) -> list[dict]:
     inputs = _validate_questions(payload)
     groups = _store_groups(task)
     group = groups[-1] if groups else None
@@ -1667,8 +1677,6 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         raise TransitionError("a group has at most three open questions; resolve existing questions before adding another")
     before = len(task.get("questions", []))
     for item, previous in targets:
-        if previous and previous["audience"] == "operator":
-            task["waiting_on"] = OPERATOR_MESSAGE_ROLE
         keep_options = previous and previous["detail"] == item["question"] and not item["options_supplied"]
         options = question_choices(previous) if keep_options else item["options"]
         recommended = _recommended_key(previous) if keep_options else item["recommended_key"]
@@ -1677,7 +1685,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET,
+                          audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:
         group["revision"] += 1
@@ -1687,43 +1696,53 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
 def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict | None,
                              recommendation: str | None, label: str | None, why: str | None,
                              *, design: dict | None = None) -> list[dict]:
+    members = _publish_block_members(task, reason, actor, payload, recommendation, label, why, design=design)
+    # The operator has the turn only while an open member is theirs; otherwise the block waits on L3.
+    if any(q["status"] == "open" and q["audience"] == "operator" for q in members):
+        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    return members
+
+
+def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | None,
+                           recommendation: str | None, label: str | None, why: str | None,
+                           *, design: dict | None = None) -> list[dict]:
     groups = _store_groups(task)
     group = groups[-1] if groups else None
     members = _group_members(task, group) if group else []
     pending = [q for q in members if q["status"] == "open"]
-    if any(q["audience"] == "operator" for q in pending):
-        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if payload is not None:
         if any(value is not None for value in (recommendation, label, why)):
             raise TransitionError("questions JSON supplies its own options and recommendation")
-        return _publish_questions(task, payload, actor, reason, design=design)
+        return _publish_questions(task, payload, actor, reason, audience, design=design)
     previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
     no_replacement = all(value is None for value in (recommendation, label, why))
-    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if design is None and no_replacement and group and reason.strip() == group["reason"].strip() and pending:
         # The ordinary block verb parks the same whole group after discussing a follow-up.
-        if all(q["audience"] == audience for q in pending):
+        if all(q["audience"] == _audience(audience, q, q["detail"]) for q in pending):
             return members
         for question in pending:
             _publish_question(task, question["detail"], actor, previous=question, group=group, bump=False,
                               options=question_choices(question), recommended_key=_recommended_key(question),
-                              why=(question.get("recommendation") or {}).get("why"))
+                              why=(question.get("recommendation") or {}).get("why"),
+                              audience=_audience(audience, question, question["detail"]))
         group["revision"] += 1
         return _group_members(task, group)
     if previous is None and len(pending) > 1:
         raise TransitionError("several questions remain open; use --questions-file with their ids or park with the saved group reason")
     previous = previous or (pending[0] if pending else None)
+    target = _audience(audience, previous, reason)
     if previous and previous["detail"].strip() == reason.strip() and no_replacement:
-        if previous["audience"] == audience and (design is None or previous.get("design") == design):
+        if previous["audience"] == target and (design is None or previous.get("design") == design):
             return members
         _publish_question(task, reason, actor, previous=previous, group=group,
                           options=question_choices(previous), recommended_key=_recommended_key(previous),
                           why=(previous.get("recommendation") or {}).get("why"),
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     else:
         _publish_question(task, reason, actor, previous=previous, group=group if pending else None,
                           recommendation=recommendation, label=label, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     current_group = _groups(task)[-1]
     current_group["reason"] = reason
     return _group_members(task, current_group)

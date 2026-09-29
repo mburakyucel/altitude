@@ -1062,7 +1062,10 @@ in its reply/checkpoint, and withdraws only the redundant current question with 
 decisions still require their own answer; original authority, existing receipts and merge holds
 remain intact. A later reaffirmation already recorded needs no further reconciliation.
 
-`block` is the current L2's question to L3; its operator flag uses the operator audience. L3 can
+`block` is the current L2's question to L3; its operator flag uses the operator audience. Each block
+sets the audience of the members it publishes or rewords: re-parking an unchanged operator question
+keeps it the operator's, and a member reworded without the flag, such as a wait on L3 or an external
+event, leaves the operator's turn. The task waits on the operator only while an open member is theirs. L3 can
 `escalate` the actual dilemma and explicit recommendation. Both publish into the owning L2 human
 conversation with their source attribution. The model chooses a plain question, one recommended
 quick action, or two to three explicit options with one recommendation. A fault is operational and

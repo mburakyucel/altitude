@@ -95,8 +95,8 @@ test("mixed custom, preset and plain answers hand the turn back and remain conve
   await group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox").scrollIntoViewIfNeeded();
   await expect(group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox")).toBeInViewport();
   await walk.state("03b-remaining-question-asked-again-beneath-recorded-answers", {
-    visible: [conversation.getByText("Your turn · 1 question · asked again", { exact: true }), group.locator(`[data-question-id="${retention.id}"]`).getByText("Decision recorded", { exact: true }), group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox")],
-    hidden: [handedBack(page), group.locator(`[data-question-id="${retention.id}"] textarea`)],
+    visible: [conversation.getByText("Your turn · 1 question · asked again", { exact: true }), group.getByText(/^\d earlier questions?$/), group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox")],
+    hidden: [handedBack(page), group.locator(`[data-question-id="${retention.id}"]`).getByText("Decision recorded", { exact: true })],
   });
   await expect.poll(async () => (await remaining(request)).length).toBe(1);
   await group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox").fill("Release team");
