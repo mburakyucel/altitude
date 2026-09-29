@@ -4,8 +4,8 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, changeHostVoice, makePairingCode, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
-import type { Certificate, Device, Overview, PairingCode, Update } from "../data/api";
+import { ApiError, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import type { Certificate, Device, Overview, PairingCode, PhoneShare, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -256,7 +256,7 @@ function DevicesPage() {
   </>;
 }
 
-/** The CA devices trust (SPEC.md §3.15): what a phone must match before installing it, and how to offer it. */
+/** The CA devices trust (SPEC.md §3.15): Add a phone's QR code, and what a phone must match before installing it. */
 function CertificateCard({ certificate }: { certificate: Certificate }) {
   if ("error" in certificate) {
     return <section className="settings-card device-certificate" aria-label="Certificate">
@@ -268,8 +268,8 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
   const rows = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
   return <section className="settings-card device-certificate" aria-label="Certificate">
     <h2>Certificate</h2>
-    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. To add a phone, run this on the computer running Altitude; it gives a ten-minute link and the steps:</p>
-    <Command text="alt tls-share" />
+    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a QR code for its camera, or run <code>alt tls-share</code> on the computer running Altitude.</p>
+    <AddPhone />
     <p className="text-meta text-muted">Before installing it on the phone, check that its name and SHA-256 match these.</p>
     <dl className="settings-network">
       <dt>Name</dt><dd>{certificate.name}</dd>
@@ -278,6 +278,62 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
       <dt>Expires</dt><dd>{certificate.expires}</dd>
     </dl>
   </section>;
+}
+
+type ShareState = { status: "idle" | "opening" | "closed" } | { status: "open"; share: PhoneShare; until: number } | { status: "failed"; error: Error };
+
+/** Add a phone: the service's ten-minute share window as a QR code with its time left. Close, the end of
+ * the ten minutes or leaving the page closes the window. */
+function AddPhone() {
+  const [state, setState] = useState<ShareState>({ status: "idle" });
+  const [now, setNow] = useState(() => Date.now());
+  const link = state.status === "open" ? state.share.link : null;
+  useEffect(() => {
+    if (!link) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => { window.clearInterval(timer); void closePhoneShare(link).catch(() => undefined); };
+  }, [link]);
+  const left = state.status === "open" ? Math.max(0, Math.ceil((state.until - now) / 1000)) : 0;
+  useEffect(() => {
+    if (state.status === "open" && left === 0) setState({ status: "closed" });
+  }, [state.status, left]);
+  const open = async () => {
+    setState({ status: "opening" });
+    try {
+      const share = await openPhoneShare();
+      setNow(Date.now());
+      setState({ status: "open", share, until: Date.now() + share.seconds * 1000 });
+    } catch (error) {
+      setState({ status: "failed", error: error as Error });
+    }
+  };
+  if (state.status === "open") {
+    const minutes = Math.floor(left / 60), seconds = String(left % 60).padStart(2, "0");
+    return <div className="phone-share">
+      <QRCode rows={state.share.qr} label={`QR code for ${state.share.link}`} />
+      <p className="text-meta">Scan it with the phone’s camera. The page it opens has the download and the steps.</p>
+      <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
+      <div className="phone-share-time">
+        <span role="timer" aria-live="off">Closes in {minutes}:{seconds}</span>
+        <button type="button" className="btn" onClick={() => setState({ status: "closed" })}>Close</button>
+      </div>
+    </div>;
+  }
+  return <>
+    <button type="button" className="btn btn-primary" disabled={state.status === "opening"} onClick={() => void open()}>{state.status === "opening" ? "Opening…" : "Add a phone"}</button>
+    {state.status === "closed" ? <p role="status" className="text-meta text-muted">The link is closed.</p> : null}
+    {state.status === "failed" ? <p role="alert" className="text-meta text-danger">{state.error.message}</p> : null}
+  </>;
+}
+
+/** A QR code from the service's module rows, dark on white with the four-module quiet zone a camera needs. */
+function QRCode({ rows, label }: { rows: string[]; label: string }) {
+  const size = rows.length + 8;
+  const path = rows.flatMap((row, y) => [...row].map((bit, x) => bit === "1" ? `M${x + 4} ${y + 4}h1v1h-1z` : "")).join("");
+  return <svg className="phone-share-qr" role="img" aria-label={label} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
+    <rect width={size} height={size} fill="#fff" />
+    <path d={path} fill="#000" />
+  </svg>;
 }
 
 /** An installed copy's version, any newer release, the command that installs it and the check's switch. */
