@@ -11,13 +11,14 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
 RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
 INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
 INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
+#: What this process's own environment sets, before a release installation's saved settings fill the rest.
+SHELL_SETTINGS = frozenset(os.environ)
 if RELEASE is not None and INSTALL_CONFIG.exists():
     for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
         if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
@@ -54,12 +55,18 @@ WORKTREE_ROOT = Path(".claude/worktrees")
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
-HOST = os.environ.get("ALTITUDE_HOST", "127.0.0.1")
-PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
+
+
+def network(environment) -> dict:
+    """Where a server started with this environment listens and which HTTPS identity it serves."""
+    return {"host": environment.get("ALTITUDE_HOST", "127.0.0.1"), "port": int(environment.get("ALTITUDE_PORT", "8890")),
+            "tls_dir": Path(environment.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser(),
+            "tls": environment.get("ALTITUDE_TLS", "1") != "0"}
+
+
+HOST, PORT, TLS_DIR, TLS = map(network(os.environ).get, ("host", "port", "tls_dir", "tls"))
 # The projects folder's initial value; `alt machine set --projects-folder` replaces it (project_roots()).
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
-TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser()
-TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
 
 def installation_environment() -> dict[str, str]:
@@ -278,40 +285,20 @@ def machine_wip() -> int:
     return machine_settings().get("wip", WIP_PER_MACHINE)
 
 
-# The capability seam for speech: the browser's own recognition needs nothing installed; the
-# machine's own speech service is one OpenAI-compatible `audio/transcriptions` URL it chooses.
-VOICE_DEFAULT_MODEL = "whisper-1"
-
-
+# The capability seam for speech: host voice runs the pinned speech model on this computer (`altitude/speech.py`)
+# and is the default wherever that model can run; elsewhere the browser's own recognition is.
 def voice_setting() -> dict:
-    """The transcription backend: browser recognition (default) or the machine's speech service."""
+    """The transcription backend: the saved host or browser choice, else host where the model can run."""
     value = machine_settings().get("voice")
-    if isinstance(value, dict):
-        return {"backend": "endpoint", "model": VOICE_DEFAULT_MODEL, **value}
-    return {"backend": "browser"}
+    if value not in ("host", "browser"):
+        from . import speech
+        value = "host" if speech.manifest()[0] is not None else "browser"
+    return {"backend": value}
 
 
 def validate_voice(value) -> None:
-    if value is None or value == "browser":
-        return
-    if not isinstance(value, dict) or not value or set(value) - {"url", "model", "key"}:
-        raise ValueError("voice must be browser or the URL of your speech service")
-    url = value.get("url")
-    parts = urlsplit(url) if isinstance(url, str) else None
-    if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError("the speech service must be an http(s) URL")
-    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
-        raise ValueError("the speech service URL carries no credentials, query or fragment; give the key separately")
-    for field in ("model", "key"):
-        if field in value and (not isinstance(value[field], str) or not value[field].strip()):
-            raise ValueError(f"the speech service {field} must be nonempty text")
-
-
-def public_voice(value):
-    """The voice setting as records and readouts show it: an endpoint key is only ever 'set'."""
-    if isinstance(value, dict) and "key" in value:
-        return {**value, "key": "set"}
-    return value
+    if value not in (None, "browser", "host"):
+        raise ValueError("voice must be host or browser")
 
 
 def validate_wip(value) -> None:

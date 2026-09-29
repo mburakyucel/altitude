@@ -1,5 +1,6 @@
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Page, type Request, type TestInfo } from "@playwright/test";
 import { test } from "./fixtures";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test.use({ scenario: "isolation" });
@@ -69,6 +70,15 @@ function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => { release = resolve; });
   return { promise, release };
+}
+
+/** Resolves once host voice's final request is answered or abandoned. */
+function finalSettled(page: Page) {
+  return new Promise<void>((resolve) => {
+    const settled = (request: Request) => { if (/\/api\/voice\/live\/.*[?&]final=1/.test(request.url())) resolve(); };
+    page.on("requestfinished", settled);
+    page.on("requestfailed", settled);
+  });
 }
 
 function views(page: Page) {
@@ -422,20 +432,19 @@ for (const nextDraft of ["", "A new draft while the accepted turn answers"]) {
 test("listening, late Stop transcription and denied microphone reset without crossing project drafts", { tag: "@chromium" }, async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
-  // Browser overlay: real MediaRecorder records a synthetic tone; no device or speech service is used.
+  // Host voice hears Chromium's fake microphone through the fixture host; a named overlay records each
+  // stream and denies the microphone on request. No device or speech model is used.
+  const host = await fixtureHost(page);
+  host.final = "Alpha late transcript";
   await page.addInitScript(`
-    const context = new AudioContext();
-    const oscillator = context.createOscillator();
-    oscillator.start();
+    const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     window.fixtureStreams = [];
     window.fixtureDenied = false;
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async (constraints) => {
       if (window.fixtureDenied) throw new DOMException("Denied by fixture", "NotAllowedError");
-      await context.resume();
-      const destination = context.createMediaStreamDestination();
-      oscillator.connect(destination);
-      window.fixtureStreams.push(destination.stream);
-      return destination.stream;
+      const stream = await open(constraints);
+      window.fixtureStreams.push(stream);
+      return stream;
     }});
   `);
   await walk.open(`${service}/projects/alpha`);
@@ -450,25 +459,18 @@ test("listening, late Stop transcription and denied microphone reset without cro
   await switchProject(page, info, "alpha");
   await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft");
   const transcript = deferred();
-  const uploaded = deferred();
-  const delivered = deferred();
-  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
-    uploaded.release();
-    await transcript.promise;
-    await route.fulfill({ json: { text: "Alpha late transcript" } }).catch(() => {}); // navigation aborts the upload
-    delivered.release();
-  }, { times: 1 });
+  host.holdFinal = transcript.promise;
+  const delivered = finalSettled(page);
   await mic.click();
-  await expect(stop).toBeVisible();
-  await page.waitForTimeout(500); // MediaRecorder needs a non-empty audio chunk.
+  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft check", { timeout: 5000 });
   await stop.click();
-  await uploaded.promise;
+  await expect.poll(() => host.finals).toBe(1);
   await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
   await expect(v.field("alpha")).not.toBeEditable();
   await switchProject(page, info, "beta");
   await v.field("beta").fill("Beta typed during transcription");
   transcript.release();
-  await delivered.promise;
+  await delivered;
   await expect(v.field("beta")).toHaveValue("Beta typed during transcription");
   await walk.state("04-beta-late-transcript-ignored-overlay", { visible: [mic, v.field("beta")], hidden: [wave, v.text("Transcribing…"), v.text("Alpha late transcript")] });
   await switchProject(page, info, "alpha");
@@ -488,36 +490,16 @@ test("listening, late Stop transcription and denied microphone reset without cro
 });
 
 for (const result of ["success", "failure", "cancel"] as const) {
-  test(`voice Send retains its original project through navigation and ${result}`, { tag: "@chromium" }, async ({ page, request, service }, info) => {
+  test(`voice Send retains its original project through navigation and ${result}`, async ({ page, request, service }, info) => {
     const walk = walkthrough(page, info);
     const v = views(page);
-    await page.addInitScript(`
-      const context = new AudioContext();
-      const oscillator = context.createOscillator(); oscillator.start();
-      Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
-        await context.resume(); const destination = context.createMediaStreamDestination(); oscillator.connect(destination); return destination.stream;
-      }});
-      // Encode real audio, then defer the recorder completion callback until after navigation.
-      const stopped = Object.getOwnPropertyDescriptor(MediaRecorder.prototype, "onstop");
-      Object.defineProperty(MediaRecorder.prototype, "onstop", { configurable: true,
-        get: stopped.get,
-        set(handler) { stopped.set.call(this, event => { window.fixtureFinishRecorder = () => handler.call(this, event); }); },
-      });
-    `);
+    // The fixture host holds the final words until the journey has left and returned to its source.
+    const host = await fixtureHost(page);
     const transcript = deferred();
-    const uploaded = deferred();
-    const delivered = deferred();
-    let transcriptions = 0;
-    // Keep interception active while completing transcription starts the message POST.
-    await page.route("**/api/transcribe", async (route) => {
-      transcriptions++;
-      uploaded.release();
-      await transcript.promise;
-      await route.fulfill(result === "failure"
-        ? { status: 503, json: { error: "Deterministic transcription failure" } }
-        : { json: { text: "dictated instruction" } }).catch(() => {});
-      delivered.release();
-    });
+    host.holdFinal = transcript.promise;
+    host.final = "dictated instruction";
+    if (result === "failure") host.failFinal = { status: 503, error: "Deterministic transcription failure" };
+    const delivered = finalSettled(page);
     const posts: { project: string; text: string }[] = [];
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/chat" && request.method() === "POST") posts.push(request.postDataJSON());
@@ -526,14 +508,12 @@ for (const result of ["success", "failure", "cancel"] as const) {
     await v.field("alpha").fill("Alpha original draft");
     await v.convo.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.convo.getByRole("button", { name: "Stop voice input" })).toBeVisible();
-    await page.waitForTimeout(500);
+    await expect(v.field("alpha")).toHaveValue("Alpha original draft check", { timeout: 5000 });
     await v.send.click();
     await switchProject(page, info, "beta");
     await v.field("beta").fill("Beta independent draft");
-    await expect.poll(() => page.evaluate("typeof window.fixtureFinishRecorder")).toBe("function");
-    await page.evaluate("window.fixtureFinishRecorder()");
-    await uploaded.promise;
-    await walk.state("01-navigation-before-recorder-stop-stays-in-source", {
+    await expect.poll(() => host.finals).toBe(1);
+    await walk.state("01-navigation-before-final-words-stays-in-source", {
       visible: [v.field("beta")], hidden: [v.text("Transcribing…"), v.text("Alpha original draft")],
     });
     await switchProject(page, info, "alpha");
@@ -552,19 +532,21 @@ for (const result of ["success", "failure", "cancel"] as const) {
     }
     await switchProject(page, info, "beta");
     transcript.release();
-    await delivered.promise;
+    await delivered;
     if (result === "success") {
       await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).history.filter((row: { role: string; text: string }) => row.role === "user" && row.text === "Alpha original draft dictated instruction").length).toBe(1);
     }
     await expect(v.field("beta")).toHaveValue("Beta independent draft");
     await switchProject(page, info, "alpha");
-    await expect(v.field("alpha")).toHaveValue(result === "success" ? "" : result === "cancel" ? "Alpha edited after cancellation" : "Alpha original draft");
+    // A failed Send keeps the words shown before the failure in the draft.
+    await expect(v.field("alpha")).toHaveValue(result === "success" ? "" : result === "cancel" ? "Alpha edited after cancellation" : /^Alpha original draft check/);
     await expect(v.field("alpha")).toBeEditable();
     await walk.state(`03-original-conversation-${result}`, {
       visible: [v.field("alpha"), ...(result === "success" ? [v.text("Alpha original draft dictated instruction")] : result === "failure" ? [v.convo.getByRole("alert").filter({ hasText: "Could not transcribe" })] : [])],
       hidden: [v.text("Transcribing…"), cancel],
     });
-    expect(transcriptions).toBe(1);
+    expect(host.opened).toBe(1);
+    expect(host.finals).toBe(1);
     expect(posts.map(({ project, text }) => ({ project, text }))).toEqual(result === "success" ? [{ project: "alpha", text: "Alpha original draft dictated instruction" }] : []);
     expect((await (await request.get(`${service}/fixture/calls`)).json()).calls.map((row: { project: string; text: string }) => ({ project: row.project, text: row.text }))).toEqual(posts.map(({ project, text }) => ({ project, text })));
     expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);

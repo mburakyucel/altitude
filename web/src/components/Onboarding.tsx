@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
-import { saveIncidentReports, saveOperatorName, useMachine, usePrerequisites } from "../data/api";
-import type { Machine } from "../data/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { changeHostVoice, readVoiceSettings, saveIncidentReports, saveOperatorName, saveVoiceSettings, useMachine, usePrerequisites } from "../data/api";
+import type { Machine, VoiceSettings } from "../data/api";
+import { updateVoiceSettings } from "./voiceBackend";
 import "./onboarding.css";
 
 type Save = { status: "idle" | "saving" } | { status: "failed"; error: Error };
@@ -134,7 +135,7 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
         <label className="voice-choice"><input type="radio" name="incident-reports" checked={publishing} onChange={() => { setOn(true); reset(); }} />
           <span>Also publish them as GitHub issues</span></label>
         <p className="text-meta text-muted">Each new system incident opens one issue in Altitude’s own repository, or in a fork you name instead.</p>
-        {publishing ? <div className="voice-endpoint">
+        {publishing ? <div className="choice-fields">
           <label>Repository<input value={target} required spellCheck={false} autoCapitalize="off"
             onChange={(event) => { setRepository(event.target.value); reset(); }} /></label>
           <p className="text-meta text-muted">{target.trim() === machine.data.altitude_repository ? "Altitude’s repository. Replace it with your fork to receive the issues yourself." : "Checked with your signed-in GitHub CLI when you save."}</p>
@@ -149,17 +150,78 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
   </form>;
 }
 
+/**
+ * Voice to text: host voice is the default where it can run, and its model is a one-time download. Setup runs
+ * in the background, so a slow or failed download never holds the first run; the microphone offers it later
+ * after Skip, and Settings shows its progress.
+ */
+export function VoiceStep({ onDone, actions }: { onDone: () => void; actions: (controls: ReactNode, settled?: boolean) => ReactNode }) {
+  const client = useQueryClient();
+  const voice = useQuery({ queryKey: ["voice-settings"], queryFn: readVoiceSettings, refetchOnWindowFocus: false });
+  const [save, setSave] = useState<Save>({ status: "idle" });
+  const run = async (write: (current: VoiceSettings) => Promise<VoiceSettings>) => {
+    setSave({ status: "saving" });
+    try {
+      const value = await write(voice.data!);
+      client.setQueryData(["voice-settings"], value);
+      updateVoiceSettings(value);
+      onDone();
+    } catch (error) {
+      setSave({ status: "failed", error: error as Error });
+    }
+  };
+  const browser = () => run((current) => saveVoiceSettings({ backend: "browser", selection: current.selection }));
+  const setUp = () => run(async (current) => {
+    if (current.backend !== "host") await saveVoiceSettings({ backend: "host", selection: current.selection });
+    return changeHostVoice("setup");
+  });
+  if (!voice.data) {
+    return <>{voice.isError
+      ? <p role="alert" className="text-meta text-danger">Could not load this setting. <button type="button" className="link" onClick={() => void voice.refetch()}>Retry</button></p>
+      : <p role="status" className="text-meta text-muted">Loading…</p>}{actions(null)}</>;
+  }
+  const host = voice.data.host;
+  const busy = save.status === "saving";
+  const browserButton = (label: string) => <button key="browser" type="button" className="btn" disabled={busy} onClick={() => void browser()}>{label}</button>;
+  if (host.state === "unavailable") {
+    return <>
+      <div className="settings-card">
+        <p>Voice to text can’t run on this computer: {host.reason}.</p>
+        <p className="text-meta text-muted">Browser recognition works in supported browsers with no download. Your browser may send audio to its speech service.</p>
+        <Failure save={save} />
+      </div>
+      {voice.data.backend === "browser" ? actions(null, true) : actions(browserButton("Use browser recognition"))}
+    </>;
+  }
+  const size = `${Math.round(host.download_bytes / 1e6)} MB`;
+  const started = host.state === "ready" || host.state === "setting-up";
+  return <>
+    <div className="settings-card">
+      <p>{host.state === "ready" ? "Voice to text runs on this computer and is set up."
+        : host.state === "setting-up" ? "Voice to text is being set up on this computer. It continues in the background."
+          : `Voice to text runs on this computer. It needs a one-time download of about ${size}.`}</p>
+      <p className="text-meta text-muted">Words appear as you speak, with punctuation, in every browser. Audio stays between your device and this computer.</p>
+      <Failure save={save} />
+    </div>
+    {actions(<>
+      {voice.data.backend === "browser" && started ? null : browserButton("Use browser recognition instead")}
+      {started ? null : <button key="setup" type="button" className="btn btn-primary" disabled={busy} onClick={() => void setUp()}>{busy ? "Starting…" : "Set up voice"}</button>}
+    </>, started)}
+  </>;
+}
+
 const steps = [
   { key: "name", title: "Your name" },
   { key: "agents", title: "Prerequisites" },
   { key: "incidents", title: "Incident reports" },
+  { key: "voice", title: "Voice" },
   { key: "projects", title: "Projects" },
 ] as const;
 type Step = (typeof steps)[number]["key"];
 
 /**
- * First run while no project is managed (SPEC.md §3.12): name, what the agents need, incident reports, then
- * projects. The step lives in `?step=` so reload and Back keep the place; every step is skippable and is a
+ * First run while no project is managed (SPEC.md §3.12): name, what the agents need, incident reports, voice,
+ * then projects. The step lives in `?step=` so reload and Back keep the place; every step is skippable and is a
  * Settings row afterwards. Adding a project opens its Setup and ends the flow.
  */
 export default function Onboarding({ projects }: { projects: ReactNode }) {
@@ -189,6 +251,10 @@ export default function Onboarding({ projects }: { projects: ReactNode }) {
     </> : step === "incidents" ? <>
       <header><h1>Report Altitude’s own faults?</h1><p className="onboarding-lead">When Altitude’s machinery fails, it records an incident on this computer. It can also open a GitHub issue for each one, so the fault gets fixed in Altitude itself.</p></header>
       <IncidentReportsForm onSaved={next} actions={(submit) => nav(<span key="skip">{skip}</span>, <span key="submit">{submit}</span>)} />
+    </> : step === "voice" ? <>
+      <header><h1>Voice to text</h1><p className="onboarding-lead">Dictate messages instead of typing them, on your phone or here.</p></header>
+      <VoiceStep onDone={next} actions={(controls, settled) => nav(settled ? null : <span key="skip">{skip}</span>, <span key="controls">{controls}</span>,
+        settled ? <button key="next" type="button" className="btn btn-primary" onClick={next}>Continue</button> : null)} />
     </> : <>
       <header><h1>Add your projects</h1><p className="onboarding-lead">A project is a folder on this computer, usually a Git checkout. Choose the folder that holds your projects; Altitude lists the folders directly inside it and nothing deeper.</p></header>
       {projects}

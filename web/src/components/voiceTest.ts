@@ -1,6 +1,8 @@
+import { act } from "@testing-library/react";
 import { vi } from "vitest";
 import { presetVoiceBackend } from "./voiceBackend";
-import type { VoiceBackend } from "../data/api";
+import type { HostVoice, VoiceBackend } from "../data/api";
+import { HostCapture } from "./hostCapture";
 import type { Punctuator } from "../punctuation";
 
 /**
@@ -23,41 +25,6 @@ export function sentence(words: readonly string[]): string[] {
     const cased = index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word.toLowerCase();
     return index === words.length - 1 ? `${cased.replace(/[.,?]$/, "")}.` : cased.replace(/[.,?]$/, "");
   });
-}
-
-/** Browser voice primitives for route/component tests; emits one AAC/mp4 blob when stopped. */
-export class FakeMediaRecorder {
-  static instances: FakeMediaRecorder[] = [];
-  static isTypeSupported(type: string) {
-    return type === "audio/mp4";
-  }
-
-  state: RecordingState = "inactive";
-  mimeType: string;
-  readonly stream: MediaStream;
-  ondataavailable: ((event: { data: Blob }) => void) | null = null;
-  onstop: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  stopCalls = 0;
-
-  constructor(stream: MediaStream, options?: MediaRecorderOptions) {
-    this.stream = stream;
-    this.mimeType = options?.mimeType ?? "audio/mp4";
-    FakeMediaRecorder.instances.push(this);
-  }
-
-  start() {
-    this.state = "recording";
-  }
-
-  stop() {
-    this.stopCalls += 1;
-    this.state = "inactive";
-    queueMicrotask(() => {
-      this.ondataavailable?.({ data: new Blob(["aac recording"], { type: this.mimeType }) });
-      this.onstop?.();
-    });
-  }
 }
 
 type FakeResult = { isFinal: boolean; 0: { transcript: string }; length: 1 };
@@ -122,13 +89,100 @@ export class FakeSpeechRecognition {
   }
 }
 
-export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean } = {}) {
-  const backend = options.backend ?? "endpoint";
+/** Host voice's microphone in tests: `speak` delivers 16 kHz samples to the capture listening now. */
+export const hostMicrophone = {
+  deliver: null as ((chunk: Int16Array) => void) | null,
+  speak(samples: number) { hostMicrophone.deliver?.(new Int16Array(samples)); },
+};
+
+export type HostVoiceCall = { path: string; seq: number; final: boolean; samples: number; selection: string };
+type Held = { settle: () => void };
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+/**
+ * This computer's speech service for tests: answers `/api/voice/live` with a recording id and each audio
+ * chunk with `words` (the final chunk with `final`, or `words` when it is null). `connection` "drop" fails
+ * every request as a lost network; "hold" keeps answers until `release()`. `refuse` answers the next start
+ * ("live") or audio request with a status and message; `forget()` answers the next audio request 410, as a
+ * host that no longer knows the recording. Other paths go to `fallback` (404 by default).
+ */
+export type HostVoiceOptions = { words?: string; final?: string | null; fallback?: (path: string, init?: RequestInit) => Response | Promise<Response> };
+
+export function hostVoiceServer(options: HostVoiceOptions = {}) {
+  const held: Held[] = [];
+  let forgets = 0;
+  const server = {
+    words: options.words ?? "",
+    final: options.final ?? null as string | null,
+    connection: "ok" as "ok" | "drop" | "hold",
+    refuse: null as { on: "live" | "audio"; status: number; error: string } | null,
+    calls: [] as HostVoiceCall[],
+    opened: 0,
+    /** The audio requests, in order. */
+    get audio() { return server.calls.filter((call) => call.path.includes("/audio")); },
+    forget() { forgets += 1; },
+    /** Answer every held request with what the server says now. */
+    release() { held.splice(0).forEach((request) => request.settle()); },
+    /** The connection returns: held requests are answered, and new ones are answered at once. */
+    reconnect() { server.connection = "ok"; server.release(); },
+    answer(path: string, init?: RequestInit): Response {
+      if (path === "/api/voice/live") {
+        if (server.refuse?.on === "live") return json({ error: server.refuse.error }, server.refuse.status);
+        server.opened += 1;
+        return json({ id: `rec-${server.opened}`, owner: "device" });
+      }
+      if (path.endsWith("/cancel")) return json({ ok: true });
+      if (server.refuse?.on === "audio") { const { status, error } = server.refuse; server.refuse = null; return json({ error }, status); }
+      if (forgets) { forgets -= 1; return json({ error: "recording expired" }, 410); }
+      const final = path.includes("final=1");
+      return json(final ? { text: server.final ?? server.words, final: true } : { text: server.words });
+    },
+    fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      if (!path.startsWith("/api/voice/live")) return options.fallback ? options.fallback(path, init) : json({ error: "not found" }, 404);
+      const query = new URL(path, "http://altitude.test").searchParams;
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (path.includes("/audio")) {
+        server.calls.push({ path, seq: Number(query.get("seq")), final: query.get("final") === "1",
+          samples: (init?.body as Int16Array).length, selection: headers["X-Voice-Selection"] ?? "" });
+      } else server.calls.push({ path, seq: -1, final: false, samples: 0, selection: headers["X-Voice-Selection"] ?? "" });
+      if (path.endsWith("/cancel")) return json({ ok: true });
+      if (server.connection === "drop") throw new TypeError("Failed to fetch");
+      if (server.connection === "hold") {
+        return new Promise<Response>((resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+          const request: Held = { settle: () => resolve(server.answer(path, init)) };
+          signal?.addEventListener("abort", () => {
+            const at = held.indexOf(request);
+            if (at >= 0) held.splice(at, 1);
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+          held.push(request);
+        });
+      }
+      return server.answer(path, init);
+    }),
+    /** Serve this page's fetch. */
+    install() { vi.stubGlobal("fetch", server.fetch); return server; },
+  };
+  return server;
+}
+
+/** Say `samples` of audio to the capture listening now (inside act, so its words render). */
+export function speak(samples = 8000) {
+  act(() => hostMicrophone.speak(samples));
+}
+
+export function installVoiceBrowser(options: { backend?: VoiceBackend; recognition?: boolean; host?: HostVoice } = {}) {
+  const backend = options.backend ?? "host";
   const recognition = options.recognition ?? backend === "browser";
-  FakeMediaRecorder.instances = [];
   FakeSpeechRecognition.instances = [];
-  const track = { stop: vi.fn() };
-  const mediaStream = { getTracks: () => [track] } as unknown as MediaStream;
+  const track = Object.assign(new EventTarget(), { stop: vi.fn(), kind: "audio" });
+  const mediaStream = { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
   const getUserMedia = vi.fn(async () => mediaStream);
   const voiceNavigator = Object.create(window.navigator) as Navigator;
   Object.defineProperty(voiceNavigator, "mediaDevices", {
@@ -139,9 +193,14 @@ export function installVoiceBrowser(options: { backend?: VoiceBackend; recogniti
   Object.defineProperty(voiceNavigator, "language", { configurable: true, value: "en-US" });
   vi.stubGlobal("navigator", voiceNavigator);
   vi.stubGlobal("isSecureContext", true);
-  vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   if (recognition) vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
   else vi.stubGlobal("SpeechRecognition", undefined);
-  presetVoiceBackend(backend);
+  vi.stubGlobal("AudioWorkletNode", class {});
+  hostMicrophone.deliver = null;
+  HostCapture.listen = async (_stream, samples) => {
+    hostMicrophone.deliver = samples;
+    return () => { if (hostMicrophone.deliver === samples) hostMicrophone.deliver = null; };
+  };
+  presetVoiceBackend(backend, options.host);
   return { getUserMedia, track };
 }

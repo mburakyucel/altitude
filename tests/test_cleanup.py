@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, state as S
+from altitude import config, dispatch, engines, server, state as S
 
 
 class TestCleanup(AltitudeCase):
@@ -133,6 +133,57 @@ class TestSelfDeploy(AltitudeCase):
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), head)
         self.assertTrue(any("self-deploy refused" in note for note in notes), notes)
         fault.assert_called_once()
+
+    def unreachable_origin(self):
+        origin = self.tmp / "origin.git"
+        origin.rename(self.tmp / "moved.git")
+        self.addCleanup(lambda: origin.exists() or (self.tmp / "moved.git").rename(origin))
+        return lambda: (self.tmp / "moved.git").rename(origin)
+
+    def tick_self_deploy(self, now: float) -> tuple[mock.Mock, mock.Mock]:
+        with mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log, \
+             mock.patch.object(server.time, "monotonic", return_value=now):
+            server.self_deploy("altitude")
+        return fault, log
+
+    def test_tick_logs_a_failed_fetch_that_recovers_without_a_fault(self):
+        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        restore = self.unreachable_origin()
+        fault, log = self.tick_self_deploy(1000.0)
+        fault.assert_not_called()
+        self.assertIn("self-deploy fetch failed; retrying next tick: git fetch origin main:", log.call_args.args[0])
+        restore()
+        fault, _ = self.tick_self_deploy(1030.0)
+        fault.assert_not_called()
+        self.assertNotIn("altitude", server._fetch_failing_since)
+
+    def test_tick_faults_once_fetches_keep_failing_past_the_grace_period(self):
+        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        self.unreachable_origin()
+        grace = server.SELF_DEPLOY_FETCH_GRACE_SECONDS
+        for now in (1000.0, 1000.0 + grace - 1):
+            fault, _ = self.tick_self_deploy(now)
+            fault.assert_not_called()
+        fault, _ = self.tick_self_deploy(1000.0 + grace)
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "self-deploy")
+        self.assertIn("altitude: git fetch origin main:", fault.call_args.args[1])
+
+    def test_tick_faults_a_policy_refusal_immediately(self):
+        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        server._fetch_failing_since["altitude"] = 1000.0  # an earlier fetch failure does not delay a refusal
+        (self.repo / "README.md").write_text("dirty deployment\n")
+        fault, _ = self.tick_self_deploy(1001.0)
+        fault.assert_called_once()
+        self.assertIn("uncommitted changes", fault.call_args.args[1])
+        self.assertNotIn("altitude", server._fetch_failing_since)
+
+    def test_pull_after_done_leaves_a_failed_fetch_to_the_tick(self):
+        self.unreachable_origin()
+        with mock.patch("altitude.incidents.system_fault") as fault:
+            notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
+        fault.assert_not_called()
+        self.assertTrue(notes[0].startswith("self-deploy fetch failed; the tick retries: git fetch origin main:"), notes)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,6 @@ function mockFetch(fixtures: Fixtures = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(fixtures.overview ?? overview);
-    if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken check" });
     if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
@@ -414,8 +413,10 @@ describe("Project page", () => {
     await user.click(more);
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Settings…" })).toHaveFocus());
     await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: /^Setup:/ })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Reset L3 conversation" })).toHaveFocus();
-    await user.keyboard("{ArrowUp}{ArrowUp}");
+    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
     expect(screen.getByRole("menuitem", { name: "Remove project" })).toHaveFocus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus());

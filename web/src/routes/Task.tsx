@@ -10,7 +10,7 @@ import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
-import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
+import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
@@ -406,7 +406,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
       </Bubble> :
-        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined}><MessageImages project={project} images={message.images} /></Reply>);
+        message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
+        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /></Reply>);
     }
   });
   if (pending && !messages.some((message) => message.id === pending.id)) {

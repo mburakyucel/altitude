@@ -43,7 +43,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         messages = []
         for text in ("The receiving coordinator was notified.", "The upstream issue is closed.",
                      "An unrelated restart has finished; the local operation still fails."):
-            row = cli(["--project", self.project, "task", "message", self.slug, text])
+            row = cli(["--project", self.project, "task", "message", self.slug, text, "--summary", "Waiting status"])
             self.assertIs(row["wake"], False)
             messages.append(row)
             self.assertEqual(dispatch.resume_due(self.project), [])
@@ -185,7 +185,8 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         T.resolve_question(self.project, self.slug, question["id"], question["revision"], original["id"],
                            expected_attempt=1, disposition="answered", reason="The operator selected the existing path")
         coordinator = T.message(self.project, self.slug, "l3", "Keep this coordination record")
-        control = T.enqueue(self.project, self.slug, "Keep this control record")
+        control = T.notify(self.project, self.slug, "Keep this control record", by="terminal",
+                           attempt=S.load_task(self.project, self.slug)["attempt"])
         forged = T.message(self.project, self.slug, "burak", "Not an original operator message", by="l3")
         for row in (original, coordinator, control, forged):
             with self.subTest(row=row["text"]), self.assertRaises(T.TransitionError):
@@ -321,7 +322,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         unavailable = PermissionError(".git/FETCH_HEAD is read-only in the coordinator")
         with mock.patch.object(dispatch.git_policy, "fetch_origin", side_effect=unavailable) as fetch, \
              mock.patch.object(incidents, "system_fault") as fault:
-            row = cli(["--project", self.project, "task", "message", self.slug, "Use the existing thread."])
+            row = cli(["--project", self.project, "task", "message", self.slug, "Use the existing thread.", "--summary", "Use the existing thread"])
 
         fetch.assert_not_called()
         fault.assert_not_called()
@@ -339,7 +340,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         S.save_task(self.project, task)
 
         with mock.patch.object(dispatch, "resume") as resume:
-            row = cli(["--project", self.project, "task", "message", self.slug, "Keep going."])
+            row = cli(["--project", self.project, "task", "message", self.slug, "Keep going.", "--summary", "Keep going"])
 
         resume.assert_not_called()
         task = S.load_task(self.project, self.slug)

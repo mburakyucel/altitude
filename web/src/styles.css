@@ -834,6 +834,7 @@
 .shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }
 /* Inline phone text controls keep their line and reach the 44px touch target (§6). */
 .shell[data-phone] .sys-line .link,
+.shell[data-phone] .coordination-line .link,
 .shell[data-phone] .needs-alerts .link,
 .shell[data-phone] .report-page > .text-meta > a { display: inline-block; padding: 13px 6px; margin: -13px -6px; }
 .shell[data-phone] .wp-fold-summary,
@@ -949,6 +950,12 @@
 }
 .menu-item:hover {
   background: var(--hairline);
+}
+.menu-item-meta {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
 }
 .menu-confirm {
   display: flex;
@@ -1783,10 +1790,39 @@
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
-.reply-from {
-  font-size: 12px;
-  font-weight: 600;
+/* A message L3 sent the L2 (§3.10): one left-aligned meta line; Show opens the original in place. */
+.coordination {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-meta);
   color: var(--text-muted);
+}
+.coordination-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.coordination-line .sys-dot {
+  align-self: flex-start;
+  margin-top: 0.55lh;
+  translate: 0 -50%;
+}
+.coordination-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.coordination-line .link {
+  font-size: var(--text-meta);
+}
+.coordination-body {
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--hairline);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .msg-time {
   font-size: var(--text-label);

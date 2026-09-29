@@ -5,7 +5,8 @@ import { walkthrough } from "./walkthrough";
 /**
  * Chat commands (SPEC.md §3.3) against real shells: a `run` block in the task conversation and in project
  * chat opens that conversation's terminal with the command typed at the prompt and nothing run until
- * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter runs it, a
+ * Enter. Walked at both widths: the command block, Copy and Copied, typed at the prompt, Enter (the phone's
+ * Enter key) runs it, a
  * program in the foreground, output that never settles, the terminal off, a reload typing nothing, no
  * terminal for a finished task, the project terminal, a plain code block, an unsafe block and a refused
  * copy. The saved messages and the shell's profile are the only fixtures.
@@ -56,10 +57,24 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
     hidden: [output.getByText("ran-42", { exact: true })],
   });
 
-  await page.keyboard.press("Enter");
+  // On phone the key row's Enter runs it without focusing the screen, so the soft keyboard stays closed;
+  // desktop has no key row, and the screen already has focus for the keyboard's Enter.
+  const enter = page.getByRole("toolbar", { name: "Terminal keys" }).getByRole("button", { name: "Enter" });
+  if (phone) {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await enter.click();
+    expect(await page.evaluate(() => !!document.activeElement?.closest(".terminal-screen"))).toBe(false);
+  } else {
+    await expect(enter).toBeHidden();
+    await page.keyboard.press("Enter");
+  }
   await walk.state("04-enter-runs", { visible: [output.getByText("ran-42", { exact: true })], hidden: [] });
+  // Once the shell is back at its prompt, the task's owner is told the command it handed over has run.
+  await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).notices, { timeout: 10_000 })
+    .toEqual([expect.stringContaining("looks finished in the task terminal: `echo ran-$((20+22))`")]);
 
   // A program in the foreground would receive the keystrokes, so nothing is typed.
+  await page.locator(".terminal-screen").click();
   await page.keyboard.type("sleep 300");
   await page.keyboard.press("Enter");
   await conversation();
@@ -83,6 +98,22 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await expect(printing).toBeVisible({ timeout: 10_000 });
   await walk.state("05b-kept-printing", { visible: [printing, printing.getByRole("button", { name: "Copy command" })], hidden: [] });
   await printing.getByRole("button", { name: "Dismiss" }).click();
+  await page.locator(".terminal-screen").click();
+  await page.keyboard.press("Control+C");
+
+  // When Altitude can't tell the owner, the command is still typed and the operator is asked to reply instead.
+  await page.route("**/api/terminal/*/command", (route) => route.fulfill({
+    status: 503, contentType: "application/json", body: JSON.stringify({ error: "Altitude is unreachable." }),
+  }));
+  await conversation();
+  await openIt.click();
+  const untold = panel.getByRole("status").filter({ hasText: "couldn't tell the task's owner to watch this command, so reply in chat once it has run." });
+  await expect(untold).toBeVisible({ timeout: 10_000 });
+  await expect(output).toContainText(/\^C\s*prepare-index-migration \$ echo ran-\$\(\(20\+22\)\)/);
+  await walk.state("05c-owner-not-told", { visible: [untold, untold.getByRole("button", { name: "Dismiss" })], hidden: [] });
+  await page.unroute("**/api/terminal/*/command");
+  await untold.getByRole("button", { name: "Dismiss" }).click();
+  await expect(untold).toBeHidden();
   await page.locator(".terminal-screen").click();
   await page.keyboard.press("Control+C");
   await page.keyboard.type("clear");

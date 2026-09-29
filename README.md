@@ -71,7 +71,9 @@ coding account's allowance and normal charges.
    curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
    ```
 
-   There is no stable release yet, so each preview installs from its own tag; check
+   `v0.1.0-rc.1` cannot start its service: systemd refuses its unit, so installation fails at
+   service start. The next release candidate carries the fix. There is no stable release yet, so
+   each preview installs from its own tag; check
    [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script
    checks the machine, runs nothing it downloads unless it matches the release's checksums and
    prints the next steps. The [installation steps](docs/SETUP.md#install-the-application) explain

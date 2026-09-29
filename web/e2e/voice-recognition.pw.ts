@@ -4,10 +4,10 @@ import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /*
- * The default voice backend: the browser's own speech recognition (SPEC.md §3.6), walked at 390 and
- * 1440. The recognizer is a page-level fake driven by the test (Playwright's Chromium has no working
- * one); the installation answers "browser" through an overlaid /api/voice. Nothing is uploaded: every
- * POST /api/transcribe and /api/chat is intercepted and counted.
+ * Browser recognition (SPEC.md §3.6), the voice backend where host voice cannot run or the operator
+ * chooses it, walked at 390 and 1440. The recognizer is a page-level fake driven by the test (Playwright's
+ * Chromium has no working one); the installation answers "browser" through an overlaid /api/voice.
+ * Nothing is uploaded: every /api/voice/live and POST /api/chat request is intercepted and counted.
  */
 
 const FAKE_RECOGNIZER = `
@@ -49,7 +49,7 @@ function views(page: Page, info: TestInfo) {
 }
 
 async function browserBackend(page: Page) {
-  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser", url: "", model: "", key_set: false, selection: "fixture-browser" } }));
+  await page.route((url) => url.pathname === "/api/voice", (route) => route.fulfill({ json: { backend: "browser", selection: "fixture-browser", host: { state: "absent", download_bytes: 698435338 } } }));
 }
 
 const PUNCTUATED_STOP = "So I think we should merge the PR today. Then look at the voice settings tomorrow. What do you think?";
@@ -276,8 +276,8 @@ test.describe("recognizer text as heard", () => {
     await page.addInitScript(FAKE_RECOGNIZER);
     const uploads: string[] = [];
     const posts: string[] = [];
-    await page.route((url) => url.pathname === "/api/transcribe", (route) => {
-      uploads.push(route.request().method());
+    await page.route((url) => url.pathname.startsWith("/api/voice/live"), (route) => {
+      uploads.push(route.request().url());
       return route.fulfill({ status: 409, json: { error: "Unexpected upload" } });
     });
     let releaseSend: () => void = () => {};

@@ -33,7 +33,8 @@ function overview(queue: unknown[]) {
 const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 /** The fixture queue the next overview read returns; tests grow it like altd would. */
-function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false) {
+function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false,
+  refused: { host: string; reason: string }[] = []) {
   let queue = initial;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -41,7 +42,7 @@ function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachabl
       if (unreachable) throw new TypeError("Failed to fetch");
       return jsonResponse({ push: true });
     }
-    if (url.includes("/api/alerts")) return jsonResponse({ key });
+    if (url.includes("/api/alerts")) return jsonResponse({ key, refused });
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
     if (url.includes("/api/project/")) return jsonResponse({ name: url.split("/").at(-1), tasks: [] });
     if (url.includes("/api/task/")) return jsonResponse({ slug: "x", state: "blocked", messages: [] });
@@ -192,6 +193,19 @@ describe("decision alerts", () => {
     setQueue([question, second]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
+  });
+
+  it("names a push service that refuses alerts, with its reason and what to do", async () => {
+    alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    mockFetch([question], PUSH_KEY, false, [{ host: "push.example", reason: "403 BadJwtToken" }]);
+    renderApp({ route: "/" });
+
+    expect(await screen.findByText(
+      "The push service at push.example refused Altitude's last alert (403 BadJwtToken), so that device "
+      + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.",
+    )).toBeVisible();
+    expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
   });
 
   it("alerts once for a new question, with the task name only, and never again for the same one", async () => {

@@ -1,6 +1,7 @@
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 import { fixtureProject, fixtureTask } from "./fixture-data";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test("proposal and changes entries open saved evidence; only explicit rerun spends", async ({ page, request }, info) => {
@@ -181,7 +182,7 @@ test("cross-engine review stays in task chat through request, result and failure
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
-test("review loading and uncertain receipt preserve listening and draft", { tag: "@chromium" }, async ({ page, request }, info) => {
+test("review loading and uncertain receipt preserve listening and draft", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const task = await fixtureTask(request, project.name);
   await page.addInitScript("AudioContext.prototype.resume = () => new Promise(() => {});");
@@ -198,7 +199,8 @@ test("review loading and uncertain receipt preserve listening and draft", { tag:
     readGate = new Promise((resolve) => { releaseRead = resolve; });
     await route.abort("failed");
   });
-  await page.route("**/api/transcribe", (route) => route.fulfill({ json: { text: "Please check expiry." } }));
+  const host = await fixtureHost(page);
+  host.final = "Please check expiry.";
   const walk = walkthrough(page, info);
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const menu = page.getByRole("dialog", { name: "Task details" });
@@ -220,7 +222,7 @@ test("review loading and uncertain receipt preserve listening and draft", { tag:
   await walk.state("03-listening-with-details", { visible: [menu, page.getByRole("button", { name: "Stop voice input", exact: true })], hidden: [page.locator(".task-review-row")] });
   await page.getByRole("button", { name: "Close task details", exact: true }).click();
   await expect(page.locator('.composer[data-phase="listening"]')).toBeVisible();
-  await page.waitForTimeout(700);
+  await expect(field).toHaveValue(/^Keep my draft\. check/, { timeout: 5000 });
   await page.getByRole("button", { name: "Stop voice input", exact: true }).click();
   await expect(field).toHaveValue("Keep my draft. Please check expiry.");
   await walk.state("04-transcription-in-draft", { visible: [field, page.getByRole("button", { name: "Start voice input", exact: true })], hidden: [page.getByRole("button", { name: "Stop voice input", exact: true }), page.getByText("Transcribing…", { exact: true })] });

@@ -451,6 +451,7 @@ class TestReviews(AltitudeCase):
         result = self.run_review(context_ids=[original["id"]])
         self.assertEqual({row["id"] for row in captured["messages"]},
                          {original["id"], coordinator["id"], correction["id"]})
+        self.assertEqual(captured["request"], "Keep the public result stable.\n", "a brief without the request keeps it")
         self.assertNotIn(owner["id"], result["snapshot"]["context_ids"])
         self.assertEqual(result["coverage"], "current")
         self.assertEqual(result["snapshot"]["captured_context_hash"], reviews._hash(captured))
@@ -723,6 +724,213 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError):
             reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_additional_review_leaves_open_findings_and_their_authority_in_the_merge_gate(self):
+        # Container proposal deadlock (2026-09-28): an honestly open assessment refused replacement and a plain
+        # request returned the old review, so a later security addendum had no supported independent review.
+        task = S.load_task(self.project, self.slug)
+        task.update(hold_merge="Operator review before merge")
+        S.save_task(self.project, task)
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: run the owner in a rootless container")
+        original = self.run_review(self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal",
+                                                focus="Challenge the isolation boundary"), proposal_id=proposal["id"])
+        reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs real Linux evidence."}])
+        for actor in ("l2", T.OPERATOR_MESSAGE_ROLE):
+            with self.subTest(actor=actor), self.assertRaisesRegex(T.TransitionError, "open findings"):
+                self.request(actor=actor, previous=original["id"])
+        self.assertEqual(self.request(subject="proposal")["id"], original["id"])
+        with self.assertRaisesRegex(T.TransitionError, "replaces no review"):
+            self.request(subject="proposal", additional=True, previous=original["id"])
+        self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 1)
+
+        addendum = T.message(self.project, self.slug, "l2", "Addendum: hide host processes from the container")
+        requested = self.request(subject="proposal", additional=True, focus="Challenge the process-visibility addendum",
+                                 request_id="additional")
+        self.assertEqual((requested["requested_by"], requested["previous"], requested["additional"]), ("l2", None, True))
+        self.assertEqual(requested["focus"], "Challenge the process-visibility addendum")
+        self.assertEqual(self.request(subject="proposal", additional=True, focus="Challenge the process-visibility addendum",
+                                      request_id="additional")["id"], "additional")
+        with self.assertRaisesRegex(T.TransitionError, "different focus"):
+            self.request(subject="proposal", focus="Challenge the process-visibility addendum", request_id="additional")
+        # A second additional request while this one waits returns it instead of stacking reviewers.
+        self.assertEqual(self.request(subject="proposal", additional=True)["id"], "additional")
+        self.engine.side_effect = lambda prompt, **kwargs: (kwargs["on_start"]({"unit": "u", "pid": 1, "started_ticks": "1"}) and
+                                                            {"termination_confirmed": True, "text": "No findings", "findings": []})
+        failed = self.run_review(requested, proposal_id="missing-proposal")
+        self.assertEqual(failed["state"], "failed")
+        with self.assertRaisesRegex(T.TransitionError, "existing review"):
+            self.request(subject="proposal", additional=True)
+        # Retrying the additional review replaces only it; the original stays current.
+        retried = self.request(previous=failed["id"])
+        self.assertEqual((retried["subject"], retried["requested_by"]), ("proposal", "l2"))
+        clean = self.run_review(retried, proposal_id=addendum["id"])
+        self.assertEqual((clean["state"], clean["result"]["findings"]), ("completed", []))
+        with self.assertRaisesRegex(T.TransitionError, "Assess the completed review"):
+            self.request(subject="proposal", additional=True)
+        reviews.assess(self.project, self.slug, clean["id"], actor="l2", expected_attempt=1, dispositions=[],
+                       reason="Checked the addendum review")
+
+        # The clean additional review does not clear the original's open finding, operator authority or hold.
+        with self.assertRaisesRegex(T.TransitionError, f"{original['id']} \\(proposal\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        with self.assertRaisesRegex(T.TransitionError, "Only the operator"):
+            reviews.withdraw(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Covered")
+        reviews.withdraw(self.project, self.slug, clean["id"], actor="l2", expected_attempt=1, reason="Addendum dropped")
+        with self.assertRaisesRegex(T.TransitionError, "unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        view = reviews.view(self.project, self.slug)
+        [kept] = [row for row in view["history"] if row["id"] == original["id"]]
+        self.assertEqual((kept["unresolved"], kept["requested_by"], kept["focus"]),
+                         (["f1"], T.OPERATOR_MESSAGE_ROLE, "Challenge the isolation boundary"))
+        self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], clean["id"])
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review before merge")
+        reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
+        reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_complete_proposal_and_retained_authority_capture_once_within_the_bound(self):
+        # Container proposal capture (I-20260927-193716): 57 KB of mandatory authority plus a 13 KB proposal
+        # stored twice exceeded the 64 KiB context before any reviewer launched.
+        git("reset", "--hard", "origin/main", cwd=self.worktree)
+        folder = S.task_dir(self.project, self.slug)
+        request = "Run the owner in a rootless container across Linux and Mac onboarding. " * 60
+        (folder / "request.md").write_text(request + "\n")
+        (folder / "brief.md").write_text("Acceptance: Linux, then Mac, then both. " * 120 + "\n\n**Request:**\n\n---\n\n" + request + "\n")
+        task = T.block(self.project, self.slug, "Which machine first?", actor="l2", expected_attempt=1)
+        answer = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Linux first, then the MacBook.")
+        T.resume(self.project, self.slug, agent_id="owner-one", expected_claim=T.claim_resume(self.project, self.slug)["id"],
+                 input_delivered=True)
+        T.resolve_question(self.project, self.slug, task["questions"][-1]["id"], 1, answer["id"], disposition="answered",
+                           reason="The operator selects this Linux machine first and the MacBook later. " * 20, expected_attempt=1)
+        authority = [T.message(self.project, self.slug, *((T.OPERATOR_MESSAGE_ROLE,) if n % 2 else ("l3",)),
+                               f"Authority {n}: keep host protections and every onboarding path. " * 20,
+                               **({} if n % 2 else {"by": "l3"})) for n in range(34)]
+        evidence = [T.message(self.project, self.slug, "l2", f"Probe {n} evidence. " * 60, expected_attempt=1) for n in range(48)]
+        proposal = T.message(self.project, self.slug, "l2", "# Proposal v4\n" + "Rootless Podman with private proc; “exact” text. " * 250,
+                             expected_attempt=1)
+        correction = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Correction: the forwarded terminal stays refused.")
+        authority += [answer, correction]
+        captured = {}
+        def inspect(prompt, **kwargs):
+            captured.update(context=(kwargs["snapshot"] / "context.json").read_text(),
+                            proposal=(kwargs["snapshot"] / "proposal.md").read_bytes())
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = inspect
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal", focus="Challenge the security model")
+        result = self.run_review(requested, proposal_id=proposal["id"], context_ids=[proposal["id"]])
+
+        self.assertEqual(result["state"], "completed")
+        context = json.loads(captured["context"])
+        self.assertGreater(len(captured["context"].encode()) + len(captured["proposal"]), 65536)
+        self.assertLessEqual(len(captured["context"].encode()), 65536)
+        self.assertEqual(captured["proposal"], proposal["text"].encode())
+        self.assertNotIn(proposal["text"][:200], captured["context"])
+        self.assertEqual(context["proposal"], {"id": proposal["id"], "at": proposal["at"], "file": "proposal.md"})
+        rows = {row["id"]: row for row in context["messages"]}
+        self.assertEqual(rows[proposal["id"]]["text_file"], "proposal.md")
+        self.assertNotIn("text", rows[proposal["id"]])
+        self.assertEqual({row["id"]: row["text"] for row in authority}, {i: rows[i]["text"] for i in rows if i != proposal["id"]})
+        self.assertFalse(set(rows) & {row["id"] for row in evidence})
+        self.assertEqual([d["message_id"] for d in context["decisions"]], [answer["id"]])
+        self.assertNotIn("request", context)
+        self.assertIn(request, context["brief"])
+        self.assertIn("proposal.md", self.engine.call_args.args[0])
+        # Identity and freshness are those of the logical context; the representation only affects the capture.
+        live = S.load_task(self.project, self.slug)
+        live["project"] = self.project
+        identity, logical = reviews._identity(self.project, live, proposal_id=proposal["id"])
+        snapshot = result["snapshot"]
+        self.assertEqual((snapshot["context_hash"], snapshot["proposal_hash"]), (identity["context_hash"], identity["proposal_hash"]))
+        self.assertEqual(logical["request"], request + "\n")
+        self.assertEqual(snapshot["proposal"]["text"], proposal["text"])
+        self.assertEqual(snapshot["captured_context_hash"], reviews._hash(context))
+        self.assertEqual(snapshot["input_hash"], reviews._hash({"tree": snapshot["tree"], "context": captured["context"],
+                                                                "patch": hashlib.sha256(b"").hexdigest(),
+                                                                "proposal": hashlib.sha256(captured["proposal"]).hexdigest()}))
+        self.assertTrue(snapshot["selected_owner_evidence"])
+        reviews.assess(self.project, self.slug, result["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs real Mac evidence."}])
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["latest"]["coverage"], "current")
+
+        # Past the bound, capture refuses truthfully without launching; earlier open findings stay in the gate.
+        long_proposal = T.message(self.project, self.slug, "l2", "x" * 65537, expected_attempt=1)
+        refused = self.run_review(self.request(subject="proposal", additional=True), proposal_id=long_proposal["id"],
+                                  context_ids=[])
+        self.assertEqual(refused["state"], "failed")
+        self.assertIn("proposal exceeds 64 KiB", refused["error"])
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Further constraint. " * 11000)
+        oversized = self.run_review(self.request(previous=refused["id"]), proposal_id=proposal["id"], context_ids=[proposal["id"]])
+        self.assertEqual(oversized["state"], "failed")
+        self.assertRegex(oversized["error"], r"Review context is \d+ bytes, over its 256 KiB bound \(the proposal is bounded separately\)\. "
+                                             r"Mandatory authority, corrections and decisions alone are \d+ bytes")
+        self.assertEqual(self.engine.call_count, 1)
+        with self.assertRaisesRegex(T.TransitionError, f"{result['id']} \\(proposal\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
+    def test_complete_mandatory_history_and_selected_pair_capture_for_changes_review(self):
+        # Container implementation capture (I-20260927-193716): 43 authority messages and 21 decisions alone
+        # exceeded the 64 KiB context, so the approved proposal plus native result (~100 KB) could not be reviewed.
+        decisions = []
+        for n in range(21):
+            task = T.block(self.project, self.slug, f"Decision {n}?", actor="l2", expected_attempt=1)
+            answer = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, f"Answer {n}: keep the protection.")
+            T.resume(self.project, self.slug, agent_id="owner-one", expected_claim=T.claim_resume(self.project, self.slug)["id"],
+                     input_delivered=True)
+            decisions.append(T.resolve_question(self.project, self.slug, task["questions"][-1]["id"], 1, answer["id"],
+                                                disposition="answered", expected_attempt=1,
+                                                reason=f"Decision {n} keeps rootless isolation on Linux and Mac. " * 8))
+        authority = [row for row in T.task_messages(self.project, self.slug) if row["role"] == T.OPERATOR_MESSAGE_ROLE]
+        authority += [T.message(self.project, self.slug, *((T.OPERATOR_MESSAGE_ROLE,) if n % 2 else ("l3",)),
+                                f"Authority {n}: keep “exact” host protections and every onboarding path. " * 30,
+                                **({} if n % 2 else {"by": "l3"})) for n in range(22)]
+        evidence = [T.message(self.project, self.slug, "l2", f"Probe {n} evidence. " * 800, expected_attempt=1) for n in range(20)]
+        approved = T.message(self.project, self.slug, "l2", "# Approved v5\n" + "Rootless Podman with private proc. " * 880,
+                             expected_attempt=1)
+        native = T.message(self.project, self.slug, "l2", "Native image result: archive verified. " * 45, expected_attempt=1)
+        self.assertEqual(len(authority), 43)
+        captured = {}
+        def inspect(prompt, **kwargs):
+            captured["context"] = (kwargs["snapshot"] / "context.json").read_text()
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = inspect
+        first = self.run_review(context_ids=[approved["id"], native["id"]])
+
+        self.assertEqual(first["state"], "completed")
+        context = json.loads(captured["context"])
+        mandatory = {**context, "messages": [row for row in context["messages"] if row["role"] != "l2"]}
+        self.assertGreater(len(json.dumps(mandatory, ensure_ascii=False, indent=2).encode()), 65536)
+        self.assertGreater(len(captured["context"].encode()), 96 * 1024)
+        self.assertLessEqual(len(captured["context"].encode()), reviews.CONTEXT_LIMIT)
+        rows = {row["id"]: row for row in context["messages"]}
+        # Every original record is present with its exact text; only unselected owner evidence is left out.
+        self.assertEqual({row["id"]: row["text"] for row in authority + [approved, native]}, {i: rows[i]["text"] for i in rows})
+        self.assertFalse(set(rows) & {row["id"] for row in evidence})
+        self.assertEqual(context["decisions"], [q["resolution"] for q in S.load_task(self.project, self.slug)["questions"]])
+        self.assertEqual(len(context["decisions"]), 21)
+        snapshot = first["snapshot"]
+        live = S.load_task(self.project, self.slug)
+        live["project"] = self.project
+        identity, _ = reviews._identity(self.project, live)
+        self.assertEqual(snapshot["context_hash"], identity["context_hash"])
+        self.assertEqual(snapshot["captured_context_hash"], reviews._hash(context))
+        self.assertEqual(snapshot["input_hash"], reviews._hash({"tree": snapshot["tree"], "context": captured["context"],
+                                                                "patch": hashlib.sha256((S.task_dir(self.project, self.slug) / "reviews"
+                                                                    / first["id"] / "snapshot" / "changes.patch").read_bytes()).hexdigest()}))
+        reviews.assess(self.project, self.slug, first["id"], actor="l2", expected_attempt=1, reason="Checked the implementation",
+                       dispositions=[{"finding_id": "f1", "disposition": "open", "reason": "Needs native Mac evidence."}])
+
+        # At the bound, default-all owner evidence refuses without launching and names the useful selection.
+        refused = self.run_review(self.request(additional=True))
+        self.assertEqual(refused["state"], "failed")
+        self.assertRegex(refused["error"], r"^Review context is \d+ bytes, over its 256 KiB bound\. Select relevant L2 evidence")
+        self.assertEqual(self.engine.call_count, 1)
+        # A deliberate same-reviewer retry with the complete selection runs; the earlier open finding stays in the gate.
+        retry = self.run_review(self.request(previous=refused["id"]), context_ids=[approved["id"], native["id"]])
+        self.assertEqual((retry["state"], retry["engine"], retry["model"]), ("completed", first["engine"], first["model"]))
+        self.assertEqual(retry["snapshot"]["context_hash"], snapshot["context_hash"])
+        with self.assertRaisesRegex(T.TransitionError, f"{first['id']} \\(changes\\) has unresolved findings: f1"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+
     def test_new_code_context_or_merge_pair_invalidates_assessment(self):
         result = self.run_review()
         self.assess(result)
@@ -879,7 +1087,6 @@ class TestReviews(AltitudeCase):
         original = json.loads(json.dumps(question))
         available = reviews.view(self.project, self.slug)
         self.assertTrue(available["subjects"]["proposal"]["available"])
-        self.assertFalse(available["subjects"]["changes"]["available"])
         requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal")
         task = S.load_task(self.project, self.slug)
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
@@ -940,32 +1147,63 @@ class TestReviews(AltitudeCase):
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
 
-    def test_other_open_questions_refuse_changes_review(self):
-        refusal = "Settle the open question before requesting changes review"
-        for why, questions in (
-                ("freeform question about the PR", None),
-                ("question with options about another PR", {"questions": [{**self.held_pr_question("Merge PR #420 first?")["questions"][0],
-                                                                             "options": [{"key": "go", "label": "Go", "text": "Merge PR #420."}],
-                                                                             "recommended_key": "go"}]}),
-                ("merge question without a held PR", "unheld")):
-            with self.subTest(why):
+    def test_changes_review_leaves_unrelated_open_questions_and_their_authority_intact(self):
+        # The one-command VM increment (#587): publication and runner-image decisions stay open while the
+        # independent candidate is reviewed; review settles none of them and grants no merge authority.
+        task = S.load_task(self.project, self.slug)
+        task.update(hold_merge="Operator review before merge")
+        S.save_task(self.project, task)
+        task = T.block(self.project, self.slug, "Publish the release repository now?", actor="l2", expected_attempt=1,
+                       updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions={"questions": [
+                           {"question": "Publish the release repository now?", "recommended_key": "wait", "options": [
+                               {"key": "publish", "label": "Publish", "text": "Publish the release repository."},
+                               {"key": "wait", "label": "Wait", "text": "Keep the release repository private."}]},
+                           {"question": "Which runner image should CI use?"}]})
+        original = json.loads(json.dumps([q for q in task["questions"] if q["status"] == "open"]))
+        cards = T.decisions(self.project)
+        self.assertEqual(len(original), 2)
+        # The operator's review request while the owner waits continues it solely for review.
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
+        with self.assertRaisesRegex(T.TransitionError, "Resume the current owner"):
+            self.run_review(requested)
+        claim = T.claim_resume(self.project, self.slug)
+        [wake] = [row for row in claim["messages"] if row["id"] == requested["id"]]
+        self.assertIn("authorizes only review and assessment, not implementation", wake["text"])
+        T.resume(self.project, self.slug, agent_id="resumed-owner", expected_claim=claim["id"], input_delivered=True)
+        self.assertEqual([q for q in S.load_task(self.project, self.slug)["questions"] if q["status"] == "open"], original)
+        result = self.run_review(requested)
+        self.assertEqual(result["state"], "completed")
+        self.assess(result)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        # The running owner requests its own next review with the same questions still open.
+        self.commit("value.py", "VALUE = 3\n")
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["available"])
+        result = self.run_review(self.request(previous=result["id"]))
+        self.assertEqual(result["state"], "completed")
+        self.assess(result)
+        reviews.require_merge(self.project, self.slug, self.pair())
+        task = T.block(self.project, self.slug, "Publish the release repository now?", actor="l2", expected_attempt=1)
+        self.assertEqual([q for q in task["questions"] if q["status"] == "open"], original)
+        self.assertEqual(T.decisions(self.project), cards)
+        self.assertEqual(task["hold_merge"], "Operator review before merge")
+        self.assertIsNone(task.get("merge_approval"))
+        # A later answer is new task context: the assessed review no longer clears the merge.
+        T.accept_question(self.project, self.slug, original[0]["id"], original[0]["revision"], "publish")
+        with self.assertRaisesRegex(T.TransitionError, "changed after review assessment"):
+            reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(self.engine.call_count, 2)
+
+    def test_stop_fault_and_planned_wait_still_refuse_review(self):
+        for key, value in (("stop_id", "stop-1"), ("fault", "sandbox"), ("planned_wait", {"until": S.now()})):
+            with self.subTest(key):
                 task = S.load_task(self.project, self.slug)
-                task.update(state="running", questions=[], question_groups=[], hold_merge=None, prs=[], delivery=None,
-                            resume_after=None, resume_request=None)
+                task.update({"stop_id": None, "fault": None, "planned_wait": None, key: value})
                 S.save_task(self.project, task)
-                if questions == "unheld":
-                    questions = self.held_pr_question()
-                    task = S.load_task(self.project, self.slug)
-                    task.update(hold_merge=None)
-                    S.save_task(self.project, task)
-                else:
-                    self.held_pr_question()
-                T.block(self.project, self.slug, "Merge PR #42 as it stands?", actor="l2", expected_attempt=1,
-                        questions=questions)
-                self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["changes"]["why"],
-                                 refusal + "; only the held PR's merge question can stay open.")
-                with self.assertRaisesRegex(T.TransitionError, refusal):
-                    self.request()
+                for subject in ("proposal", "changes"):
+                    self.assertEqual(reviews.view(self.project, self.slug)["subjects"][subject]["why"],
+                                     "Continue or settle the task before requesting review.")
+                    with self.assertRaisesRegex(T.TransitionError, "Continue or settle the task"):
+                        self.request(subject=subject)
         self.engine.assert_not_called()
 
     def test_proposal_source_and_merge_approval_require_owner_reassessment(self):

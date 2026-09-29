@@ -316,3 +316,16 @@ format. `scripts/punctuation` records how.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## Host voice components downloaded at setup
+
+The Altitude archive does not include these. `alt voice setup` (or **Set up voice** in first run or Settings)
+downloads them from their publishers, pinned by checksum, into `~/.altitude/speech`; each keeps its own
+licence.
+
+| Component | Licence | Source |
+| --- | --- | --- |
+| NVIDIA Parakeet TDT 0.6B v2 speech model, ONNX int8 conversion | CC-BY-4.0 | `nvidia/parakeet-tdt-0.6b-v2`, converted by `istupakov/parakeet-tdt-0.6b-v2-onnx` on Hugging Face |
+| onnx-asr 0.12.0 | MIT | PyPI |
+| onnxruntime 1.22.0 | MIT | PyPI |
+| numpy 2.5.3 | BSD-3-Clause, with bundled components under their own licences | PyPI |

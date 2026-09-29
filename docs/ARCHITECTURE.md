@@ -281,9 +281,14 @@ certificates are validated without replacement. Browser/device trust stays expli
 until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
 constraints ("No limits" when it has none), with the URL and per-platform trust steps. `alt tls-share`
-(operator only) runs in the CLI process, not in altd: for ten minutes it answers plain HTTP on the
-configured non-loopback address and an ephemeral port with `ca.crt` and nothing else, and prints the
-name and fingerprint the device checks before installing it. Remote binding and trust remain explicit;
+(operator only) runs in the CLI process, not in altd. It takes the address, port and TLS directory
+from the running service's own process environment through the platform seam
+(`platform.service_settings`), since the service manager, not the operator's shell, configures the
+service; a disagreeing shell setting is refused. It fetches `/api/health` over HTTPS trusting only
+that directory's CA and requires the answer from the service's main process. Then for ten minutes it
+answers plain HTTP on the service's non-loopback address and an ephemeral port with those `ca.crt`
+bytes and nothing else, and prints the name and fingerprint the device checks before installing it.
+`alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
@@ -334,7 +339,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
 | Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
-| Terminal Close | the session plus processes carrying the terminal's environment mark | the shell is its own launchd job, and Close kills its coalition (Apple's binaries hide their environment) | Operator terminal |
+| Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
@@ -369,7 +374,9 @@ claim without consuming the authorized request, restoring its message batch ahea
 The existing daemon scheduler retries the same request after release and rechecks guards, worktree
 provenance and lifecycle fences before launching. Actual setup/provenance errors retain their fault path.
 
-The permanent **Setup** control opens these results and actions. Programmatic repair installs or
+**Setup…** in the project menu opens these results and actions; the header shows a Setup status only
+while the current observation needs attention (running, unmet or unreadable), with no stored
+dismissal. Programmatic repair installs or
 refreshes owned guards and establishes the coordinator command connection. **Retry** requests that
 same bounded work. Configuration faults notify the existing L3; **Discuss with L3** opens its conversation
 without sending a message or launching another repair agent. L3 investigates with its existing
@@ -479,9 +486,10 @@ using judgment to keep simple work light. L2 requests through the CLI or the ope
 subject entries in the task menu. Each existing entry opens saved evidence without invoking review;
 reruns are explicit actions in details. A repeated request or source message reuses its receipt.
 The owner prepares a committed checkpoint, identifies the exact original L2 proposal message for a
-proposal review, and invokes the fixed daemon endpoint. A proposal request may continue a
-question-blocked owner solely for review while preserving the original approval question. This adds
-no implementation authority, helper queue, provider handoff, owner session or general command transport.
+proposal review, and invokes the fixed daemon endpoint. Open questions do not gate either subject: a
+request may continue a question-blocked owner solely for review while preserving every open question and
+its original authority. This adds no implementation or merge authority, helper queue, provider handoff,
+owner session or general command transport.
 
 The engine and routing seams prefer an eligible configured option different from the owner, respecting
 project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
@@ -509,9 +517,15 @@ submodules are excluded by refusal. A path over 2 MiB in either base or candidat
 and diff, and the capture names it with its size. Both trees accept at most 10000 files and 64 MiB of
 remaining content, so removed content is bounded before creating the diff. Context includes the brief,
 request, original authority messages and corrections, decisions,
-and default-all or selected L2 evidence, bounded to 64 KiB. Proposal capture also binds the exact
-original L2 message and text against the committed head's source tree, even before code differs from
-main. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
+and default-all or selected L2 evidence; its captured `context.json` holds one copy of each input, so
+the request is omitted when the brief contains it verbatim, and is bounded to 256 KiB: room for a long
+task's complete authority and decisions plus selected evidence, well under the reviewer's 2 MiB file read. Nothing
+is dropped or summarized; beyond the bound capture refuses with the size and whether mandatory records
+alone exceed it. Proposal capture
+also binds the exact original L2 message and text against the committed head's source tree, even before
+code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
+`context.json` names the proposal message and points to the file. Identity and freshness hash the
+logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
 refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
@@ -534,7 +548,8 @@ Review records retain original findings and separate owner dispositions for each
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
 A finding the owner leaves `open` stays visibly unresolved, blocks merge and prevents replacing its
-review; only evidence-backed fixed/dismissed outcomes clear an assessment.
+review; only evidence-backed fixed/dismissed outcomes clear an assessment. An additional review of the
+same subject replaces nothing, so earlier reviews stay in the merge gate with their original authority.
 Proposal assessment records the proposal identity and dispositions, including an explicitly selected
 revised proposal when relevant. Later proposal/source/context changes require L2 assessment or deliberate review.
 The UI distinguishes reviewed evidence from later L2 assessment; proposal evidence never accepts an
@@ -872,6 +887,14 @@ of clean main. Dirty, diverged, ahead or off-main deployment remains untouched a
 failure; otherwise valid isolated tasks continue. Publication retains its current-candidate checks,
 ownership boundaries and review holds.
 
+A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
+such failure and retries it on the next tick. It raises the `self-deploy` system fault only once fetches
+have failed for five minutes without a success in between, carrying the latest fetch error. The
+post-delivery fast-forward returns a note for a failed fetch and leaves the retry to the tick. Every
+other self-deploy failure, including a dirty, diverged, ahead or off-main checkout and a failed
+fast-forward, raises the fault immediately. The failure start is held in daemon memory, so a restart
+starts a new grace period.
+
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses
 Git's C-locale diagnostics to recognize the exact stale-old-value compare-and-swap error for its
@@ -1007,7 +1030,8 @@ fail without a success event. Confirmed calls append actor, number, URL, state a
 existing `pr-close` project log. Repeated calls read current state; no registry or automatic retry runs.
 L3 judges authorization and superseding delivery from the existing evidence; the command does not
 prove replacement equivalence or select cleanup targets. L2 hands that evidence to L3 and gains no
-PR-close authority. Task state, archives and merge holds retain their own lifecycle.
+PR-close authority. Task state, archives and merge holds retain their own lifecycle; a closed PR that
+is a task's current PR gains a `pr-closed` task event, which retires its held-review card.
 The [L3 persona](../personas/l3.md) directs capability-gap recommendations and authorized remediation;
 that guidance grants no permission expansion by itself.
 
@@ -1016,33 +1040,44 @@ that guidance grants no permission expansion by itself.
 `terminal.py` gives the operator one login shell per task worktree or project folder. It is off until
 the operator turns on the `terminal` machine setting (`POST /api/terminal-access`, which uses the
 same request and `machine-set` event as the other machine settings; turning it off closes every
-open terminal, and an open in progress either registers before that or is refused). altd starts the shell on a pseudo-terminal in a session of its own, as the operator
-and outside every worker sandbox. On macOS the shell is its own launchd job, which the supervisor stops
-when altd goes. The shell and its children live only as long as altd: there is no
-multiplexer and no persistence. A task terminal opens in the task's worktree while the
+open terminal, and an open in progress either registers before that or is refused). altd owns the
+pseudo-terminal; the user service manager starts the login shell on it as a transient
+`altitude-terminal-<id>.service` job (`platform.terminal_job`), as the operator and outside every worker
+sandbox. The job is created by the manager rather than by altd, so the shell does not inherit altd's
+`NoNewPrivileges=yes` and `sudo` asks for the operator's password in the terminal as it does in a desktop
+terminal. altd keeps that hardening; worker and review jobs are confined by their own sandbox. The job is
+`PartOf` Altitude's service, so the shell and its children live only as long as altd: there is no multiplexer
+and no persistence. A launcher that cannot
+start the job (no reachable user manager) ends the terminal as `failed` with the launcher's error, which the page
+shows. On
+macOS the job is a launchd job whose supervisor holds the shell on the pseudo-terminal and stops it when altd's
+launcher has gone, and Close hangs up every member of the job's coalition. A task terminal opens in the task's worktree while the
 task is neither done nor rejected; a project terminal opens in the registered project folder. The
 tick's `terminal.sweep()` closes a task's terminal once the task is done, rejected or gone, and a
 project's once it is no longer managed. Opening returns the running terminal when one exists.
-Every process the shell starts inherits `ALTITUDE_TERMINAL=<terminal id>`. Closing sends SIGHUP to
-every process in the terminal's session or carrying its mark, including those that left the session
-(`setsid`, daemons), then SIGKILL to whatever remains after two seconds, including commands that
-ignore the hang-up. A process that clears its environment and leaves the session escapes. Each
-process is held by a pidfd before it is checked, so a reused pid is never signalled. macOS hides the
-environment of its own binaries, so there Close signals every member of the shell's job coalition
-instead, except the supervisor recording the end; nothing escapes. The terminal
-ends when its shell exits, even while a process that left its session still holds the
-pseudo-terminal; the end kills everything the terminal started that is still running. The status names the foreground command when it is not the
-shell, so the page can confirm before stopping it.
+The job's control group holds every process the shell starts, including those that leave its session
+(`setsid`, daemons). Closing stops the job: SIGHUP to every process in it, then SIGKILL to whatever remains
+after two seconds, including commands that ignore the hang-up. Close repeats the stop until the terminal
+has ended and its close is recorded, which also covers a job the manager had not yet registered and leaves
+nothing unrecorded when altd stops next, and reports an error when the job is still running ten seconds later. The terminal ends when its shell exits; the
+manager then stops the job, which kills everything the terminal started that is still running. altd holds the
+shell's side of the pseudo-terminal open for the terminal's life, so the end comes from the job, never from a
+hang-up. A process started through the user manager or a scheduler from the terminal is outside the job and
+escapes. The status names the foreground command when it is not the shell, so the page can confirm before
+stopping it.
 
 Output goes into a 256 KB replay buffer addressed by absolute offsets. `GET
 /api/terminal/<project>/stream?task=&id=&offset=` is server-sent events: `output` events carry base64
 bytes, the next offset and whether older output was dropped, and `end` carries the final status
-(`exited`, exit code and end reason: `exited`, `closed`, `task-finished` or `project-removed`). A
-reconnecting page resumes from its own offset. An ended terminal is dropped at once: its open streams
-still read the end, and afterwards the status is `none`. `GET /api/terminal/<project>?task=` returns
+(`exited`, exit code and end reason: `exited`, `closed`, `task-finished`, `project-removed` or `failed` with
+its `error`). A
+reconnecting page resumes from its own offset. An ended terminal leaves the status at once (`none`), accepts no
+more input, resize or close, and stays readable only by a stream naming its id, so a page attaching after a
+failed start still reads why, until a new terminal opens, the task finishes or altd stops. `GET /api/terminal/<project>?task=` returns
 the status: state (`none` or `running`), terminal id, the setting, folder and the foreground command.
 `POST /api/terminal/<project>/{open,input,resize,close}` with `{task?, id, data?, cols?, rows?}`
-drive it. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
+drive it, and `POST /api/terminal/<project>/command` with `{task, id, text}` names the command the page is
+about to type for the owner. Replies to accepted terminal POSTs are HTTP/1.1 with a length and keep their connection,
 while every other altd reply closes its own, so typing reuses one connection instead of a new TCP and TLS handshake per
 keystroke (an echo takes one network round trip), and altd sends small writes without Nagle's delay.
 The page sends input in order, one request at a time, coalescing keys typed meanwhile and splitting a
@@ -1056,9 +1091,35 @@ message's `run` block (one line with no control, invisible-formatting or line-se
 **Open in terminal** in its task or project conversation: the page holds the command in memory for that
 terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
 stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
-holds the foreground. It never sends Enter, and the server sees ordinary input. Input and output are never written anywhere. The task's `events.jsonl`, or the project's
+holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it into a task
+terminal, the page names it with `command`, so altd follows that one command in memory: the first Enter the
+operator types after it starts it, and a Ctrl+C before that Enter drops it. The command has finished once
+the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
+no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
+background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts
+counts as finished. Then, or when the terminal ends first, `tasks.notify` leaves one Terminal notice in the
+task inbox, on its own thread so the reader keeps draining output while it waits for the project lock. It
+reaches the owner at its next checkpoint as any queued message does and wakes a blocked owner unless it is
+stopped or faulted; a task no longer running or blocked, or on a later attempt than the one current when the
+page named the command, gets none. It is no conversation entry and grants nothing. When naming the command
+fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
+owner to `alt task terminal` to verify; a shell builtin that waits for input without a child looks finished.
+Project terminals send no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
+
+A task's running owner reads its task terminal's output with `alt task terminal` (`POST /api/task/terminal`
+with the task, project and attempt). The reply is the replay buffer as plain text (escape sequences removed,
+each line as its last carriage return left it), whether earlier output was dropped, and the terminal's state:
+`running`, `exited` with its exit code and reason, or `none`. altd answers only the task's current attempt
+while it runs, and only when the client end of the connection is held by a process in that owner's worker job
+(`terminal.owner_connection`, from the same process and socket facts as the agent check), so another agent that
+holds this machine's key cannot read it. There is no owner path to input, resize, close or stream. The last
+ended task terminal's output stays readable in altd's memory until a new terminal opens for the task, the task
+finishes (the tick's sweep forgets it) or altd stops; nothing is written to disk. Project terminals have no
+reader. The task terminal says "This task's owner can read this terminal's output." Anything the terminal
+prints can reach the owner, its session record and its provider, where it stays after Altitude forgets it.
+A password typed at a prompt that does not echo, such as `sudo`'s, is not in the output.
 
 Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
 not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see
@@ -1071,8 +1132,8 @@ since an IPv6 socket can reach an IPv4 address. A
 client whose row is missing is refused when its address belongs to this host (it can be bound). A
 local client is allowed only when a process outside Altitude visibly holds
 that socket and none of altd, anything altd started (a Claude L3 turn runs as altd's child in altd's
-own cgroup) or any process in the Altitude service or one of its jobs (workers, reviews, machine
-commands, terminals; an `altitude*.service` cgroup on Linux, a recorded job coalition on macOS) does.
+own cgroup) or any process in an `altitude*.service` unit (workers, reviews, machine commands, terminal
+shells; on macOS the job coalition recorded under that unit name) does.
 A holder whose descriptors or unit cannot be read identifies nothing, so an agent process that hides
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
@@ -1085,8 +1146,10 @@ looks like the operator's browser, so the operator keeps the terminal off while 
 On Linux, Claude L2 workers have no OS sandbox, so they can already change the
 operator's files directly. Every paired browser can use the terminal once it is
 on. That is the same trust as its other
-operator controls, and the Settings copy says so. Altitude stores nothing typed; the operator's own
-shell keeps its history as it does in any terminal.
+operator controls, and the Settings copy says so. That includes `sudo`: a paired browser whose user knows
+the operator's password, or that uses a terminal while `sudo` still remembers an authentication there, can act
+as root. A password travels from the browser over TLS to altd and into the pseudo-terminal like any other input;
+Altitude stores nothing typed, and the operator's own shell keeps its history as it does in any terminal.
 
 ## Faults
 
@@ -1709,10 +1772,21 @@ Stop transcribes for editing and cancels on leaving; Send retains its operation 
 including leaving before the recorder emits its stop event. Failure returns the preexisting text to
 the source conversation. Recovery arriving from an earlier send remains a separate unsent draft;
 it is not appended to the captured voice Send. Image Retry retains the captured request context.
-This client operation lasts within the current document; it adds no streaming
-transcription service or server-side audio queue.
+This client operation lasts within the current document; it adds no server-side queue of sends or
+audio.
 The composer reads the installation's voice backend and destination identity from `GET /api/voice` and
-shows no microphone until it answers. With `browser`, the default, `recognition.ts` wraps the
+shows no microphone until it answers. With `host`, `hostCapture.ts` wraps streaming in the same
+recorder shape: a dedicated audio graph, separate from the waveform, runs an audio worklet (loaded
+from a blob URL) that averages the microphone down to 16 kHz 16-bit samples. The composer shows
+"Starting voice…" until the first samples arrive, then Listening. One request is in flight at a time,
+carrying what gathered since the last answer (normally half a second, at most ten seconds); a request
+lost on the network is repeated with the same number up to three times. Each answer replaces the words
+after the typed draft. Stop releases the microphone and sends the rest as the final chunk; Transcribing
+lasts until the final text lands. No samples within two seconds, an ended track, a worklet that cannot
+load, a refusal or a lost connection stops the recording: the words already shown land in the draft
+and the hint gives the reason. A 409 reads the backend again. Before setup, the microphone explains
+the one-time download with a **Set up voice** link; when host voice cannot run here or its setup
+failed, the microphone hides and the hint says why. With `browser`, the default, `recognition.ts` wraps the
 browser's own `SpeechRecognition` in the recorder's shape (start, stop, state, one stop event).
 After the previous capture's shutdown gate and microphone acquisition, the composer synchronously
 creates and connects the waveform graph before starting either recognizer or recorder. React only
@@ -1765,9 +1839,9 @@ records speech, drafts, raw samples or device identifiers, uploads data, or chan
 The operator explicitly views/copies the report; viewing stops collection and reload/clear deletes it.
 The report identifies the loaded script basename and browser/Home Screen mode, without the origin
 or conversation URL. The microphone
-stream feeds the waveform and carries the same permission the recognizer needs. With `local` or an
-endpoint, the composer records with MediaRecorder and uploads after Stop or Send; a 409 from a
-server whose backend or endpoint URL changed shows the server's words and reads the backend again.
+stream feeds the waveform and carries the same permission the recognizer needs. With `host`, the
+composer streams samples as described under [host voice](#host-voice); a 409 from a server whose
+backend or runtime changed shows the server's words and reads the backend again.
 A successful Settings read or save updates the document's cached selection for the next capture;
 saving cancels an older Settings query, and an earlier composer read cannot overwrite the saved
 selection. Each recording holds its initial identity.
@@ -1907,8 +1981,13 @@ anchor. `task_view` projects `question_group` with member records, `question` as
 open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
-delivery whose owner stopped in `blocked` or `reported` (#419). Any operator message or quick answer
-hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
+delivery whose owner stopped in `blocked` or `reported` (#419). A held PR that Altitude has observed
+closed without merging asks for no review (#575): an L2 `block` reads the held PR's state from the checkout origin's repository, and a
+`CLOSED` result, like a verified `alt pr close`, appends one `pr-closed` task event. The delivery,
+`prs` history and merge hold stay recorded. A later `delivery` or `pr-adopted` event for that PR, a
+`pr-reopened` event from an owner block that reads it open again, or a new PR asks again. An
+unreadable state leaves the recorded review shown and says so on stderr. Any operator message or
+quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
 restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
 `paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question
@@ -1924,7 +2003,7 @@ including a freeform question. The generated review card stays hidden until the 
 that question, including while its submitted response waits for interpretation. This presentation
 rule supplies no merge authority: an unrelated answer mentioning the PR never counts as approval,
 and the held-review fallback returns after resolution when still needed. Independent questions and
-ordinary chat remain available. The changes-review exception still requires quick options.
+ordinary chat remain available.
 Existing stopped/fault cards link to their ordinary task controls; an operational
 pause with no open question offers Resume through the existing daemon operation.
 If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and
@@ -2021,46 +2100,103 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `browser` (the default) or a speech-service object with `url`, optional `model` and
-optional `key`; any other stored value reads as `browser`. `GET /api/voice` reports backend, URL,
-model, a `key_set` boolean and an opaque selection identity over backend and destination; it never
-returns the key. `alt machine set --voice` requests a change through the same durable request that
-carries `wip`, and the CLI, `machine show` and the event log show a key only as `set`.
+settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
+speech manifest names a runtime this computer can run, and `browser` elsewhere (macOS for now).
+`GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
+the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
+default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
 (the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
-backend choices and names the saved service's host in its summary. Project three-dot menus and the
-desktop operator row open Settings. `POST /api/voice` saves through the same durable request/apply
-path as the CLI, with no restart or provider probe. Browser recognition saves immediately; the
-speech-service URL uses Save service, with model and key behind a hosted-provider disclosure that
-opens when either is saved. Its key is write-only, retained only for an unchanged URL; editing the
-URL clears retention, and a blank replacement removes the key. Failed saves leave the persisted
-choice unchanged. A changed backend or URL asks the person to reload settings; concurrent model/key
-edits keep last-writer semantics. Fresh settings reads update the form as well as the composer's
-selection. The form owns saving/error/saved state and disables inputs before sending, independently
-of query notifications. It adopts a successful save's selection before enabling edits. Its later
-cache notification does not reset subsequent edits; a different settings read still refreshes the
-form.
+choices, This computer and Browser recognition, each saved immediately. Project three-dot menus and the
+desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` through the same
+durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
+matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
+persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
+First run offers the same choice as its Voice step (see the design spec §3.12); a setup failure there
+never blocks onboarding.
 
-`POST /api/transcribe` is a bounded adapter for the speech service. It accepts the browser's
-declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers), limits the
-upload to 16 MiB and posts the recording unchanged as one OpenAI-compatible `audio/transcriptions`
-multipart request (bearer key when configured, `whisper-1` unless a model is named), returning the
-service's `text`. The service decodes the container; Altitude runs no converter. A redirect is
-refused so the key never follows it, and the URL carries no credentials or query string. With
-`browser` it refuses uploads so a page that read the backend earlier reads it again. It never writes
-audio to disk and neither owns nor starts a speech model. The upload's `X-Voice-Selection`
-identifies the backend and destination selected at capture start. Missing or stale selections are
-refused before forwarding audio; accepted requests use one settings snapshot. No old settings are
-retained for replay. The typed draft survives a refused upload.
+Altitude sends no recording to a speech service of its own configuration. On start,
+`dispatch.forget_speech_service()` deletes a stored speech-service setting and any pending or applied
+`voice-request.json` naming one, with its key, under the projects lock, and appends one event without
+URL or key; a machine with nothing stale is left untouched, so the step is idempotent. The machine then
+uses the default. Phone access uses an explicitly configured private HTTPS address whose certificate
+covers that address. Safari can use the microphone after the CA is trusted on the phone; typing
+remains available without voice.
 
-An unsupported media type, a timeout, an unreachable service, an HTTP refusal and a reply without
-text become concise client errors that name the configured service URL, so the person can fix it;
-diagnostics stay in the private server log, and the key appears in neither. The composer announces
-recording and transcribing, restores the editable field after cancel or error, and leaves the
-microphone as progressive enhancement. Phone access uses an explicitly configured private HTTPS
-address whose certificate covers that address. Safari can use the microphone after the CA is trusted
-on the phone; typing remains available without speech services.
+#### Host voice
+
+With `host`, this computer transcribes: `altitude/speech.py` owns a pinned speech runtime and one
+speech worker, and the page streams samples to it. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
+CC-BY-4.0) as the int8 ONNX export `istupakov/parakeet-tdt-0.6b-v2-onnx` at a pinned revision, run on
+the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punctuates and capitalizes.
+
+`platform.speech_runtime()` names the runtime this host and interpreter can run (Linux x86_64, glibc
+2.28 or newer, CPython 3.12 or 3.13). Anything else, including macOS until native evidence is recorded,
+reads as `unavailable` with its reason. `speech.status()` is `unavailable`, `absent`, `setting-up`
+(with bytes done), `ready`, `failed` (with the reason) or `outdated`, with the download size.
+
+Setup (`alt voice setup`, or Settings through `POST /api/voice/host` with `setup`) downloads the
+manifest in `speech.py`: five model files from Hugging Face and three wheels from PyPI, about 698 MB.
+Each file streams into `~/.altitude/speech/.staging` with a size cap and must match its pinned
+SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
+backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
+naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
+rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
+reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
+any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
+`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
+worker within a second when its runtime disappears under it (`alt voice remove`).
+
+The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
+minimal environment, imports only the runtime's unpacked wheels, and reads one JSON request per line:
+`open`, `audio` (base64 samples), `finish` and `close`. It answers `ready` once the model is loaded,
+then each changed recording's text so far, finishing recordings first. It commits text at pauses once
+eight seconds are pending: the audio up to the middle of the last quiet run (quiet is relative to the
+recording's own level) is transcribed once and kept; without a pause by twelve seconds, the words that
+started at least a second before the end are kept, except the last. No read covers much more than
+twelve seconds of audio. It exits on stdin EOF, so it ends with the daemon.
+
+`speech.Host` supervises it. The first recording starts the worker, after checking that about 2.5 GB
+of memory is available; every recording shares it, and it exits after fifteen minutes unused. Requests
+reach it through a writer thread, so a worker that is loading or hung never holds up a request. A
+watchdog kills it when it takes more than 30 seconds to load, then 10 seconds to answer new audio or
+15 seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
+starts a fresh worker. Its stderr goes to `~/.altitude/speech/worker.log`; altd's log records starts,
+stops and reasons, never text.
+
+The page's routes carry raw samples: `POST /api/voice/live` starts a recording for the current
+`X-Voice-Selection` (refused unless the backend is `host` and the runtime ready) and answers its id;
+`POST /api/voice/live/<id>/audio?seq=N&final=0|1` adds chunk `N`, at most ten seconds of 16 kHz 16-bit
+mono samples, and answers the text so far at once, never waiting for inference; `final=1` waits for
+the final text, and cancelling the recording ends that wait at once. Chunks are numbered from 0: a repeated number gets its first answer again without
+adding audio, and a skipped one fails the recording. `POST /api/voice/live/<id>/cancel` discards it. A
+recording belongs to the paired device that opened it; at most two are active (a third is busy, 429),
+each up to ten minutes, and one without a request for 30 seconds is dropped. Audio stays in memory for
+its recording only. The live and setup routes refuse other sites and Altitude's own agents, as the
+terminal does; the daemon stops the worker on shutdown.
+
+Every live and audio request carries the page's `X-Voice-Selection`; the server checks it against the
+current setting, including the runtime digest, before reading audio (409 otherwise). An unknown
+recording answers 410 and a recording opened by another paired device answers 403. Opening a recording
+also answers `owner`, an opaque name for the paired device (an HMAC of its id under the machine key); a
+replay presents it as `X-Voice-Owner`, so a browser paired again as another device during an outage is
+refused (403) rather than continuing the recording.
+`web/src/components/hostCapture.ts` keeps recording through a lost connection. Each recording's
+samples stay in page memory only, up to its ten-minute limit, and at most two recordings are retained
+at once; a third microphone tap asks the person to wait. Requests are sequential: a lost request is
+sent again with the same number, bytes and `final` flag after a backoff of half a second doubling to
+three seconds, so the server's repeat rule makes retries harmless. A 410 (the server restarted or
+dropped the idle recording) opens a new recording and replays the retained samples from the start
+while the selection is unchanged; a busy answer while reopening is retried. During replay the shown
+words hold ("Catching up…") until the replay passes the point already shown and its transcript is as long,
+because the host acknowledges audio before transcribing it; text never shrinks.
+401, 403 and 409 end the recording and keep the words shown. After Stop or Send the page waits at most
+two minutes for the connection ("Waiting for connection…", with Cancel); then it discards the audio,
+keeps the words already shown and says the last words were not added, and a voice Send returns its
+text unsent to the conversation it was sent from. A microphone that ends stops the recording and keeps
+its words. Nothing is written to storage.
 
 ### Design evidence
 
@@ -2156,8 +2292,12 @@ both viewports. A second wrapping row keeps chips visible: the state, the model 
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
-day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
-prose under day dividers, the open question group at the end of the conversation (closed groups
+day-divider, and composer components: the operator's rows as bubbles and the L2's rows as prose
+under day dividers. Each message L3 sent the L2 is one compact line: "L3 ·" and the one-line
+`summary` L3 supplied with `alt task message --summary`, or "L3 messaged the L2" for a message saved
+without one, with an image count when it carries images. Its Show opens the complete stored text and
+images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
+is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
 at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first

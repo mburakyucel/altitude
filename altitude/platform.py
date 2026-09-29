@@ -87,6 +87,31 @@ def status() -> dict[str, str]:
     return values
 
 
+#: The settings that say where the service listens and which HTTPS identity it serves.
+SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
+
+
+def service_settings() -> tuple[int, dict[str, str]]:
+    """The running service's main process and the settings it started with, whichever unit, drop-in or
+    environment file supplied them. A shell's own environment does not describe the service."""
+    values = status()
+    pid = int(values.get("MainPID") or 0)
+    if values["LoadState"] != "loaded":
+        raise RuntimeError("No Altitude service is installed for this user.")
+    if values.get("ActiveState") != "active" or not pid:
+        raise RuntimeError("The Altitude service is not running. Start it, then retry.")
+    try:
+        entries = _environment(pid) if _darwin() else (PROC / str(pid) / "environ").read_bytes().split(b"\0")
+    except OSError as exc:
+        raise RuntimeError(f"Cannot read the Altitude service's settings: {exc}.") from exc
+    settings = {}
+    for entry in entries:
+        key, _, value = entry.decode(errors="replace").partition("=")
+        if key in SERVICE_SETTINGS:
+            settings[key] = value
+    return pid, settings
+
+
 def control(action: str) -> str:
     require_supported()
     if _darwin():
@@ -119,9 +144,13 @@ def logs() -> str:
 
 
 def definition(prefix: Path, python: Path, settings: Path, environment: dict[str, str]) -> str:
+    def literal(value: str | Path) -> str:
+        # systemd expands specifiers in every one of these settings, even inside quotes.
+        return str(value).replace("%", "%%")
+
     def quote(value: str | Path) -> str:
-        # systemd expands specifiers even inside quotes; no shell interprets these arguments.
-        return '"' + str(value).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+        # ExecStart= and Environment= split words and unescape; no shell interprets these arguments.
+        return '"' + literal(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     for value in (prefix, python, settings, *environment.values()):
         if any(ch in str(value) for ch in ("\n", "\r", "\x00")):
@@ -136,8 +165,11 @@ def definition(prefix: Path, python: Path, settings: Path, environment: dict[str
                                      "ALTITUDE_SERVICE": "1", "ALTITUDE_TLS": "1"},
             "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 5, "Umask": 0o077,
             "ProcessType": "Standard", "StandardOutPath": log, "StandardErrorPath": log}).decode()
+    if str(prefix) != str(prefix).rstrip() or str(prefix).endswith("\\"):
+        # WorkingDirectory= drops trailing whitespace and a trailing backslash continues the line.
+        raise ValueError("The installation prefix must not end in whitespace or a backslash")
     return ("[Unit]\nDescription=Altitude private application\n\n[Service]\nType=simple\n"
-            f"WorkingDirectory={quote(prefix)}\n"
+            f"WorkingDirectory={literal(prefix)}\n"  # one verbatim path: quotes would be part of it
             f"ExecStart=:{quote(python)} -B {quote(prefix / 'current/bin/alt')} serve\n"
             f"Environment={quote('ALTITUDE_CONFIG=' + str(settings))}\n"
             + "".join(f"Environment={quote(key + '=' + value)}\n" for key, value in environment.items())
@@ -219,6 +251,44 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
             f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
             f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
             "--", *_scrub(env), "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
+
+
+def terminal_job(name: str, tty: str, command: list[str], env: dict[str, str], *, grace: int) -> list[str]:
+    """A login shell as a job of its own on the pseudo-terminal `tty`, started with the caller's working directory.
+
+    The user manager, not the hardened Altitude parent, creates the shell, so it does not inherit altd's
+    ``NoNewPrivileges=yes`` and ``sudo`` can ask for the operator's password on that terminal (issue #543). The job's
+    control group holds everything the shell starts, including processes that leave its session; stopping the job
+    sends each of them SIGHUP, then SIGKILL after `grace` seconds. ``--wait`` keeps the launcher running until the
+    shell has ended and returns its exit status. ``PartOf`` stops the job with Altitude's service. The shell starts
+    from the user manager's environment, as a desktop session's would, plus `env`, whose values appear on the
+    launcher's command line: only settings, never credentials.
+
+    On macOS the shell is its own launchd job on `tty`, whose supervisor hangs up its coalition on stop and stops
+    it once the launcher (altd's child) has gone."""
+    if _darwin():
+        return _entry("launch", json.dumps({"label": _label(name), "mode": "terminal", "tty": tty, "command": command,
+                                            "env": {**_login_env(), **env}, "grace": grace}))
+    return [SYSTEMD_RUN, "--user", "--wait", "--collect", "--quiet", f"--unit={name}", "--same-dir",
+            "--expand-environment=no", "--property=NoNewPrivileges=no", f"--property=TTYPath={tty}",
+            "--property=StandardInput=tty", "--property=StandardOutput=tty", "--property=StandardError=tty",
+            "--property=KillMode=control-group", "--property=KillSignal=SIGHUP", "--property=SendSIGKILL=yes",
+            f"--property=TimeoutStopSec={grace}", f"--property=PartOf={SERVICE}",
+            *(f"--setenv={key}={value}" for key, value in sorted(env.items())), "--", *command]
+
+
+def terminal_session(fd: int) -> int:
+    """The session on the pseudo-terminal whose controlling side is `fd`: the shell's process id."""
+    if _darwin():
+        session = ctypes.CDLL(None, use_errno=True).tcgetsid(fd)
+        if session < 0:
+            raise OSError(ctypes.get_errno(), "The terminal has no session")
+        return session
+    return struct.unpack("i", fcntl.ioctl(fd, TIOCGSID, b"\0" * 4))[0]
+
+
+#: Linux's request for a terminal's session, which Python's termios module does not name.
+TIOCGSID = 0x5429
 
 
 def detached_job_command(name: str, command: list[str], *, path: str) -> list[str]:
@@ -355,11 +425,6 @@ def service_status(unit: str, env: dict) -> dict:
 PROC = Path("/proc")
 
 
-#: A cgroup path component naming altd's own service or one of its transient units (workers, reviews,
-#: machine commands, restarts).
-ALTITUDE_UNIT = re.compile(r"altitude(-[^/]*)?\.service")
-
-
 def _stat(pid: int) -> list[str]:
     return (PROC / str(int(pid)) / "stat").read_text().rsplit(")", 1)[1].split()
 
@@ -398,88 +463,8 @@ def process_name(pid: int) -> str | None:
         return None
 
 
-def signal_session(session: int, mark: bytes, sig: int) -> None:
-    """Signal every process in `session` and every process whose environment carries `mark` (those that left the
-    session: `setsid`, daemons). Each process is held by a pidfd before it is checked, so a pid reused by an
-    unrelated process in between is never signalled. macOS has no process handle: the start time is checked again
-    right before the signal, and a PID is reused only after the counter wraps."""
-    if _darwin():
-        for pid in _pids():
-            try:
-                start = _started(_bsd(pid))
-                if (os.getsid(pid) == session or mark in _environment(pid)) and _started(_bsd(pid)) == start:
-                    os.kill(pid, sig)
-            except OSError:
-                pass
-        return
-    for entry in PROC.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            handle = os.pidfd_open(int(entry.name))
-        except OSError:  # it has exited
-            continue
-        try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            if int(fields[3]) == session or mark in (entry / "environ").read_bytes().split(b"\0"):
-                signals.pidfd_send_signal(handle, sig)
-        except (OSError, IndexError, ValueError):
-            pass
-        finally:
-            os.close(handle)
-
-
 def _controlling_terminal() -> None:  # runs in the child between fork and exec
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-
-
-def start_terminal(ident: str, shell: list[str], tty: int, *, cwd: Path, env: dict[str, str]) -> subprocess.Popen:
-    """Start a terminal's shell as the session leader of the pseudo-terminal `tty`. On macOS the shell is its own
-    launchd job, since the environment that marks what the terminal started is unreadable for Apple's own binaries:
-    everything it starts stays in the job's coalition. The process returned there is the shell's launcher, which
-    exits with the shell's status; the job stops when the launcher does, as when the service restarts."""
-    if not _darwin():
-        return subprocess.Popen(shell, stdin=tty, stdout=tty, stderr=tty, cwd=cwd, env=env,
-                                start_new_session=True, preexec_fn=_controlling_terminal)
-    spec = {"label": _label(f"altitude-terminal-{ident}"), "mode": "pipe", "terminal": True, "command": shell,
-            "env": env}
-    return subprocess.Popen(_entry("launch", json.dumps(spec)), stdin=tty, stdout=tty, stderr=tty, cwd=cwd, env=env,
-                            start_new_session=True)
-
-
-def terminal_leader(ident: str, proc: subprocess.Popen) -> int | None:
-    """The shell's process ID, which leads its session and process group; None while it is starting."""
-    if not _darwin():
-        return proc.pid
-    try:
-        return int((_jobs() / _label(f"altitude-terminal-{ident}") / "leader").read_text())
-    except (OSError, ValueError):
-        return None
-
-
-def signal_terminal(ident: str, proc: subprocess.Popen, mark: bytes, sig: int) -> None:
-    """Signal everything the terminal started: on Linux its session and whatever carries `mark`; on macOS its job's
-    coalition, except the supervisor that records the shell's end."""
-    if not _darwin():
-        return signal_session(proc.pid, mark, sig)
-    job = _jobs() / _label(f"altitude-terminal-{ident}")
-    coalition = _recorded_coalition(job.name)
-    try:
-        supervisor = int((job / "supervisor").read_text())
-    except (OSError, ValueError):
-        supervisor = None
-    if not coalition:
-        return
-    try:
-        members = _members(coalition)
-    except OSError:  # best effort, as on Linux: Close reports the shell's end, not every descendant's
-        return
-    for pid, start in members:
-        try:
-            if pid != supervisor and _coalition_of(pid) == coalition and _started(_bsd(pid)) == start:
-                os.kill(pid, sig)
-        except OSError:
-            pass
 
 
 def _hex_address(address: str, port: int) -> tuple[str, str]:
@@ -517,15 +502,17 @@ def client_socket(clients: list[str], client_port: int, servers: list[str], serv
     return None
 
 
-def process_table() -> dict[int, tuple[int, bool]]:
-    """pid -> (parent pid, whether it runs in the Altitude service or one of its jobs) for every readable process.
-    A process that exits while being read is left out: it cannot vouch for anything."""
+def process_table() -> dict[int, tuple[int, list[str]]]:
+    """pid -> (parent pid, the process's control-group path components) for every readable process. A process
+    that exits while being read is left out: it cannot vouch for anything. On macOS the components are the unit
+    name of the Altitude job (or service) whose coalition holds the process, spelled as on Linux."""
     if _darwin():
-        owned = _altitude_coalitions()
+        units = _altitude_coalitions()
         table = {}
         for pid in _pids():
             try:
-                table[pid] = (_bsd(pid).ppid, _coalition_of(pid) in owned)
+                coalition = _coalition_of(pid)
+                table[pid] = (_bsd(pid).ppid, [units[coalition]] if coalition in units else [])
             except OSError:
                 continue
         return table
@@ -539,8 +526,7 @@ def process_table() -> dict[int, tuple[int, bool]]:
         except OSError:
             continue
         table[int(entry.name)] = (int(stat.rsplit(")", 1)[1].split()[1]),
-                                  any(ALTITUDE_UNIT.fullmatch(part) for line in groups.splitlines()
-                                      for part in line.split("/")))
+                                  [part for line in groups.splitlines() for part in line.split("/")])
     return table
 
 
@@ -829,7 +815,10 @@ def _launch(spec: dict) -> int:
     relays: dict[int, int] = {}
     try:
         spec.update(cwd=os.getcwd(), launcher=None if mode == "detached" else [os.getpid(), _started(_bsd(os.getpid()))])
-        if mode == "pipe":
+        if mode == "terminal":
+            spec["stdin"] = spec["tty"]
+            supervisor_log = job / "supervisor.log"
+        elif mode == "pipe":
             spec["stdin"] = _fd_path(0)
             if spec["stdin"] is None:  # a pipe: callers write a whole prompt, then close it
                 _write_private(job / "stdin", sys.stdin.buffer.read())
@@ -933,7 +922,7 @@ def _supervise(job: Path) -> int:
     coalition = _coalition_of(own)
     _write_private(job / "coalition", str(coalition))
     _write_private(job / "supervisor", str(own))
-    terminal = spec.get("terminal", False)
+    terminal = spec.get("mode") == "terminal"
     status = 1
     try:
         # A terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere.
@@ -973,13 +962,13 @@ def _supervise(job: Path) -> int:
             try:
                 code = child.wait(timeout=spec.get("runtime_max")) if not terminal else _hold(child, spec["launcher"])
             except subprocess.TimeoutExpired:
-                _confirm_stopped(coalition, spare=own)
+                _confirm_stopped(coalition, spare=own, **_stop_signal(spec))
                 code = child.wait()
             status = code if code >= 0 else 128 - code
     except OSError as exc:
         print(f"{spec['label']}: {exc}", file=sys.stderr)
     finally:
-        stopped = _confirm_stopped(coalition, spare=own)
+        stopped = _confirm_stopped(coalition, spare=own, **_stop_signal(spec))
         _write_private(job / "status", str(status))
         launcher = spec.get("launcher")
         if not stopped:
@@ -998,6 +987,11 @@ def _hold(child: subprocess.Popen, launcher: list) -> int:
         except subprocess.TimeoutExpired:
             if not _running(*launcher):
                 child.kill()
+
+
+def _stop_signal(spec: dict) -> dict:
+    """How a job's members are stopped: a terminal's hang up first, as KillSignal=SIGHUP, with its own grace."""
+    return {"first": signals.SIGHUP, "grace": spec["grace"]} if spec.get("mode") == "terminal" else {}
 
 
 def _keep(job: Path, coalition: int) -> None:
@@ -1047,7 +1041,11 @@ def _launchd_job_stop(name: str, timeout: int) -> None:
     except RuntimeError:
         job = None
     coalition = _recorded_coalition(label) or (job or {}).get("coalition")
-    stopped = not coalition or _confirm_stopped(coalition, limit=timeout)
+    try:
+        spec = json.loads((_jobs() / label / "spec.json").read_text())
+    except (OSError, ValueError):
+        spec = {}
+    stopped = not coalition or _confirm_stopped(coalition, limit=timeout, **_stop_signal(spec))
     subprocess.run([LAUNCHCTL, "bootout", f"{_domain()}/{label}"], capture_output=True, timeout=timeout)
     if stopped:
         shutil.rmtree(_jobs() / label, ignore_errors=True)
@@ -1055,12 +1053,14 @@ def _launchd_job_stop(name: str, timeout: int) -> None:
         _keep(_jobs() / label, coalition)
 
 
-def _altitude_coalitions() -> set[int]:
-    """The coalitions of every job whose supervisor has recorded one and, when this process is the service, its own."""
-    owned = {_recorded_coalition(path.name) for path in _jobs().glob("*")}
+def _altitude_coalitions() -> dict[int, str]:
+    """Coalition -> unit name for every job whose supervisor has recorded one and, when this process is the
+    service, its own."""
+    units = {_recorded_coalition(path.name): path.name.removeprefix("dev.altitude.job.") + ".service"
+             for path in _jobs().glob("*")}
     if os.environ.get("ALTITUDE_SERVICE") == "1":
-        owned.add(_coalition_of(os.getpid()))
-    return {coalition for coalition in owned if coalition}
+        units[_coalition_of(os.getpid())] = SERVICE
+    return {coalition: unit for coalition, unit in units.items() if coalition}
 
 
 # --- macOS: processes and sockets ---------------------------------------------------------------------------------
@@ -1191,8 +1191,9 @@ def _confirm_stopped(coalition: int, **stop) -> bool:
         return False
 
 
-def _stop_members(coalition: int, *, spare: int | None = None, grace: float = 5, limit: float = 60) -> bool:
-    """Stop every process in the coalition but `spare`: SIGTERM, then SIGKILL for whatever outlasts `grace`,
+def _stop_members(coalition: int, *, spare: int | None = None, first: int = signals.SIGTERM, grace: float = 5,
+                  limit: float = 60) -> bool:
+    """Stop every process in the coalition but `spare`: `first`, then SIGKILL for whatever outlasts `grace`,
     repeated for members that fork meanwhile. Each signal is preceded by a fresh identity check. False when members
     remain after `limit` seconds."""
     began = time.monotonic()
@@ -1205,8 +1206,8 @@ def _stop_members(coalition: int, *, spare: int | None = None, grace: float = 5,
         if elapsed >= limit:
             return False
         for pid, start in members:
-            sig = signals.SIGKILL if elapsed >= grace else signals.SIGTERM
-            if sig == signals.SIGTERM and (pid, start) in termed:
+            sig = signals.SIGKILL if elapsed >= grace else first
+            if sig != signals.SIGKILL and (pid, start) in termed:
                 continue
             try:
                 if _coalition_of(pid) == coalition and _started(_bsd(pid)) == start:
@@ -1218,7 +1219,8 @@ def _stop_members(coalition: int, *, spare: int | None = None, grace: float = 5,
 
 
 def _environment(pid: int) -> list[bytes]:
-    """The process's environment as KERN_PROCARGS2 reports it: argc, the executable path, argv, then environ."""
+    """The process's environment as KERN_PROCARGS2 reports it: argc, the executable path, argv, then environ. Only
+    this user's processes are readable, and not Apple's own binaries."""
     libc = ctypes.CDLL(None, use_errno=True)
     mib = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
     size = ctypes.c_size_t(0)
@@ -1268,3 +1270,28 @@ def _tcp_handles(pid: int) -> set[str]:
 
 def _socket_port(value: int) -> int:
     return int.from_bytes((value & 0xFFFF).to_bytes(2, sys.byteorder), "big")
+
+
+# --- Host speech -------------------------------------------------------------------------------------------------
+
+def speech_runtime() -> tuple[str | None, str]:
+    """The pinned speech runtime this host and interpreter can run (`linux-x86_64-cp312`), or None and why not.
+    The runtime's wheels need glibc 2.28. macOS is not verified (issue #225)."""
+    if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
+        return None, "voice runs on Linux x86_64 only for now"
+    libc = (os.confstr("CS_GNU_LIBC_VERSION") or "") if hasattr(os, "confstr") else ""
+    match = re.fullmatch(r"glibc (\d+)\.(\d+).*", libc)
+    if not match or (int(match[1]), int(match[2])) < (2, 28):
+        return None, "voice needs glibc 2.28 or newer"
+    return f"linux-x86_64-cp{sys.version_info.major}{sys.version_info.minor}", ""
+
+
+def available_memory() -> int | None:
+    """Bytes of memory available without swapping, or None when the host does not say."""
+    try:
+        for line in (PROC / "meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None

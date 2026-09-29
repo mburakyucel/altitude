@@ -1,19 +1,19 @@
 """Real terminals over the real API: a plain bash on a real pseudo-terminal in a fictional task worktree
-and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Two
+and project folder, whose saved conversations hold chat commands (`run` blocks) to open in them. Three
 things are fixtures: the agent check (service_support passes every request; /fixture/agent refuses them)
-and the shell (no profile files, a fixed prompt). Routes under /fixture/ drive the lifecycle events a
-walkthrough cannot cause from the page: a lost stream, a finished task, an agent request, a restart, an
-update that replaces the built app under an open page, the app's files out of reach."""
+and the shell (no profile files, a fixed prompt) and its job, which the service manager runs in production.
+Routes under /fixture/ drive the lifecycle events a walkthrough cannot cause from the page: a lost stream,
+a finished task, an agent request, a restart, an update that replaces the built app under an open page, the
+app's files out of reach. /fixture/notices reads what waits for the task owner."""
 import os
 import shutil
 import socket
-import sys
 import tempfile
 import threading
 from pathlib import Path
 
 from service_support import configure, serve
-from tests.support import add_worktree, make_repo
+from tests.support import add_worktree, local_terminal_launch, local_terminal_stop, make_repo
 from altitude import config, l3, server, state as S, tasks as T, terminal
 
 
@@ -28,13 +28,7 @@ def main():
     config.WEB_DIST = dist
     os.environ.update({"PS1": r"\W $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
-    if sys.platform == "darwin":
-        # Each macOS shell is its own launchd job; the offline guard's launchctl stub would refuse it.
-        launchd = config.ROOT / "launchd"
-        launchd.mkdir(parents=True, exist_ok=True)
-        (launchd / "launchctl").unlink(missing_ok=True)
-        (launchd / "launchctl").symlink_to("/bin/launchctl")
-        os.environ["PATH"] = f"{launchd}:{os.environ['PATH']}"
+    terminal.launch, terminal.stop = local_terminal_launch, local_terminal_stop
     agent = threading.Event()
     terminal.agent_connection = lambda _peer, _local: agent.is_set()
 
@@ -88,6 +82,9 @@ def main():
             if self.path == "/fixture/unreachable":  # the connection drops for the terminal's code and the page
                 unreachable.set()
                 return self._json({"ok": True})
+            if self.path == "/fixture/notices":  # what waits for the task owner's next checkpoint
+                return self._json({"notices": [row["text"] for row in T.pending("atlas", slug)
+                                               if row.get("by") == "terminal"]})
             if self.path == "/fixture/finish":  # the task finishes; altd's next tick closes its terminal
                 row = S.load_task("atlas", slug)
                 row.update(state="done", agent_id=None)
@@ -117,10 +114,8 @@ def main():
                 held.set()
                 for stream in list(streams):
                     stream.connection.shutdown(socket.SHUT_RDWR)
-                for key, term in list(terminal._terminals.items()):
+                for key in list(terminal._terminals):
                     terminal.close(*key)
-                    with term.cond:
-                        term.cond.wait_for(lambda: term.ended, 5)
                 held.clear()
                 return self._json({"ok": True})
             return super().do_POST()

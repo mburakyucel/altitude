@@ -1,5 +1,6 @@
 import { expect, type Page, type TestInfo } from "@playwright/test";
 import { test } from "./fixtures";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "image-input-service.py" });
@@ -201,8 +202,9 @@ for (const scope of ["project", "task"] as const) {
     await expect(page.locator(".bubble").filter({ hasText: caption })).toBeVisible();
   });
 
-  test(`${scope}: image selection survives voice cancel, transcription and send`, { tag: "@chromium" }, async ({ page }, info) => {
+  test(`${scope}: image selection survives voice cancel, transcription and send`, async ({ page }, info) => {
     await page.addInitScript(STALLED_PLAYBACK);
+    const host = await fixtureHost(page);
     const walk = walkthrough(page, info);
     await open(page, scope, info);
     const v = controls(page, scope);
@@ -214,29 +216,28 @@ for (const scope of ["project", "task"] as const) {
     await expect(v.field).not.toBeEditable();
     await v.field.press("End");
     await page.keyboard.type("unwanted recording edit");
-    await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
+    // Live words may already follow the draft; typing never reaches it.
+    await expect(v.field).toHaveValue(new RegExp(`^${caption.replace(/\./g, "\\.")} Keep this edit\\.(?: check.*)?$`));
     await walk.state("02-voice-cancel-keeps-image", { action: () => page.getByRole("button", { name: "Cancel voice input", exact: true }).click(), visible: [v.strip, v.add, start], hidden: [stop] });
     await expect(v.field).toBeEditable();
     await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
     let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    let transcript = "Please fix the overlap.";
-    await page.route("**/api/transcribe", async (route) => { await gate; return route.fulfill({ json: { text: transcript } }); });
+    host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
+    host.final = "Please fix the overlap.";
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible();
-    // Chromium needs an actual recorded interval before it can encode audio data.
-    await page.waitForTimeout(700);
+    await expect(v.field).toHaveValue(`${caption} Keep this edit. check`, { timeout: 5000 });
     await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByText("Transcribing…", { exact: true })], hidden: [v.add, stop] });
     await expect(v.field).toBeVisible();
     await expect(v.field).not.toBeEditable();
     release();
     await expect(v.field).toHaveValue(`${caption} Keep this edit. Please fix the overlap.`);
     await walk.state("04-transcript-in-draft-only", { visible: [v.strip, v.add, start], hidden: [page.getByText("Transcribing…", { exact: true }), page.getByText("Please fix the overlap.", { exact: true })] });
-    transcript = "  ";
-    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
+    host.final = "  ";
+    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await expect(v.field).toHaveValue(/ check/, { timeout: 5000 }); await v.send.click();
     await expect(start).toBeEnabled(); await expect(v.strip).toBeVisible();
     await expect(v.preview).toHaveCount(0);
-    transcript = "And keep search working.";
-    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await page.waitForTimeout(700); await v.send.click();
+    host.final = "And keep search working.";
+    await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await expect(v.field).toHaveValue(/ check/, { timeout: 5000 }); await v.send.click();
     await walk.state("05-voice-send-clears-image-and-draft", { visible: [v.preview, start], hidden: [v.strip, page.getByText("Transcribing…", { exact: true })] });
     await expect(v.field).toHaveValue("");
     await page.evaluate(() => { Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
@@ -256,21 +257,17 @@ for (const scope of ["project", "task"] as const) {
     await expect(page.locator(".bubble").filter({ hasText: "Plain text still works." })).toBeVisible();
   });
 
-  test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, { tag: "@chromium" }, async ({ page, request }, info) => {
+  test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, async ({ page, request }, info) => {
     await page.addInitScript(STALLED_PLAYBACK);
+    const host = await fixtureHost(page);
     const walk = walkthrough(page, info);
     await open(page, scope, info);
     const v = controls(page, scope);
     await v.picker.setInputFiles(await screenshotFile(page));
     await v.field.fill(caption);
     let release!: () => void;
-    let uploaded!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const upload = new Promise<void>((resolve) => { uploaded = resolve; });
-    await page.route("**/api/transcribe", async (route) => {
-      uploaded(); await gate;
-      await route.fulfill({ json: { text: "Please inspect the attached screenshot." } });
-    }, { times: 1 });
+    host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
+    host.final = "Please inspect the attached screenshot.";
     const submitted: { url: string; project: string; slug?: string; text: string; images: unknown[] }[] = [];
     page.on("request", (request) => {
       const url = new URL(request.url()).pathname;
@@ -296,9 +293,9 @@ for (const scope of ["project", "task"] as const) {
     await v.composer.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.composer.getByRole("button", { name: "Stop voice input" })).toBeVisible();
     await expect(v.listening).toBeVisible();
-    await page.waitForTimeout(500);
+    await expect(v.field).toHaveValue(`${caption} check`, { timeout: 5000 });
     await v.send.click();
-    await upload;
+    await expect.poll(() => host.finals).toBe(1);
     await leave();
     const destination = scope === "task" ? "alpha" : "beta";
     const destinationField = page.getByRole("textbox", { name: `Message L3 about ${destination}`, exact: true });

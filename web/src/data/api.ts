@@ -429,6 +429,7 @@ export const TaskMessageSchema = z
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    summary: z.string().nullish(),
     review_id: z.string().nullish(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
@@ -653,8 +654,6 @@ export const ChatViewSchema = z
   })
   .passthrough();
 
-export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough();
-
 export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
@@ -681,13 +680,19 @@ export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
-const VoiceSchema = z.object({
-  backend: z.enum(["browser", "endpoint"]), selection: z.string(),
-  url: z.string(), model: z.string(), key_set: z.boolean(),
-});
+/** Host voice on this computer: why it cannot run, or where its one-time setup stands. */
+const HostVoiceSchema = z.union([
+  z.object({ state: z.literal("unavailable"), reason: z.string() }),
+  z.object({
+    state: z.enum(["absent", "setting-up", "ready", "failed", "outdated"]), download_bytes: z.number(),
+    done_bytes: z.number().optional(), reason: z.string().optional(),
+  }),
+]);
+const VoiceSchema = z.object({ backend: z.enum(["browser", "host"]), selection: z.string(), host: HostVoiceSchema });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;
-export type VoiceUpdate = { backend: VoiceBackend; selection: string; url?: string; model?: string; key?: string; keep_key?: boolean };
+export type HostVoice = z.infer<typeof HostVoiceSchema>;
+export type VoiceUpdate = { backend: VoiceBackend; selection: string };
 
 /** Which backend this installation transcribes with; "browser" never uploads audio. */
 export async function readVoiceSettings(): Promise<VoiceSettings> {
@@ -772,6 +777,7 @@ export const TerminalStatusSchema = z
     offset: z.number().nullish(),
     exit_code: z.number().nullish(),
     reason: z.string().nullish(),
+    error: z.string().nullish(),
     busy: z.string().nullish(),
   })
   .passthrough();
@@ -793,8 +799,9 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize and close for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
-export function terminalSend(project: string, action: "input" | "resize" | "close", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
+/** Input, resize and close for terminal `id`, and `command`: the chat command about to be typed, which the task's owner
+ * hears about once it has run. Each answers ok or the server's error (410 once it was replaced). */
+export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; text?: string; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
 
@@ -812,25 +819,39 @@ const PrerequisitesSchema = z.object({
 });
 export type Prerequisite = z.infer<typeof PrerequisitesSchema>["items"][number];
 
+/** Set up, cancel setup of, or remove host voice; answers the settings with the new host state. */
+export async function changeHostVoice(action: "setup" | "cancel" | "remove"): Promise<VoiceSettings> {
+  return VoiceSchema.parse(await post("/api/voice/host", { action }));
+}
+
+const HostTextSchema = z.object({ text: z.string(), final: z.boolean().optional() }).passthrough();
+
+/** Start a host voice recording for the selection the page read. */
+/** Opens a host recording. A replay names the `owner` its first recording answered, so it stays with that device. */
+export async function startHostVoice(selection: string, signal?: AbortSignal, owner?: string): Promise<{ id: string; owner: string }> {
+  const headers: Record<string, string> = { "X-Voice-Selection": selection };
+  if (owner) headers["X-Voice-Owner"] = owner;
+  return z.object({ id: z.string(), owner: z.string() }).passthrough().parse(
+    await api("/api/voice/live", { method: "POST", body: "{}", headers, signal }));
+}
+
+/** Chunk `seq` of 16 kHz 16-bit samples; answers the text so far, or the final text. */
+export async function sendHostVoice(id: string, selection: string, seq: number, pcm: Int16Array, final: boolean, signal?: AbortSignal) {
+  return HostTextSchema.parse(await api(`/api/voice/live/${id}/audio?seq=${seq}&final=${final ? 1 : 0}`, {
+    method: "POST", body: pcm as Int16Array<ArrayBuffer>, headers: { "Content-Type": "application/octet-stream", "X-Voice-Selection": selection }, signal,
+  }));
+}
+
+export async function cancelHostVoice(id: string): Promise<void> {
+  await post(`/api/voice/live/${id}/cancel`, {});
+}
+
 /** What the agents need on the computer running Altitude; each read checks again. */
 export function usePrerequisites() {
   return useQuery({
     queryKey: ["prerequisites"], queryFn: async () => PrerequisitesSchema.parse(await api("/api/prerequisites")).items,
     refetchOnWindowFocus: false, retry: false, gcTime: 0,
   });
-}
-
-/** Upload one browser-native audio blob for the server to forward to the machine's speech service. */
-export async function transcribeVoice(audio: Blob, selection: string, signal?: AbortSignal): Promise<string> {
-  const result = VoiceTranscriptSchema.parse(
-    await api("/api/transcribe", {
-      method: "POST",
-      body: audio,
-      headers: { "Content-Type": audio.type || "application/octet-stream", "X-Voice-Selection": selection },
-      signal,
-    }),
-  );
-  return result.text;
 }
 
 // ---- query hooks (20s polling) ---------------------------------------------------------

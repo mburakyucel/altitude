@@ -1785,6 +1785,11 @@ def _owned_unit(record: dict, worker_id: str) -> str:
     return expected
 
 
+def worker_unit(worker_id: str, *, job_root: Path) -> str:
+    """The job a worker runs in, from its ownership record."""
+    return _owned_unit(S.read_json(_codex_paths(job_root, worker_id)["record"], None), worker_id)
+
+
 def codex_stop(worker_id: str, *, job_root: Path) -> str:
     """Stop the worker's job, which takes every descendant with it."""
     paths = _codex_paths(job_root, worker_id)

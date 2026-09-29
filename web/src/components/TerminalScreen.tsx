@@ -49,7 +49,9 @@ export function inputPiece(text: string): string {
  * alert, until the operator has checked the screen.
  *
  * A chat `command` (SPEC.md §3.3) is typed as a paste once the screen has settled on the shell's prompt,
- * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead.
+ * without Enter; when a program holds the foreground, or no prompt appears, a notice offers Copy instead. A task
+ * terminal first tells Altitude the command, so the task's owner hears once the operator has run it; when that
+ * fails, the command is still typed and a notice asks the operator to reply in chat instead.
  */
 export default function TerminalScreen({ project, task, id, keys, intro, reconnecting, command, onEnd, onReconnecting, onCommand }: {
   project: string;
@@ -249,12 +251,19 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
       over = true;
       clearTimeout(expiry);
       setHeld(null);
+      // The task's owner hears once the command has run; typing it does not depend on that, but the operator
+      // learns when the owner won't hear.
+      const told = !task || await terminalSend(project, "command", { task, id, text: command.text }).then(() => true, () => false);
+      if (gone) return;
+      if (!told) setHeld({ text: command.text, reason: "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run." });
       pasteText.current(command.text);
       focus.current();
       report.current.onCommand?.();
     };
+    let gone = false;
     void attempt();
     return () => {
+      gone = true;
       over = true;
       clearTimeout(timer);
       clearTimeout(expiry);
@@ -296,6 +305,10 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
         onPointerDown={(event) => event.preventDefault()} onClick={() => { send.current(key.data); focus.current(); }}>{key.label}</button>)}
       <button type="button" aria-label="Paste" onPointerDown={(event) => event.preventDefault()} onClick={() => void paste()}>
         <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M7 4h6v2H7zM6 5H5a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1h-1" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>
+      </button>
+      {/* The operator's Enter without the soft keyboard: it leaves focus where it is, so the keyboard stays closed. */}
+      <button type="button" className="terminal-enter" aria-label="Enter" onPointerDown={(event) => event.preventDefault()} onClick={() => send.current("\r")}>
+        <svg aria-hidden viewBox="0 0 20 20" width="18" height="18"><path d="M15 5v5a2 2 0 01-2 2H5M8.5 8.5L5 12l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
     </div> : null}
   </>;

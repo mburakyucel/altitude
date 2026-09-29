@@ -34,11 +34,11 @@ class TestWorkerStatusResume(AltitudeCase):
         S.write_json(report, {"landed": {"prs": [{"number": 101, "merged": True}]}})
         history = S.append_event(self.project, slug, "report-superseded", report=S.read_json(report))
         message = T.message(self.project, slug, "l3", "Deployment verified; finish the report.", by="l3")
-        dispatch.request_task_operation(self.project, slug, "resume", "Cause verified gone", actor="l3")
-        return task, paths, report, history, message
+        request = dispatch.request_task_operation(self.project, slug, "resume", "Cause verified gone", actor="l3")
+        return task, paths, report, history, message, request["request"]
 
     def resume_case(self, engine, states, success):
-        task, paths, report, history, message = self.owner(engine, f"Resume {engine} {len(S.list_tasks(self.project))}")
+        task, paths, report, history, message, request = self.owner(engine, f"Resume {engine} {len(S.list_tasks(self.project))}")
         slug = task["slug"]
         report_before = report.read_bytes()
         real_run = subprocess.run
@@ -61,9 +61,12 @@ class TestWorkerStatusResume(AltitudeCase):
         def launch(_engine, _name, session, prompt, **kwargs):
             self.assertEqual((_engine, session, kwargs["extra_env"]["ALTITUDE_ATTEMPT"]),
                              (engine, task["session_id"], "3"))
-            self.assertIn(message["text"], prompt)
-            # The resumed turn carries the message alone; the persona already requires a fresh report.
-            self.assertEqual(prompt, T.render_inbox([message]))
+            # The resumed turn carries the message and the resume reason alone; the persona already requires a
+            # fresh report.
+            reason = next(row for row in T.task_messages(self.project, slug) if row["id"] == request["id"])
+            self.assertEqual((reason["role"], reason["text"]), ("l3", "Cause verified gone"))
+            self.assertEqual(prompt, T.render_inbox([message, reason]))
+            self.assertIn(f"Resumed by L3 at {reason['at']} with this reason", prompt)
             self.assertIn("Every resumed code-owner turn", (config.PERSONAS / "l2.md").read_text())
             late.append(T.message(self.project, slug, "l3", "Keep the evidence.", by="l3"))
             return {"returncode": 0, "agent": {"id": f"new-{slug}", "sessionId": session,
@@ -88,7 +91,7 @@ class TestWorkerStatusResume(AltitudeCase):
         self.assertEqual(report.read_bytes(), report_before)
         self.assertIn(history, S.read_events(self.project, slug))
         self.assertEqual([row["id"] for row in T.pending(self.project, slug)],
-                         [late[0]["id"]] if success else [message["id"]])
+                         [late[0]["id"]] if success else [message["id"], request["id"]])
         self.assertFalse(current.get("resume_claim"))
         if not success:
             self.assertEqual(current["agent_id"], task["agent_id"])

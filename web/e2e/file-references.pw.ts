@@ -1,5 +1,6 @@
 import { expect, type Locator } from "@playwright/test";
 import { test } from "./fixtures";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "file-references-service.py" });
@@ -108,18 +109,14 @@ test("real file loading, missing recovery, denial, unsupported and empty states"
 });
 
 test("file references remain usable alongside listening, cancellation and microphone denial", { tag: "@chromium" }, async ({ page, request, service }, info) => {
-  // Named browser capability overlay: real MediaRecorder gets a synthetic tone, never a device.
+  // Host voice hears Chromium's fake microphone through the fixture host; a named overlay denies the microphone.
+  await fixtureHost(page);
   await page.addInitScript(`
-    const audio = new AudioContext();
-    const tone = audio.createOscillator();
-    tone.start();
+    const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     window.fixtureDenied = false;
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async (constraints) => {
       if (window.fixtureDenied) throw new DOMException("Fixture denial", "NotAllowedError");
-      await audio.resume();
-      const target = audio.createMediaStreamDestination();
-      tone.connect(target);
-      return target.stream;
+      return open(constraints);
     }});
   `);
   const { paths, slug } = await (await request.get(`${service}/fixture/files`)).json();

@@ -1,13 +1,15 @@
 import { expect, type Route } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
+import { fixtureHost } from "./hostVoice";
 
 // First run in a disposable service with nothing managed and an empty ~/Projects; fictional folders sit in ~/code.
 // The service's GitHub CLI is signed out and its one installed engine is signed in.
 test.use({ scenario: "folders" });
 
-test("first run walks the name, prerequisites, declined incident reports and projects, then Settings", async ({ page, request }, info) => {
+test("first run walks the name, prerequisites, declined incident reports, voice setup and projects, then Settings", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
+  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
   const firstRun = page.getByRole("region", { name: "First run" });
   const heading = (name: string) => firstRun.getByRole("heading", { name });
   const name = firstRun.getByLabel("Your name");
@@ -61,6 +63,15 @@ test("first run walks the name, prerequisites, declined incident reports and pro
   });
   await firstRun.getByRole("button", { name: "Continue", exact: true }).click();
 
+  const setUpVoice = firstRun.getByRole("button", { name: "Set up voice", exact: true });
+  await walk.state("06a-voice-download-offered", {
+    visible: [heading("Voice to text"), firstRun.getByText("Voice to text runs on this computer. It needs a one-time download of about 698 MB.", { exact: true }),
+      setUpVoice, firstRun.getByRole("button", { name: "Use browser recognition instead", exact: true }), firstRun.getByRole("button", { name: "Skip" })],
+    hidden: [keep],
+  });
+  await setUpVoice.click();
+  expect(host.requests).toEqual(["setup"]);
+
   const browser = page.getByRole("region", { name: "Choose a folder" });
   await walk.state("07-projects-folder-empty", {
     visible: [heading("Add your projects"), firstRun.getByText("No folders in ~/Projects yet"), firstRun.getByRole("button", { name: "Change…" }), firstRun.getByRole("button", { name: "Choose a folder elsewhere…" })],
@@ -108,5 +119,28 @@ test("first run walks the name, prerequisites, declined incident reports and pro
   await walk.state("13-settings-prerequisites", {
     visible: [page.getByText("gh auth login"), page.getByRole("button", { name: "Check again" })],
     hidden: [page.getByRole("button", { name: "Continue anyway" })],
+  });
+});
+
+test("first run's voice step: browser recognition instead, or why this computer cannot run voice", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const firstRun = page.getByRole("region", { name: "First run" });
+  const host = await fixtureHost(page, { state: "absent", download_bytes: 698435338 });
+  await walk.open("/projects?step=voice");
+  await walk.state("voice-01-browser-instead", {
+    action: () => firstRun.getByRole("button", { name: "Use browser recognition instead", exact: true }).click(),
+    visible: [firstRun.getByRole("heading", { name: "Add your projects" })],
+    hidden: [firstRun.getByRole("heading", { name: "Voice to text" })],
+  });
+  expect(host.backend).toBe("browser");
+  expect(host.requests).toEqual([]);
+
+  host.backend = "browser";
+  host.state = { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" };
+  await walk.state("voice-02-unavailable", {
+    action: () => firstRun.getByRole("button", { name: "‹ Back" }).click(),
+    visible: [firstRun.getByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 only for now.", { exact: true }),
+      firstRun.getByRole("button", { name: "Continue", exact: true })],
+    hidden: [firstRun.getByRole("button", { name: "Set up voice" }), firstRun.getByRole("button", { name: /Use browser recognition/ }), firstRun.getByRole("button", { name: "Skip" })],
   });
 });

@@ -174,7 +174,7 @@ hard-codes one, and one configured engine means one row.
 
 ### 3.2 Project header
 
-Desktop anatomy: project name (18px, 600); status line; actions: permanent **Setup** status (§3.12),
+Desktop anatomy: project name (18px, 600); status line; actions: **Setup** status while setup needs attention (§3.12),
 **Terminal** (pressed while the project terminal shows, §3.10), work-panel toggle (tinted when the panel is
 open, hidden at ≥ 1280 where the panel is inline), overflow menu. On phone **Terminal** is an icon
 button before the three dots.
@@ -190,10 +190,12 @@ single 54px shell header. The project name opens the switcher; a non-Auto pin st
 compact status. There is no second status row. The three dots open the same project actions menu as
 desktop, above any keyboard. The engine pin, the last L3 turn and model/effort defaults live on the
 project's Settings page (§3.15).
-**Setup** remains discoverable in the project header on phone and desktop, including healthy
-projects. It opens the same configuration checklist without replacing the conversation or draft.
+A healthy project's header holds no Setup control. **Setup…** in the overflow menu always opens the
+configuration checklist without replacing the conversation or draft; the header shows Setup only
+while setup needs attention (§3.12).
 
-Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
+Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Setup…** with
+the current setup status in muted text (§3.12), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
 reports a design URL; opens in a new tab).
 
@@ -280,8 +282,9 @@ a task or project conversation offer Open in terminal; elsewhere (Live session, 
 | Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
 | Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
 | A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
+| Owner not told | In a task terminal the page first tells Altitude the command so its owner hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run.", with **Copy command** and ×. |
 | Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
-| Enter | Only the operator's Enter runs it. |
+| Enter | Only the operator's Enter runs it: the keyboard's, or on phone the key row's **Enter** (§3.10), which runs the typed command without opening the soft keyboard. |
 
 Phone (390×844) and desktop (1440×900) evidence: `web/e2e/run-in-terminal.pw.ts` walks these states
 against real shells from saved task and project messages.
@@ -490,20 +493,23 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
-| Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land (browser) or transcribe (server backends) to the draft; the arrow or Enter: land or transcribe, then send at once |
-| Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Server backends transcribe the upload here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
+| Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once |
+| Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Host voice finishes its last words here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195). When English punctuation did not finish, the words land as heard and a muted hint stays until the next capture or send: "Added without punctuation: still loading. Next time it will be ready." while the model is still downloading, otherwise "Added without punctuation: this browser could not run it." | the operator edits or sends as with a typed draft |
 | Denied | mic stays available; hint reads "Microphone blocked in the browser. Typing works." (microphone or recognizer refused) | the hint stays until the next tap, which asks the browser again; a lasting block shows the hint again |
-| Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, "This browser has no speech recognition. Typing works." when the browser backend has no recognizer, or nothing when a server backend's browser lacks recording; no mic until the installation's backend is known | typing unaffected |
+| Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, "This browser has no speech recognition. Typing works." when the browser backend has no recognizer, or nothing when host voice's browser lacks audio capture; no mic until the installation's backend is known | typing unaffected |
+| Host voice | Starting: "Starting voice…" with the spinner until the microphone delivers audio; then Listening as above, with words from this computer appearing about a second behind speech (the last words may still change). Stop or the arrow: Transcribing for about half a second while the host finishes. Not set up: the mic stays; a tap shows "Voice needs a one-time download on this computer. **Set up voice**" (or "an update"), linking to Settings → Voice input; while setting up, "Voice is being set up on this computer. Typing works."; after a failed setup, "Voice setup did not finish. **Retry in Settings**. Typing works." Cannot run here: mic hidden, "Voice isn't available on this computer: <reason>. Typing works." | a recording that stops early (connection lost, speech process stopped, microphone interrupted or silent, busy on another device) keeps the words already shown, restores editing and says "Voice stopped: <reason>. Typing works." |
+| Host voice, connection lost | Listening continues: "Connection lost — still recording. Your words will catch up." and the timer keeps running; the recording stays in page memory only. When the page reconnects to a restarted server, "Catching up…" while the recording is replayed; the words already shown stay until the replay passes them, so text never shrinks. After Stop or the arrow while offline: "Waiting for connection…" with the spinner and Cancel. A third recording while two are still sending: "Voice is still sending an earlier recording. Typing works." | reconnect: the words catch up and Stop or Send completes as usual; a voice Send completes in the conversation it was sent from even after navigating away, and a Stop is cancelled on leaving; Cancel discards the recording and keeps the words shown; after two minutes without a connection: the words already shown stay, "Couldn't reach this computer: your recording's last words weren't added." and a voice Send returns its text unsent to its own conversation's draft |
 | Engine pin | Auto, or an engine name | `POST /api/chat` carries the pin; it covers chat and system turns alike and stays until changed |
 
-Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
+Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit.
 The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
 
 The installation's voice backend (`GET /api/voice`, set with `alt machine set --voice`) decides how
-words arrive: `browser` (the default, no setup) runs the browser's own speech recognition and shows
-words while speaking; `local` and an OpenAI-compatible endpoint upload the recording after Stop or
-Send and show Transcribing. Words are never simulated: only recognition that produces them
+words arrive: `host` (the default where this computer can run the speech model) streams the
+microphone to this computer, which transcribes it with its own speech model and shows words while
+speaking; `browser` (no setup; the default elsewhere, macOS for now) runs the browser's own speech
+recognition and shows words while speaking. Words are never simulated: only recognition that produces them
 progressively shows them progressively. `VoiceStates.html` shows each state at desktop and phone width.
 Browser recognition of English is punctuated on the device by a bundled model that adds only
 `.` `,` `?` and capitals; dictated words are never rewritten. Other languages keep the recognizer's
@@ -663,7 +669,10 @@ Under the Needs you heading, one switch offers **Alert me about new decisions** 
 once permission is granted. It is set per device, because each browser grants its own permission, and
 its line below states the reach honestly: a device the browser's push service can wake alerts with
 Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
-woken alerts only while Altitude is open, which on a phone means while it is on screen. A browser that cannot show notifications disables the switch and says so;
+woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
+service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
+alerts only while Altitude is open and offers turning alerts off and on there to subscribe it again; the
+line returns to the reach once a push gets through. A browser that cannot show notifications disables the switch and says so;
 refused permission says the browser's settings block alerts and how to allow them again. Every state
 leaves Needs you, its cards and all typing untouched.
 
@@ -908,7 +917,17 @@ walks the phone gesture: idle, drag started, half-way with the incoming view loa
 release completing, springing back, resistance past either end and reduced motion, plus the
 gesture exclusions and retained reading state.
 
-The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
+A message L3 sent the L2 is coordination, not conversation with the operator: it reads as one
+left-aligned muted line with a dot, **L3 ·** and the one-line summary L3 wrote when sending (for
+example "L3 · Resolve conflicts, keep the review hold"), "· N images" when it carries images, and
+**Show** (44px target on phone). A message saved without a summary reads **L3 messaged the L2**. A
+summary longer than the phone width wraps; it is never cut. Show opens the complete original message
+in place, with its links and images, and becomes **Hide**; the time sits in the gutter like any row.
+Opening one stops bottom-following so the reader keeps their place. The stored message is never
+shortened: it is the L2's input and authority evidence. Questions L3 brings to the operator keep
+their question cards. `web/e2e/task-page.pw.ts` walks summarised and unsummarised rows folded, open
+and folded again on phone and desktop.
+The composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
 Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."
 for another blocked task. Confirmed Stop reads **Send a correction to continue this session.** A
@@ -988,7 +1007,10 @@ the tab row, whose active Terminal tab carries a × (**Close terminal**); phone 
 title and **Close**. Then any notice and the dark screen filling the rest (edge to edge on phone),
 whose first line, dimmed, says "Runs as you in <folder>"; on phone a key row of Esc, Tab, a sticky
 Ctrl (pressed state), the four arrows and **Paste** (reads the clipboard), each an equal-width 44px
-target. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
+target, and last a wider accent-filled **Enter** (return-arrow icon) that sends the Return key, as
+the keyboard's would, for a typed command, a `read` or a password prompt. Enter leaves focus where it
+is, so the soft keyboard does not open for it. Desktop has no key row: its keyboard's Enter does the
+same. Showing the view opens the shell, or attaches to the running one; there is no Open step. The
 terminal keeps running when the page leaves; returning replays up to 256 KB. When the shell ends,
 however it ends, the view returns to where the operator was — Live session on a task, the project for
 the project terminal — and keeps no output; the next visit opens a fresh shell.
@@ -1001,6 +1023,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
 | Running | The screen with the cursor focused; **Close** / ×; the phone key row. |
+| Running, task terminal | Also a grey note above the screen: "This task's owner can read this terminal's output." A project terminal has no note. |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
 | Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size; it disappears when output resumes and missed output appears. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
@@ -1010,6 +1033,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Closed elsewhere (another tab or device, or the setting turned off) | The view returns; toast "The terminal was closed elsewhere." |
 | Task finished / project unmanaged | The view returns; toast "The task finished, so its terminal closed." / "The project is no longer managed, so its terminal closed." The task's Terminal tab disappears. |
 | Ended while disconnected (an Altitude restart) | The view returns; toast "The terminal closed while the connection was lost." |
+| Could not start (no reachable service manager) | The view returns; failure toast "The terminal could not start: <reason>". |
 | Chat command | Opened from a `run` block in its conversation: the command typed at the prompt, not run; or a notice with Copy when a program holds the foreground (§3.3 Chat commands). |
 | Could not read, start or refused | "Couldn't read the terminal" or "Couldn't open a terminal", the server's reason (a missing folder, the setting off, an agent request refused) and **Retry**, shown at once. |
 | Terminal code missing | The page predates an update, whose activation removed the terminal code this page would load: "Altitude was updated", "This page is from the earlier version. Reload to open the terminal." If Altitude cannot be reached: "Couldn't load the terminal", "Check the connection to Altitude, then reload." Both add "The shell keeps running. Reloading clears text you have typed but not sent." and **Reload**; nothing reloads by itself. Walkthrough: `web/e2e/app-update.pw.ts`. |
@@ -1026,11 +1050,11 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 
 ### 3.12 First run and project setup
 
-Shown on any project route when no project is managed: a centred card with four steps, **Your
-name**, **Prerequisites**, **Incident reports** and **Projects**. Desktop shows a numbered stepper
-(done steps ticked); phone shows "Step N of 4 · Title" and keeps the step's buttons in a sticky bar
-above the tab bar. The step is `?step=` so reload and browser Back keep the place. The name and
-incident steps have **Skip**, prerequisites always allow **Continue anyway**, and every step but the
+Shown on any project route when no project is managed: a centred card with five steps, **Your
+name**, **Prerequisites**, **Incident reports**, **Voice** and **Projects**. Desktop shows a numbered stepper
+(done steps ticked); phone shows "Step N of 5 · Title" and keeps the step's buttons in a sticky bar
+above the tab bar. The step is `?step=` so reload and browser Back keep the place. The name,
+incident and voice steps have **Skip**, prerequisites always allow **Continue anyway**, and every step but the
 first has **‹ Back**, which saves nothing. Each step is also
 a Settings row (§3.15), and the name reads “you” wherever none is known.
 
@@ -1049,6 +1073,13 @@ a Settings row (§3.15), and the name reads “you” wherever none is known.
   states the sanitization and whether the repository is public. Publishing reads **Save and
   continue** (Checking… while the GitHub CLI confirms the repository); a refusal shows the server
   sentence under the choice and keeps the step. Keeping incidents local saves nothing.
+- **Voice to text**: where this computer can run the speech model, "Voice to text runs on this
+  computer. It needs a one-time download of about 698 MB." with **Set up voice** (saves This computer
+  and starts the download, which continues in the background), **Use browser recognition instead** and
+  **Skip**; once set up or setting up, the step says so and offers **Continue**. Where it cannot run,
+  "Voice to text can’t run on this computer: <reason>." with **Use browser recognition** (or
+  **Continue** when that is already the choice). A failed save shows the server sentence and keeps the
+  step; a setup that later fails is retried from Settings and never blocks first run.
 - **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser
   with **Use "<folder>"** in place; with two or more folders, "N folders" and **Add all N**; one row per
   folder directly inside it with **Add project**; then "A project can live anywhere: **Choose a
@@ -1077,8 +1108,13 @@ For a removed project with retained history, `POST /api/project/add` reports `re
 Its conversation and saved queue remain; setup reuses healthy configuration. Historical replies
 or errors do not determine a new first conversation's outcome.
 
-**Setup** stays in the project header with **Checking**, **Ready** or **Needs attention**; unavailable
-reads say **Unavailable**, and non-Git projects say **Conversation ready**. It opens
+**Setup…** in the project menu reads **Checking**, **Ready** or **Needs attention**; unavailable reads say
+**Unavailable**, and non-Git projects say **Conversation ready**. The header shows the same status as a
+**Setup · <status>** control only while setup needs attention: setup is running, a current requirement
+is missing or failed (including one an update introduces), or the read failed. A first read that is
+still loading and a ready project keep the header quiet. Opened from the header, the control stays
+until focus leaves it, so closing the checklist returns focus there; after resolution it then
+disappears. There is no dismissal or seen-state: the current checks alone decide. Both open
 a focused desktop overlay or full-height phone sheet with folder, repository, instructions, Git
 guards and coordinator rows. Problems appear before healthy checks. Text and icons distinguish
 pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
@@ -1102,10 +1138,11 @@ completion, with **Open conversation** available.
 
 Walkthrough states at phone and desktop: fresh registration, healthy/reused project, newly missing
 requirement, stale guards, custom-hook review, active progress, interruption, failed/denied repair
-and successful retry. Also cover empty folder discovery, initial loading, failed read with Retry,
+and successful retry. Also cover the quiet healthy header, menu access, the header appearing for a new
+requirement and leaving after repair, empty folder discovery, initial loading, failed read with Retry,
 offline observations and non-Git outcomes. Status changes use a polite live region, errors an alert,
 and controls 44px targets. The sheet contains focus and scrolling, closes with Escape/Back, and
-restores focus to Setup. Conversation/draft and reading position survive. Listening belongs to
+restores focus to the Setup control or menu button it was opened from. Conversation/draft and reading position survive. Listening belongs to
 the existing conversation opened by **Discuss with L3**, including its recording/cancel/error states.
 
 ### 3.13 Restart banner
@@ -1263,26 +1300,24 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers Browser recognition (default) and Your speech service. Descriptions state
-where audio goes and any setup or charges. Browser saves immediately; Your speech service opens a
-**Service URL** form with **Save service**, a line naming the OpenAI-compatible
-`/v1/audio/transcriptions` endpoint and a **How to run one** link to the setup docs. Model and key
-stay behind **Hosted provider? Add a key or model** and are shown directly once a key or a
-non-default model is saved. Back discards unsaved service edits. Saving stays on the page. Keys are
-write-only: **Key set · never shown** has a **Replace** control; a blank replacement removes it.
-Editing the URL clears retained-key selection; no stored key follows a new destination. A
-successful save updates only the next capture. Uploads bind to their original backend/destination
-and refuse a changed selection before forwarding audio. The overview row names the service's host.
+The voice page offers two choices, This computer and Browser recognition, each saved immediately.
+Descriptions state where audio goes and any setup. This computer shows its setup below the choice:
+"Needs a one-time download of about 698 MB, checked against this release." with **Set up voice**;
+while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready, "Ready
+on this computer. While you dictate, the speech process uses about 2 GB of memory." and **Remove voice
+(698 MB)**; a failed setup shows its reason with **Retry**; an outdated runtime asks for an update with
+the same button; the model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When
+this computer cannot run it, the choice is disabled and says why. A successful save updates only the
+next capture; a recording keeps the selection it started with and stops when it changes.
 
 | State | What appears and what actions do |
 | --- | --- |
 | Loading | Loading settings…; no selected default or editable controls. |
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
-| Saved browser | Chosen radio, Saved.; service form absent. |
-| Service editing | URL required; hosted link reveals optional model/key; explicit save; overview still reflects persisted choice. |
-| Saving | Saving… and disabled controls until the request answers. |
-| Failed/denied save | Server explanation and Retry; draft fields and saved choice preserved. A changed backend or URL offers Reload settings; concurrent model/key edits use last-writer semantics. |
-| Saved service | Saved.; key entry clears and becomes Key set when configured. Returning shows Your speech service · host. |
+| Saved browser | Chosen radio, Saved. |
+| Saved host | Chosen radio, Saved. and the setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
+| Saving | Saving… and disabled choices until the request answers. |
+| Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
 Under **This project**, opened from a project, one row names that project and opens
 `/settings/projects/<name>`; a direct visit lists every managed project under **Projects** instead.
@@ -1433,7 +1468,7 @@ retain phone/desktop state verification and accessible review evidence.
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
-| Composer voice | `POST /api/transcribe` | none; audio is deleted after transcription |
+| Host voice | `POST /api/voice/host` (setup, cancel, remove), `POST /api/voice/live`, `/api/voice/live/<id>/audio`, `/cancel` | the speech model under `~/.altitude/speech`; audio stays in memory for the recording only |
 | Monitor | `GET /api/monitor` | none |
 
 The shell's one `GET /api/changes` stream refetches the mounted overview, monitor, project and task reads

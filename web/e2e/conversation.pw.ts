@@ -1,6 +1,7 @@
 import { test } from "./fixtures";
 import { expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
 import { fixtureProject, fixtureTask } from "./fixture-data";
+import { fixtureHost } from "./hostVoice";
 import { walkthrough } from "./walkthrough";
 
 /*
@@ -9,9 +10,9 @@ import { walkthrough } from "./walkthrough";
  * dividers, the folded and grouped system lines, and the expanded card. States the live service cannot
  * be asked to produce on demand (a turn in progress, a failed turn, an FYI, an empty or failed read, a
  * report prompt in the new label/value shape, a streamed or refused send, the queue, the voice states)
- * are overlaid on the real rows with page.route, named "-overlay". Every POST /api/chat, /api/chat/remove,
- * /api/l3/engine, and /api/transcribe is intercepted: nothing here sends a message to L3, changes the
- * engine pin, or uploads audio.
+ * are overlaid on the real rows with page.route, named "-overlay". Every POST /api/chat, /api/chat/remove
+ * and /api/l3/engine is intercepted, and voice runs against the fixture host (hostVoice.ts): nothing here
+ * sends a message to L3, changes the engine pin, or runs a speech model.
  */
 
 type Row = Record<string, unknown> & { role: string; text: string; trigger?: string; turn_id?: string; at?: string };
@@ -543,21 +544,14 @@ test("the engine pin: Auto and the engines the API names; the pin posts and is r
   await expect.poll(() => pins).toEqual([first.engine, null]);
 });
 
-/** A microphone that yields a tone, so the waveform has something to draw; Chromium records it as webm. */
+/** Chromium's fake microphone, which the test can hold while it opens (`window.fixtureMicGate`). */
 const FAKE_MIC = `
-  const context = new AudioContext();
-  const oscillator = context.createOscillator();
-  oscillator.frequency.value = 220;
-  oscillator.start();
+  const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
   Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
     configurable: true,
-    // A fresh stream per call, as a real microphone gives: the composer stops the tracks it got.
-    value: async () => {
+    value: async (constraints) => {
       await window.fixtureMicGate;
-      await context.resume();
-      const destination = context.createMediaStreamDestination();
-      oscillator.connect(destination);
-      return destination.stream;
+      return open(constraints);
     },
   });
 `;
@@ -582,19 +576,15 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   await page.addInitScript(FAKE_MIC);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
-  let answer: "ok" | "fail" = "ok";
-  let release: () => void = () => {};
-  let gate = new Promise<void>((resolve) => (release = resolve));
-  const uploads: string[] = [];
+  const host = await fixtureHost(page);
+  host.final = "and walk every state";
+  // Live words are held until the listening draft has been walked unchanged.
+  let hearWords: () => void = () => {};
+  host.holdAudio = new Promise<void>((resolve) => (hearWords = resolve));
   const posts: string[] = [];
   await page.route((url) => url.pathname === "/api/chat", (route) => {
     posts.push(route.request().postData() ?? "");
     return route.fulfill({ status: 409, json: { error: "Unexpected send" } });
-  });
-  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
-    uploads.push(route.request().headers()["content-type"] ?? "");
-    await gate;
-    return answer === "ok" ? route.fulfill({ json: { text: "and walk every state" } }) : route.fulfill({ status: 503, json: { error: "speech service unavailable" } });
   });
   const wave = v.main.locator(".composer-wave");
   const timer = v.main.getByLabel("Recording time", { exact: true });
@@ -610,9 +600,9 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   });
   await expectVoiceDraftLocked(page, v.field, "Keep the draft");
   await expectStacked(v);
-  await page.evaluate("window.releaseFixtureMic()");
   await walk.state("01-listening-three-controls-overlay", {
-    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field],
+    action: () => page.evaluate("window.releaseFixtureMic()"),
+    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
     hidden: [v.mic, transcribing],
   });
   await expect(v.hint).toHaveText("Listening… Stop to add text, or Send.");
@@ -647,11 +637,16 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   });
   await expect(v.field).toHaveValue("Keep the draft");
   await expect(v.field).toBeEditable();
-  expect(uploads).toEqual([]);
+  expect(host.finals).toBe(0);
+  await expect.poll(() => host.requests.at(-1)).toBe("live/fixture/cancel");
+  hearWords();
+  host.holdAudio = null;
 
+  let release: () => void = () => {};
+  host.holdFinal = new Promise<void>((resolve) => (release = resolve));
   await v.mic.click();
   await expect(v.stop).toBeVisible();
-  await page.waitForTimeout(700);
+  await expect(v.field).toHaveValue(/^Keep the draft check/, { timeout: 5000 });
   await walk.state("03-transcribing-overlay", {
     action: () => v.stop.click(),
     visible: [transcribing, v.field, v.cancel, v.main.locator(".composer-box .spinner"), ...(!v.phone ? [wave] : [])],
@@ -659,7 +654,10 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   });
   await expect(v.mic).toBeDisabled();
   await expect(v.send).toBeDisabled();
-  await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  // The words heard so far stay shown, locked, until the final words replace them.
+  await expect.poll(() => host.finals).toBe(1);
+  await expectVoiceDraftLocked(page, v.field, await v.field.inputValue());
+  await expect(v.field).toHaveValue(/^Keep the draft check/);
   await expectStacked(v);
   await page.keyboard.press("Enter");
   expect(posts).toEqual([]);
@@ -675,20 +673,20 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   await expect(v.field).toBeEditable();
   expect(await v.main.locator(".composer button").allInnerTexts()).not.toContain("Undo");
   await expect(v.hint).toHaveText("L3 answers or creates one task. Shift + Enter for a new line.");
-  expect(uploads[0]).toMatch(/^audio\//);
+  expect(host.finals).toBe(1);
 
-  answer = "fail";
-  gate = Promise.resolve();
+  host.failFinal = { status: 503, error: "Voice stopped: the speech process stopped." };
   await v.mic.click();
   await expect(v.stop).toBeVisible();
-  await page.waitForTimeout(500);
+  await expect(v.field).toHaveValue(/^Keep the draft and walk every state check/, { timeout: 5000 });
   const failure = v.main.getByRole("alert").filter({ hasText: "Could not transcribe. Typing works." });
   await walk.state("05-transcription-failed-overlay", {
     action: () => v.send.click(),
     visible: [failure, v.mic],
     hidden: [transcribing, v.stop],
   });
-  await expect(v.field).toHaveValue("Keep the draft and walk every state");
+  // Words shown before the failure stay in the draft; nothing is sent.
+  await expect(v.field).toHaveValue(/^Keep the draft and walk every state check/);
   await expect(v.field).toBeEditable();
   await expect(v.mic).toBeEnabled();
   expect(posts).toEqual([]);
@@ -703,13 +701,11 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
   let releaseTranscript: () => void = () => {};
   let releaseSend: () => void = () => {};
-  const transcriptGate = new Promise<void>((resolve) => (releaseTranscript = resolve));
   const sendGate = new Promise<void>((resolve) => (releaseSend = resolve));
   const posts: string[] = [];
-  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
-    await transcriptGate;
-    return route.fulfill({ json: { text: "and send this now" } });
-  });
+  const host = await fixtureHost(page);
+  host.final = "and send this now";
+  host.holdFinal = new Promise<void>((resolve) => (releaseTranscript = resolve));
   await page.route((url) => url.pathname === "/api/chat", async (route) => {
     posts.push((route.request().postDataJSON() as { text: string }).text);
     await sendGate;
@@ -722,7 +718,7 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   await v.field.fill("Keep the draft");
   await v.mic.click();
   await expect(v.stop).toBeVisible();
-  await page.waitForTimeout(700);
+  await expect(v.field).toHaveValue(/^Keep the draft check/, { timeout: 5000 });
   const transcribing = v.main.getByText("Transcribing…", { exact: true });
   await walk.state("01-send-at-once-transcribing-overlay", {
     action: () => v.send.click(),
@@ -752,25 +748,19 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   expect(posts).toEqual(["Keep the draft and send this now"]);
 });
 
-test("voice: cancelling delayed Send transcription restores editing and ignores its late result", { tag: "@chromium" }, async ({ page, request }, info) => {
+test("voice: cancelling delayed Send transcription restores editing and ignores its late result", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await page.addInitScript(FAKE_MIC);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
+  const host = await fixtureHost(page);
+  host.final = "cancelled late transcript";
   let release!: () => void;
-  let uploaded!: () => void;
-  let delivered!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const upload = new Promise<void>((resolve) => { uploaded = resolve; });
-  const delivery = new Promise<void>((resolve) => { delivered = resolve; });
+  host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
+  // Cancel abandons the final request; the held answer comes later and must change nothing.
+  const abandoned = new Promise<void>((resolve) => page.on("requestfailed", (request) => { if (/\/api\/voice\/live\/.*[?&]final=1/.test(request.url())) resolve(); }));
   const posts: string[] = [];
-  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
-    uploaded();
-    await gate;
-    await route.fulfill({ json: { text: "cancelled late transcript" } }).catch(() => {});
-    delivered();
-  });
   await page.route((url) => url.pathname === "/api/chat", (route) => {
     posts.push(route.request().postData() ?? "");
     return route.fulfill({ status: 409, json: { error: "Unexpected send" } });
@@ -779,9 +769,9 @@ test("voice: cancelling delayed Send transcription restores editing and ignores 
   await v.field.fill("Keep the preexisting draft");
   await v.mic.click();
   await expect(v.stop).toBeVisible();
-  await page.waitForTimeout(500);
+  await expect(v.field).toHaveValue(/^Keep the preexisting draft check/, { timeout: 5000 });
   await v.send.click();
-  await upload;
+  await expect.poll(() => host.finals).toBe(1);
   await walk.state("01-pending-send-can-cancel-overlay", {
     visible: [v.cancel, v.field, v.main.locator(".composer-box .spinner")], hidden: [v.stop],
   });
@@ -793,8 +783,8 @@ test("voice: cancelling delayed Send transcription restores editing and ignores 
   await expect(v.field).toHaveValue("Keep the preexisting draft");
   await expect(v.field).toBeEditable();
   await v.field.fill("Edited after cancellation");
+  await abandoned;
   release();
-  await delivery;
   await walk.state("03-late-cancelled-result-ignored-overlay", {
     visible: [v.field], hidden: [v.bubble("cancelled late transcript"), v.main.locator(".msg-row[data-pending]")],
   });
@@ -807,6 +797,7 @@ test("voice: denied and unavailable", { tag: "@chromium" }, async ({ page, reque
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false }));
+  await fixtureHost(page);
   await page.addInitScript(`
     Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
       configurable: true,

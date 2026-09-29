@@ -502,6 +502,11 @@ operator-required proposal, security or product decisions. A member that exists 
 Altitude rule or mechanism re-asks a settled decision stays open until settled, and L3 also owns
 repairing that friction through an existing owner or one task.
 For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
+An explicit `task resume --reason` is part of the claimed batch: the claim appends it once to the conversation as
+the requester's message, keyed by the request id, and the owner reads it after the messages already waiting, headed "Resumed by
+<actor> at <time> with this reason". It shares the batch's delivery receipts and failure restoration,
+wakes nothing by itself and is never decision or approval evidence.
+A resume with no request and an empty inbox continues from the owner's progress file.
 
 A reported task with an open PR retains its owner conversation. The ordinary composer and coordinator
 Resume path validate a currently open recorded PR, retain the previous report and verifier result in
@@ -678,11 +683,13 @@ hold requires approval of that renewed requirement. Failed reconciliation follow
 
 Voice capture does not add a lifecycle state. Browser recognition of English is punctuated and
 capitalized on the device by a bundled model as each phrase is finalized; Altitude never rewrites
-dictated words. With the default browser backend, recognized words
-appear in the read-only draft while listening and **Stop** lands them once the last phrase is
-punctuated, without a transcription step;
-with your speech service, **Stop** transcribes the bounded recording
-into the editable draft. The send arrow lands or transcribes, appends and sends at once. Both sending paths use
+dictated words. With host voice, the microphone streams to this computer, words appear in the
+read-only draft while listening and **Stop** lands the host's final words about half a second later;
+the recording keeps going through a lost connection and its words catch up, and after Stop or Send it
+waits at most two minutes for the connection. With browser recognition, recognized words appear in
+the read-only draft while listening and **Stop** lands them once the last phrase is punctuated. A
+recording that stops early keeps the words already shown and says why. The send arrow lands, appends
+and sends at once. Both sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.

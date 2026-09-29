@@ -139,6 +139,16 @@ class Service(DarwinCase):
         with self.assertRaisesRegex(RuntimeError, "still running"):
             platform.control("stop")
 
+    def test_service_settings_come_from_the_running_service(self):
+        environment = self.patch(platform, "_environment", return_value=[b"ALTITUDE_PORT=9443", b"HOME=/Users/x"])
+        with self.assertRaisesRegex(RuntimeError, "No Altitude service is installed"):
+            platform.service_settings()
+        platform.service_path().parent.mkdir(parents=True)
+        platform.service_path().write_text("defined")
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL, path=platform.service_path())
+        self.assertEqual(platform.service_settings(), (4242, {"ALTITUDE_PORT": "9443"}))
+        environment.assert_called_with(4242)
+
     def test_logs_read_the_service_log(self):
         self.assertEqual(platform.logs(), "")
         platform.logs_dir().mkdir(parents=True)
@@ -277,7 +287,7 @@ class Jobs(DarwinCase):
 
 
 class Processes(DarwinCase):
-    """A fixture process table: pid -> (parent, start, coalition, session, environment, name)."""
+    """A fixture process table: pid -> (parent, start, coalition, name)."""
 
     def setUp(self):
         super().setUp()
@@ -286,14 +296,11 @@ class Processes(DarwinCase):
         self.patch(platform, "_pids", side_effect=lambda: list(self.table))
         self.patch(platform, "_bsd", side_effect=self.bsd)
         self.patch(platform, "_coalition_of", side_effect=lambda pid: self.row(pid)["coalition"])
-        self.patch(platform, "_environment", side_effect=lambda pid: self.row(pid)["env"])
-        self.patch(platform.os, "getsid", side_effect=lambda pid: self.row(pid)["session"])
         self.patch(platform.os, "kill", side_effect=self.kill)
         self.patch(platform.time, "sleep")
 
-    def add(self, pid, *, parent=1, start=1, coalition=1, session=1, env=(), name=b"proc", zombie=False):
-        self.table[pid] = {"parent": parent, "start": start, "coalition": coalition, "session": session,
-                           "env": list(env), "name": name, "zombie": zombie}
+    def add(self, pid, *, parent=1, start=1, coalition=1, name=b"proc", zombie=False):
+        self.table[pid] = {"parent": parent, "start": start, "coalition": coalition, "name": name, "zombie": zombie}
 
     def row(self, pid):
         if pid not in self.table:
@@ -307,7 +314,7 @@ class Processes(DarwinCase):
 
     def kill(self, pid, sig):
         self.killed.append((pid, sig))
-        if sig == signal.SIGKILL or sig == signal.SIGTERM and not self.table[pid].get("ignores", False):
+        if sig == signal.SIGKILL or not self.table[pid].get("ignores", False):
             del self.table[pid]
 
     def test_identity_liveness_and_name(self):
@@ -326,7 +333,7 @@ class Processes(DarwinCase):
     def test_stop_signals_every_member_checked_again_and_escalates_after_the_grace(self):
         self.add(1)  # launchd: another coalition
         self.add(50, coalition=9)
-        self.add(51, coalition=9, session=51)
+        self.add(51, coalition=9)
         self.add(52, coalition=9, start=3)
         self.table[52]["ignores"] = True  # ignores SIGTERM
         clock = iter([0, 0, 1, 6, 6, 7, 7])
@@ -370,35 +377,24 @@ class Processes(DarwinCase):
             platform._members(9)
         self.assertFalse(platform._confirm_stopped(9))
         self.assertEqual(self.killed, [])
-        job = platform._jobs() / "dev.altitude.job.altitude-terminal-t1"
-        job.mkdir(parents=True)
-        (job / "coalition").write_text("9")
-        platform.signal_terminal("t1", mock.Mock(pid=5), b"ALTITUDE_TERMINAL=t1", signal.SIGHUP)  # best effort
-        self.assertEqual(self.killed, [])
 
-    def test_session_signal_reaches_the_session_and_marked_processes_only(self):
-        self.add(70, session=70)
-        self.add(71, session=70)
-        self.add(72, session=72, env=[b"ALTITUDE_TERMINAL=t1"])
-        self.add(73, session=73, env=[b"ALTITUDE_TERMINAL=t2"])
-        self.add(74, session=74)
-        platform.signal_session(70, b"ALTITUDE_TERMINAL=t1", signal.SIGHUP)
-        self.assertEqual(self.killed, [(70, signal.SIGHUP), (71, signal.SIGHUP), (72, signal.SIGHUP)])
-
-    def test_terminal_signal_reaches_its_coalition_but_not_the_supervisor(self):
-        job = platform._jobs() / "dev.altitude.job.altitude-terminal-t1"
+    def test_a_terminal_is_a_job_on_its_tty_that_stop_hangs_up(self):
+        argv = platform.terminal_job("altitude-terminal-t1.service", "/dev/ttys009", ["zsh", "-l"], {"TERM": "xterm"},
+                                     grace=2)
+        spec = json.loads(argv[7])
+        self.assertEqual((spec["label"], spec["mode"], spec["tty"], spec["command"], spec["grace"]),
+                         ("dev.altitude.job.altitude-terminal-t1", "terminal", "/dev/ttys009", ["zsh", "-l"], 2))
+        self.assertEqual(spec["env"]["TERM"], "xterm")
+        job = platform._jobs() / spec["label"]
         job.mkdir(parents=True)
+        (job / "spec.json").write_text(json.dumps(spec))
         (job / "coalition").write_text("12")
-        (job / "supervisor").write_text("80")
-        (job / "leader").write_text("81")
-        for pid in (80, 81, 82):
+        for pid in (81, 82):
             self.add(pid, coalition=12)
         self.add(83, coalition=13)
-        proc = mock.Mock(pid=5)
-        self.assertEqual(platform.terminal_leader("t1", proc), 81)
-        self.assertIsNone(platform.terminal_leader("t2", proc))
-        platform.signal_terminal("t1", proc, b"ALTITUDE_TERMINAL=t1", signal.SIGHUP)
+        platform.job_stop("altitude-terminal-t1.service", {}, timeout=32)
         self.assertEqual(self.killed, [(81, signal.SIGHUP), (82, signal.SIGHUP)])
+        self.assertFalse(job.exists())
 
     def test_agent_connection_uses_coalitions_and_socket_holders(self):
         peer, local = ("127.0.0.1", 51000), ("127.0.0.1", 8443)
@@ -406,7 +402,7 @@ class Processes(DarwinCase):
                                       platform.ipaddress.ip_address("127.0.0.1"), 8443)
         held = {}
         self.patch(platform, "_tcp_handles", side_effect=lambda pid: held[pid])
-        self.patch(platform, "_altitude_coalitions", return_value={20})
+        self.patch(platform, "_altitude_coalitions", return_value={20: "altitude-codex-w1.service"})
         altd = os.getpid()
         for case, holder, refused in (("browser", dict(parent=1, coalition=5), False),
                                       ("worker job", dict(parent=1, coalition=20), True),
@@ -418,6 +414,9 @@ class Processes(DarwinCase):
                 held.clear()
                 held.update({altd: set(), 4000: {handle}})
                 self.assertEqual(terminal.agent_connection(peer, local), refused)
+        self.table[4000].update(parent=1, coalition=20)  # the task's worker job holds the socket
+        self.assertTrue(terminal.owner_connection(peer, local, "altitude-codex-w1.service"))
+        self.assertFalse(terminal.owner_connection(peer, local, "altitude-codex-w2.service"))
         self.table[4000].update(parent=1, coalition=5)
         held[4000] = set()  # the client end is held by nobody visible (hidden descriptors): unidentified, refused
         self.assertTrue(terminal.agent_connection(peer, local))

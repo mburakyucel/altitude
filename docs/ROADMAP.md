@@ -22,6 +22,10 @@ and visibility decisions remain separate. Private-trial readiness
 requires exact OS/architecture, application/engine versions and observed compatibility evidence;
 fixtures do not establish fresh-machine or live-provider success.
 
+Validation work favors reusable automated entry points that owners run against their candidates over
+steps the operator repeats by hand; each [validation environment](DEVELOPMENT.md#validation-environments)
+names what it does not establish, and remaining manual steps name their reason.
+
 ### Portable installation: delivered and remaining
 
 PR #356 delivers the Linux CLI, daemon and
@@ -33,12 +37,15 @@ installation, native Mac behavior or engine authentication.
 
 The manually dispatched [Linux installation lifecycle harness](DEVELOPMENT.md#installation-lifecycle-acceptance)
 adds packaged installation, real per-user service/HTTPS checks, update, failed activation recovery and
-uninstall retention on disposable Ubuntu 24.04 runners. Its first hosted execution remains pending
-until a run's artifact/source identity and results are recorded. The synthetic version pair uses
+uninstall retention on disposable Ubuntu 24.04 machines; the local VM run also restarts the machine and
+checks that the service starts again unattended, and runs the built `install.sh` through its public
+command against a release server inside the guest. Its hosted workflow has not executed; the
+[local VM run](DEVELOPMENT.md#local-vm-run) executes the same harness on the development host, and
+acceptance for a release needs a recorded run for its source commit. The synthetic version pair uses
 one source commit, so it supplies no cross-release migration evidence. Runs are independent of
 other owners' delivery and the required PR gate. This is partial #226 acceptance; the parent stays
 open, and macOS remains with `macos-support-native-runtime-behind-the`. Minimal OS installation,
-reboot/login/logout, browser/device CA trust, public-download bootstrap, native confinement and
+login/logout, browser/device CA trust, download from GitHub's published release, native confinement and
 live-provider compatibility remain outside this harness's evidence.
 
 The private-trial path is Linux-only until the macOS evidence below is recorded. The following

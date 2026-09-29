@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
-import { FakeMediaRecorder, FakeSpeechRecognition, installVoiceBrowser, punctuationFixture, sentence } from "./voiceTest";
+import type { HostVoiceOptions } from "./voiceTest";
+import { FakeSpeechRecognition, hostMicrophone, hostVoiceServer, installVoiceBrowser, punctuationFixture, sentence, speak } from "./voiceTest";
+import { HostCapture, UNREACHED, WAIT_MS } from "./hostCapture";
+import { MemoryRouter } from "react-router";
 import { presetVoiceBackend, updateVoiceSettings } from "./voiceBackend";
 
 /*
@@ -39,27 +42,37 @@ function mount(props: Partial<ComposerProps> & { initial?: string } = {}) {
   return { ...view, user, field: screen.getByLabelText("Message L3 about altitude") as HTMLTextAreaElement };
 }
 
-/** /api/transcribe answers `text` (or 503 for null); `gate` holds the answer until released. */
-function stubTranscribe(text: string | null, gate?: Promise<void>) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      if (!String(input).includes("/api/transcribe")) return jsonResponse({ error: "not found" }, 404);
-      await gate;
-      return text == null ? jsonResponse({ error: "speech service unavailable" }, 503) : jsonResponse({ text });
-    }),
-  );
+/** This computer's speech service: it answers `words` while listening and `final` at the end. */
+function hostVoice(words = "", final: string | null = null, fallback?: HostVoiceOptions["fallback"]) {
+  return hostVoiceServer({ words, final, fallback }).install();
 }
+
+/** Let every answer and render queued so far run (real timers). */
+const settle = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+
+/** Start host voice and say half a second, so the composer is Listening with its first chunk answered. */
+async function listen(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Start voice input" }));
+  await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+  speak();
+  await screen.findByText("Listening… Stop to add text, or Send.");
+  await settle();
+}
+
+/** Advance fake timers inside act so every answer and render they release runs. */
+const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
 describe("Composer", () => {
   it("keeps text selectable but rejects typing and paste throughout microphone startup and listening", async () => {
     const { getUserMedia } = installVoiceBrowser();
+    hostVoice();
     const stream = await getUserMedia();
     let open!: (stream: MediaStream) => void;
     getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { open = resolve; }));
     const { user, field } = mount({ initial: "Keep this text" });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    for (const status of ["Opening microphone…", "Listening… Stop to add text, or Send."]) {
+    const next = [() => open(stream), () => hostMicrophone.speak(8000), () => undefined];
+    for (const status of ["Opening microphone…", "Starting voice…", "Listening… Stop to add text, or Send."]) {
       expect(screen.getByRole("status")).toHaveTextContent(status);
       expect(screen.getByRole("status").closest(".composer-box")).not.toBeNull();
       expect(field).toHaveAttribute("readonly");
@@ -67,7 +80,7 @@ describe("Composer", () => {
       await user.keyboard("mutated{Backspace}");
       await user.paste("pasted text");
       expect(field).toHaveValue("Keep this text");
-      await act(async () => open(stream));
+      await act(async () => next.shift()!());
     }
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
     await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
@@ -77,6 +90,7 @@ describe("Composer", () => {
 
   it.each(["resolve", "reject"])("ignores cancelled microphone acquisition %s after a new recording starts", async (result) => {
     const { getUserMedia } = installVoiceBrowser();
+    hostVoice();
     const stopOld = vi.fn();
     let open!: (stream: MediaStream) => void;
     let reject!: (error: Error) => void;
@@ -87,52 +101,61 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     await act(async () => result === "resolve" ? open({ getTracks: () => [{ stop: stopOld }] } as unknown as MediaStream) : reject(new DOMException("Late denial", "NotAllowedError")));
     expect(stopOld).toHaveBeenCalledTimes(result === "resolve" ? 1 : 0);
-    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    await settle();
+    expect(HostCapture.retained.size).toBe(1);
     expect(field).toHaveValue("Draft");
     expect(field).toHaveAttribute("readonly");
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
   });
 
-  it.each(["resolve", "reject"])("a cancelled transcription cannot %s into a newer recording", async (result) => {
+  it("a cancelled voice Send cannot land into a newer recording when its request is answered later", async () => {
     installVoiceBrowser();
-    let resolve!: (response: Response) => void;
-    let reject!: (error: Error) => void;
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((done, fail) => { resolve = done; reject = fail; })));
+    const server = hostVoice("stale transcript");
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Original", onSubmit });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(user);
+    expect(field).toHaveValue("Original stale transcript");
+    server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Transcribing…");
+    const shown = field.value;
     await user.click(field);
     await user.keyboard("{Enter}changed");
     await user.paste("pasted");
-    expect(field).toHaveValue("Original");
+    expect(field).toHaveValue(shown);
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Original");
     expect(field).not.toHaveAttribute("readonly");
     await user.type(field, " edited");
+    server.words = "";
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await act(async () => result === "resolve" ? resolve(jsonResponse({ text: "stale transcript" })) : reject(new Error("stale failure")));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    speak();
+    // Every held answer arrives now, the cancelled recording's final one included.
+    server.final = "stale final";
+    await act(async () => server.reconnect());
+    await settle();
     expect(screen.getByRole("status")).toHaveTextContent("Listening…");
     expect(field).toHaveValue("Original edited");
     expect(field).toHaveAttribute("readonly");
     expect(onSubmit).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Original edited");
   });
 
-  it("a transcription timeout restores usable editing and the preexisting draft without sending", async () => {
+  it("a voice Send the connection never returns to restores usable editing and the preexisting draft without sending", async () => {
     installVoiceBrowser();
-    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")));
-    })));
+    const server = hostVoice();
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Keep this", onSubmit });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(user);
+    server.connection = "hold";
     vi.useFakeTimers();
     try {
       await act(async () => { screen.getByRole("button", { name: "Send" }).click(); });
       expect(field).toHaveAttribute("readonly");
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+      await advance(WAIT_MS);
+      expect(screen.getByRole("alert")).toHaveTextContent(UNREACHED);
       expect(field).not.toHaveAttribute("readonly");
       expect(field).toHaveValue("Keep this");
       expect(onSubmit).not.toHaveBeenCalled();
@@ -210,13 +233,13 @@ describe("Composer", () => {
 
   it("keeps dictated edits in unconfirmed recovery across remount", async () => {
     installVoiceBrowser();
-    stubTranscribe("and the tests");
+    hostVoice("", "and the tests");
     const first = mount({ onSubmit: () => Promise.reject(new TypeError("Lost receipt")) });
     await first.user.type(first.field, "Inspect the sample");
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByRole("alert");
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await first.user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await listen(first.user);
+    await first.user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(first.field).toHaveValue("Inspect the sample and the tests"));
     first.unmount();
     expect(mount().field).toHaveValue("Inspect the sample and the tests");
@@ -416,11 +439,11 @@ describe("Composer", () => {
 
   it.each(["Escape", "Cancel"])("Listening: Cancel, Stop, Send; %s goes back with nothing added", async (action) => {
     const { getUserMedia, track } = installVoiceBrowser();
-    stubTranscribe("never used");
+    const server = hostVoice("", "never used");
     const { user, field } = mount({ initial: "Keep this" });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(user);
 
-    const stop = await screen.findByRole("button", { name: "Stop voice input" });
+    const stop = screen.getByRole("button", { name: "Stop voice input" });
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(screen.getByRole("button", { name: "Cancel voice input" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
@@ -436,18 +459,19 @@ describe("Composer", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument());
     expect(field).toHaveValue("Keep this");
     expect(track.stop).toHaveBeenCalled();
-    expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes("/api/transcribe"))).toBe(false);
+    expect(server.audio.some((call) => call.final)).toBe(false);
+    await waitFor(() => expect(server.calls.at(-1)?.path).toBe("/api/voice/live/rec-1/cancel"));
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("Transcribing then Landed: the transcript lands in the draft, cursor at the end, and nothing else appears", async () => {
     installVoiceBrowser();
-    let release: () => void = () => {};
-    stubTranscribe("and the tests", new Promise<void>((resolve) => (release = resolve)));
+    const server = hostVoice("", "and the tests");
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Fix the timer", onSubmit });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await listen(user);
+    server.connection = "hold";
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     expect(onSubmit).not.toHaveBeenCalled();
     expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
@@ -455,7 +479,7 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(field).toHaveAttribute("readonly");
 
-    release();
+    await act(async () => server.reconnect());
     await waitFor(() => expect(field).toHaveValue("Fix the timer and the tests"));
     expect(screen.queryByText("Transcribing…")).toBeNull();
     expect(screen.queryByRole("region")).toBeNull();
@@ -468,12 +492,12 @@ describe("Composer", () => {
 
   it.each(["Send", "Enter", "Busy"])("Send at once (%s): transcribes then submits the combined draft through the normal path", async (action) => {
     installVoiceBrowser();
-    let release: () => void = () => {};
-    stubTranscribe("and the tests", new Promise<void>((resolve) => (release = resolve)));
+    const server = hostVoice("", "and the tests");
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Fix the timer", onSubmit, busy: action === "Busy" });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    const stop = await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
+    server.connection = "hold";
+    const stop = screen.getByRole("button", { name: "Stop voice input" });
     const send = screen.getByRole("button", { name: action === "Busy" ? "Queue" : "Send" });
     expect(send.textContent).toBe("");
     expect(send.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
@@ -489,7 +513,7 @@ describe("Composer", () => {
     field.focus();
     await user.keyboard("{Enter}");
     expect(onSubmit).not.toHaveBeenCalled();
-    release();
+    await act(async () => server.reconnect());
     await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith("Fix the timer and the tests", expect.any(Function)));
     expect(field).toHaveValue("");
     expect(screen.queryByText("Transcribing…")).toBeNull();
@@ -497,11 +521,10 @@ describe("Composer", () => {
 
   it.each(["", "Keep this"])("Send at once: an empty transcript sends nothing and keeps draft '%s'", async (initial) => {
     installVoiceBrowser();
-    stubTranscribe("  ");
+    hostVoice("", "  ");
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial, onSubmit });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
     field.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled());
@@ -512,18 +535,17 @@ describe("Composer", () => {
 
   it.each([false, true])("explicit voice Send retains its requested destination when later props change, disabled=%s", async (disabled) => {
     installVoiceBrowser();
-    let release: () => void = () => {};
-    stubTranscribe("the transcript", new Promise<void>((resolve) => (release = resolve)));
+    const server = hostVoice("", "the transcript");
     const original = vi.fn();
     const latest = vi.fn();
     const user = userEvent.setup();
     const { rerender } = render(<Harness initial="Keep" onSubmit={original} />);
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
+    server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Transcribing…");
     rerender(<Harness onSubmit={latest} disabled={disabled} />);
-    release();
+    await act(async () => server.reconnect());
     await waitFor(() => expect(screen.queryByText("Transcribing…")).toBeNull());
     expect(original).toHaveBeenCalledExactlyOnceWith("Keep the transcript", expect.any(Function));
     expect(latest).not.toHaveBeenCalled();
@@ -532,24 +554,18 @@ describe("Composer", () => {
 
   it("voice Send owns recorder completion before unmount, restores pending source UI, and preserves its next draft", async () => {
     installVoiceBrowser();
-    let emit!: () => void;
-    const stopRecording = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementation(function (this: FakeMediaRecorder) {
-      this.state = "inactive";
-      emit = () => { this.ondataavailable?.({ data: new Blob(["voice"], { type: this.mimeType }) }); this.onstop?.(); };
-    });
-    let release!: () => void;
-    stubTranscribe("dictated", new Promise<void>((resolve) => { release = resolve; }));
+    const server = hostVoice("", "dictated");
     let accept!: () => void;
     let complete!: () => void;
     const original = vi.fn((_text: string, accepted: () => void) => { accept = accepted; return new Promise<void>((resolve) => { complete = resolve; }); });
     const other = vi.fn();
     const first = mount({ initial: "Original", onSubmit: original });
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(first.user);
+    server.connection = "hold";
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
     const destination = mount({ conversation: "project/beta", initial: "Independent", onSubmit: other });
-    await act(async () => emit());
-    stopRecording.mockRestore();
+    await settle();
     expect(destination.field).toHaveValue("Independent");
     expect(destination.field).not.toHaveAttribute("readonly");
     destination.unmount();
@@ -557,7 +573,8 @@ describe("Composer", () => {
     expect(source.field).toHaveValue("Original");
     expect(source.field).toHaveAttribute("readonly");
     expect(screen.getByRole("status")).toHaveTextContent("Transcribing…");
-    await act(async () => release());
+    await act(async () => server.reconnect());
+    await settle();
     expect(original).toHaveBeenCalledExactlyOnceWith("Original dictated", expect.any(Function));
     expect(other).not.toHaveBeenCalled();
     await source.user.type(source.field, "Next draft");
@@ -568,18 +585,19 @@ describe("Composer", () => {
 
   it.each(["failure", "cancel"])("voice %s restores its source draft after navigation without sending", async (outcome) => {
     installVoiceBrowser();
-    let release!: () => void;
-    stubTranscribe(null, new Promise<void>((resolve) => { release = resolve; }));
+    const server = hostVoice();
     const onSubmit = vi.fn();
     const first = mount({ initial: "Source text", onSubmit });
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(first.user);
+    server.connection = "hold";
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
-    if (outcome === "failure") await act(async () => release());
+    server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
+    if (outcome === "failure") { await act(async () => server.reconnect()); await settle(); }
     const source = mount({ onSubmit });
     if (outcome === "cancel") {
       await source.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
-      await act(async () => release());
+      await act(async () => server.reconnect());
     } else expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
     expect(source.field).toHaveValue("Source text");
     expect(source.field).not.toHaveAttribute("readonly");
@@ -591,13 +609,15 @@ describe("Composer", () => {
 
   it("a voice-only transcription failure remains visible when returning after completion", async () => {
     installVoiceBrowser();
-    let release!: () => void;
-    stubTranscribe(null, new Promise<void>((resolve) => { release = resolve; }));
+    const server = hostVoice();
     const first = mount();
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(first.user);
+    server.connection = "hold";
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
-    await act(async () => release());
+    server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
+    await act(async () => server.reconnect());
+    await settle();
     const source = mount();
     expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
     expect(source.field).toHaveValue("");
@@ -608,63 +628,65 @@ describe("Composer", () => {
   });
 
   it.each([["a view change", false], ["visible Cancel", true]])("a late recorder stop after %s focuses the field only for a cancel made in view", async (_label, visibleCancel) => {
-    installVoiceBrowser();
-    const deferredStop = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementationOnce(function (this: FakeMediaRecorder) { this.state = "inactive"; });
+    installVoiceBrowser({ backend: "browser" });
     const { user, field, rerender } = mount();
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    const recording = FakeMediaRecorder.instances[0]!;
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    const recording = FakeSpeechRecognition.instances[0]!;
+    recording.answersAbort = false;
     if (visibleCancel) await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
     else {
       rerender(<Harness active={false} />);
+      await act(async () => undefined);
       rerender(<Harness active />);
     }
     act(() => field.blur());
-    // Issue #495: the stop event arrives after the view has returned.
-    await act(async () => { recording.onstop?.(); });
+    // Issue #495: the recognizer's end arrives after the view has returned.
+    await act(async () => { recording.onend?.(); });
     await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
     if (visibleCancel) await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toHaveFocus());
     expect(field).not.toHaveFocus();
-    deferredStop.mockRestore();
   });
 
-  it("Cancel before recorder completion releases that microphone and isolates a restarted recording", async () => {
+  it("Cancel before the last words releases that microphone and isolates a restarted recording", async () => {
     const { track } = installVoiceBrowser();
-    const deferredStop = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementationOnce(function (this: FakeMediaRecorder) { this.state = "inactive"; });
-    stubTranscribe("new recording");
+    const server = hostVoice("", "old recording");
     const { user, field } = mount({ initial: "Draft" });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    const old = FakeMediaRecorder.instances[0]!;
+    await listen(user);
+    server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
+    // Send lets go of the microphone at once; only the last words are awaited.
+    expect(track.stop).toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
-    expect(track.stop).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await act(async () => {
-      old.ondataavailable?.({ data: new Blob(["stale audio"]) });
-      old.onerror?.();
-      old.onstop?.();
-    });
+    expect(field).toHaveValue("Draft");
+    server.final = "new recording";
+    await act(async () => server.reconnect());
+    await listen(user);
     expect(field).toHaveAttribute("readonly");
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Draft new recording"));
-    const upload = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("transcribe"));
-    expect((upload?.[1]?.body as Blob).size).toBe(new Blob(["aac recording"]).size);
-    deferredStop.mockRestore();
+    // The cancelled recording's last request was abandoned unanswered; only the new one was answered.
+    expect(server.audio.filter((call) => call.final).map((call) => call.path)).toEqual([
+      "/api/voice/live/rec-1/audio?seq=1&final=1", "/api/voice/live/rec-2/audio?seq=1&final=1"]);
+    expect(HostCapture.retained.size).toBe(0);
   });
 
   it.each(["refused", "unconfirmed"].flatMap((failure) => ["success", "failure", "cancel", "empty"].map((outcome) => ({ failure, outcome }))))("transfers existing $failure recovery once into a voice Send that ends in $outcome", async ({ failure, outcome }) => {
     installVoiceBrowser();
     sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: {}, text: "Recovered request", failure }));
-    let release!: () => void;
-    stubTranscribe(outcome === "failure" ? null : outcome === "empty" ? "" : "dictated", new Promise<void>((resolve) => { release = resolve; }));
+    const server = hostVoice("", outcome === "empty" ? "" : "dictated");
     const onSubmit = vi.fn();
     const first = mount({ onSubmit });
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(first.user);
+    server.connection = "hold";
+    if (outcome === "failure") server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
     const source = mount({ onSubmit });
     expect(source.field).toHaveValue("Recovered request");
     if (outcome === "cancel") await source.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
-    await act(async () => release());
+    await act(async () => server.reconnect());
+    await settle();
     expect(source.field).toHaveValue(outcome === "success" ? "" : "Recovered request");
     expect(onSubmit).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
     const warning = failure === "unconfirmed" ? "Could not confirm delivery. Check the conversation before sending again."
@@ -678,14 +700,14 @@ describe("Composer", () => {
 
   it.each([false, true])("an earlier failed send remains unsent while voice Send finishes; failure after remount=%s", async (afterRemount) => {
     installVoiceBrowser();
-    let release!: () => void;
     let refuse!: (error: Error) => void;
-    stubTranscribe("dictated", new Promise<void>((resolve) => { release = resolve; }));
+    const server = hostVoice("", "dictated");
     const onSubmit = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { refuse = reject; }));
     const first = mount({ initial: "Earlier request", onSubmit });
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     await first.user.type(first.field, "Voice request");
-    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await listen(first.user);
+    server.connection = "hold";
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
     if (!afterRemount) await act(async () => refuse(new ApiError(409, "Refused")));
@@ -693,7 +715,8 @@ describe("Composer", () => {
     if (afterRemount) await act(async () => refuse(new ApiError(409, "Refused")));
     expect(source.field).toHaveValue("Voice request");
     expect(source.field).toHaveAttribute("readonly");
-    await act(async () => release());
+    await act(async () => server.reconnect());
+    await settle();
     expect(onSubmit).toHaveBeenNthCalledWith(2, "Voice request dictated", expect.any(Function));
     expect(source.field).toHaveValue("Earlier request");
     expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
@@ -703,15 +726,18 @@ describe("Composer", () => {
     expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["Stop voice input", "Send"])("failure after %s: the hint reports it, the draft is unchanged, nothing sends", async (control) => {
+  it.each([
+    ["Stop voice input", "Voice stopped: the speech process stopped. Typing works."],
+    ["Send", "Could not transcribe. Typing works."],
+  ])("failure after %s: the hint reports it, the draft is unchanged, nothing sends", async (control, hint) => {
     installVoiceBrowser();
-    stubTranscribe(null);
+    const server = hostVoice();
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Draft stays", onSubmit });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
+    server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
     await user.click(screen.getByRole("button", { name: control }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(hint);
     expect(field).toHaveValue("Draft stays");
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
@@ -719,6 +745,7 @@ describe("Composer", () => {
 
   it("Denied: the hint says typing works and the mic asks the browser again", async () => {
     installVoiceBrowser();
+    hostVoice();
     vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
     const { user, field } = mount({ initial: "still here", busy: true });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
@@ -729,9 +756,9 @@ describe("Composer", () => {
     expect(field).toHaveValue("still here");
     await user.type(field, " and typing");
     expect(field).toHaveValue("still here and typing");
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await listen(user);
     expect(screen.queryByText("Microphone blocked in the browser. Typing works.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
   });
 
   it("Unavailable: no mic and Voice needs HTTPS on an insecure origin; no mic and no hint without recording", () => {
@@ -743,7 +770,7 @@ describe("Composer", () => {
     first.unmount();
 
     vi.stubGlobal("isSecureContext", true);
-    vi.stubGlobal("MediaRecorder", undefined);
+    vi.stubGlobal("AudioWorkletNode", undefined);
     render(<Harness />);
     expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
     expect(screen.queryByText("Voice needs HTTPS")).toBeNull();
@@ -751,14 +778,374 @@ describe("Composer", () => {
 
   it("Ctrl+M starts and stops the microphone from the field", async () => {
     installVoiceBrowser();
-    stubTranscribe("by keyboard");
+    const server = hostVoice("", "by keyboard");
     const { user, field } = mount();
     field.focus();
     await user.keyboard("{Control>}m{/Control}");
-    await screen.findByRole("button", { name: "Stop voice input" });
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    speak();
+    await screen.findByText("Listening… Stop to add text, or Send.");
     await user.keyboard("{Control>}m{/Control}");
     await waitFor(() => expect(field).toHaveValue("by keyboard"));
-    expect(FakeMediaRecorder.instances[0]?.stopCalls).toBe(1);
+    expect(server.audio.filter((call) => call.final)).toHaveLength(1);
+  });
+
+  // ---- host voice: the microphone streams to this computer, whose words appear while listening ----
+  /** The host's answers: each chunk is answered with how many samples it has heard. */
+  function stubHost(options: { refuse?: string } = {}) {
+    let heard = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/voice") return jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
+      if (path === "/api/voice/live") return options.refuse ? jsonResponse({ error: options.refuse }, 429) : jsonResponse({ id: "rec", owner: "device" });
+      if (path.endsWith("/cancel")) return jsonResponse({ ok: true });
+      heard += (init?.body as Int16Array).length;
+      return jsonResponse(path.includes("final=1") ? { text: `Heard ${heard} samples.`, final: true } : { text: `heard ${heard}` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("host voice: Starting voice until samples arrive, words while listening, Stop lands the final words", async () => {
+    installVoiceBrowser({ backend: "host" });
+    const fetchMock = stubHost();
+    const { user, field } = mount({ initial: "Note:" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Starting voice…");
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    expect(await screen.findByText("Listening… Stop to add text, or Send.")).toBeInTheDocument();
+    await waitFor(() => expect(field).toHaveValue("Note: heard 8000"));
+    expect(field).toHaveAttribute("readonly");
+    act(() => hostMicrophone.speak(2000));
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Note: Heard 10000 samples."));
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/voice/live", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-host" }) }));
+    expect(fetchMock.mock.calls.map(([path]) => String(path))).not.toContain("/api/transcribe");
+  });
+
+  it("host voice: Send while listening sends the draft with the final words", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost();
+    const onSubmit = vi.fn((_text: string, accepted: () => void) => accepted());
+    const { user } = mount({ initial: "Please", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await screen.findByText("Listening… Stop to add text, or Send.");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Please Heard 8000 samples.", expect.any(Function)));
+  });
+
+  it("host voice: a stopped recording keeps the words shown and says why", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost();
+    const { user, field } = mount();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await waitFor(() => expect(field).toHaveValue("heard 8000"));
+    stubHost({ refuse: "unused" });
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "Voice stopped: the speech process stopped." }, 503)));
+    act(() => hostMicrophone.speak(8000));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice stopped: the speech process stopped. Typing works.");
+    expect(field).toHaveValue("heard 8000");
+    expect(field).not.toHaveAttribute("readonly");
+  });
+
+  it("host voice: a refused start says why and opens nothing more", async () => {
+    installVoiceBrowser({ backend: "host" });
+    stubHost({ refuse: "Voice is busy on another device." });
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice is busy on another device. Typing works.");
+    expect(field).toHaveValue("Draft");
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("host voice: Cancel discards the words on screen and the recording on the host", async () => {
+    installVoiceBrowser({ backend: "host" });
+    const fetchMock = stubHost();
+    const { user, field } = mount({ initial: "Keep" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    act(() => hostMicrophone.speak(8000));
+    await waitFor(() => expect(field).toHaveValue("Keep heard 8000"));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Keep");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/voice/live/rec/cancel", expect.anything()));
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  // ---- host voice through a lost connection: the recording goes on, the words catch up ----------------
+  it("host voice: a lost connection keeps recording and the words shown, and they catch up once answers return", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("first words", "first words and the rest");
+    const { user, field } = mount({ initial: "Draft" });
+    await listen(user);
+    expect(field).toHaveValue("Draft first words");
+    vi.useFakeTimers();
+    try {
+      server.connection = "drop";
+      speak();
+      await advance(0);
+      expect(screen.getByRole("status")).toHaveTextContent("Connection lost — still recording. Your words will catch up.");
+      for (let second = 0; second < 10; second++) { speak(); await advance(1000); }
+      expect(screen.getByRole("status")).toHaveTextContent("Connection lost — still recording. Your words will catch up.");
+      expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+      expect(field).toHaveValue("Draft first words");
+      expect(field).toHaveAttribute("readonly");
+      server.words = "first words and the rest";
+      server.connection = "ok";
+      await advance(3000);
+      expect(screen.getByRole("status")).toHaveTextContent("Listening… Stop to add text, or Send.");
+      expect(field).toHaveValue("Draft first words and the rest");
+    } finally { vi.useRealTimers(); }
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    expect(field).toHaveValue("Draft first words and the rest");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("host voice: when the host forgets the recording, the replay shows Catching up… and the words never shrink", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("one two three");
+    const { user, field } = mount();
+    const shown: string[] = [];
+    const record = () => { shown.push(field.value); };
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    // Twenty seconds recorded and answered: a replay needs two ten-second requests to cover them.
+    speak(160_000);
+    await screen.findByText("Listening… Stop to add text, or Send.");
+    await settle();
+    speak(160_000);
+    await settle();
+    expect(field).toHaveValue("one two three");
+    record();
+    server.forget();
+    server.connection = "hold";
+    speak();
+    await act(async () => server.release());  // 410: the host opens a new recording, held
+    await settle();
+    expect(screen.getByRole("status")).toHaveTextContent("Catching up…");
+    record();
+    await act(async () => server.release());  // the new recording opens; its first ten seconds are held
+    await settle();
+    server.words = "one";
+    await act(async () => server.release());  // the replay has not yet reached the words shown
+    await settle();
+    expect(screen.getByRole("status")).toHaveTextContent("Catching up…");
+    expect(field).toHaveValue("one two three");
+    record();
+    server.words = "one two three four";
+    await act(async () => server.reconnect());
+    await settle();
+    expect(screen.getByRole("status")).toHaveTextContent("Listening… Stop to add text, or Send.");
+    expect(field).toHaveValue("one two three four");
+    record();
+    shown.forEach((value, index) => { if (index) expect(value.startsWith(shown[index - 1]!)).toBe(true); });
+    expect(server.calls.filter((call) => call.path === "/api/voice/live")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+  });
+
+  it("host voice: Stop while offline waits for the connection, and the X cancels with nothing added", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("spoken");
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Draft", onSubmit });
+    await listen(user);
+    expect(field).toHaveValue("Draft spoken");
+    server.connection = "drop";
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    expect(await screen.findByText("Waiting for connection…")).toBeInTheDocument();
+    expect(field).toHaveAttribute("readonly");
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).toHaveValue("Draft");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(screen.queryByText("Waiting for connection…")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(HostCapture.retained.size).toBe(0);
+    expect(server.calls.at(-1)?.path).toBe("/api/voice/live/rec-1/cancel");
+    server.connection = "ok";
+    await settle();
+    expect(field).toHaveValue("Draft");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("host voice: Stop while offline past the wait lands the words shown and says the last words were not added", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("spoken");
+    const { user, field } = mount({ initial: "Draft" });
+    await listen(user);
+    vi.useFakeTimers();
+    try {
+      server.connection = "drop";
+      await act(async () => { screen.getByRole("button", { name: "Stop voice input" }).click(); });
+      await advance(WAIT_MS - 1);
+      expect(screen.getByRole("status")).toHaveTextContent("Waiting for connection…");
+      await advance(1);
+      expect(field).toHaveValue("Draft spoken");
+      expect(field).not.toHaveAttribute("readonly");
+      expect(screen.getByRole("alert")).toHaveTextContent(UNREACHED);
+      expect(HostCapture.retained.size).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("host voice: a voice Send that outlives its composer sends its late words only to its own conversation", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("", "the late words");
+    const own = vi.fn();
+    const other = vi.fn();
+    const first = mount({ initial: "Original", onSubmit: own });
+    await listen(first.user);
+    vi.useFakeTimers();
+    try {
+      server.connection = "drop";
+      await act(async () => { screen.getByRole("button", { name: "Send" }).click(); });
+      await advance(0);
+      expect(screen.getByRole("status")).toHaveTextContent("Waiting for connection…");
+      first.unmount();
+      render(<Harness conversation="project/beta" initial="Other draft" onSubmit={other} />);
+      const field = screen.getByLabelText("Message L3 about altitude");
+      await act(async () => { screen.getByRole("button", { name: "Start voice input" }).click(); });
+      await advance(0);
+      speak();
+      await advance(0);
+      expect(screen.getByRole("status")).toHaveTextContent("Connection lost — still recording. Your words will catch up.");
+      server.words = "other words";
+      server.connection = "ok";
+      await advance(3000);
+      expect(own).toHaveBeenCalledExactlyOnceWith("Original the late words", expect.any(Function));
+      expect(other).not.toHaveBeenCalled();
+      expect(field).toHaveValue("Other draft other words");
+      expect(screen.getByRole("status")).toHaveTextContent("Listening… Stop to add text, or Send.");
+      await act(async () => { screen.getByRole("button", { name: "Cancel voice input" }).click(); });
+      expect(field).toHaveValue("Other draft");
+    } finally { vi.useRealTimers(); }
+    expect(other).not.toHaveBeenCalled();
+    expect(HostCapture.retained.size).toBe(0);
+  });
+
+  it("host voice: a voice Send past the wait returns its text unsent to its own conversation with the reason", async () => {
+    installVoiceBrowser();
+    const server = hostVoice("spoken");
+    const onSubmit = vi.fn();
+    const first = mount({ initial: "Original", onSubmit });
+    await listen(first.user);
+    vi.useFakeTimers();
+    try {
+      server.connection = "drop";
+      await act(async () => { screen.getByRole("button", { name: "Send" }).click(); });
+      first.unmount();
+      const other = render(<Harness conversation="project/beta" initial="Other draft" />);
+      await advance(WAIT_MS);
+      expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("Other draft");
+      expect(screen.queryByRole("alert")).toBeNull();
+      other.unmount();
+    } finally { vi.useRealTimers(); }
+    expect(JSON.parse(sessionStorage.getItem("altitude.submitted:project/altitude")!)).toMatchObject({ text: "Original spoken", failure: "unreached" });
+    const source = mount({ onSubmit });
+    expect(source.field).toHaveValue("Original spoken");
+    expect(source.field).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("alert")).toHaveTextContent(UNREACHED);
+    expect(onSubmit).not.toHaveBeenCalled();
+    await source.user.type(source.field, "!");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("host voice: a third recording while two are still sending says so and opens no microphone", async () => {
+    const { getUserMedia } = installVoiceBrowser();
+    const server = hostVoice("words");
+    const first = mount({ initial: "First" });
+    await listen(first.user);
+    server.connection = "drop";
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    const second = mount({ conversation: "project/beta", initial: "Second" });
+    await second.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull());
+    speak();
+    expect(await screen.findByText("Connection lost — still recording. Your words will catch up.")).toBeInTheDocument();
+    await second.user.click(screen.getByRole("button", { name: "Send" }));
+    second.unmount();
+    expect(HostCapture.retained.size).toBe(2);
+    const third = mount({ conversation: "project/gamma", initial: "Third" });
+    await third.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Voice is still sending an earlier recording. Typing works.");
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(third.field).toHaveValue("Third");
+    await third.user.type(third.field, " typed");
+    expect(third.field).toHaveValue("Third typed");
+    server.connection = "ok";
+    await waitFor(() => expect(HostCapture.retained.size).toBe(0), { timeout: 5000 });
+    await third.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText("Starting voice…")).toBeInTheDocument();
+    await third.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+  });
+
+  it("host voice: an interrupted microphone lands the words and says why", async () => {
+    const { track } = installVoiceBrowser();
+    hostVoice("spoken", "spoken words");
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Draft", onSubmit });
+    await listen(user);
+    act(() => { track.dispatchEvent(new Event("ended")); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice stopped: the microphone was interrupted. Typing works.");
+    expect(field).toHaveValue("Draft spoken words");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+  });
+
+  it("host voice: a 409 on a chunk ends at once with the words shown and reads the voice setting again", async () => {
+    installVoiceBrowser({ recognition: true });
+    const server = hostVoice("kept words", null, (path) => path === "/api/voice"
+      ? jsonResponse({ backend: "browser", selection: "fixture-browser", host: { state: "ready", download_bytes: 0 } })
+      : jsonResponse({ error: "not found" }, 404));
+    const { user, field } = mount({ initial: "Draft" });
+    await listen(user);
+    expect(field).toHaveValue("Draft kept words");
+    server.refuse = { on: "audio", status: 409, error: "Voice settings changed. Record again with the new setting." };
+    speak();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice settings changed. Record again with the new setting. Typing works.");
+    expect(field).toHaveValue("Draft kept words");
+    expect(field).not.toHaveAttribute("readonly");
+    expect(server.audio.some((call) => call.final)).toBe(false);
+    await waitFor(() => expect(server.fetch).toHaveBeenCalledWith("/api/voice", expect.anything()));
+    // The next capture uses the backend the server now reports.
+    await user.click(await screen.findByRole("button", { name: "Start voice input" }));
+    await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
+    expect(HostCapture.retained.size).toBe(0);
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+  });
+
+  it.each([
+    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer. Set up voice"],
+    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer. Set up voice"],
+    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works."],
+  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint) => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "host", host });
+    const fetchMock = vi.fn(async () => jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText(hint.split(" Set up voice")[0]!, { exact: false })).toBeInTheDocument();
+    if (hint.endsWith("Set up voice")) expect(await screen.findByRole("link", { name: "Set up voice" })).toHaveAttribute("href", "/settings/voice");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" }, "Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works."],
+    [{ state: "failed", download_bytes: 698_000_000, reason: "a download failed" }, "Voice setup did not finish. Retry in Settings. Typing works."],
+  ] as const)("host voice that cannot run here (%o) hides the mic and says why", async (host, hint) => {
+    installVoiceBrowser({ backend: "host", host });
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Start voice input" })).toBeNull();
+    expect(screen.getByText((_, node) => node?.classList.contains("composer-hint") === true && node.textContent === hint)).toBeInTheDocument();
   });
 
   // ---- browser recognition: the default backend shows words while listening and uploads nothing ----
@@ -772,7 +1159,7 @@ describe("Composer", () => {
     await screen.findByRole("button", { name: "Stop voice input" });
     const [recognizer] = FakeSpeechRecognition.instances;
     expect(recognizer).toMatchObject({ continuous: true, interimResults: true, started: 1 });
-    expect(FakeMediaRecorder.instances).toEqual([]);
+    expect(HostCapture.retained.size).toBe(0);
     expect(field).toHaveAttribute("readonly");
 
     act(() => recognizer!.hear([], "and the"));
@@ -979,9 +1366,9 @@ describe("Composer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it.each(["browser", "endpoint"] as const)("%s connects each waveform before capture starts and closes each graph once", async (backend) => {
+  it.each(["browser", "host"] as const)("%s connects each waveform before capture starts and closes each graph once", async (backend) => {
     installVoiceBrowser({ backend });
-    if (backend === "endpoint") stubTranscribe("new words");
+    if (backend === "host") hostVoice("", "new words");
     const order: string[] = [];
     const closes: ReturnType<typeof vi.fn>[] = [];
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
@@ -992,9 +1379,9 @@ describe("Composer", () => {
       createAnalyser() { return { fftSize: 512 }; }
       createMediaStreamSource() { return { connect: () => order.push("connected") }; }
     });
-    const prototype = backend === "browser" ? FakeSpeechRecognition.prototype : FakeMediaRecorder.prototype;
+    const prototype = (backend === "browser" ? FakeSpeechRecognition.prototype : HostCapture.prototype) as { start(): void };
     const start = prototype.start;
-    vi.spyOn(prototype, "start").mockImplementation(function (this: FakeSpeechRecognition & FakeMediaRecorder) {
+    vi.spyOn(prototype, "start").mockImplementation(function (this: unknown) {
       order.push("start");
       start.call(this);
     });
@@ -1004,6 +1391,7 @@ describe("Composer", () => {
       await screen.findByRole("button", { name: "Stop voice input" });
       expect(order).toEqual(Array.from({ length: closes.length }, () => ["connected", "start"]).flat());
       if (backend === "browser") act(() => FakeSpeechRecognition.instances.at(-1)!.hear(["new words"]));
+      else { speak(); await screen.findByText("Listening… Stop to add text, or Send."); }
       if (action === "navigation") view.unmount();
       else await view.user.click(screen.getByRole("button", { name: `${action} voice input` }));
       await waitFor(() => closes.forEach((close) => expect(close).toHaveBeenCalledOnce()));
@@ -1013,10 +1401,10 @@ describe("Composer", () => {
   });
 
   it.each([
-    ["browser", "constructor"], ["browser", "start"], ["endpoint", "constructor"], ["endpoint", "start"],
+    ["browser", "constructor"], ["browser", "start"], ["host", "start"],
   ] as const)("releases a prepared waveform when %s %s throws, then retries", async (backend, failure) => {
     const { track } = installVoiceBrowser({ backend });
-    if (backend === "endpoint") stubTranscribe("recovered");
+    if (backend === "host") hostVoice("", "recovered");
     const close = vi.fn(async () => undefined);
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
@@ -1029,13 +1417,7 @@ describe("Composer", () => {
       constructor() { super(); if (failure === "constructor") throw new Error("fixture construction failure"); }
       start() { throw new DOMException("fixture startup failure", "InvalidStateError"); }
     });
-    else vi.stubGlobal("MediaRecorder", class extends FakeMediaRecorder {
-      constructor(stream: MediaStream, options?: MediaRecorderOptions) {
-        super(stream, options);
-        if (failure === "constructor") throw new Error("fixture construction failure");
-      }
-      start() { throw new DOMException("fixture startup failure", "InvalidStateError"); }
-    });
+    else vi.spyOn(HostCapture.prototype, "start").mockImplementationOnce(() => { throw new DOMException("fixture startup failure", "InvalidStateError"); });
     const { user, field } = mount({ initial: "Draft" });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
@@ -1043,9 +1425,9 @@ describe("Composer", () => {
     expect(field).toHaveValue("Draft");
     expect(field).not.toHaveAttribute("readonly");
     vi.stubGlobal("SpeechRecognition", FakeSpeechRecognition);
-    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     if (backend === "browser") act(() => FakeSpeechRecognition.instances.at(-1)!.hear(["recovered"]));
+    else { await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull()); speak(); await screen.findByText("Listening… Stop to add text, or Send."); }
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Draft recovered"));
     await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
@@ -1101,9 +1483,9 @@ describe("Composer", () => {
     expect(onSubmit).toHaveBeenCalledTimes(action === "Send" ? 1 : 0);
   });
 
-  it.each(["browser", "endpoint"] as const)("%s microphone can retry after a waveform close never answers", async (backend) => {
+  it.each(["browser", "host"] as const)("%s microphone can retry after a waveform close never answers", async (backend) => {
     const { getUserMedia } = installVoiceBrowser({ backend });
-    if (backend === "endpoint") stubTranscribe("new words");
+    if (backend === "host") hostVoice("", "new words");
     let lateClose!: () => void;
     const close = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { lateClose = resolve; })).mockResolvedValue(undefined);
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
@@ -1135,6 +1517,7 @@ describe("Composer", () => {
     // It must not close the new graph or change this capture's phase.
     await act(async () => lateClose());
     expect(close).toHaveBeenCalledOnce();
+    if (backend === "host") { await waitFor(() => expect(hostMicrophone.deliver).not.toBeNull()); speak(); }
     expect(screen.getByText("Listening… Stop to add text, or Send.")).toBeInTheDocument();
     if (backend === "browser") act(() => FakeSpeechRecognition.instances[1]!.hear(["new words"]));
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
@@ -1248,9 +1631,9 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
   });
 
-  it.each(["browser", "endpoint"] as const)("%s backend: the X returns focus to the microphone, never the field, so no phone keyboard opens; Escape returns to the field", async (backend) => {
+  it.each(["browser", "host"] as const)("%s backend: the X returns focus to the microphone, never the field, so no phone keyboard opens; Escape returns to the field", async (backend) => {
     installVoiceBrowser({ backend });
-    stubTranscribe("never used");
+    hostVoice("", "never used");
     const { user, field } = mount({ initial: "Keep this" });
     const mic = () => screen.getByRole("button", { name: "Start voice input" });
     for (const cancelBy of ["X", "X", "Escape"]) {
@@ -1363,25 +1746,6 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
   });
 
-  it("upload backend: a 409 from a changed installation shows the server's words and reads the backend again", async () => {
-    installVoiceBrowser({ backend: "endpoint", recognition: true });
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/api/voice")) return jsonResponse({ backend: "browser", selection: "fixture-browser", url: "", model: "", key_set: false });
-      if (String(input).includes("/api/transcribe")) return jsonResponse({ error: "Voice now runs in the browser on this installation. Try again." }, 409);
-      return jsonResponse({ error: "not found" }, 404);
-    }));
-    const { user, field } = mount({ initial: "Keep this" });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
-    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Voice now runs in the browser on this installation. Try again.");
-    expect(field).toHaveValue("Keep this");
-    // The next attempt uses the backend the server now reports: recognition, no upload.
-    await user.click(await screen.findByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
-    expect(FakeSpeechRecognition.instances).toHaveLength(1);
-  });
-
   it("browser recognition: no recognizer in this browser hides the mic and says so; the backend read hides the mic until it answers", async () => {
     installVoiceBrowser({ backend: "browser", recognition: false });
     const first = render(<Harness />);
@@ -1399,7 +1763,7 @@ describe("Composer", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (!String(input).endsWith("/api/voice")) return jsonResponse({ error: "not found" }, 404);
       const backend = await new Promise<string>((resolve) => (answer = resolve));
-      return jsonResponse({ backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false });
+      return jsonResponse({ backend, selection: `fixture-${backend}`, url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
     }));
     presetVoiceBackend(null);
     render(<Harness />);
@@ -1409,17 +1773,16 @@ describe("Composer", () => {
     expect(await screen.findByRole("button", { name: "Start voice input" })).toBeInTheDocument();
   });
 
-  it("uploads with the capture's destination even when Settings changes while listening", async () => {
+  it("host voice sends with the capture's selection even when Settings changes while listening", async () => {
     installVoiceBrowser();
-    const fetchMock = vi.fn(async () => jsonResponse({ text: "spoken" }));
-    vi.stubGlobal("fetch", fetchMock);
+    const server = hostVoice("", "spoken");
     const { user, field } = mount({ initial: "Keep this" });
-    await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
-    act(() => updateVoiceSettings({ backend: "endpoint", selection: "new-destination", url: "https://speech.example.test", model: "", key_set: false }));
+    await listen(user);
+    act(() => updateVoiceSettings({ backend: "host", selection: "new-selection", host: { state: "ready", download_bytes: 0 } }));
+    speak();
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
     await waitFor(() => expect(field).toHaveValue("Keep this spoken"));
-    expect(fetchMock).toHaveBeenCalledWith("/api/transcribe", expect.objectContaining({ headers: expect.objectContaining({ "X-Voice-Selection": "fixture-endpoint" }) }));
+    expect(server.calls.map((call) => call.selection)).toEqual(["fixture-host", "fixture-host", "fixture-host", "fixture-host"]);
   });
 
   it("combines a draft and a transcript with one space, and formats the timer", () => {

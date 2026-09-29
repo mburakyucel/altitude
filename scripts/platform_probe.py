@@ -226,6 +226,36 @@ def confinement():
 
 
 @row
+def foreign_coalition():
+    """Stop's member scan skips only exited processes, so an ordinary user must read every other user's coalition."""
+    if not DARWIN or os.getuid() == 0:
+        return None  # coalitions are macOS only; root reads every process, which proves nothing
+
+    def owner(pid: int) -> int | None:  # None when this user may not read the process's details
+        try:
+            return platform._bsd(pid).uid
+        except PermissionError:
+            return None
+
+    foreign, denied, unreadable, launchd = 0, 0, 0, False
+    for pid in platform._pids():
+        try:
+            uid = owner(pid)
+            if uid == os.getuid():
+                continue
+            platform._coalition_of(pid)
+        except FileNotFoundError:  # exited meanwhile
+            continue
+        except OSError:
+            unreadable += 1
+            continue
+        foreign, denied, launchd = foreign + 1, denied + (uid is None), launchd or (pid == 1 and uid in (None, 0))
+    check(not unreadable and launchd, f"{unreadable} of {foreign + unreadable} other users' processes unreadable; "
+                                      f"root launchd read: {launchd}")
+    return f"all {foreign} other users' coalitions read ({denied} with details denied), root launchd among them"
+
+
+@row
 def process_facts():
     me = os.getpid()
     start = platform.process_start(me)

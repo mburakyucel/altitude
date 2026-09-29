@@ -288,6 +288,7 @@ class TestL2Steering(AltitudeCase):
                 failed_resume = self.view(task)
                 self.assertEqual(failed_resume["steering"]["state"], "stopped")
                 self.assertEqual(failed_resume["session_id"], task["session_id"])
+                # Continue sends no authored reason, so the conversation keeps only the operator's two messages.
                 self.assertEqual([row["delivery"]["state"] for row in failed_resume["messages"]], ["unconfirmed", "unconfirmed"])
                 self.assertFalse(any(row["delivery"]["removable"] for row in failed_resume["messages"]))
                 with self.assertRaises(T.TransitionError):

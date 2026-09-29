@@ -65,7 +65,12 @@ test("saved L3 and L2 prose preserves links and code across reload and external 
   const l2 = page.getByRole("region", { name: "Task conversation", exact: true });
   const answer = l2.locator('.msg-row[data-role="l2"] .reply');
   await savedReferences(answer);
-  await walk.state("07-saved-l2-references-links-code", { visible: [answer, l2.getByRole("link", { name: "pull request #253", exact: true })], hidden: [l2.getByRole("link", { name: "issue #901", exact: true })] });
+  // L3's message to the L2 keeps its links behind the coordination line's Show.
+  const coordination = l2.locator('[data-role="l3"]');
+  await walk.state("07-saved-l2-references-links-code", {
+    action: () => coordination.getByRole("button", { name: "Show", exact: true }).click(),
+    visible: [answer, coordination.getByRole("link", { name: "pull request #253", exact: true })], hidden: [l2.getByRole("link", { name: "issue #901", exact: true })],
+  });
   await page.reload();
   await savedReferences(answer);
   await walk.state("08-reloaded-saved-l2", { visible: [answer], hidden: [l3] });

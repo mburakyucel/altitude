@@ -33,6 +33,7 @@ class TransitionError(Exception):
 
 
 TASK_MESSAGE_ROLES = (config.OPERATOR_ACTOR, "l2", "l3")
+SUMMARY_LIMIT = 100  # one folded conversation row on a phone
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
 
@@ -473,15 +474,21 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             group_id: str | None = None, group_revision: int | None = None,
             stop_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
-            request_id: str | None = None, request_digest: str | None = None) -> dict:
+            request_id: str | None = None, request_digest: str | None = None,
+            summary: str | None = None) -> dict:
     """Append one message to the task conversation. The operator's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
-    the current one."""
+    the current one. L3's one-line `summary` describes its message in the conversation's folded row."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
     if not text and not (uploads or image_ids):
         raise TransitionError("task message is empty")
+    summary = " ".join(str(summary or "").split())
+    if summary and role != "l3":
+        raise TransitionError("only L3's coordination messages carry a summary")
+    if len(summary) > SUMMARY_LIMIT:
+        raise TransitionError(f"task message summary exceeds {SUMMARY_LIMIT} characters")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if request_id:
@@ -502,6 +509,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         if _ensure_question(project, task):
             S.save_task(project, task)
         row = {"id": request_id or uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
+        if summary:
+            row["summary"] = summary
         # #277: a coordinator's waiting update is discussion, not evidence that the fault is repaired.
         wake_blocked = wake_blocked and not (role == "l3" and task.get("fault"))
         if not wake_blocked:
@@ -569,11 +578,23 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         return row
 
 
-def enqueue(project: str, slug: str, text: str, *, by: str = "altitude") -> dict:
-    """Leave control-plane text for the worker's next checkpoint without a conversation entry."""
-    row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
+def notify(project: str, slug: str, text: str, *, by: str, attempt: int) -> dict | None:
+    """Leave an automatic notice for the owner's next checkpoint, without a conversation entry, and wake an owner
+    that is blocked. Stop and a fault still hold it: the notice waits for the next resume. A task with no owner
+    session, or one on a later attempt than the notice's, gets none."""
     with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt:
+            return None
+        row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
         _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)
+        if task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault"):
+            task["resume_request"] = row["id"]
+            task["resume_after"] = task.get("resume_after") or S.now()
+            task.pop("resume_failed", None)
+            S.save_task(project, task)
+            S.append_event(project, slug, "resume-requested", by=by, reason="notice", message_id=row["id"])
+            S.regen_state_md(project)
     return row
 
 
@@ -749,6 +770,17 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         _ensure_question(project, task)
         rows = _pending_rows(task, path)
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
+        request = task.get("daemon_request") or {}
+        if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
+            # I-20260927-193716: the reason that authorizes a resume reaches the owner as the requester's message.
+            # Its request was the wake, so a batch restored after a failed launch holds it without waking again.
+            reason = {"id": request["id"], "at": _conversation_time(), "role": request["actor"],
+                      "by": request["actor"], "text": request["reason"], "resume": True, "wake": False}
+            if request["actor"] == "l3":
+                reason["summary"] = "Resumed the task"
+            _append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", reason)
+            request["message_id"] = reason["id"]
+            rows.append(reason)
         claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
@@ -872,7 +904,8 @@ def _sender(row: dict) -> str:
 def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them: the words, their sender and the id a decision cites.
     The worker already holds its persona, brief and its own questions; nothing else is repeated here."""
-    return "\n\n".join(f"Message from {_sender(row)} (message id {row['id']}"
+    return "\n\n".join((f"Resumed by {_sender(row)} at {row['at']} with this reason (message id {row['id']}"
+                        if row.get("resume") else f"Message from {_sender(row)} (message id {row['id']}")
                        + (f"; answers question {', '.join(row['answers'])}" if row.get("answers") else "")
                        + f"):\n{row['text']}"
                        + ("\nImages: " + ", ".join(f"{image['id']} ({image['name']})" for image in row["images"])
@@ -1788,7 +1821,8 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
 
 def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
     if source == "task":
-        return [row for row in task_messages(project, slug) if not row.get("removed_at")]
+        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
+        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
@@ -2022,14 +2056,62 @@ def _names_pr(number: int) -> re.Pattern:
     return re.compile(rf"(/pull/|PR #?){number}\b")
 
 
+def _closed(events: list[dict], number: int) -> bool:
+    """#575: the latest delivery, adoption or observed state of this PR says it closed without merging."""
+    latest = next((e for e in reversed(events) if e.get("number") == number and e.get("kind") in (
+        "delivery", "pr-adopted", "pr-closed", "pr-reopened")), {})
+    return latest.get("kind") == "pr-closed"
+
+
+def _held_pr(task: dict, events: list[dict]) -> int | None:
+    """The task's current PR under a merge hold, unless Altitude has observed it closed without merging."""
+    number = (task.get("prs") or [None])[-1]
+    return number if number and task.get("hold_merge") and not _closed(events, number) else None
+
+
+def record_pr_state(project: str, slug: str, number: int, state: str, *, by: str) -> bool:
+    """Record an observed closure or reopening of the task's current PR once; delivery, hold and history stay."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if (state not in ("OPEN", "CLOSED") or (task.get("prs") or [None])[-1] != number
+                or _closed(S.read_events(project, slug), number) == (state == "CLOSED")):
+            return False
+        S.append_event(project, slug, "pr-closed" if state == "CLOSED" else "pr-reopened", number=number, by=by)
+    return True
+
+
+def observe_held_pr(project: str, slug: str, *, by: str) -> str | None:
+    """Read the held PR's GitHub state as its owner stops; an unreadable state leaves the recorded review as is.
+    The read names the checkout origin's repository and checks the returned identity, so an inherited
+    GH_REPO or a same-numbered PR elsewhere cannot record a closure (review of #575)."""
+    from . import github_intake, verify
+    task = S.load_task(project, slug)
+    number = (task.get("prs") or [None])[-1]
+    if not (number and task.get("hold_merge")):
+        return None
+    try:
+        owner, repo = github_intake.project_repo(project)
+        info = verify.gh(["pr", "view", str(number), "--repo", f"{owner}/{repo}", "--json", "number,url,state"],
+                         config.project_path(project))
+    except (verify.VerifierFault, github_intake.IssueIntakeError, KeyError) as exc:
+        return f"PR #{number} state unavailable: {exc}"
+    url = f"https://github.com/{owner}/{repo}/pull/{number}"
+    if not (isinstance(info, dict) and info.get("number") == number and str(info.get("url", "")).lower() == url.lower()
+            and info.get("state") in ("OPEN", "CLOSED", "MERGED")):
+        return f"PR #{number} state unavailable: GitHub returned no matching record"
+    record_pr_state(project, slug, number, info["state"], by=by)
+    return None
+
+
 def approved_pr(project: str, task: dict) -> int | None:
     """#451: the operator's review-card approval of the held PR stands through routine integration until the
     hold changes or a later operator message about the PR; the owner judges scope and applies it with
     `alt land --merge --approval`, asking again only when the change materially conflicts with it."""
-    number = (task.get("prs") or [None])[-1]
-    if not (number and task.get("hold_merge")):
+    events = S.read_events(project, task["slug"])
+    number = _held_pr(task, events)
+    if not number:
         return None
-    holds = [e["at"] for e in S.read_events(project, task["slug"]) if e.get("kind") in ("new", "hold-merge")]
+    holds = [e["at"] for e in events if e.get("kind") in ("new", "hold-merge")]
     # Records keep whole seconds; an approval must come in a later second than the hold.
     second = lambda at: datetime.fromisoformat(at.replace("Z", "+00:00")).replace(microsecond=0)
     since = second(holds[-1] if holds else "1970-01-01T00:00:00+00:00")
@@ -2054,18 +2136,14 @@ def _references_held_pr(task: dict, question: dict) -> bool:
                     f"{o['label']} {o['text']}" for o in question_choices(question))])))
 
 
-def asks_merge(task: dict, question: dict) -> bool:
-    """Changes review requires the held PR's explicit quick-choice question (#537)."""
-    return bool(question_choices(question) and _references_held_pr(task, question))
-
-
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
     An open operator question naming the PR supplies its single response surface, with quick choices
     or a freeform field. Its submitted response stays there until the owner resolves the question.
-    The question does not supply merge authority; recorded approval keeps its separate rules (#451)."""
-    number = (task.get("prs") or [None])[-1]
-    if (number and (task.get("delivery") or task.get("adopted_pr")) and task.get("hold_merge")
+    The question does not supply merge authority; recorded approval keeps its separate rules (#451).
+    A PR observed closed without merging asks for no review (#575)."""
+    number = _held_pr(task, S.read_events(project, task["slug"]))
+    if (number and (task.get("delivery") or task.get("adopted_pr"))
             and task.get("state") in ("blocked", "reported") and not any(
                 task.get(key) for key in ("handed_back", "resume_after", "fault", "stop_id"))
             and not any(_references_held_pr(task, q) for q in task.get("questions", []) if q["status"] == "open")
@@ -2162,7 +2240,7 @@ def block_question(task: dict) -> str:
                           for q in task.get("questions", []) if q["status"] == "open")
     return (f"Task `{slug}` blocked and asks: {task['blocked_reason'][:800]}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
-            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\"` so its owner "
+            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\" --summary \"<one line>\"` so its owner "
             "can record the resolution. This notification grants no operator authority. Keep operator-required "
             "proposal, security and product decisions open; do not re-escalate members already addressed to the operator. "
             f"For a new operator choice use `alt task escalate {slug}` with its question and recommendation. "

@@ -16,7 +16,7 @@ ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
-                               ("task", "machine"), ("task", "run"), ("task", "review")}
+                               ("task", "machine"), ("task", "run"), ("task", "review"), ("task", "terminal")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
@@ -60,13 +60,6 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     return payload, reason.strip()
 
 
-def _public_voice_request(request):
-    """A voice request as the terminal shows it: the endpoint key never leaves the private file."""
-    if not request:
-        return request
-    return {key: config.public_voice(value) if key in ("voice", "result_voice") else value for key, value in request.items()}
-
-
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
         return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
@@ -98,7 +91,7 @@ def _task_review(args, project: str) -> dict:
     if args.review_action == "request":
         return reviews.request(project, slug, request_id=args.request_id or uuid.uuid4().hex,
                                focus=args.focus, source_id=args.source_message, previous=args.previous,
-                               subject=args.subject, engine=args.engine, model=args.model, **options)
+                               additional=args.additional, subject=args.subject, engine=args.engine, model=args.model, **options)
     if args.review_action == "assess":
         try:
             payload = json.loads(sys.stdin.read() if args.file == "-" else Path(args.file).read_text())
@@ -204,6 +197,14 @@ def _brief_text(record: dict) -> str:
                      + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
 
 
+def _terminal_text(record: dict) -> str:
+    if record["state"] == "none":
+        return "[altitude] no terminal output: this task's terminal has not been opened since Altitude last started"
+    head = ("[altitude] terminal running" if record["state"] == "running"
+            else f"[altitude] terminal ended ({record.get('reason')}, exit {record.get('exit_code')})")
+    return (head + ("; earlier output was dropped" if record["missed"] else "") + "\n" + record["text"])
+
+
 def _queue_text(record: dict) -> str:
     lines = [f"Running ({len(record['running'])}):"]
     lines += [f"- {row['project']}/{row['slug']} ({row['age']})" for row in record["running"]] or ["- none"]
@@ -293,13 +294,13 @@ def main(argv=None) -> None:
     x = ms.add_parser("set"); x.add_argument("--reason", required=True)
     one = x.add_mutually_exclusive_group(required=True)
     one.add_argument("--wip", type=int); one.add_argument("--unset-wip", action="store_true")
-    one.add_argument("--voice", metavar="browser|URL", help="browser (default), or the URL of your speech service's OpenAI-compatible audio/transcriptions endpoint")
-    one.add_argument("--unset-voice", action="store_true", help="restore browser recognition")
+    one.add_argument("--voice", choices=("host", "browser"), help="host (live text from the speech model on this computer, after `alt voice setup`) or browser recognition")
+    one.add_argument("--unset-voice", action="store_true", help="restore the default: host where the speech model can run, else browser")
     one.add_argument("--projects-folder", metavar="PATH", help="the folder whose immediate subfolders First run offers to add")
     one.add_argument("--unset-projects-folder", action="store_true", help="return to ALTITUDE_ROOTS, default ~/Projects")
-    x.add_argument("--voice-model", metavar="MODEL", help=f"model name a hosted service expects (default {config.VOICE_DEFAULT_MODEL})")
-    x.add_argument("--voice-key-file", metavar="PATH", help="file holding the bearer key a hosted service expects, or - for stdin; the key never appears on a command line and stays in the private settings file")
     sub.add_parser("state")
+    v = sub.add_parser("voice", help="host voice: the speech model on this computer")
+    v.add_argument("vcmd", choices=("status", "setup", "remove"))
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     n.add_argument("--effort", choices=config.TASK_EFFORTS, help="override the project L2 effort defaults for this task")
@@ -335,6 +336,8 @@ def main(argv=None) -> None:
     for name in ("events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--last", type=int, default=10); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("report"); x.add_argument("slug"); x.add_argument("--json", action="store_true", dest="as_json")
+    x = ts.add_parser("terminal", help="current L2: read this task's terminal output (read-only)")
+    x.add_argument("slug", nargs="?"); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
     rs = ts.add_parser("resume", help="continue a blocked L2 or reported/open-PR owner; L3 can also return a contradicted report")
     rs.add_argument("slug"); rs.add_argument("--reason", required=True)
@@ -344,6 +347,7 @@ def main(argv=None) -> None:
     ms = ts.add_parser("message", help="message the existing L2; resumes blocked/open-PR owners or L3 correction of a contradicted report")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     ms.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
+    ms.add_argument("--summary", help="L3: one line (up to 100 characters) saying what the message is about")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
@@ -384,6 +388,8 @@ def main(argv=None) -> None:
             rv.add_argument("--focus", default="")
             rv.add_argument("--source-message", help="original chat message requesting this review")
             rv.add_argument("--previous", help="review to retry, rerun, or replace while it waits to run")
+            rv.add_argument("--additional", action="store_true",
+                            help="another review of the subject that replaces none; current reviews and their open findings keep gating merge")
             rv.add_argument("--engine", choices=config.ENGINES, help="reviewer engine for this request only; never substituted")
             rv.add_argument("--model", help="reviewer model for this request only; never substituted")
         elif action != "status":
@@ -474,6 +480,11 @@ def main(argv=None) -> None:
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
     machine_run = c == "task" and args.tcmd == "run"
+    terminal_read = c == "task" and args.tcmd == "terminal"
+    if terminal_read:
+        args.slug = args.slug or os.environ.get("ALTITUDE_TASK")
+        if ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT"):
+            sys.exit("alt task terminal: only the current L2 reads its own task's terminal")
     review_run = c == "task" and args.tcmd == "review" and args.review_action == "run"
     if review_run:
         args.slug = args.slug or os.environ.get("ALTITUDE_TASK")
@@ -482,13 +493,13 @@ def main(argv=None) -> None:
             sys.exit("alt task review run: only the current L2 runs reviews for its own task and project")
     if machine_run and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT")):
         sys.exit("alt task run: only the current L2 runs commands, and only for its own task")
-    if c == "issue" or closing_pr or setup_command or machine_run or review_run:
+    if c == "issue" or closing_pr or setup_command or machine_run or review_run or terminal_read:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or machine_run or review_run or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        body = "" if setup_command or machine_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command} if machine_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
@@ -500,7 +511,7 @@ def main(argv=None) -> None:
         ca = config.TLS_DIR / "ca.crt"
         from altitude import access
         from urllib.parse import quote
-        endpoint = "task/review/run" if review_run else "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
+        endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                          headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
@@ -510,6 +521,9 @@ def main(argv=None) -> None:
                 result = json.load(response)
                 if review_run and not result.get("ok"):
                     sys.exit(result.get("error", "Review execution failed"))
+                if terminal_read:
+                    out(result) if args.as_json else print(_terminal_text(result))
+                    return
                 if machine_run:
                     sys.stdout.write(result["output"])
                     print(f"[altitude] {result['unit']}: exit {result['exit']}"
@@ -562,31 +576,23 @@ def main(argv=None) -> None:
     if c == "machine":
         from altitude import dispatch
         if args.mcmd == "set":
-            if (args.voice_model or args.voice_key_file) and (args.voice is None or args.voice == "browser"):
-                sys.exit("alt machine set: --voice-model and --voice-key-file accompany a speech service URL")
-            key = None
-            if args.voice_key_file:
-                key = (sys.stdin.read() if args.voice_key_file == "-" else Path(args.voice_key_file).read_text()).strip()
-                if not key:
-                    sys.exit("alt machine set: the voice key file is empty")
             if args.voice is not None or args.unset_voice:
-                value = None if args.unset_voice else args.voice if args.voice == "browser" else {
-                    "url": args.voice, **({"model": args.voice_model} if args.voice_model else {}),
-                    **({"key": key} if key else {})}
-                request = dispatch.request_setting(None, "voice", value, args.reason, actor=ACTOR)
-                out({**request, "request": _public_voice_request(request["request"])})
+                out(dispatch.request_setting(None, "voice", None if args.unset_voice else args.voice, args.reason, actor=ACTOR))
             elif args.projects_folder is not None or args.unset_projects_folder:
                 value = None if args.unset_projects_folder else str(Path(args.projects_folder).expanduser().absolute())
                 out(dispatch.request_setting(None, "projects_folder", value, args.reason, actor=ACTOR))
             else:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
-            voice = config.voice_setting()
+            # A receipt from before the speech-service removal can name a service key until altd next starts.
+            voice_request = S.read_json(config.ROOT / "voice-request.json", None)
+            if isinstance(voice_request, dict):
+                voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
-                 "voice": config.public_voice(voice),
-                 "voice_request": _public_voice_request(S.read_json(config.ROOT / "voice-request.json", None)),
+                 "voice": config.voice_setting(),
+                 "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "projects_folder_request": S.read_json(config.ROOT / "projects_folder-request.json", None)})
         return
@@ -659,6 +665,9 @@ def main(argv=None) -> None:
                     waiting = T.OPERATOR_MESSAGE_ROLE if args.for_operator else "l3"
                     previous_questions = {(q["id"], q["revision"])
                                           for q in S.load_task(p, args.slug).get("questions", [])}
+                    if note := T.observe_held_pr(p, args.slug, by="l2"):
+                        print(f"alt task block: {note}; the held review card keeps the recorded delivery",
+                              file=sys.stderr)
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
@@ -699,7 +708,9 @@ def main(argv=None) -> None:
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
-            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else T.OPERATOR_MESSAGE_ROLE, _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids)
+            if ACTOR == "l3" and not (args.summary or "").strip():
+                sys.exit("alt task message: L3 adds --summary '<one line saying what the message is about>'")
+            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else T.OPERATOR_MESSAGE_ROLE, _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids, summary=args.summary)
             out(message)
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
@@ -870,14 +881,34 @@ def main(argv=None) -> None:
         except tls.TLSFailure as exc:
             sys.exit(f"alt tls-share: {exc}")
         return
+    if c == "voice":
+        from altitude import speech
+        if args.vcmd != "status" and ACTOR != config.OPERATOR_ACTOR:
+            sys.exit(f"alt voice {args.vcmd}: only the operator sets up voice")
+        try:
+            if args.vcmd == "setup":
+                files, _ = speech.manifest()
+                if files is not None and speech.runtime() is None:
+                    print(f"Downloading about {sum(f[2] for f in files) / 1e6:.0f} MB and checking each file…", file=sys.stderr)
+                speech.setup()
+            elif args.vcmd == "remove":
+                speech.remove_runtime()
+        except speech.SpeechError as exc:
+            sys.exit(f"alt voice {args.vcmd}: {exc}")
+        out(speech.status())
+        return
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt pair: only the operator pairs devices")
-        from altitude import access
+        from altitude import access, tls
         code = access.issue_code()
+        # The code works without the service, so a missing link never blocks recovering access.
+        try:
+            link = f"On the device, open {tls.service()['url']}/pair?code={code['code']}\nor type the code"
+        except tls.TLSFailure as exc:
+            link = f"No link: {exc}\nType the code"
         print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes)\n"
-              f"On the device, open {'https' if config.TLS else 'http'}://{config.HOST}:{config.PORT}/pair?code={code['code']}\n"
-              "or type the code on its Pair this device screen. A new code cancels this one.")
+              f"{link} on its Pair this device screen. A new code cancels this one.")
         return
 
 

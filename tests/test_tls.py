@@ -1,15 +1,19 @@
 """Real disposable TLS identities and handshakes; no host trust stores or services."""
 import json
+import os
 import re
 from pathlib import Path
 import ssl
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from tests.support import SUITE
-from altitude import config, installation, tls
+from tests.support import ALT, SUITE
+from altitude import config, installation, platform, tls
+
+ORIGINAL_STATUS = platform.status
 
 # A validity period already over. OpenSSL 3.4 and newer refuse negative -days but take explicit dates.
 _help = subprocess.run(["openssl", "x509", "-help"], capture_output=True, text=True)
@@ -386,14 +390,19 @@ class TestTLS(unittest.TestCase):
         self.assertFalse(self.directory.exists())
 
 
-class TestShare(unittest.TestCase):
-    """`alt tls-share` offers only the public CA, over plain HTTP, on the address a phone reaches."""
+class ServiceCase(unittest.TestCase):
+    """A fictional running service: its settings live only in its own process environment, as a service
+    manager started it, while this shell carries none of them."""
 
     def setUp(self):
+        host = mock.patch.object(platform.sys, "platform", "linux")  # systemd and procfs fixtures
+        host.start()
+        self.addCleanup(host.stop)
         temporary = tempfile.TemporaryDirectory(dir=SUITE)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        for name, value in {"TLS_DIR": self.root / "configuration" / "tls", "HOST": "127.0.0.1",
+        self.service_tls = self.root / "service-configuration" / "tls"
+        for name, value in {"TLS_DIR": self.service_tls, "HOST": "127.0.0.1",
                             "ROOT": self.root / "runtime", "SOURCE": self.root / "source",
                             "PROJECT_ROOTS": [self.root / "projects"],
                             "PROJECTS_FILE": self.root / "runtime" / "projects.json"}.items():
@@ -401,12 +410,148 @@ class TestShare(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         tls.initialize()
+        for key in platform.SERVICE_SETTINGS:
+            self.assertNotIn(key, os.environ)
+        self.proc = self.root / "proc"
+        for target, name, value in ((platform, "PROC", self.proc),
+                                    (platform, "status", lambda: dict(self.native))):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.running({"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443",
+                      "ALTITUDE_TLS_DIR": str(self.service_tls)})
 
-    def test_a_loopback_or_wildcard_address_is_refused_with_the_setting_to_change(self):
-        for host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
-            with self.subTest(host=host), mock.patch.object(config, "HOST", host), \
-                    self.assertRaisesRegex(tls.TLSFailure, "Set ALTITUDE_HOST"):
+    def running(self, settings: dict, *, pid: int = 4242, state: str = "active", load: str = "loaded"):
+        self.native = {"LoadState": load, "ActiveState": state, "MainPID": str(pid)}
+        (self.proc / str(pid)).mkdir(parents=True, exist_ok=True)
+        (self.proc / str(pid) / "environ").write_bytes(b"\0".join(
+            f"{key}={value}".encode() for key, value in {"PATH": "/usr/bin", "SECRET_TOKEN": "fictional",
+                                                         **settings}.items()) + b"\0")
+
+
+class TestServiceDiscovery(ServiceCase):
+    def test_an_ordinary_shell_finds_the_running_services_address_port_and_certificates(self):
+        found = tls.service()
+        self.assertEqual({key: found[key] for key in ("host", "port", "tls_dir", "tls", "pid", "url")},
+                         {"host": "10.20.30.40", "port": 9443, "tls_dir": self.service_tls, "tls": True,
+                          "pid": 4242, "url": "https://10.20.30.40:9443"})
+        self.running({"ALTITUDE_HOST": "fd00::7", "ALTITUDE_TLS": "0"})
+        found = tls.service()
+        self.assertEqual((found["url"], found["tls_dir"]), ("http://[fd00::7]:8890", config.network({})["tls_dir"]))
+
+    def test_a_shell_setting_must_agree_with_the_service(self):
+        shell = {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443", "ALTITUDE_TLS_DIR": str(self.service_tls)}
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset(shell)):
+            self.assertEqual(tls.service()["url"], "https://10.20.30.40:9443")
+        shell = {"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "8890", "ALTITUDE_TLS_DIR": str(self.root / "other")}
+        # Settings a release installation filled in from its saved configuration are not the shell's own.
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset()):
+            self.assertEqual(tls.service()["url"], "https://10.20.30.40:9443")
+        with mock.patch.dict(os.environ, shell), mock.patch.object(config, "SHELL_SETTINGS", frozenset(shell)), \
+                self.assertRaisesRegex(tls.TLSFailure, r"^This shell sets ALTITUDE_PORT, ALTITUDE_TLS_DIR differently "
+                                                        r"from the running Altitude service\. Unset them"):
+            tls.service()
+
+    def test_a_missing_stopped_or_unsupported_service_is_named(self):
+        for load, state, message in (("not-found", "inactive", "No Altitude service is installed"),
+                                     ("loaded", "inactive", "The Altitude service is not running"),
+                                     ("loaded", "failed", "The Altitude service is not running")):
+            self.running({}, load=load, state=state)
+            with self.subTest(state=state), self.assertRaisesRegex(tls.TLSFailure, message):
+                tls.service()
+        self.running({"ALTITUDE_PORT": "https"})
+        with self.assertRaisesRegex(tls.TLSFailure, "Cannot find the running Altitude service: invalid literal"):
+            tls.service()
+        self.running({})
+        (self.proc / "4242" / "environ").unlink()
+        with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's settings"):
+            tls.service()
+
+
+class HealthServer:
+    """An HTTPS health endpoint with the service's certificate, answering as process `pid`."""
+
+    def __init__(self, test: unittest.TestCase, directory: Path, pid: int):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"pid": pid}).encode() if self.path == "/api/health" else b"{}"
+                self.send_response(200 if self.path == "/api/health" else 404)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        with mock.patch.object(config, "TLS_DIR", directory):
+            context = tls.check(renew=False)
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        test.addCleanup(self.server.server_close)
+        test.addCleanup(self.server.shutdown)
+
+
+class TestIdentity(ServiceCase):
+    """The service proves, over HTTPS, that the selected CA certifies it under its configured name."""
+
+    def found(self, port: int) -> dict:
+        self.running({"ALTITUDE_PORT": str(port), "ALTITUDE_TLS_DIR": str(self.service_tls)})
+        return tls.service()
+
+    def test_the_certificate_offered_is_the_one_the_running_service_proves(self):
+        health = HealthServer(self, self.service_tls, 4242)
+        self.assertEqual(tls._proven(self.found(health.port)), (self.service_tls / "ca.crt").read_bytes())
+
+    def test_another_process_another_ca_or_no_answer_is_refused(self):
+        health = HealthServer(self, self.service_tls, 999)
+        with self.assertRaisesRegex(tls.TLSFailure, r"^Another process answers at https://127\.0\.0\.1:\d+"):
+            tls._proven(self.found(health.port))
+        other = self.root / "other-installation" / "tls"
+        with mock.patch.object(config, "TLS_DIR", other):
+            tls.initialize()
+        stranger = HealthServer(self, other, 4242)
+        with self.assertRaisesRegex(tls.TLSFailure, "does not prove its identity with the CA certificate "
+                                    + re.escape(str(self.service_tls / "ca.crt"))):
+            tls._proven(self.found(stranger.port))
+        stranger.server.shutdown()
+        stranger.server.server_close()
+        with self.assertRaisesRegex(tls.TLSFailure, r"^The Altitude service does not answer at https://127\.0\.0\.1"):
+            tls._proven(self.found(stranger.port))
+        (self.service_tls / "ca.crt").unlink()
+        with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's CA certificate"):
+            tls._proven(self.found(health.port))
+
+
+class TestShare(ServiceCase):
+    """`alt tls-share` offers only the public CA, over plain HTTP, on the address a phone reaches."""
+
+    def test_a_loopback_wildcard_or_plain_http_service_is_refused_before_anything_is_offered(self):
+        for settings, message in (({}, "configured for 127.0.0.1, which only this computer can open. Set the "
+                                       "service's ALTITUDE_HOST"),
+                                  ({"ALTITUDE_HOST": "localhost"}, "configured for localhost"),
+                                  ({"ALTITUDE_HOST": "::1"}, "configured for ::1"),
+                                  ({"ALTITUDE_HOST": "0.0.0.0"}, "configured for 0.0.0.0"),
+                                  ({"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_TLS": "0"}, "serves plain HTTP")):
+            self.running(settings)
+            with self.subTest(settings=settings), self.assertRaisesRegex(tls.TLSFailure, message):
                 tls.share(out=lambda line: self.fail(f"printed {line!r} before refusing"))
+
+    def sharing(self, out):
+        import threading
+        health = HealthServer(self, self.service_tls, 4242)
+        self.running({"ALTITUDE_PORT": str(health.port), "ALTITUDE_TLS_DIR": str(self.service_tls)})
+        # The suite may bind only loopback, so loopback stands in for the phone's network address here.
+        patcher = mock.patch.object(tls, "_phone_address")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        thread = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
+        thread.start()
+        return thread, health
 
     def test_serves_only_the_certificate_and_prints_what_the_phone_must_match(self):
         import threading
@@ -418,23 +563,20 @@ class TestShare(unittest.TestCase):
             lines.append(line)
             printed.set()
 
-        # The suite may bind only loopback, so loopback stands in for the phone's network address here.
-        with mock.patch.object(tls, "_phone_host", return_value=("IP", "127.0.0.1")):
-            sharing = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
-            sharing.start()
-            self.assertTrue(printed.wait(10))
-            steps = lines[0]
-            link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", steps).group(0)
-            with urllib.request.urlopen(link, timeout=5) as response:
-                self.assertEqual(response.headers["Content-Type"], "application/x-x509-ca-cert")
-                self.assertEqual(response.read(), (config.TLS_DIR / "ca.crt").read_bytes())
-            for other in ("/", "/ca.key", "/server.key", "/api/health"):
-                with self.subTest(path=other), self.assertRaises(urllib.error.HTTPError) as refused:
-                    urllib.request.urlopen(link.replace("/ca.crt", other), timeout=5)
-                self.assertEqual(refused.exception.code, 404)
-            sharing.join(15)
+        sharing, health = self.sharing(out)
+        self.assertTrue(printed.wait(10))
+        steps = lines[0]
+        link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", steps).group(0)
+        with urllib.request.urlopen(link, timeout=5) as response:
+            self.assertEqual(response.headers["Content-Type"], "application/x-x509-ca-cert")
+            self.assertEqual(response.read(), (self.service_tls / "ca.crt").read_bytes())
+        for other in ("/", "/ca.key", "/server.key", "/api/health"):
+            with self.subTest(path=other), self.assertRaises(urllib.error.HTTPError) as refused:
+                urllib.request.urlopen(link.replace("/ca.crt", other), timeout=5)
+            self.assertEqual(refused.exception.code, 404)
+        sharing.join(15)
         self.assertFalse(sharing.is_alive(), "the link closes by itself")
-        authority = tls.identity(config.TLS_DIR / "ca.crt")
+        authority = tls.identity(self.service_tls / "ca.crt")
         pairs = authority["sha256"].split(":")
         for row in (pairs[:8], pairs[8:16], pairs[16:24], pairs[24:]):
             self.assertIn(" ".join(row), steps)
@@ -442,7 +584,7 @@ class TestShare(unittest.TestCase):
         self.assertIn("Before tapping Install", steps)
         self.assertIn(tls.describe_scope(authority["scope"]), steps)
         self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
-        self.assertIn(f"open {tls.url()} in a new Private tab", steps)
+        self.assertIn(f"open https://127.0.0.1:{health.port} in a new Private tab", steps)
         self.assertEqual(lines[1:], ["Sent the certificate to 127.0.0.1.", "The link is closed."])
 
     def test_a_stalled_client_neither_blocks_the_phone_nor_outlives_the_link(self):
@@ -455,17 +597,96 @@ class TestShare(unittest.TestCase):
             lines.append(line)
             printed.set()
 
-        with mock.patch.object(tls, "_phone_host", return_value=("IP", "127.0.0.1")):
-            sharing = threading.Thread(target=tls.share, kwargs={"minutes": 0.05, "out": out})
-            sharing.start()
-            self.assertTrue(printed.wait(10))
-            link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", lines[0]).group(0)
-            port = int(link.split(":")[2].split("/")[0])
-            with socket.create_connection(("127.0.0.1", port), timeout=10) as stalled:
-                stalled.sendall(b"GET /ca.crt HTTP/1.1\r\n")  # headers never finish
-                with urllib.request.urlopen(link, timeout=5) as response:
-                    self.assertEqual(response.read(), (config.TLS_DIR / "ca.crt").read_bytes())
-                sharing.join(15)
-                self.assertFalse(sharing.is_alive(), "the link closes on time despite the open request")
-                self.assertEqual(stalled.recv(1024), b"", "the stalled request never receives the certificate")
+        sharing, _ = self.sharing(out)
+        self.assertTrue(printed.wait(10))
+        link = re.search(r"http://127\.0\.0\.1:\d+/ca\.crt", lines[0]).group(0)
+        port = int(link.split(":")[2].split("/")[0])
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as stalled:
+            stalled.sendall(b"GET /ca.crt HTTP/1.1\r\n")  # headers never finish
+            with urllib.request.urlopen(link, timeout=5) as response:
+                self.assertEqual(response.read(), (self.service_tls / "ca.crt").read_bytes())
+            sharing.join(15)
+            self.assertFalse(sharing.is_alive(), "the link closes on time despite the open request")
+            self.assertEqual(stalled.recv(1024), b"", "the stalled request never receives the certificate")
         self.assertEqual(lines[-1], "The link is closed.")
+
+
+@unittest.skipUnless(sys.platform == "linux", "the fictional service manager answers for a Linux user service")
+class TestShareCommand(unittest.TestCase):
+    """The operator's ordinary shell runs `alt tls-share` and `alt pair` with none of the service's settings;
+    a fictional service manager reports a real process whose environment holds them."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=SUITE)
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+
+    def service(self, settings: dict, state: str = "active") -> None:
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                                   env={"PATH": os.environ["PATH"], **settings})
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        manager = self.bin / "systemctl"
+        manager.write_text(f"#!/bin/sh\nprintf 'LoadState=loaded\\nActiveState={state}\\nSubState=running\\n"
+                           f"MainPID={process.pid}\\nFragmentPath=/fictional\\nUnitFileState=enabled\\n'\n")
+        manager.chmod(0o755)
+
+    def alt(self, *args: str, entry: Path = ALT, **shell) -> subprocess.CompletedProcess:
+        environment = {key: value for key, value in os.environ.items() if key not in platform.SERVICE_SETTINGS}
+        environment.update({"PATH": f"{self.bin}:{os.environ['PATH']}", "ALTITUDE_HOME": str(self.root / "runtime"),
+                            "ALTITUDE_ACTOR": config.OPERATOR_ACTOR, **shell})
+        return subprocess.run([sys.executable, str(entry), *args], input="", capture_output=True, text=True,
+                              env=environment, timeout=60)
+
+    def test_a_release_installation_follows_the_service_over_its_saved_settings(self):
+        import shutil
+        source = self.root / "application" / "versions" / "trial-1"
+        for directory in ("altitude", "bin"):
+            shutil.copytree(ALT.parent.parent / directory, source / directory,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (source / "release.json").write_text(json.dumps({"version": "trial-1", "commit": "a" * 40}))
+        saved = self.root / "install.json"
+        saved.write_text(json.dumps({"environment": {"ALTITUDE_HOST": "10.9.9.9", "ALTITUDE_PORT": "8890",
+                                                     "ALTITUDE_TLS_DIR": str(self.root / "saved-tls")}}))
+        folder = self.root / "service-tls"
+        # A service drop-in overrides the saved settings; the shell sets none of them.
+        self.service({"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443", "ALTITUDE_TLS_DIR": str(folder)})
+        entry = source / "bin" / "alt"
+        result = self.alt("tls-share", entry=entry, ALTITUDE_CONFIG=str(saved))
+        self.assertIn(f"alt tls-share: Cannot read the Altitude service's CA certificate {folder / 'ca.crt'}",
+                      result.stderr)
+        self.assertIn("This shell sets ALTITUDE_PORT differently",
+                      self.alt("tls-share", entry=entry, ALTITUDE_CONFIG=str(saved), ALTITUDE_PORT="8890").stderr)
+
+    def test_an_ordinary_shell_selects_the_services_address_and_certificate_folder(self):
+        folder = self.root / "service-tls"
+        self.service({"ALTITUDE_HOST": "10.20.30.40", "ALTITUDE_PORT": "9443", "ALTITUDE_TLS_DIR": str(folder)})
+        result = self.alt("tls-share")
+        # The service's own folder is chosen (it holds no CA here), before any network access or listener.
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn(f"alt tls-share: Cannot read the Altitude service's CA certificate {folder / 'ca.crt'}",
+                      result.stderr)
+        paired = self.alt("pair")
+        self.assertEqual(paired.returncode, 0, paired.stderr)
+        self.assertRegex(paired.stdout, r"On the device, open https://10\.20\.30\.40:9443/pair\?code=[\w-]+\n")
+
+    def test_true_loopback_mismatch_stopped_service_and_other_actors_are_refused(self):
+        self.service({"ALTITUDE_PORT": "9443"})
+        self.assertIn("alt tls-share: The Altitude service is configured for 127.0.0.1, which only this computer "
+                      "can open", self.alt("tls-share").stderr)
+        self.assertIn("alt tls-share: This shell sets ALTITUDE_PORT differently from the running Altitude service",
+                      self.alt("tls-share", ALTITUDE_PORT="8890").stderr)
+        for actor in ("l2", "l3"):
+            refused = self.alt("tls-share", ALTITUDE_ACTOR=actor)
+            self.assertEqual((refused.returncode, refused.stdout), (1, ""))
+            self.assertNotIn("service", refused.stderr)
+        self.service({}, state="inactive")
+        self.assertIn("alt tls-share: Cannot find the running Altitude service: The Altitude service is not running",
+                      self.alt("tls-share").stderr)
+        paired = self.alt("pair")
+        self.assertEqual(paired.returncode, 0, paired.stderr)
+        self.assertIn("No link: Cannot find the running Altitude service", paired.stdout)
+        self.assertIn("Type the code on its Pair this device screen.", paired.stdout)

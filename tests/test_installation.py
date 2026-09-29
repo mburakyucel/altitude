@@ -561,10 +561,30 @@ class Platform(unittest.TestCase):
     def test_unit_quotes_spaces_percent_backslashes_and_quotes(self):
         unit = platform.definition(Path('/tmp/A 100% "trial"'), Path("/usr/bin/python3"),
                                    Path('/tmp/A 100% "trial"/install.json'), {"PATH": "/bin:/tmp/back\\slash"})
-        self.assertIn('WorkingDirectory="/tmp/A 100%% \\"trial\\""', unit)
+        self.assertIn('WorkingDirectory=/tmp/A 100%% "trial"\n', unit)
         self.assertIn('Environment="PATH=/bin:/tmp/back\\\\slash"', unit)
         self.assertIn('KillMode=control-group\n', unit)
         self.assertIn('NoNewPrivileges=yes\n', unit)
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd-analyze parses unit files on systemd hosts")
+    def test_systemd_accepts_the_unit_for_unusual_installation_paths(self):
+        for name in ("plain", "A 100% trial", 'quoted "trial"', "back\\slash", "${UNDEFINED} %h", "it's"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                prefix = Path(tmp) / name
+                unit = Path(tmp) / "altitude.service"
+                unit.write_text(platform.definition(prefix, Path(sys.executable).resolve(), prefix / "install.json",
+                                                    {"PATH": "/usr/bin:/bin"}))
+                unit.chmod(0o644)  # the installer's mode; CI jobs run with umask 000
+                result = subprocess.run(["systemd-analyze", "verify", "--man=no", "--generators=no", str(unit)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("altitude.service", result.stderr)
+                self.assertIn(f"WorkingDirectory={str(prefix).replace('%', '%%')}\n", unit.read_text())
+
+    def test_prefix_that_systemd_would_alter_is_refused(self):
+        for value in ("/tmp/app ", "/tmp/app\t", "/tmp/app\\"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                platform.definition(Path(value), Path("/usr/bin/python3"), Path("/tmp/install.json"), {"PATH": "/bin"})
 
     def test_control_characters_cannot_inject_unit_directives(self):
         for value in ("/tmp/app\nExecStart=/usr/bin/other", "/tmp/app\r", "/tmp/app\x00"):

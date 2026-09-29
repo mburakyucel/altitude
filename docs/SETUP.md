@@ -8,9 +8,11 @@ genuine clean-machine/provider acceptance are not established.
 
 The optional [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance)
 exercises the packaged application on disposable Ubuntu 24.04 GitHub runners with fictional data
-and fixture engines. Its first hosted execution remains pending until results are recorded.
-The same harness runs on a disposable developer VM; it is not an installation command for your
-own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention,
+and fixture engines. It has not executed on GitHub; the same harness runs in a
+[local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
+installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention (the local VM
+also checks the service starts again after a restart and runs the built `install.sh` against a
+release server inside the VM),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
@@ -52,6 +54,10 @@ stable release yet, so install the newest release candidate from its own tag:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
 ```
 
+`v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
+installation fails at service start. The next release candidate carries the fix; see the
+[changelog](../CHANGELOG.md).
+
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
 when something is missing: Linux x86_64 or a Mac with Apple silicon on macOS 15 or newer, not root,
 Python 3.12 or newer, `curl`, a SHA-256 tool, `openssl` (OpenSSL 3 on a Mac) and `systemctl --user` on
@@ -91,8 +97,8 @@ alt doctor
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
 migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
-An initial custom `--prefix` must be empty; updates retain customized hook launchers and refuse
-to overwrite them. Resolve the named ownership conflict before retrying.
+An initial custom `--prefix` must be empty and must not end in whitespace or a backslash; updates
+retain customized hook launchers and refuse to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
 It checks GitHub authentication without a provider request; repository permissions, model access
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.
@@ -154,10 +160,19 @@ On the computer running Altitude, locally or over SSH, run:
 alt tls-share
 ```
 
-For ten minutes it offers the certificate at a plain-HTTP link on the configured address
-(`ALTITUDE_HOST`, which must not be loopback) and prints the steps below with the CA's real name and
-fingerprint. It serves nothing else; Ctrl-C closes it sooner. A firewall on that computer can block
-the link's port; then use another channel.
+It reads the address, port and certificate folder from the running Altitude service itself, so
+the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
+`ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
+anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
+service's address, and offers only a certificate the service proves it serves under. For ten
+minutes it offers the certificate at a plain-HTTP link on the service's address and prints the
+steps below with the CA's real name and fingerprint. It serves nothing else; Ctrl-C closes it
+sooner. A firewall on that computer can block the link's port; then use another channel.
+
+It stops with the reason when the service is not installed or not running, serves plain HTTP,
+listens only on loopback (`ALTITUDE_HOST` must be the private-network address the phone opens,
+which takes effect when the service restarts), does not answer, or answers without proving that
+certificate. It needs the Linux user service; the native macOS service is not available yet.
 
 On an iPhone or iPad:
 
@@ -215,8 +230,9 @@ run:
 alt pair
 ```
 
-It prints an eight-character code and a `/pair?code=…` link. Type the code on the device, or open
-the link there. A code works once, for ten minutes; a new code cancels the previous one and five
+It prints an eight-character code and a `/pair?code=…` link to the running service's address.
+Type the code on the device, or open the link there; when the service cannot be found it prints the
+code with the reason instead of a link. A code works once, for ten minutes; a new code cancels the previous one and five
 wrong codes cancel it. A paired device stays paired for 400 days of disuse and renews while you use
 it. A paired device can also make a code in **Settings → Devices** for another one. On an iPhone,
 a Home Screen app added after Safari is paired may start already paired: iOS can copy Safari's
@@ -249,7 +265,8 @@ Altitude what is waiting. On your own network the alert names the project and ta
 the alert says a decision is waiting and nothing more. It needs outbound internet from altd; where a
 push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
 phone means while it is on screen. Each alert opens that decision and carries no conversation text.
-A push service that refuses Altitude's default sender address takes one from `ALTITUDE_PUSH_CONTACT`.
+While a push service refuses Altitude's alerts, the line under the switch names it and the reason it
+gave; [refused decision alerts](OPERATIONS.md#refused-decision-alerts) lists what each reason needs.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
 ## First run in the browser
@@ -335,9 +352,11 @@ alt --project example chat "Describe this project and suggest one small improvem
 ## Project setup and repair
 
 **Altitude performs routine setup automatically. If a step fails, L3 helps investigate, and
-Altitude checks the result before marking it complete.** The project header's permanent **Setup**
-status opens its checklist on phone and desktop. It shows the latest observations, with **Check
-again** for a fresh check and relevant actions on incomplete rows.
+Altitude checks the result before marking it complete.** **Setup…** in the project's ⋯ menu opens
+the checklist on phone and desktop at any time. The project header shows a **Setup** status only while
+setup needs attention: it is running, a current requirement is missing or failed, or setup could not
+be read. A ready project's header stays quiet. The checklist shows the latest observations, with
+**Check again** for a fresh check and relevant actions on incomplete rows.
 
 | Step | What happens |
 | --- | --- |
@@ -353,7 +372,7 @@ Ready describes these project checks, not every future remote operation or model
 Setup never initializes Git. Optional capabilities such as voice do not prevent readiness.
 
 Existing projects receive the same current checks as new projects. Missing requirements introduced
-by an update appear without detach/reattach or repeating healthy work. Routine maintenance and
+by an update appear in the project header without detach/reattach or repeating healthy work. Routine maintenance and
 launch checks refresh recognized owned guard paths to the active source; saved task-worktree
 overrides receive the same checks. Failed or interrupted introductory
 agent calls wait for an explicit Retry; routine maintenance does not repeat them. Refresh, reconnection
@@ -390,10 +409,10 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
-| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
+| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
-| `alt machine set --voice` | Transcription backend: `browser` (default, no setup) or the URL of your OpenAI-compatible speech service, with an optional model and key for hosted providers. See [voice input](OPERATIONS.md#voice-input). |
+| `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,
@@ -418,17 +437,16 @@ Remote access is explicit: bind the specific private interface/address your devi
 wildcard bind is certified for `localhost` only) and arrange firewall/network access. There is no application login layer; HTTPS authenticates the
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
-for update/recovery and source deployments. Voice input works out of the box through the browser's
-own speech recognition, with English punctuated on the device by a model bundled in the archive; a
-speech service of your own is optional (see [voice input](OPERATIONS.md#voice-input)). Typing
-remains available without either.
+for update/recovery and source deployments. Voice input runs on this computer by default where its
+speech model can run: first run offers the one-time download of about 698 MB, checked against the
+release (**Set up voice**, **Use browser recognition instead** or **Skip**; see [host voice](OPERATIONS.md#host-voice)).
+Elsewhere, including macOS for now, voice uses the browser's own speech recognition, with English
+punctuated on the device by a model bundled in the archive (see [voice input](OPERATIONS.md#voice-input)).
+Typing remains available without either.
 Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).
-The overview shows the saved backend; the Voice input page holds its options. Browser recognition
-saves immediately. **Your speech service** requires the URL of an OpenAI-compatible
-`/v1/audio/transcriptions` endpoint, then **Save service**; a hosted provider's key and model sit
-behind **Hosted provider? Add a key or model**. [Your speech service](OPERATIONS.md#your-speech-service)
-has a worked example of running one on this computer; the service's own setup and charges apply.
-Installation downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
+The overview shows the saved backend; the Voice input page holds its two choices, **This computer**
+(with **Set up voice** and its progress) and **Browser recognition**, each saved immediately.
+Installation itself downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
 ## When something does not work
 
