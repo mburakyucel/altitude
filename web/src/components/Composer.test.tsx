@@ -1835,6 +1835,20 @@ describe("Composer live words", () => {
     expect(field).toHaveValue("");
   });
 
+  it("a recording that stops early while the words are still flowing lands every recognized word", async () => {
+    installVoiceBrowser();
+    const server = hostVoice(heard);
+    const { user, field } = mount({ initial: "Please" });
+    await listen(user);
+    await waitFor(() => expect(field.value.length).toBeGreaterThan("Please ".length));
+    expect(field.value).not.toBe(`Please ${heard}`);
+    server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
+    act(() => hostMicrophone.speak(8000));
+    expect(await screen.findByText("Voice stopped: the speech process stopped. Typing works.")).toBeInTheDocument();
+    expect(field).toHaveValue(`Please ${heard}`);
+    expect(field).not.toHaveAttribute("readonly");
+  });
+
   it("Cancel while the words are still flowing restores the draft with nothing added", async () => {
     installVoiceBrowser();
     hostVoice(heard);
