@@ -94,6 +94,23 @@ to `~/.config/altitude/access/`, so it works whatever address Altitude listens o
 a browser is open. To sign out every browser, remove `~/.config/altitude/access/devices.json`. Back up
 the folder only to a place as private as `~/.config`.
 
+## Refused decision alerts
+
+A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device
+again on each tick while a decision waits, even one another device already took, so a fix on either
+side takes effect without another step. altd records the refusal and the short reason code the
+service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
+<status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
+the line under the alert switch in Needs you names that push service and its reason, and that device
+alerts only while Altitude is open.
+
+- `403 BadJwtToken`: the service rejects the signed sender token, most often its contact address.
+  Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](SETUP.md#configuration-and-limits)).
+- `403 VapidPkHashMismatch` or another refusal of the key: turn alerts off and on again on that
+  device, which subscribes it with the key Altitude signs with.
+- `404` or `410`: the subscription has ended; altd drops it and the device subscribes again when
+  alerts are next turned on there.
+
 ## Remove a project
 
 In the project's **More actions** menu, **Remove project** detaches its coordinator and stops

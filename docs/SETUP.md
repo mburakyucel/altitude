@@ -257,7 +257,8 @@ Altitude what is waiting. On your own network the alert names the project and ta
 the alert says a decision is waiting and nothing more. It needs outbound internet from altd; where a
 push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
 phone means while it is on screen. Each alert opens that decision and carries no conversation text.
-A push service that refuses Altitude's default sender address takes one from `ALTITUDE_PUSH_CONTACT`.
+While a push service refuses Altitude's alerts, the line under the switch names it and the reason it
+gave; [refused decision alerts](OPERATIONS.md#refused-decision-alerts) lists what each reason needs.
 Declining permission, or a browser without notifications, leaves Needs you and typing unchanged.
 
 ## First run in the browser
@@ -400,7 +401,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
-| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@localhost`. Set a real `mailto:` address if a device's push service refuses that one. |
+| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
 | `alt machine set --voice` | Transcription backend: `browser` (default, no setup), `host` (this computer transcribes live after `alt voice setup`) or the URL of your OpenAI-compatible speech service, with an optional model and key for hosted providers. See [voice input](OPERATIONS.md#voice-input). |
