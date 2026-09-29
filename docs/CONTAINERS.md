@@ -3,9 +3,10 @@
 Container support is under validation. The candidate uses rootless Podman with real systemd inside
 the image. The feasibility tuple is Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
 its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory passed on commit
-`03ca1a936e942282b2d314a85ca49cd1bb2553e4`, archive SHA-256
-`07b9be89d681ad8934def42f7605b84a6de77c58d841e2aed25740dd5a441fc2`.
-Later source revisions and the optional stripped-image native-profile lane have not run natively.
+`171d8027de970315c6de5ad92cb38dbc9420bca5`, archive SHA-256
+`2a0d2e1ab2360e6669c6dd1a64deb081423ae38b53cd7d50d7d1cd0505474af3`.
+That same image passed the native diagnostic task/coordinator permission matrix and actual daemon
+environment/listener/certificate checks. This evidence applies to that exact source and Linux tuple.
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
@@ -133,19 +134,22 @@ image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
-The prepared successor also checks the running daemon's environment and owned listening socket,
-using a non-default internal port and fictional advertised certificate name. This remains unrun
-and does not test host port publication or client-device access.
+The gate checks the running daemon's environment and owned listening socket using a non-default
+internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
+and the requested certificate SAN; it does not test host port publication or client-device access.
 
 An explicit `--native-sandbox-binary /path/to/diagnostic-executable` additionally copies an ordinary
 installed native diagnostic into the disposable image and exercises the application-generated task
 and coordinator profiles. It retains binary/probe hashes, positive controls, allowed/denied writes,
 manager/broker/loopback socket checks and a fictional Git commit. The source deployment is already
-root-owned and denies the unsandboxed write control. This optional stripped-image profile lane is
-prepared but has not run; the earlier profile evidence used a diagnostic image. It makes no provider
-session, authentication or other-engine confinement claim.
+root-owned and denies the unsandboxed write control. The stripped-image lane passed with diagnostic
+CLI 0.158.0 and bubblewrap 0.12.0. Task writes were limited to worktree/Git/state/temp; coordinator
+writes were limited to scratch. Both denied user-manager sockets and Git-consent writes; the task
+retained broker/loopback access and the coordinator denied direct connections. Both sandboxed roles
+reported zero effective capabilities, NoNewPrivs=1 and Seccomp=2. This makes no provider-session,
+authentication or other-engine confinement claim.
 
-Results explicitly name uncovered final-image engine confinement, full task workflow, Stop/restart/
+Results explicitly name uncovered provider-session confinement parity, full task workflow, Stop/restart/
 recreation, concurrent controller locks, updates/backups, published HTTPS/browser onboarding and Mac.
 Workspace tests cover route refusals, native regressions, lock contention and fictional phone/desktop
 states; they are not container/Mac acceptance. Required PR checks remain required, and optional hosted
