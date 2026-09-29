@@ -804,8 +804,9 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize and close for terminal `id`: each answers ok or the server's error (410 once it was replaced). */
-export function terminalSend(project: string, action: "input" | "resize" | "close", body: { task?: string; id: string; data?: string; cols?: number; rows?: number }) {
+/** Input, resize and close for terminal `id`, and `command`: the chat command about to be typed, which the task's owner
+ * hears about once it has run. Each answers ok or the server's error (410 once it was replaced). */
+export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; text?: string; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
 

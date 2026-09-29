@@ -58,6 +58,9 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
 
   await page.keyboard.press("Enter");
   await walk.state("04-enter-runs", { visible: [output.getByText("ran-42", { exact: true })], hidden: [] });
+  // Once the shell is back at its prompt, the task's owner is told the command it handed over has run.
+  await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).notices, { timeout: 10_000 })
+    .toEqual([expect.stringContaining("looks finished in the task terminal: `echo ran-$((20+22))`")]);
 
   // A program in the foreground would receive the keystrokes, so nothing is typed.
   await page.keyboard.type("sleep 300");
@@ -83,6 +86,22 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await expect(printing).toBeVisible({ timeout: 10_000 });
   await walk.state("05b-kept-printing", { visible: [printing, printing.getByRole("button", { name: "Copy command" })], hidden: [] });
   await printing.getByRole("button", { name: "Dismiss" }).click();
+  await page.locator(".terminal-screen").click();
+  await page.keyboard.press("Control+C");
+
+  // When Altitude can't tell the owner, the command is still typed and the operator is asked to reply instead.
+  await page.route("**/api/terminal/*/command", (route) => route.fulfill({
+    status: 503, contentType: "application/json", body: JSON.stringify({ error: "Altitude is unreachable." }),
+  }));
+  await conversation();
+  await openIt.click();
+  const untold = panel.getByRole("status").filter({ hasText: "couldn't tell the task's owner to watch this command, so reply in chat once it has run." });
+  await expect(untold).toBeVisible({ timeout: 10_000 });
+  await expect(output).toContainText(/\^C\s*prepare-index-migration \$ echo ran-\$\(\(20\+22\)\)/);
+  await walk.state("05c-owner-not-told", { visible: [untold, untold.getByRole("button", { name: "Dismiss" })], hidden: [] });
+  await page.unroute("**/api/terminal/*/command");
+  await untold.getByRole("button", { name: "Dismiss" }).click();
+  await expect(untold).toBeHidden();
   await page.locator(".terminal-screen").click();
   await page.keyboard.press("Control+C");
   await page.keyboard.type("clear");

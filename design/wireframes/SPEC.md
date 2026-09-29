@@ -282,6 +282,7 @@ a task or project conversation offer Open in terminal; elsewhere (Live session, 
 | Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
 | Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
 | A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
+| Owner not told | In a task terminal the page first tells Altitude the command so its owner hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run.", with **Copy command** and ×. |
 | Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
 | Enter | Only the operator's Enter runs it. |
 
