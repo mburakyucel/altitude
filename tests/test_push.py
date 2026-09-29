@@ -27,8 +27,9 @@ class _Service(http.server.BaseHTTPRequestHandler):
         size = int(self.headers.get("Content-Length") or 0)
         self.server.requests.append({"path": self.path, "body": self.rfile.read(size),
                                      "headers": {name.lower(): value for name, value in self.headers.items()}})
-        body = self.server.body if self.server.status >= 300 else b""
-        self.send_response(self.server.status)
+        status = self.server.refusing.get(self.path, self.server.status)
+        body = self.server.body if status >= 300 else b""
+        self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -68,6 +69,7 @@ class TestPush(AltitudeCase):
         self.service = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Service)
         self.service.socket = context.wrap_socket(self.service.socket, server_side=True)
         self.service.requests, self.service.status, self.service.body = [], 201, b""
+        self.service.refusing = {}  # path -> status, for one device refused among several
         threading.Thread(target=self.service.serve_forever, daemon=True).start()
         self.addCleanup(self.service.server_close)
         self.addCleanup(self.service.shutdown)
@@ -195,6 +197,50 @@ class TestPush(AltitudeCase):
         push.notify()
         push.forget(self.endpoint)
         self.assertNotIn(self.endpoint, (self.tmp / "push.json").read_text())
+
+    def test_a_refusal_echoing_the_endpoint_records_only_its_status(self):
+        push.subscribe(self.endpoint)
+        self.service.status = 403
+        self.service.body = json.dumps({"reason": f"Bad subscription {self.endpoint}"}).encode()
+        self.decision("Choose backup retention", "How long should backups stay?")
+        notes = []
+        push.notify(notes.append)
+        self.assertEqual(push.refused()[0]["reason"], "403")
+        self.assertNotIn("/wake/", json.dumps([notes, push.refused()]))
+
+    def test_a_refused_device_is_retried_while_another_device_already_took_the_decision(self):
+        second = self.endpoint.replace("device-1", "device-2")
+        push.subscribe(self.endpoint)
+        push.subscribe(second)
+        self.service.refusing, self.service.body = {"/wake/device-2": 403}, b'{"reason":"BadJwtToken"}'
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.assertEqual([r["reason"] for r in push.refused()], ["403 BadJwtToken"])
+        push.notify()  # the first device took it; only the refused one is tried again
+        self.assertEqual([sent["path"] for sent in self.service.requests[2:]], ["/wake/device-2"])
+
+        self.service.refusing = {}  # fixed on either side: the next tick gets through and stops retrying
+        push.notify()
+        push.notify()
+        self.assertEqual(push.refused(), [])
+        self.assertEqual([sent["path"] for sent in self.service.requests[2:]], ["/wake/device-2"] * 2)
+
+    def test_a_device_subscribing_again_while_a_refused_send_is_in_flight_starts_clean(self):
+        push.subscribe(self.endpoint)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        sending = push._send
+
+        def resubscribed_meanwhile(endpoint):
+            outcome = sending(endpoint)
+            push.forget(endpoint)
+            push.subscribe(endpoint)
+            return outcome
+
+        self.service.status, self.service.body = 403, b'{"reason":"BadJwtToken"}'
+        push.notify()
+        self.patch(push, "_send", resubscribed_meanwhile)
+        push.notify()
+        self.assertEqual(push.refused(), [])
 
     def test_a_second_device_does_not_silence_a_decision_the_first_is_still_owed(self):
         push.subscribe(self.endpoint)

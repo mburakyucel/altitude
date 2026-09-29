@@ -96,9 +96,10 @@ the folder only to a place as private as `~/.config`.
 
 ## Refused decision alerts
 
-A push service that refuses Altitude's alert keeps its device subscribed and is tried again on each
-tick, so a fix on either side takes effect without another step. altd records the refusal and the
-reason the service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
+A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device
+again on each tick while a decision waits, even one another device already took, so a fix on either
+side takes effect without another step. altd records the refusal and the short reason code the
+service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
 <status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
 the line under the alert switch in Needs you names that push service and its reason, and that device
 alerts only while Altitude is open.

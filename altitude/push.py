@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -113,7 +114,8 @@ def _send(endpoint: str) -> tuple[int, str]:
 
 
 def _reason(refusal: urllib.error.HTTPError) -> str:
-    """Apple and Mozilla answer {"reason": …}, Google a line of text; either is short and names no one."""
+    """Apple and Mozilla answer {"reason": …}, Google a line of text. Only a short plain code is kept:
+    the reason is logged and shown on the page, and a body echoing an endpoint must not carry it there."""
     try:
         body = refusal.read(2000).decode(errors="replace").strip()
     except OSError:
@@ -124,7 +126,8 @@ def _reason(refusal: urllib.error.HTTPError) -> str:
         parsed = None
     if isinstance(parsed, dict):
         body = str(parsed.get("reason") or parsed.get("message") or parsed.get("error") or "")
-    return " ".join(body.split())[:120]
+    body = " ".join(body.split())
+    return body if re.fullmatch(r"[\w .,'()-]{1,80}", body) else ""
 
 
 def _record() -> dict:
@@ -186,18 +189,22 @@ def notify(log=lambda message: None) -> None:
     """Called each tick: a newly waiting decision wakes every subscribed device, once.
 
     A decision counts as announced only once a device has taken it. A machine that was asleep or off
-    its network when the decision arrived therefore still wakes on the next tick that gets through."""
+    its network when the decision arrived therefore still wakes on the next tick that gets through.
+    A device whose push service refused is tried again each tick while a decision waits, so a fix on
+    either side reaches it without another step, even when another device took the decision."""
     with _LOCK:
         record = _record()
         if not record["subscriptions"]:
             return
         keys = _waiting()
         fresh = [key for key in keys if key not in record["seen"]]
-        if not fresh:  # answered decisions drop out; the record stays the size of the queue
+        refusing = [endpoint for endpoint in record["subscriptions"] if endpoint in record["refused"]]
+        if not fresh and not (keys and refusing):  # answered decisions drop out; the record stays the size of the queue
             record["seen"] = keys
             _save(record)
             return
-        endpoints = list(record["subscriptions"])
+        endpoints = list(record["subscriptions"]) if fresh else refusing
+        before = dict(record["refused"])  # a subscription renewed while sending starts clean, not refused again
     taken, outcomes = False, {}
     for endpoint in endpoints:  # sent outside the lock: a slow push service must not stall a subscription
         try:
@@ -207,7 +214,7 @@ def notify(log=lambda message: None) -> None:
             continue
         if status in (404, 410):  # gone for good; the device subscribes again when it next alerts
             forget(endpoint)
-        elif status >= 300:  # kept and tried each tick, so a fix on either side takes effect by itself
+        elif status >= 300:  # kept, and recorded with its reason below
             outcomes[endpoint] = f"{status} {reason}".strip()
         else:
             taken = True
@@ -216,7 +223,8 @@ def notify(log=lambda message: None) -> None:
         record = _record()
         record["seen"] = keys if taken else [key for key in keys if key not in fresh]
         for endpoint, why in outcomes.items():
-            if endpoint not in record["subscriptions"] or record["refused"].get(endpoint) == why:
+            now = record["refused"].get(endpoint)
+            if endpoint not in record["subscriptions"] or now != before.get(endpoint) or now == why:
                 continue
             # Once per change, with its reason: a refusal logged every tick without one hid its cause.
             host = urlparse(endpoint).netloc
