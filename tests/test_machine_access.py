@@ -6,11 +6,18 @@ Authority fences, records, the HTTP door and the CLI door are real.
 """
 import http.client
 import json
+import os
+import signal
+import socket
+import subprocess
+import sys
 import threading
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from tests.support import AltitudeCase, make_repo
+from tests.support import REPO, AltitudeCase, make_repo
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 SHIM = r'''#!/usr/bin/env python3
@@ -28,6 +35,25 @@ with open(log, "ab") as out:
 '''
 
 
+# The altd that a restart replaces: a real process that launches the unit, then is killed while it runs.
+EARLIER_ALTD = r'''
+import sys
+from altitude import access, platform, server
+platform.SYSTEMD_RUN, platform.sys.platform, access.is_machine = sys.argv[1], "linux", lambda presented: True
+httpd = server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), server.Handler)
+print("ready", flush=True)
+httpd.serve_forever()
+'''
+
+
+def wait_for(condition, what):
+    deadline = time.monotonic() + 30
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out waiting for {what}")
+        time.sleep(.02)
+
+
 class TestMachineAccess(AltitudeCase):
     host = "linux"  # systemd fixtures
 
@@ -40,6 +66,9 @@ class TestMachineAccess(AltitudeCase):
         shim.write_text(SHIM)
         shim.chmod(0o755)
         self.patch(platform, "SYSTEMD_RUN", str(shim))
+        self.active = set()  # units the fixture service manager still runs
+        self.patch(platform, "job_active", side_effect=lambda name, env: name in self.active)
+        self.patch(server, "MACHINE_POLL_SECONDS", .01)
         self.at = "2026-09-16T06:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
         self.patch(T, "_conversation_time", side_effect=lambda: self.at)
@@ -68,9 +97,10 @@ class TestMachineAccess(AltitudeCase):
         finally:
             connection.close()
 
-    def run_command(self, command, *, status=200, attempt="1"):
+    def run_command(self, command, *, status=200, attempt="1", request=None):
         return self.request("/api/task/run", {"project": self.project, "slug": self.slug, "attempt": attempt,
-                                              "command": command}, status=status)
+                                              "command": command, "request": request or uuid.uuid4().hex},
+                            status=status)
 
     def ask(self, text="May I edit the service unit, reload and restart it to keep TLS?"):
         self.tick()
@@ -163,9 +193,10 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual((again["exit"], again["n"], again["unit"]), (0, 2, self.unit(2)))
         self.assertEqual(again["output"], "second\n")
         folder = S.task_dir(self.project, self.slug)
-        log = (folder / "machine.log").read_text()
-        self.assertIn("hello\n", log)
-        self.assertIn("second\n", log)
+        self.assertIn("hello\n", (folder / f"{self.unit(1)}.log").read_text())
+        self.assertEqual((folder / f"{self.unit(2)}.log").read_text(), "second\n")
+        self.assertEqual((again["log"], (folder / f"{self.unit(2)}.exit").read_text()),
+                         (str(folder / f"{self.unit(2)}.log"), "0"))
         rows = [json.loads(line) for line in (folder / "machine.jsonl").read_text().splitlines()]
         self.assertEqual([(r["n"], r["command"], r["exit"], r["purpose"]) for r in rows],
                          [(1, "echo hello; echo trouble >&2; pwd; exit 3", 3, question["detail"]),
@@ -198,17 +229,17 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual([(r["n"], r["exit"], r["error"]) for r in rows], [(n, 0, None) for n in (1, 2, 3)])
 
     def test_a_unit_without_an_exit_status_is_never_a_success(self):
+        self.granted()
         self.patch(platform, "SYSTEMD_RUN", str(self.tmp / "bin" / "missing"))
-        result = engines.machine_command("true", cwd=self.worktree, log=self.tmp / "machine.log", unit=self.unit(1),
-                                         identity=dispatch.l2_env(self.project, self.slug, 1))
-        self.assertEqual((result["exit"], result["timed_out"]), (None, False))
+        result = self.run_command("true")
+        self.assertEqual((result["exit"], result["timed_out"], result["output"]), (None, False, ""))
         self.assertIn("no exit status recorded", result["error"])
-        self.assertFalse((self.tmp / f"{self.unit(1)}.exit").exists())
+        self.assertIn("missing", result["error"])
+        self.assertEqual([(e["exit"], e["error"]) for e in self.events("machine-run")], [(None, result["error"])])
 
     def test_a_command_past_its_limit_is_reported_as_a_timeout(self):
         self.granted()
-        original = engines.machine_command
-        self.patch(engines, "machine_command", side_effect=lambda command, **kw: original(command, timeout=1, **kw))
+        self.patch(config, "MACHINE_COMMAND_TIMEOUT", 1)
         result = self.run_command("echo started; sleep 5; echo never")
         self.assertEqual((result["exit"], result["timed_out"]), (None, True))
         self.assertIn("limit", result["error"])
@@ -297,3 +328,101 @@ class TestMachineAccess(AltitudeCase):
         self.assertIn("ALTITUDE_ATTEMPT=1", scrub)
         self.assertEqual(scrub[-3:], ["altitude-machine", "systemctl --user daemon-reload", str(self.tmp / "unit.exit")])
         self.assertIn('bash -lc "$1"', scrub[-4])
+
+    def rows(self):
+        return [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
+                .splitlines()]
+
+    def test_a_command_interrupted_by_a_restart_keeps_its_result_for_the_ledger_and_the_owner(self):
+        self.granted()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        earlier = subprocess.Popen([sys.executable, "-c", EARLIER_ALTD, platform.SYSTEMD_RUN, str(port)], cwd=REPO,
+                                   stdout=subprocess.PIPE, text=True, env={**os.environ, "PYTHONPATH": str(REPO)})
+        self.addCleanup(earlier.stdout.close)
+        self.addCleanup(earlier.kill)
+        self.assertEqual(earlier.stdout.readline(), "ready\n")
+        started, release = self.tmp / "started", self.tmp / "release"
+        owner = subprocess.Popen(
+            [sys.executable, str(REPO / "bin" / "alt"), "task", "run", self.slug,
+             f"echo before; touch {started}; while [ ! -e {release} ]; do sleep .02; done; echo after; exit 5"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": self.project,
+                 "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(port), "ALTITUDE_TLS": "0",
+                 "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+        self.addCleanup(owner.kill)
+        wait_for(started.exists, "the command to start")
+        self.active.add(self.unit(1))
+        earlier.send_signal(signal.SIGKILL)  # Altitude restarts; the unit runs on
+        earlier.wait()
+        [row] = self.rows()
+        self.assertEqual((row["exit"], row["finished"]), (None, None))
+        self.assertIn("interrupted", row["error"])
+        self.assertIn("one command at a time", self.run_command("echo meanwhile", status=400)["error"])
+        replacement = server.ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+        replacement.daemon_threads = True
+        threading.Thread(target=replacement.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(replacement.server_close)
+        self.addCleanup(replacement.shutdown)
+        settling = server.settle_interrupted_machine_commands()
+        self.assertEqual(len(settling), 1)
+        release.touch()
+        exit_file = S.task_dir(self.project, self.slug) / f"{self.unit(1)}.exit"
+        wait_for(exit_file.exists, "the unit's exit status")
+        self.active.discard(self.unit(1))
+        for thread in settling:
+            thread.join(30)
+        stdout, stderr = owner.communicate(timeout=60)
+        self.assertEqual(owner.returncode, 5, stderr)
+        self.assertIn("waiting for this command's result", stderr)
+        self.assertTrue(stdout.startswith("before\nafter\n"), stdout)
+        self.assertIn(f"[altitude] {self.unit(1)}: exit 5; log ", stdout)
+        [row] = self.rows()
+        finished = datetime.fromtimestamp(exit_file.stat().st_mtime, timezone.utc).isoformat()
+        self.assertEqual((row["exit"], row["timed_out"], row["error"], row["finished"]), (5, False, None, finished))
+        self.assertEqual([(e["n"], e["exit"], e["finished"]) for e in self.events("machine-run")], [(1, 5, finished)])
+        self.assertEqual([(e["unit"], e["exit"]) for e in S.read_project_log(self.project)
+                          if e["kind"] == "machine-run"], [(self.unit(1), 5)])
+        self.assertEqual((self.run_command("echo next")["n"], len(self.events("machine-run"))), (2, 2))
+
+    def test_an_interrupted_command_is_settled_from_its_exit_status_or_stays_uncertain(self):
+        self.granted()
+        folder = S.task_dir(self.project, self.slug)
+        runs = folder / "machine.jsonl"
+        started = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        interrupted = {"purpose": "p", "exit": None, "timed_out": False, "started": started, "finished": None,
+                       "error": "still running or interrupted with altd"}
+        runs.write_text(json.dumps({**interrupted, "n": 1, "command": "make gate", "unit": self.unit(1)}) + "\n")
+        (folder / f"{self.unit(1)}.exit").write_text("0")
+        os.utime(folder / f"{self.unit(1)}.exit", (1790000000, 1790000000))
+        (folder / f"{self.unit(1)}.log").write_text("gate passed\n")
+        for thread in server.settle_interrupted_machine_commands():
+            thread.join(30)
+        with runs.open("a") as ledger:
+            ledger.write(json.dumps({**interrupted, "n": 2, "command": "make vm", "unit": self.unit(2)}) + "\n")
+        for thread in server.settle_interrupted_machine_commands():
+            thread.join(30)
+        first, second = self.rows()
+        self.assertEqual((first["exit"], first["error"], first["finished"]),
+                         (0, None, datetime.fromtimestamp(1790000000, timezone.utc).isoformat()))
+        self.assertEqual((second["exit"], second["timed_out"]), (None, False))
+        self.assertIn("uncertain", second["error"])
+        self.assertIsNotNone(second["finished"])
+        self.assertEqual([(e["n"], e["exit"]) for e in self.events("machine-run")], [(1, 0), (2, None)])
+        self.assertEqual(server.settle_interrupted_machine_commands(), [])
+        self.assertEqual(self.run_command("true")["n"], 3)
+
+    def test_asking_again_with_the_same_request_returns_its_result_without_running_it_again(self):
+        self.granted()
+        request = uuid.uuid4().hex
+        counter = self.tmp / "runs"
+        first = self.run_command(f"echo once >> {counter}; echo done", request=request)
+        again = self.run_command(f"echo once >> {counter}; echo done", request=request)
+        self.assertEqual((again["n"], again["exit"], again["output"]), (first["n"], 0, "done\n"))
+        self.assertEqual(counter.read_text(), "once\n")
+        self.assertIn("different command", self.run_command("echo other", request=request, status=400)["error"])
+        self.assertIn("current attempt", self.run_command(f"echo once >> {counter}; echo done", request=request,
+                                                          attempt="2", status=403)["error"])
+        self.assertIn("hexadecimal", self.run_command("true", request="not-a-request", status=400)["error"])
+        self.assertEqual((len(self.rows()), len(self.events("machine-run"))), (1, 1))

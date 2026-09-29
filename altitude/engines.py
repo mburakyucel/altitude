@@ -778,42 +778,72 @@ def machine_unit(project: str, slug: str, sequence: int) -> str:
     return f"altitude-machine-{safe}-{sequence}.service"
 
 
-def machine_command(command: str, *, cwd: Path, log: Path, unit: str, identity: dict,
-                    timeout: int = config.MACHINE_COMMAND_TIMEOUT) -> dict:
-    """Run one command as the operator's user outside the worker sandbox; return its exit status and the output
-    it appended to `log`. No exit status within the limit is reported as a timeout or an explicit uncertainty,
-    never as success."""
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.touch()
-    offset = log.stat().st_size
-    status = log.with_name(f"{unit}.exit")
-    status.unlink(missing_ok=True)
+def machine_files(folder: Path, unit: str) -> tuple[Path, Path]:
+    """The unit's own output log and the exit status it writes itself, both in the task folder."""
+    return folder / f"{unit}.log", folder / f"{unit}.exit"
+
+
+def machine_command(command: str, *, cwd: Path, folder: Path, unit: str, identity: dict,
+                    timeout: int) -> str | None:
+    """Run one command as the operator's user outside the worker sandbox and wait for its job; return why the
+    launch failed, if it did. The job writes its output and exit status itself (`machine_files`), so the result
+    survives Altitude restarting while it runs; `machine_outcome` reads it."""
+    log, status = machine_files(folder, unit)
+    folder.mkdir(parents=True, exist_ok=True)
     env = codex_env(identity, retain_user_bus=True)
-    started = datetime.now(timezone.utc)
-    record = {"unit": unit, "command": command, "exit": None, "timed_out": False, "started": started.isoformat(),
-              "finished": None, "error": None, "log": str(log)}
     try:
         run = subprocess.run(platform.logged_job_command(unit, command, log=log, status=status, env=env,
                                                          timeout=timeout),
                              cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout + 30)
-        launch_error = (run.stderr or run.stdout).strip()[:300]
+        return (run.stderr or run.stdout).strip()[:300] or None
     except (OSError, subprocess.SubprocessError) as exc:
-        launch_error = str(exc)[:300]
+        return str(exc)[:300]
+
+
+def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, timeout: int,
+                    launch_error: str | None = None, poll: float = 2) -> dict:
+    """Wait until the unit has written its exit status or ended, then return its exit status and timing.
+
+    `watched` says this altd saw the job end, so a missing status after the limit is a timeout; a job that ended
+    unseen, while Altitude restarted, without a status stays an explicit uncertainty. Neither is ever a success."""
+    status = machine_files(folder, unit)[1]
+    begun = datetime.fromisoformat(started)
+    env = codex_env(retain_user_bus=True)
+    while not status.exists():
+        try:  # the limit ends the job, so past it (and a little grace) nothing is still running
+            ended = datetime.now(timezone.utc) >= begun + timedelta(seconds=timeout + 60) or \
+                not platform.job_active(unit, env)
+        except RuntimeError:
+            ended = False
+        if ended:
+            break
+        watched = True
+        time.sleep(poll)
     finished = datetime.now(timezone.utc)
-    record["finished"] = finished.isoformat()
-    try:
+    record = {"exit": None, "timed_out": False, "finished": finished.isoformat(), "error": None}
+    try:  # read after seeing the end: a job writes its status just before it exits
         record["exit"] = int(status.read_text().strip())
+        record["finished"] = datetime.fromtimestamp(status.stat().st_mtime, timezone.utc).isoformat()
     except (OSError, ValueError):
-        record["timed_out"] = (finished - started).total_seconds() >= timeout
-        record["error"] = (f"stopped at the {timeout}s limit" if record["timed_out"]
-                           else f"no exit status recorded: {launch_error or 'the unit ended before the command ran'}")
-    status.unlink(missing_ok=True)
-    with open(log, "rb") as stream:
-        stream.seek(offset)
-        data = stream.read()
-    record["output_truncated"] = len(data) > 16384
-    record["output"] = data[-16384:].decode(errors="replace")
+        record["timed_out"] = watched and (finished - begun).total_seconds() >= timeout
+        record["error"] = (f"stopped at the {timeout}s limit" if record["timed_out"] else
+                           f"no exit status recorded: {launch_error or 'the unit ended before the command ran'}"
+                           if watched else "no exit status recorded: the unit ended while altd restarted, "
+                                           "so the result is uncertain")
     return record
+
+
+def machine_output(folder: Path, unit: str) -> dict:
+    """The end of the unit's output, as the owner reads it with its result."""
+    log = machine_files(folder, unit)[0]
+    try:
+        with open(log, "rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 16385))
+            data = stream.read()
+    except OSError:
+        data = b""
+    return {"output": data[-16384:].decode(errors="replace"), "output_truncated": len(data) > 16384,
+            "log": str(log)}
 
 
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
