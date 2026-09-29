@@ -1509,7 +1509,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise speech.SpeechError("Voice settings changed. Record again with the new setting.", 409)
             if parts == ["api", "voice", "live"]:
                 self._body()
-                return self._json(SPEECH.open(device))
+                owner = access.voice_owner(device)
+                replaying = self.headers.get("X-Voice-Owner")
+                if replaying is not None and replaying != owner:
+                    raise speech.SpeechError("Voice stopped: this recording belongs to another device.", 403)
+                return self._json({**SPEECH.open(device), "owner": owner})
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 seq = int((query.get("seq") or [""])[0])

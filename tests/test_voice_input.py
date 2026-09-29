@@ -94,6 +94,15 @@ class TestSpeechServiceRemoval(VoiceCase):
             self.assertNotIn(secret, events)
             self.assertNotIn(secret, "".join(path.read_text() for path in config.ROOT.glob("*.json")))
 
+    def test_machine_show_never_prints_a_service_key_before_the_daemon_removes_it(self):
+        S.write_json(config.ROOT / "voice-request.json", {"id": "r1", "voice": self.SERVICE, "status": "done",
+                                                          "result_voice": self.SERVICE})
+        shown = self.alt("machine", "show", env={"ALTITUDE_ACTOR": config.OPERATOR_ACTOR})
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        for secret in ("sk-private", "voice.example"):
+            self.assertNotIn(secret, shown.stdout)
+        self.assertEqual(json.loads(shown.stdout)["voice_request"]["voice"], "removed speech service")
+
     def test_a_pending_service_request_is_never_applied(self):
         S.write_json(config.ROOT / "settings.json", {"voice": "browser"})
         S.write_json(config.ROOT / "voice-request.json", {"id": "r1", "voice": self.SERVICE, "status": "pending",

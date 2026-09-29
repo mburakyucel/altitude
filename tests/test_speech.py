@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 
 from tests.support import AltitudeCase
-from altitude import config, platform, server, speech, speech_worker, state as S, terminal
+from altitude import access, config, platform, server, speech, speech_worker, state as S, terminal
 
 #: Answers like the worker: the text is how many samples the recording holds. `argv[1]` picks a failure.
 FAKE_WORKER = r'''
@@ -552,6 +552,18 @@ class TestHostVoiceRoutes(SpeechCase):
         self.assertNotEqual(server.voice_view()["selection"], selection, "a new runtime is a new selection")
         self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=1", b"", "application/octet-stream",
                                    **chunk)[0], 409)
+
+    def test_a_replay_stays_with_the_device_that_opened_the_first_recording(self):
+        self.runtime()
+        status, opened = self.start()
+        self.assertEqual(status, 200)
+        owner = opened["owner"]
+        self.assertEqual(owner, access.voice_owner(None))
+        self.assertNotEqual(access.voice_owner("another-device"), owner, "each paired device has its own name")
+        self.post(f"/api/voice/live/{opened['id']}/cancel")
+        self.assertEqual(self.post("/api/voice/live", **{"X-Voice-Owner": owner})[0], 200)
+        status, payload = self.post("/api/voice/live", **{"X-Voice-Owner": access.voice_owner("another-device")})
+        self.assertEqual((status, payload["error"]), (403, "Voice stopped: this recording belongs to another device."))
 
     def test_starting_needs_the_current_selection_and_a_set_up_runtime(self):
         self.assertEqual(self.post("/api/voice/live", **{"X-Voice-Selection": "stale"})[0], 409)

@@ -59,7 +59,7 @@ export async function fixtureHost(page: Page, initial: HostState = READY) {
       host.chunks = [];
       host.opened += 1;
       host.id = host.opened === 1 ? "fixture" : `fixture-${host.opened}`;
-      return route.fulfill({ json: { id: host.id } });
+      return route.fulfill({ json: { id: host.id, owner: "fixture-device" } });
     }
     if (host.forget || !path.startsWith(`/api/voice/live/${host.id}/`)) {
       host.forget = false;

@@ -584,11 +584,15 @@ def main(argv=None) -> None:
             else:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
+            # A receipt from before the speech-service removal can name a service key until altd next starts.
+            voice_request = S.read_json(config.ROOT / "voice-request.json", None)
+            if isinstance(voice_request, dict):
+                voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
                  "voice": config.voice_setting(),
-                 "voice_request": S.read_json(config.ROOT / "voice-request.json", None),
+                 "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "projects_folder_request": S.read_json(config.ROOT / "projects_folder-request.json", None)})
         return

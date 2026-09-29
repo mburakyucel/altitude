@@ -797,7 +797,7 @@ describe("Composer", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/api/voice") return jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host: { state: "ready", download_bytes: 0 } });
-      if (path === "/api/voice/live") return options.refuse ? jsonResponse({ error: options.refuse }, 429) : jsonResponse({ id: "rec" });
+      if (path === "/api/voice/live") return options.refuse ? jsonResponse({ error: options.refuse }, 429) : jsonResponse({ id: "rec", owner: "device" });
       if (path.endsWith("/cancel")) return jsonResponse({ ok: true });
       heard += (init?.body as Int16Array).length;
       return jsonResponse(path.includes("final=1") ? { text: `Heard ${heard} samples.`, final: true } : { text: `heard ${heard}` });

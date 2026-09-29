@@ -13,8 +13,8 @@
  * at once: one sending, one recording. A request that gets no answer is repeated with the same samples,
  * number and final flag, so the host never counts it twice, while the microphone keeps recording. When the
  * host no longer knows the recording (it idled out or restarted), the capture opens a new one and replays
- * everything from the start; the host refuses that replay if the voice setting or its runtime changed. The
- * words shown hold still until the replay catches up with them. After Stop, the capture waits two minutes
+ * everything from the start; the host refuses that replay if the voice setting or its runtime changed, or if
+ * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */
 import { ApiError, cancelHostVoice, sendHostVoice, startHostVoice } from "../data/api";
@@ -133,11 +133,13 @@ export class HostCapture {
   private recorded = 0;
   /** The host recording, the last sequence number it answered, and how many samples those answers cover. */
   private id: string | null = null;
+  /** The paired device the first host recording belongs to: a replay is refused under any other. */
+  private owner: string | undefined;
   /** A replay is opening a new host recording: a busy host is asked again rather than ending the capture. */
   private reopening = false;
   private seq = -1;
   private covered = 0;
-  /** The words shown before a replay: held until the replay covers as many samples. */
+  /** The words shown before a replay: held until the replay covers as many samples and as many words. */
   private holdUntil = 0;
   private inflight: { seq: number; pcm: Int16Array; final: boolean } | null = null;
   private stopping = false;
@@ -248,9 +250,10 @@ export class HostCapture {
   private async open() {
     const request = this.begin(REQUEST_MS);
     try {
-      const opened = await startHostVoice(this.selection, request.signal);
+      const opened = await startHostVoice(this.selection, request.signal, this.owner);
       if (this.state === "inactive") { void cancelHostVoice(opened.id).catch(() => undefined); return; }
       this.id = opened.id;
+      this.owner ??= opened.owner;
       traceVoice("host.opened", this);
       this.answered();
     } catch (error) {
@@ -272,7 +275,8 @@ export class HostCapture {
       this.inflight = null;
       this.seq = chunk.seq;
       this.covered += chunk.pcm.length;
-      if (chunk.final || this.covered >= this.holdUntil) {
+      // The host answers audio before transcribing it, so a replay holds until its words catch up too.
+      if (chunk.final || !this.holdUntil || this.covered >= this.holdUntil && answer.text.length >= this.text.length) {
         this.holdUntil = 0;
         this.text = answer.text;
         this.onupdate?.(this.text);

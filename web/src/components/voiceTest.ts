@@ -132,7 +132,7 @@ export function hostVoiceServer(options: HostVoiceOptions = {}) {
       if (path === "/api/voice/live") {
         if (server.refuse?.on === "live") return json({ error: server.refuse.error }, server.refuse.status);
         server.opened += 1;
-        return json({ id: `rec-${server.opened}` });
+        return json({ id: `rec-${server.opened}`, owner: "device" });
       }
       if (path.endsWith("/cancel")) return json({ ok: true });
       if (server.refuse?.on === "audio") { const { status, error } = server.refuse; server.refuse = null; return json({ error }, status); }

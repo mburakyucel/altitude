@@ -2124,7 +2124,10 @@ terminal does; the daemon stops the worker on shutdown.
 
 Every live and audio request carries the page's `X-Voice-Selection`; the server checks it against the
 current setting, including the runtime digest, before reading audio (409 otherwise). An unknown
-recording answers 410 and a recording opened by another paired device answers 403.
+recording answers 410 and a recording opened by another paired device answers 403. Opening a recording
+also answers `owner`, an opaque name for the paired device (an HMAC of its id under the machine key); a
+replay presents it as `X-Voice-Owner`, so a browser paired again as another device during an outage is
+refused (403) rather than continuing the recording.
 `web/src/components/hostCapture.ts` keeps recording through a lost connection. Each recording's
 samples stay in page memory only, up to its ten-minute limit, and at most two recordings are retained
 at once; a third microphone tap asks the person to wait. Requests are sequential: a lost request is
@@ -2132,7 +2135,8 @@ sent again with the same number, bytes and `final` flag after a backoff of half 
 three seconds, so the server's repeat rule makes retries harmless. A 410 (the server restarted or
 dropped the idle recording) opens a new recording and replays the retained samples from the start
 while the selection is unchanged; a busy answer while reopening is retried. During replay the shown
-words hold ("Catching up…") until the replay passes the point already shown, so text never shrinks.
+words hold ("Catching up…") until the replay passes the point already shown and its transcript is as long,
+because the host acknowledges audio before transcribing it; text never shrinks.
 401, 403 and 409 end the recording and keep the words shown. After Stop or Send the page waits at most
 two minutes for the connection ("Waiting for connection…", with Cancel); then it discards the audio,
 keeps the words already shown and says the last words were not added, and a voice Send returns its

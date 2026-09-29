@@ -25,7 +25,7 @@ describe("HostCapture", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     calls = [];
-    reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec" }) : answer({ text: `${calls.filter((c) => c.path.includes("/audio")).length} chunks` });
+    reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec", owner: "device" }) : answer({ text: `${calls.filter((c) => c.path.includes("/audio")).length} chunks` });
     vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
       const call = { path, body: init.body, headers: init.headers as Record<string, string> };
       calls.push(call);
@@ -72,7 +72,7 @@ describe("HostCapture", () => {
   it("gathers samples while a request is in flight and sends them together, at most ten seconds each", async () => {
     const mic = microphone();
     let release: () => void = () => undefined;
-    reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec" })
+    reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec", owner: "device" })
       : call.path.includes("seq=0") ? new Promise((resolve) => { release = () => resolve(answer({ text: "slow" })); }) : answer({ text: "caught up" });
     const capture = new HostCapture(mic.stream, "s");
     capture.start();
@@ -94,7 +94,7 @@ describe("HostCapture", () => {
     let offline = true;
     reply = (call) => {
       if (offline) throw new TypeError("network");
-      return call.path === "/api/voice/live" ? answer({ id: "rec" }) : answer({ text: `heard ${call.path}` });
+      return call.path === "/api/voice/live" ? answer({ id: "rec", owner: "device" }) : answer({ text: `heard ${call.path}` });
     };
     const capture = new HostCapture(mic.stream, "s");
     const seen: string[] = [];
@@ -142,7 +142,7 @@ describe("HostCapture", () => {
     let host = "first";
     let gone = false;
     reply = (call) => {
-      if (call.path === "/api/voice/live") return answer({ id: host });
+      if (call.path === "/api/voice/live") return answer({ id: host, owner: "device" });
       if (gone && call.path.startsWith("/api/voice/live/first/")) return answer({ error: "Voice stopped: this recording has ended." }, 410);
       const count = calls.filter((c) => c.path.startsWith(`/api/voice/live/${host}/audio`)).length;
       return answer({ text: `${host} ${count}` });
@@ -170,7 +170,7 @@ describe("HostCapture", () => {
     const mic = microphone();
     let replaying = false;
     reply = (call) => {
-      if (call.path === "/api/voice/live") return answer({ id: replaying ? "second" : "first" });
+      if (call.path === "/api/voice/live") return answer({ id: replaying ? "second" : "first", owner: "device" });
       if (call.path.startsWith("/api/voice/live/first/") && replaying) return answer({ error: "ended" }, 410);
       if (call.path.startsWith("/api/voice/live/second/audio?seq=1")) return new Promise<Response>(() => undefined);
       return answer({ text: replaying ? "short" : "a longer sentence already shown" });
@@ -191,6 +191,54 @@ describe("HostCapture", () => {
     expect(capture.connection).toBe("catching-up");
   });
 
+  it("holds the words until the replay's transcript catches up, not only its samples", async () => {
+    const mic = microphone();
+    let replaying = false;
+    let heard = "";
+    reply = (call) => {
+      if (call.path === "/api/voice/live") return answer({ id: replaying ? "second" : "first", owner: "device" });
+      if (call.path.startsWith("/api/voice/live/first/") && replaying) return answer({ error: "ended" }, 410);
+      return answer({ text: replaying ? heard : "words already shown" });
+    };
+    const capture = new HostCapture(mic.stream, "s");
+    capture.start();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 3; i++) { mic.speak(8000); await vi.advanceTimersByTimeAsync(0); }
+    replaying = true;
+    mic.speak(8000);  // the host acknowledges the replayed samples before transcribing them
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.filter((call) => call.path.startsWith("/api/voice/live/second/audio")).length).toBeGreaterThan(0);
+    expect(capture.text).toBe("words already shown");
+    expect(capture.connection).toBe("catching-up");
+    heard = "words already shown again";
+    mic.speak(8000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(capture.text).toBe("words already shown again");
+    expect(capture.connection).toBe("ok");
+  });
+
+  it("replays as the device that opened the first recording", async () => {
+    const mic = microphone();
+    let host = "first";
+    reply = (call) => {
+      if (call.path === "/api/voice/live") return answer({ id: host, owner: host === "first" ? "device-a" : "device-b" });
+      if (host === "second" && call.path.startsWith("/api/voice/live/first/")) return answer({ error: "ended" }, 410);
+      return answer({ text: "words" });
+    };
+    const capture = new HostCapture(mic.stream, "s");
+    capture.start();
+    await vi.advanceTimersByTimeAsync(0);
+    mic.speak(8000);
+    await vi.advanceTimersByTimeAsync(0);
+    host = "second";
+    mic.speak(8000);
+    await vi.advanceTimersByTimeAsync(0);
+    const opens = calls.filter((call) => call.path === "/api/voice/live");
+    expect(opens).toHaveLength(2);
+    expect(opens[0]!.headers["X-Voice-Owner"]).toBeUndefined();
+    expect(opens[1]!.headers["X-Voice-Owner"]).toBe("device-a");
+  });
+
   it("asks a busy host again while replaying, and ends with the words shown if the connection stays lost two minutes after Stop", async () => {
     const mic = microphone();
     let opens = 0;
@@ -198,7 +246,7 @@ describe("HostCapture", () => {
     reply = (call) => {
       if (call.path === "/api/voice/live") {
         opens += 1;
-        return opens > 1 && busy-- > 0 ? answer({ error: "Voice is busy on another device." }, 429) : answer({ id: `rec${opens}` });
+        return opens > 1 && busy-- > 0 ? answer({ error: "Voice is busy on another device." }, 429) : answer({ id: `rec${opens}`, owner: "device" });
       }
       if (call.path.startsWith("/api/voice/live/rec1/") && opens === 1 && busy === 2) return answer({ error: "ended" }, 410);
       return answer({ text: "words so far" });
@@ -238,7 +286,7 @@ describe("HostCapture", () => {
     it(`ends at once, keeping the words shown, when the host refuses with ${status}`, async () => {
       const mic = microphone();
       let refuse = false;
-      reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec" })
+      reply = (call) => call.path === "/api/voice/live" ? answer({ id: "rec", owner: "device" })
         : refuse ? answer({ error: "Voice settings changed. Record again with the new setting." }, status) : answer({ text: "kept" });
       const capture = new HostCapture(mic.stream, "s");
       capture.start();
@@ -336,7 +384,7 @@ describe("HostCapture", () => {
   it("a recording opened after cancel is discarded on the host too", async () => {
     const mic = microphone();
     let open: () => void = () => undefined;
-    reply = (call) => call.path === "/api/voice/live" ? new Promise((resolve) => { open = () => resolve(answer({ id: "late" })); }) : answer({ ok: true });
+    reply = (call) => call.path === "/api/voice/live" ? new Promise((resolve) => { open = () => resolve(answer({ id: "late", owner: "device" })); }) : answer({ ok: true });
     const capture = new HostCapture(mic.stream, "s");
     capture.start();
     capture.cancel();
