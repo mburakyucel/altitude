@@ -272,7 +272,7 @@ wildcard/DNS bindings, environment files and foreign drop-ins require separate r
 Obtain the reviewed installer, archive and verified checksum, then inspect:
 
 ```sh
-python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>' \
+python3.12 install.py --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>' \
   --prepare-source-tls /absolute/path/to/existing-certificates
 ```
 

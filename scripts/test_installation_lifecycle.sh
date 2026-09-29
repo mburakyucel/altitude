@@ -4,11 +4,12 @@
 # checks it and removes it. PHASE bootstrap points the release host at this machine's loopback for the
 # duration of the test. Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|reboot-install|reboot-verify)$ ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR SOURCE_COMMIT [bootstrap|reboot-install|reboot-verify]' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|reboot-install|reboot-verify|recovery)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|reboot-install|reboot-verify|recovery]' >&2
     exit 2
 fi
-[[ $5 =~ ^[0-9a-f]{40}$ ]] || { echo 'Supply the full selected source commit.' >&2; exit 2; }
+# BASELINE_COMMIT.. names a published baseline built from another commit.
+[[ $5 =~ ^([0-9a-f]{40}\.\.)?[0-9a-f]{40}$ ]] || { echo 'Supply the full selected source commit.' >&2; exit 2; }
 if [[ $EUID != 0 || -n ${ALTITUDE_ACTOR:-} ]]; then
     echo 'Requires root on a disposable VM, outside an Altitude worker.' >&2
     exit 2

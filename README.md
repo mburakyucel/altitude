@@ -70,7 +70,7 @@ acceptance are not yet established.
 1. Install the current release candidate as the account that will use Altitude:
 
    ```sh
-   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.1/install.sh | sh
+   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
    ```
 
    There is no stable release yet, so each preview installs from its own tag; check
