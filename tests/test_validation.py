@@ -7,6 +7,7 @@ results folder in place of their mount points. The authority fences, the fixed c
 committed HEAD, the results copy, cleanup, records, the switch and the HTTP and CLI doors are real.
 """
 import http.client
+import hashlib
 import json
 import os
 import subprocess
@@ -152,6 +153,16 @@ class TestValidationRunner(AltitudeCase):
 
         self.assertEqual(self.validate(["true"])["n"], 2)
         self.assertEqual(len(self.calls("build")), 1, "a built image is reused")
+
+    def test_the_image_comes_from_the_source_the_service_activated_after_import(self):
+        activated = self.tmp / "activated"
+        (activated / "scripts").mkdir(parents=True)
+        (activated / "scripts" / "validation.Containerfile").write_text("FROM scratch\n")
+        self.patch(config, "SOURCE", activated)   # git_policy.activate_source() at service startup
+        self.assertEqual(self.validate(["true"])["exit"], 0)
+        [build] = self.calls("build")
+        self.assertIn(f"--file={activated / 'scripts' / 'validation.Containerfile'}", build)
+        self.assertIn(hashlib.sha256(b"FROM scratch\n").hexdigest()[:16], validation.image_tag())
 
     def test_kvm_refreshes_the_cloud_image_with_the_deployed_runner_first(self):
         kvm = self.tmp / "kvm"
