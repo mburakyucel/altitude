@@ -22,7 +22,8 @@ Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulat
 Host authorization acceptance is also open: desktop authentication prompts were reported during
 native gates. Source inspection identifies a fixture runtime-directory error that can send crun
 cleanup to the host system manager. Successful fixture exits and cleanup do not establish absence
-of those requests. Exact host-event correlation and a fail-on-attempt native guard remain required.
+of those requests. The corrected lookup and bus-denial adapter have workspace fixture evidence;
+exact host-event correlation, independent review and native verification remain required.
 
 ## Boundary
 
@@ -199,8 +200,19 @@ The launcher requires the runtime directory's bus to resolve to the local accoun
 socket. The gate links that socket into its private runtime directory, retaining isolated pause,
 OCI and storage state. Podman 4.9.3 passes only the runtime directory to `crun delete`; a private
 directory without that link loses the user bus and crun 1.14.1 can fall back to the system manager.
-The preflight refuses a missing or redirected bus, but is not proof against a later bus failure or
-an unobserved runtime-child authorization attempt. Native verification of this correction is pending.
+The preflight refuses a missing or redirected bus. Each launcher command also routes system-bus
+fallback to a private rejecting socket, which accepts no authentication and forwards nothing.
+`bin/altitude-crun` reinstalls that guard before invoking the ordinary `/usr/bin/crun`, including
+when Podman strips its environment. The adapter refuses secure execution or an elevated runtime
+that could ignore the environment override. Keep this host launcher and adapter available for the
+lifetime of containers it creates; Podman records the absolute OCI runtime path.
+
+A private runtime-directory ledger records attempted system-bus connections. The launcher fails on
+new attempts even when a child cleanup error is swallowed; the gate also checks the ledger after
+cleanup and retains the result before removing fixture storage. This instruments the selected
+Podman/crun D-Bus clients; it is not an OS sandbox against a program that ignores D-Bus routing or
+against same-account software. It does not change host polkit or service policy. Native verification
+of the complete runtime, asynchronous cleanup, rootless mapping and default protections is pending.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

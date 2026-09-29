@@ -2,6 +2,9 @@
 import json
 import os
 import stat
+import subprocess
+import sys
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -48,7 +51,10 @@ class TestContainerBusIdentity(AltitudeCase):
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, "getuid", return_value=1000), \
              mock.patch.object(Path, "resolve", return_value=Path('/run/user/1000/bus')), \
              mock.patch.object(Path, "lstat", side_effect=metadata), \
-             mock.patch.object(platform.subprocess, "run", return_value=mock.Mock(returncode=0, stdout="ok")) as run:
+             mock.patch.object(platform, "container_bus_guard", side_effect=lambda env: nullcontext(env)), \
+             mock.patch.object(platform, "container_bus_denials", return_value=self.tmp / 'empty-denials'), \
+             mock.patch.object(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, 'ok', '')) as run:
+            (self.tmp / 'empty-denials').touch()
             self.assertEqual(platform.container_command(["stop", "fixture"]), "ok")
             self.assertEqual(run.call_args.kwargs["env"]["XDG_RUNTIME_DIR"], "/run/user/1000")
 
@@ -60,6 +66,79 @@ class TestContainerBusIdentity(AltitudeCase):
             with self.assertRaisesRegex(RuntimeError, "must resolve to the local user bus"):
                 platform.container_command(["rm", "--force", "fixture"])
             run.assert_not_called()
+
+
+class TestSystemBusGuard(AltitudeCase):
+    def environment(self):
+        return {'PATH': '/usr/bin:/bin', 'XDG_RUNTIME_DIR': str(self.tmp)}
+
+    def test_local_attempt_is_recorded_even_when_child_exits_successfully(self):
+        environment = self.environment()
+        # The only connection is to the guard's fictional local socket. No host bus.
+        child = ('import os,socket; s=socket.socket(socket.AF_UNIX); '
+                 's.connect(os.environ["DBUS_SYSTEM_BUS_ADDRESS"].removeprefix("unix:path=")); s.close()')
+        with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
+            with platform.container_bus_guard(environment) as guarded:
+                result = subprocess.run([sys.executable, '-c', child], env=guarded, timeout=3)
+                self.assertEqual(result.returncode, 0)
+        ledger = platform.container_bus_denials(environment)
+        self.assertIn('connection refused', ledger.read_text())
+        self.assertEqual(stat.S_IMODE(ledger.stat().st_mode), 0o600)
+        self.assertFalse(Path(guarded['DBUS_SYSTEM_BUS_ADDRESS'].removeprefix('unix:path=')).exists())
+
+    def test_no_attempt_preserves_body_failure_and_removes_endpoint(self):
+        with self.assertRaisesRegex(ValueError, 'fixture failure'):
+            with platform.container_bus_guard(self.environment()) as guarded:
+                raise ValueError('fixture failure')
+        self.assertEqual(platform.container_bus_denials(self.environment()).read_text(), '')
+        self.assertFalse(Path(guarded['DBUS_SYSTEM_BUS_ADDRESS'].removeprefix('unix:path=')).exists())
+
+    def test_denial_evidence_cannot_follow_symlinks(self):
+        outside = self.tmp / 'outside'
+        outside.write_text('untouched')
+        platform.container_bus_denials(self.environment()).symlink_to(outside)
+        with self.assertRaises(OSError):
+            with platform.container_bus_guard(self.environment()):
+                self.fail('must refuse')
+        self.assertEqual(outside.read_text(), 'untouched')
+
+    def test_child_denial_cannot_be_hidden_by_successful_podman_exit(self):
+        environment = self.environment()
+        def ignored_failure(*args, **kwargs):
+            # Models a separately guarded OCI child's durable signal, not stderr matching.
+            with platform.container_bus_denials(environment).open('a') as evidence:
+                evidence.write('system-manager connection refused\n')
+            return subprocess.CompletedProcess([], 0, 'success', '')
+        with mock.patch.object(os, 'getuid', return_value=1000), \
+             mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(platform, 'container_user_environment', return_value=environment), \
+             mock.patch.object(platform.subprocess, 'run', side_effect=ignored_failure) as command:
+            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
+                platform.container_command(['rm', '--force', 'fixture'])
+            self.assertIn(str(platform.CONTAINER_OCI), command.call_args.args[0])
+
+    def test_oci_adapter_reinstalls_guard_after_environment_is_stripped(self):
+        environment = self.environment()
+        actual_popen = subprocess.Popen
+        observed = []
+        child = ('import os,socket; s=socket.socket(socket.AF_UNIX); '
+                 's.connect(os.environ["DBUS_SYSTEM_BUS_ADDRESS"].removeprefix("unix:path=")); s.close()')
+        def fictional_oci(arguments, *, env, close_fds):
+            observed.append(arguments)
+            self.assertFalse(close_fds)
+            return actual_popen([sys.executable, '-c', child], env=env, close_fds=close_fds)
+        actual_stat = Path.stat
+        def metadata(path, *args, **kwargs):
+            if path == Path('/usr/bin/crun'):
+                return mock.Mock(st_mode=stat.S_IFREG | 0o755)
+            return actual_stat(path, *args, **kwargs)
+        with mock.patch.dict(os.environ, environment, clear=True), \
+             mock.patch.object(Path, 'stat', metadata), mock.patch.object(os, 'listxattr', return_value=[]), \
+             mock.patch.object(platform.subprocess, 'Popen', side_effect=fictional_oci):
+            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
+                platform.container_oci(['delete', '--force', 'fictional-id'])
+        self.assertEqual(observed, [['/usr/bin/crun', 'delete', '--force', 'fictional-id']])
+        self.assertIn('connection refused', platform.container_bus_denials(environment).read_text())
 
 
 class TestFixtureCleanup(AltitudeCase):

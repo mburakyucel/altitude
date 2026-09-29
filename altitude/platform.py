@@ -23,6 +23,8 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import uuid
 
 
@@ -37,6 +39,104 @@ CONTAINER_INSTANCE = Path("/etc/altitude/instance")
 CONTAINER_PROJECTS = Path("/home/altitude/Projects")
 CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
 IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
+CONTAINER_OCI = Path(__file__).resolve().parent.parent / "bin/altitude-crun"
+CONTAINER_BUS_DENIAL = "Altitude refused a host system-manager connection"
+
+
+def container_bus_denials(environment: dict[str, str]) -> Path:
+    return Path(environment["XDG_RUNTIME_DIR"]) / "altitude-system-bus-denials"
+
+
+@contextmanager
+def container_bus_guard(environment: dict[str, str]):
+    """Reject system-bus fallback by the selected D-Bus clients and retain attempts (#543).
+
+    This instruments trusted Podman/crun, not arbitrary hostile programs. The OCI
+    adapter reinstalls it after Podman strips its child environment.
+    """
+    ledger = container_bus_denials(environment)
+    descriptor = os.open(ledger, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+        os.close(descriptor)
+        raise RuntimeError("Container bus-denial evidence must be an owned private regular file")
+    done = threading.Event()
+    failures: list[str] = []
+    attempts: list[bool] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="alt-bus-") as folder, \
+                socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            endpoint = str(Path(folder) / "reject")
+            listener.bind(endpoint)
+            listener.listen(8)
+            listener.settimeout(.05)
+            def reject():
+                try:
+                    while True:
+                        try:
+                            peer, _ = listener.accept()
+                        except socket.timeout:
+                            if done.is_set():
+                                return
+                            continue
+                        with peer:
+                            attempts.append(True)
+                            # No authentication, method parsing, forwarding or payload logging.
+                            os.write(descriptor, b"system-manager connection refused\n")
+                except BaseException as exc:
+                    failures.append(str(exc))
+            thread = threading.Thread(target=reject, name="altitude-bus-denial")
+            thread.start()
+            guarded = {**environment, "DBUS_SYSTEM_BUS_ADDRESS": f"unix:path={endpoint}"}
+            try:
+                yield guarded
+            finally:
+                done.set()
+                thread.join(timeout=1)
+                if thread.is_alive() or failures:
+                    raise RuntimeError("Container bus-denial monitor failed: " + "; ".join(failures))
+                if attempts:
+                    raise RuntimeError(CONTAINER_BUS_DENIAL)
+    finally:
+        os.close(descriptor)
+
+
+def container_oci(arguments: list[str]) -> int:
+    """OCI adapter: preserve crun arguments/streams, prohibit its system-bus fallback."""
+    import ctypes
+    libc = ctypes.CDLL(None)
+    libc.getauxval.argtypes = [ctypes.c_ulong]
+    libc.getauxval.restype = ctypes.c_ulong
+    if libc.getauxval(23):  # AT_SECURE: secure_getenv would ignore the denial endpoint.
+        raise RuntimeError("Refuse a secure-execution OCI adapter that can ignore bus routing")
+    runtime = Path("/usr/bin/crun")
+    mode = runtime.stat().st_mode
+    if not stat.S_ISREG(mode) or mode & 0o6000 or "security.capability" in os.listxattr(runtime):
+        raise RuntimeError("The container adapter requires an ordinary distribution crun executable")
+    with container_bus_guard(dict(os.environ)) as environment:
+        # Preserve OCI/conmon descriptors just as direct execution does. Guard
+        # sockets and the evidence descriptor are themselves close-on-exec.
+        child = None
+        pending: list[int] = []
+        def forward(number, _frame):
+            if child is None:
+                pending.append(number)
+            else:
+                try:
+                    child.send_signal(number)
+                except ProcessLookupError:
+                    pass
+        previous = {number: signal.signal(number, forward)
+                    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            child = subprocess.Popen([str(runtime), *arguments], env=environment, close_fds=False)
+            for number in pending:
+                forward(number, None)
+            result = child.wait()
+            return result if result >= 0 else 128 - result
+        finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
 
 
 def containerized() -> bool:
@@ -320,8 +420,8 @@ def container_runtime() -> dict:
             raise RuntimeError("Rootless Podman with default seccomp is required")
         if host["cgroupVersion"] != "v2" or host["cgroupManager"] != "systemd":
             raise RuntimeError("Rootless Podman needs delegated cgroup v2 and the systemd cgroup manager")
-        if host["ociRuntime"]["name"] != "crun":
-            raise RuntimeError("This container deployment requires crun; select it before retrying")
+        if host["ociRuntime"]["path"] != str(CONTAINER_OCI):
+            raise RuntimeError("This container deployment requires the guarded crun adapter")
         if not shutil.which("slirp4netns"):
             raise RuntimeError("Install slirp4netns for the explicitly selected rootless network")
         return {"host": host, "version": info["version"], "store": info["store"]}
@@ -356,8 +456,16 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
         raise RuntimeError("Run Podman as your ordinary Linux account")
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
-    result = subprocess.run(["podman", "--remote=false", *arguments], text=True,
-                            capture_output=not interactive, timeout=timeout, env=container_user_environment())
+    environment = container_user_environment()
+    with container_bus_guard(environment) as guarded:
+        ledger = container_bus_denials(environment)
+        before = ledger.stat().st_size
+        result = subprocess.run(["podman", "--remote=false", "--runtime", str(CONTAINER_OCI), *arguments], text=True,
+                                capture_output=not interactive, timeout=timeout, env=guarded)
+        # A runtime child can report a denied connection yet have its failure
+        # swallowed by Podman cleanup. Such a command must still fail.
+        if ledger.stat().st_size != before or CONTAINER_BUS_DENIAL in (result.stderr or ""):
+            raise RuntimeError(CONTAINER_BUS_DENIAL)
     if result.returncode:
         error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
                              f"{(result.stderr or '').strip()[-2000:]}")

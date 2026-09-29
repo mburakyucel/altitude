@@ -309,6 +309,10 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     if clean(["ps", "--all", "--quiet"]).strip() or json.loads(clean(["volume", "ls", "--format", "json"])):
                         raise RuntimeError("Fixture containers or volumes remain")
                 result["pause_helpers_retired"] = platform.cleanup_container_pause(root / "home")
+                denials = platform.container_bus_denials(dict(os.environ))
+                result["host_system_bus_denials"] = denials.read_text() if denials.exists() else ""
+                if result["host_system_bus_denials"]:
+                    result.update(passed=False, error="A runtime attempted a host system-manager connection")
                 shutil.rmtree(root)
                 result["temporary_directory_removed"] = not root.exists()
             except Exception as exc:

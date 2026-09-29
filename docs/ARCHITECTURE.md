@@ -4,8 +4,10 @@
 
 The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
 Disposable fixture runtimes retain private storage/process metadata and link only that same user
-bus into their runtime directory. This keeps environment-stripped OCI cleanup on the intended bus;
-native proof against host system-manager authorization attempts remains pending in the
+bus into their runtime directory. The host controller and OCI adapter route system-bus fallback to
+a private rejecting endpoint and retain denial evidence, including errors Podman cleanup swallows.
+This is instrumentation of the selected runtime clients, not hostile-process confinement. Native
+proof against host system-manager authorization attempts remains pending in the
 [container evidence](CONTAINERS.md#evidence).
 
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
