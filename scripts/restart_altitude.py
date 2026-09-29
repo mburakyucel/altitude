@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import access, config, dispatch, git_policy, incidents, state as S  # noqa: E402
+from altitude import access, config, dispatch, git_policy, incidents, platform, state as S  # noqa: E402
 
 
 ROOT = config.REPO
@@ -234,6 +234,7 @@ def record_failure(attempt: str | None, error: str) -> None:
 
 
 def main() -> int:
+    platform.require_native_application()
     staging: Path | None = None
     attempt = requested_at()
     try:

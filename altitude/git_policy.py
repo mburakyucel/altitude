@@ -229,9 +229,9 @@ def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> 
 
 def activate_source() -> None:
     """Pin service launch inputs to committed source outside every worker's writable roots."""
-    from . import config
+    from . import config, platform
 
-    if config.RELEASE is not None:
+    if platform.containerized() or config.RELEASE is not None:
         # Versioned installs already pin code and resources outside project worktrees.
         return
     repo = config.REPO

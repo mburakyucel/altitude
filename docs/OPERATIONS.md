@@ -1,5 +1,9 @@
 # Operations
 
+The [container lifecycle](CONTAINERS.md#lifecycle-and-recovery) uses host image replacement instead
+of native application updates or source activation. Browser terminal and host voice are explicitly
+unavailable. Container runtime, complete onboarding and backup/recovery acceptance remain pending.
+
 This is the runtime guide for an already configured installation. New users should start with
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:

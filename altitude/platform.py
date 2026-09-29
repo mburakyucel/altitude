@@ -7,13 +7,19 @@ The macOS runtime is not implemented yet (issue #225); `require_supported` refus
 from __future__ import annotations
 
 import fcntl
+from contextlib import ExitStack, contextmanager
 import ipaddress
+import json
 import os
 from pathlib import Path
 import platform as host_platform
 import re
+import select
 import shlex
 import shutil
+import signal
+import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -22,6 +28,189 @@ import sys
 SERVICE = "altitude.service"
 #: What First run shows for a missing command-line tool, run in the operator's own terminal.
 INSTALL = {"gh": "sudo apt install gh", "git": "sudo apt install git"}
+
+# Image-owned identity, outside every persistent/writable application volume. Neither an environment
+# variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
+CONTAINER_MARKER = Path("/etc/altitude/container")
+CONTAINER_PROJECTS = Path("/home/altitude/Projects")
+IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
+
+
+def containerized() -> bool:
+    """Recognize the image contract; an invalid existing marker fails closed, never as native mode."""
+    try:
+        info = CONTAINER_MARKER.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise RuntimeError("Container identity must be a root-owned, non-writable regular file")
+    for parent in CONTAINER_MARKER.parents:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError("Container identity must have root-owned, non-writable parent directories")
+    with CONTAINER_MARKER.open("rb") as source:
+        if source.read(64) != b"altitude-container-v1\n":
+            raise RuntimeError("Unsupported container identity; use a matching Altitude image")
+    return True
+
+
+def container_unavailable(subject: str) -> str | None:
+    if not containerized():
+        return None
+    if subject == "Terminal":
+        return "Browser terminal is unavailable in this container. Use podman exec from a host terminal."
+    if subject == "Voice":
+        return "Host voice is unavailable in this container. Use browser recognition or an external speech service."
+    return IMAGE_MANAGED
+
+
+def require_native_application() -> None:
+    if containerized():
+        raise RuntimeError(IMAGE_MANAGED)
+
+
+def container_setting_error(setting: str, value) -> str | None:
+    if setting == "terminal":
+        return container_unavailable("Terminal")
+    if setting == "update_check":
+        return container_unavailable("Update")
+    if setting == "voice" and value == "host":
+        return container_unavailable("Voice")
+    return None
+
+
+def container_shell_command() -> str | None:
+    if not containerized():
+        return None
+    return ("podman exec -it --user 1000 --env HOME=/home/altitude "
+            "--env XDG_RUNTIME_DIR=/run/user/1000 --workdir /home/altitude "
+            f"{shlex.quote(socket.gethostname())} bash")
+
+
+def require_container_project(path: Path, *, folder: bool = False) -> None:
+    if containerized():
+        root = CONTAINER_PROJECTS.resolve()
+        target = path.resolve()
+        if not target.is_relative_to(root) or not folder and target == root:
+            raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
+
+
+@contextmanager
+def container_volume_locks(home: Path, projects: Path):
+    """Hold both controller-volume locks, including across user-manager/daemon restarts.
+
+    Issue #543: a second controller must not race the first on either persistent store. These are
+    operational locks, not protection against malicious software running as the application user.
+    """
+    with ExitStack() as stack:
+        for directory, filename in ((home, ".altitude-instance.lock"), (projects, ".altitude-projects.lock")):
+            fd = os.open(directory / filename, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            stack.callback(os.close, fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError(f"Volume lock is not a private regular file: {directory}")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError(f"Another Altitude container owns this volume: {directory}") from None
+        yield
+
+
+def container_bootstrap() -> None:
+    """The image's root bootstrap unit, ordered before the application user manager."""
+    if not containerized() or os.getuid() != 0:
+        raise RuntimeError("Container bootstrap requires its image and container-root account")
+    home, projects = Path("/home/altitude"), Path("/home/altitude/Projects")
+    for directory in (home, projects):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or not directory.is_mount():
+            raise RuntimeError(f"Mount a dedicated local Podman volume at {directory}")
+        if info.st_uid not in (0, 1000):
+            raise RuntimeError(f"Volume {directory} must belong to container UID 1000 or be newly created")
+    with container_volume_locks(home, projects):
+        # Only the two mount roots, never recursive data or host paths. Locks stay owned by root.
+        for directory in (home, projects):
+            os.chown(directory, 1000, 1000)
+            directory.chmod(0o700)
+        notify = os.environ.get("NOTIFY_SOCKET")
+        if not notify:
+            raise RuntimeError("Container bootstrap must run as its notification service")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+            channel.connect("\0" + notify[1:] if notify.startswith("@") else notify)
+            channel.sendall(b"READY=1")
+        def stop(_signal, _frame):
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        while True:
+            signal.pause()
+
+
+def container_runtime() -> dict:
+    """Actionable prerequisites for the tested Linux rootless-runtime family; no daemon installation."""
+    require_supported()
+    if os.getuid() == 0:
+        raise RuntimeError("Run container commands as your ordinary Linux account, not root")
+    if not shutil.which("podman"):
+        raise RuntimeError("Install Podman and crun using your Linux distribution, then retry")
+    try:
+        info = json.loads(container_command(["info", "--format", "json"]))
+        host = info["host"]
+        if not host["security"]["rootless"] or not host["security"]["seccompEnabled"]:
+            raise RuntimeError("Rootless Podman with default seccomp is required")
+        if host["cgroupVersion"] != "v2" or host["cgroupManager"] != "systemd":
+            raise RuntimeError("Rootless Podman needs delegated cgroup v2 and the systemd cgroup manager")
+        if host["ociRuntime"]["name"] != "crun":
+            raise RuntimeError("This container deployment requires crun; select it before retrying")
+        if not shutil.which("slirp4netns"):
+            raise RuntimeError("Install slirp4netns for the explicitly selected rootless network")
+        return {"host": host, "version": info["version"], "store": info["store"]}
+    except (KeyError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
+
+
+def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False) -> str:
+    """Only the local rootless controller; callers select exact task/image/volume resources."""
+    if os.getuid() == 0:
+        raise RuntimeError("Run Podman as your ordinary Linux account")
+    if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
+        raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
+    result = subprocess.run(["podman", "--remote=false", *arguments], text=True,
+                            capture_output=not interactive, timeout=timeout)
+    if result.returncode:
+        error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
+                             f"{(result.stderr or '').strip()[-2000:]}")
+        error.result = result
+        raise error
+    return result.stdout or ""
+
+
+def cleanup_container_pause(home: Path) -> list[int]:
+    """Retire only pause helpers belonging to a disposable fixture controller's exact private HOME."""
+    retired = []
+    for path in PROC.iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            if (path / "comm").read_text().strip() != "podman pause":
+                continue
+            if ("HOME=" + str(home)).encode() not in (path / "environ").read_bytes().split(b"\0"):
+                continue
+            descriptor = os.pidfd_open(int(path.name))
+            try:
+                if path.stat().st_uid != os.getuid() or (path / "exe").resolve() != Path(shutil.which("podman")):
+                    raise RuntimeError("Fixture pause helper identity changed; preserve it for inspection")
+                signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+                poller = select.poll()
+                poller.register(descriptor, select.POLLIN)
+                if not poller.poll(5000):
+                    raise RuntimeError("Fixture pause helper termination is unconfirmed")
+                retired.append(int(path.name))
+            finally:
+                os.close(descriptor)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return retired
 
 
 def require_supported() -> None:
@@ -57,7 +246,7 @@ def status() -> dict[str, str]:
 
 
 #: The settings that say where the service listens and which HTTPS identity it serves.
-SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
+SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_PUBLIC_HOST", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
 
 
 def service_settings() -> tuple[int, dict[str, str]]:
@@ -430,8 +619,10 @@ def holds(pid: int, handle: str) -> bool:
 # --- Host speech -------------------------------------------------------------------------------------------------
 
 def speech_runtime() -> tuple[str | None, str]:
-    """The pinned speech runtime this host and interpreter can run (`linux-x86_64-cp312`), or None and why not.
-    The runtime's wheels need glibc 2.28. macOS is not verified (issue #225)."""
+    """The pinned speech runtime, or an explicit deployment/platform limitation."""
+    unavailable = container_unavailable("Voice")
+    if unavailable:
+        return None, unavailable
     if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
         return None, "voice runs on Linux x86_64 only for now"
     libc = (os.confstr("CS_GNU_LIBC_VERSION") or "") if hasattr(os, "confstr") else ""

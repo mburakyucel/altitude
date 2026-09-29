@@ -233,6 +233,7 @@ def _changes(before: dict, after: dict) -> list[str]:
 
 def prepare(directory: Path, *, apply: bool = False) -> dict:
     """Check by default; explicit apply writes one TLS-only drop-in and reloads definitions."""
+    platform.require_native_application()
     if os.environ.get("ALTITUDE_ACTOR") in ("l2", "l3"):
         raise RuntimeError("Source TLS preparation is an operator operation")
     platform.require_supported()

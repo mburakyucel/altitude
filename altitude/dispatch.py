@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, project_setup, route, state as S, tasks as T
+from . import config, engines, git_policy, images, platform, project_setup, route, state as S, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -400,6 +400,9 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if setting not in (MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS):
         raise T.TransitionError(f"unknown {scope} setting")
     try:
+        unavailable = platform.container_setting_error(setting, value) if project is None else None
+        if unavailable:
+            raise ValueError(unavailable)
         if setting == "wip":
             config.validate_wip(value)
         elif setting == "voice":
@@ -456,6 +459,9 @@ def _run_setting(project: str | None, setting: str) -> dict:
             return request
         projects = config._load_projects() if project is not None else None
         entry = projects.get(project) if projects is not None else config.machine_settings()
+        unavailable = platform.container_setting_error(setting, request.get(setting)) if project is None else None
+        if unavailable:
+            request.update(status="refused", note=unavailable)
         if setting == "projects_folder":  # the folder can vanish or lose access before altd drains the CLI request
             try:
                 config.validate_projects_folder(request[setting])
@@ -1506,6 +1512,8 @@ def activation_component(path: str) -> str | None:
 
 
 def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
+    if platform.containerized():
+        return []  # A project merge cannot activate code in the immutable application image.
     # Activation: a finishing worker must not clear requested_at or change build inputs during activation.
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():

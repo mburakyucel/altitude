@@ -1,0 +1,12 @@
+[Unit]
+Description=Altitude persistent volume ownership and controller locks
+Before=user@1000.service
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/altitude
+ExecStart=/usr/bin/python3 -B -c 'from altitude.platform import container_bootstrap; container_bootstrap()'
+TimeoutStartSec=15
+TimeoutStopSec=10
+NoNewPrivileges=yes
+UMask=0077

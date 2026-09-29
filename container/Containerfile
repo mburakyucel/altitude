@@ -1,0 +1,22 @@
+FROM docker.io/library/debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+ENV container=podman PYTHONDONTWRITEBYTECODE=1
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    systemd systemd-sysv dbus dbus-user-session python3 git gh openssl ca-certificates \
+    bubblewrap util-linux procps curl openssh-client ripgrep nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 --shell /bin/bash altitude \
+    && mkdir -p /var/lib/systemd/linger /etc/altitude /etc/systemd/system/user@1000.service.d \
+    && touch /var/lib/systemd/linger/altitude
+COPY app /opt/altitude
+RUN cp /opt/altitude/container/altitude-volumes.service /etc/systemd/system/ \
+    && cp /opt/altitude/container/user-manager.conf /etc/systemd/system/user@1000.service.d/altitude.conf \
+    && cp /opt/altitude/container/altitude.service /etc/systemd/user/ \
+    && mkdir -p /etc/systemd/user/default.target.wants \
+    && ln -s ../altitude.service /etc/systemd/user/default.target.wants/altitude.service \
+    && ln -s /opt/altitude/bin/alt /usr/local/bin/alt \
+    && printf 'altitude-container-v1\n' > /etc/altitude/container \
+    && chmod -R go-w /opt/altitude /etc/altitude \
+    && python3 /opt/altitude/container/strip_privileges.py
+ENV ALTITUDE_HOST=0.0.0.0 ALTITUDE_PORT=8890 ALTITUDE_PUBLIC_HOST=localhost ALTITUDE_TLS=1
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

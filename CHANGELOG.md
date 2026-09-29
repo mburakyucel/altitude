@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The Linux container candidate packages the verified release with rootless Podman, real user
+  services and persistent home/project volumes. Image mode refuses browser terminal, host voice
+  and native application updates, and labels setup commands and paths by their container context.
+  Full runtime, lifecycle/recovery, onboarding and Mac acceptance remain pending; see
+  [the container boundary and validation limits](docs/CONTAINERS.md).
+
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes
   and percent signs. `v0.1.0-rc.1` wrote that path in quotes, so systemd refused the unit and

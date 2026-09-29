@@ -521,7 +521,9 @@ def main(argv=None) -> None:
         from altitude import access
         from urllib.parse import quote
         endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
-        request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
+        from altitude import platform
+        connect_host = "localhost" if platform.containerized() else config.HOST
+        request = urllib.request.Request(f"{'https' if tls else 'http'}://{connect_host}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                          headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
         try:

@@ -165,6 +165,11 @@ def installation(engine: str) -> dict:
 #: The command that installs each engine CLI, shown by First run while it is missing.
 INSTALL = {"claude": "npm install -g @anthropic-ai/claude-code", "codex": "npm install -g @openai/codex"}
 
+
+def install_command(engine: str) -> str:
+    command = INSTALL[engine]
+    return command.replace("npm install -g", "npm install --prefix ~/.local -g") if platform.containerized() else command
+
 #: The engine CLI's local sign-in status and the command the operator runs in their own terminal to sign in.
 SIGN_IN = {"claude": (("auth", "status"), "claude auth login"), "codex": (("login", "status"), "codex login")}
 
@@ -529,7 +534,7 @@ def clean_env() -> dict:
     env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
-                if config.RELEASE is not None else config.SOURCE / "bin")
+                if config.RELEASE is not None and not platform.containerized() else config.SOURCE / "bin")
     env["PATH"] = str(commands) + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     if config.RELEASE is not None:
         env["PYTHONDONTWRITEBYTECODE"] = "1"

@@ -56,7 +56,8 @@ def _openssl(*args: str, allow_failure: bool = False) -> subprocess.CompletedPro
 
 
 def _host(host: str | None) -> tuple[str, str]:
-    value = host or config.HOST
+    from . import platform
+    value = host or (config.PUBLIC_HOST if platform.containerized() else config.HOST)
     if value in ("0.0.0.0", "::"):
         # A wildcard bind is not a name a device can use; devices reach it through localhost.
         return "DNS", "localhost"
@@ -331,13 +332,16 @@ def service() -> dict:
     except (RuntimeError, ValueError) as exc:
         raise TLSFailure(f"Cannot find the running Altitude service: {exc}") from exc
     shell = config.network(os.environ)
-    differing = [key for key, name in (("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
-                                       ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir"))
+    settings = [("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
+                ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir")]
+    if platform.containerized():
+        settings.append(("ALTITUDE_PUBLIC_HOST", "public_host"))
+    differing = [key for key, name in settings
                  if key in config.SHELL_SETTINGS and shell[name] != found[name]]
     if differing:
         raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
                          "Unset them in this shell, then retry.")
-    kind, name = _host(found["host"])
+    kind, name = _host(found["public_host"] if platform.containerized() else found["host"])
     address = f"[{name}]" if kind == "IP" and ":" in name else name
     return {**found, "pid": pid, "kind": kind, "name": name,
             "url": f"{'https' if found['tls'] else 'http'}://{address}:{found['port']}"}
@@ -384,6 +388,10 @@ def share(minutes: int = SHARE_MINUTES, out=print) -> None:
     """Offer the public CA certificate to a phone on this network over plain HTTP for a few minutes. The
     channel is unauthenticated: the printed steps have the phone check the file's contents and SHA-256
     before installing it, and nothing else is served."""
+    from . import platform
+    if platform.containerized():
+        raise TLSFailure("Export the public CA with the host container command's certificate action; "
+                         "this container does not publish a second certificate-sharing port.")
     import http.server
     import socket
     import threading

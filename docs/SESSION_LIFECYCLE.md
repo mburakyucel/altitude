@@ -1284,6 +1284,11 @@ never changes task or worker state.
 
 ## Operator terminal
 
+The container deployment explicitly refuses terminal routes and owner transcript reads for every
+connection. Its user interface offers the host-side container shell command instead. Container
+application activation uses image replacement, not source restart receipts; native worker lifecycle
+and the full final-image acceptance still follow the [container validation boundary](CONTAINERS.md).
+
 The operator's terminal sits beside a task's sessions without joining them. When the operator opens
 it, altd starts a shell in the task's worktree. No agent session starts, and the worker's
 lifecycle does not change. The L2 is not told and nothing is added to its conversation or inbox.

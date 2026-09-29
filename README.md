@@ -63,6 +63,10 @@ is the initial target; clean-machine and provider acceptance remain pending. You
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
+[Linux container support](docs/CONTAINERS.md) is under validation. Its rootless Podman candidate uses
+dedicated project volumes and an explicit security exception; container, Mac and complete onboarding
+acceptance are not yet established.
+
 1. Install the current release candidate as the account that will use Altitude:
 
    ```sh

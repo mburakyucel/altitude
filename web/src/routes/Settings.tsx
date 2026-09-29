@@ -210,7 +210,7 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
 }
 
 /** The operator's terminal, off after install: one switch for this computer. */
-function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
+function TerminalSwitch({ enabled, unavailable }: { enabled: boolean | undefined; unavailable?: string | null }) {
   const client = useQueryClient();
   const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
   const change = async (on: boolean) => {
@@ -223,6 +223,7 @@ function TerminalSwitch({ enabled }: { enabled: boolean | undefined }) {
       setSave({ status: "failed", error: error as Error });
     }
   };
+  if (unavailable) return <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{unavailable}</small></span></div>;
   return <div className="settings-row settings-switch-row">
     <label htmlFor="terminal-switch">
       <strong>Terminal</strong>{" "}
@@ -342,10 +343,13 @@ function VersionRows({ update }: { update: Update }) {
     }
   };
   const available = update.available;
+  if (update.managed === "image") return <div className="settings-row settings-version">
+    <span><strong>Version</strong>{" "}<small>{update.current} · {update.reason}</small></span>
+  </div>;
   return <>
     <div className="settings-row settings-version">
       <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : update.check && update.checked ? " · Up to date" : ""}</small></span>
-      {available ? <Command text={update.command} /> : null}
+      {available && update.command ? <Command text={update.command} /> : null}
     </div>
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-check-switch">
@@ -366,6 +370,7 @@ const titles = {
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
 function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-reports" }) {
+  const inContainer = useMachine().data?.deployment === "container";
   const [saved, setSaved] = useState(false);
   const status = saved ? <p role="status" className="text-meta text-muted">Saved.</p> : null;
   const submitRow = (submit: ReactNode) => <div className="onboarding-nav">{submit}{status}</div>;
@@ -378,7 +383,7 @@ function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-repo
     <IncidentReportsForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
   </>;
   return <>
-    <p className="text-meta text-muted">What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again. Altitude never asks for a password or token in the browser.</p>
+    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p>
     <PrerequisiteList actions={(check) => <div className="onboarding-nav">{check}</div>} />
   </>;
 }
@@ -435,7 +440,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           <Link className="settings-row" to="/settings/devices" state={state}>
             <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
-          <TerminalSwitch enabled={machine.data?.terminal} />
+          <TerminalSwitch enabled={machine.data?.terminal} unavailable={machine.data?.terminal_unavailable} />
           {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
         </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>

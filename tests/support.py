@@ -25,7 +25,7 @@ _native_sandbox_command = None
 SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
-OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
+OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget", "podman")
 
 
 def install_offline_guards() -> None:

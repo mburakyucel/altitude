@@ -1734,6 +1734,9 @@ class Handler(BaseHTTPRequestHandler):
     def _terminal_denied(self, *, json_body: bool, subject: str = "Terminal") -> str | None:
         """Why a terminal or update request is refused: a cross-site page (both run commands, so a page
         elsewhere must not be able to start them) or one of Altitude's own agents."""
+        unavailable = platform.container_unavailable(subject)
+        if unavailable:
+            return unavailable
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
             return f"{subject} requests must come from Altitude's own page."
         # One connection keeps one client socket, so its first terminal or update request decides for the rest.
@@ -2399,6 +2402,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_close()
                 return
             if api == "restart":
+                if platform.containerized():
+                    return self._json({"error": platform.IMAGE_MANAGED}, 409)
                 status = restart_status()
                 if not status:
                     return self._json({"error": "no restart is pending"}, 409)
@@ -2424,7 +2429,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def restart_status() -> dict | None:
     """Pending backend/web activation plus what the page's early Restart button waits for."""
-    if config.RELEASE is not None:
+    if platform.containerized() or config.RELEASE is not None:
         return None  # Installed archives activate only through the explicit update transaction.
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
@@ -2490,6 +2495,7 @@ class RestartBusy(RuntimeError):
 
 
 def restart_service() -> dict:
+    platform.require_native_application()
     if config.RELEASE is not None:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
@@ -2560,6 +2566,7 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
+            "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
             "update": installation.update_status(), "now": S.now()}
@@ -2585,16 +2592,18 @@ def folders(raw: str | None) -> dict:
 
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
-    home = config.HOME.resolve()
+    home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
     target = Path(raw).expanduser() if raw else home
     if not target.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
     target = target.resolve()
     if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
-        raise FolderError("Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+        raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
+                          else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
     if not target.is_dir():
         raise FolderError("This folder no longer exists.", 404)
-    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": []}
+    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
+            **({"location": "container"} if platform.containerized() else {})}
     try:
         entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -2628,7 +2637,10 @@ def machine_view() -> dict:
     Settings show them."""
     return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
-            "update_check": config.machine_settings().get("update_check") is not False}
+            "terminal_unavailable": platform.container_unavailable("Terminal"),
+            "container_shell": platform.container_shell_command(),
+            "deployment": "container" if platform.containerized() else "native",
+            "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:
@@ -2735,6 +2747,9 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
     """The task terminal's output for the task's running owner: read-only, and only to a connection from a process in
     that owner's current worker job, so another agent holding this machine's key cannot read it."""
+    unavailable = platform.container_unavailable("Terminal")
+    if unavailable:
+        raise PermissionError(unavailable)
     S.require_task_slug(slug)
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
@@ -2989,7 +3004,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot prepare the private access store ({exc}); refusing to start")
         raise SystemExit(1) from exc
     try:
-        context = tls.check(host) if config.TLS else None
+        certificate_host = config.PUBLIC_HOST if platform.containerized() else host
+        context = tls.check(certificate_host) if config.TLS else None
     except (tls.TLSFailure, OSError) as exc:
         log(f"HTTPS startup refused: {exc}")
         raise SystemExit(1) from exc
@@ -3017,7 +3033,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         restart_notice()
-        threading.Thread(target=timer_loop, args=(context, host), name="timers", daemon=True).start()
+        threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")

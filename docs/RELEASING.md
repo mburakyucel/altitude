@@ -1,5 +1,10 @@
 # Release checkpoints
 
+The [container candidate](CONTAINERS.md) consumes this same checksummed application archive, including
+its container packaging. Image labels retain release/source/archive identity. Building an image neither
+publishes it nor establishes runtime or architecture acceptance. Native release/installer publication
+and its optional hosted workflow remain independent of container validation.
+
 Altitude uses versioned archives and source checkpoints. A release identifies a validated commit
 and its notes. The operator decides when to publish it. No release or tag is created by running
 the test suite, merging a PR, or recording an Unreleased changelog entry.

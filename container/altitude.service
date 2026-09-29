@@ -1,0 +1,19 @@
+[Unit]
+Description=Altitude container application
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/altitude
+Environment=PATH=/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ALTITUDE_SERVICE=1
+Environment=ALTITUDE_TLS=1
+ExecStartPre=/usr/bin/python3 -B -c 'from altitude import tls; tls.initialize()'
+ExecStart=/usr/bin/python3 -B /opt/altitude/bin/alt serve
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

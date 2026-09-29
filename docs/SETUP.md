@@ -1,5 +1,9 @@
 # Set up Altitude
 
+The [container candidate](CONTAINERS.md) uses container-local tools, sign-ins and project volumes.
+Native installation commands below do not install into that image. Complete container/Mac onboarding
+acceptance remains pending.
+
 Altitude targets one operator on a Linux x86_64 machine with a systemd user manager. The release
 archive includes the CLI, daemon and built UI; Ubuntu 24.04 is the initial validation target.
 Native macOS, Windows and genuine clean-machine/provider acceptance are not established.

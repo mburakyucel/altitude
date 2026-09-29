@@ -1,5 +1,15 @@
 # Altitude architecture
 
+## Container deployment boundary
+
+The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
+inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
+runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
+refuse every peer in that deployment. Source merges remain ordinary project delivery; application
+activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
+manager. Immutable resources and persistent home/projects have separate lifetimes. Final-image and
+Mac runtime evidence remain pending.
+
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
 and receives their questions and reports needing follow-up. Several tasks can proceed in isolated

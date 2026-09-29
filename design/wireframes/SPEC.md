@@ -1,5 +1,13 @@
 # Altitude UI specification
 
+Container deployment retains the existing First run and Settings layouts. It labels folder paths
+as container-volume paths and distinguishes host shell commands from tools/sign-ins inside the
+container. Terminal and image-managed version rows explain unavailability without enable/update
+switches; the host-voice choice is unavailable with its reason. Browser and external-service voice
+remain available. Empty folders, outside-volume refusal, retry and reload use the existing form
+states. The approved Linux-first security model leaves final container/Mac onboarding validation
+open; fictional walkthroughs live in `web/e2e/container.pw.ts` and ignored UI artifacts.
+
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
