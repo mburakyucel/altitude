@@ -69,6 +69,16 @@ class TestRestartCommand(AltitudeCase):
             self.assertEqual((dist / "version").read_text(), "old")
             self.assertFalse(staging.exists())
 
+    def test_the_checkout_is_checked_against_the_branch_the_service_runs(self):
+        restart = load_script()
+        for environment, branch in (("", "main"), ("ALTITUDE_SOURCE_BRANCH=trial", "trial")):
+            unit = {"WorkingDirectory": str(restart.ROOT),
+                    "Environment": f"ALTITUDE_HOME={config.ROOT} {environment}".strip()}
+            with self.subTest(branch=branch), mock.patch.object(restart, "unit_properties", return_value=unit), \
+                    mock.patch.object(restart.git_policy, "fetch_and_require_exact_base") as fetch:
+                restart.require_deployed_checkout()
+                fetch.assert_called_once_with(restart.ROOT, branch)
+
     def test_decision_11_script_allows_running_and_blocked_workers_and_waiting_reports(self):
         restart = load_script()
         self.private_ledgers()

@@ -78,7 +78,8 @@ def require_deployed_checkout() -> None:
             f"ALTITUDE_HOME points to {config.ROOT}, but {SERVICE} uses {service_home}; refusing the wrong state"
         )
     try:
-        git_policy.fetch_and_require_exact_base(ROOT, config.SOURCE_BRANCH)
+        # The service's branch, as it runs: this detached job inherits only PATH.
+        git_policy.fetch_and_require_exact_base(ROOT, unit_environment().get("ALTITUDE_SOURCE_BRANCH") or "main")
     except git_policy.GitPolicyError as exc:
         raise RestartError(str(exc)) from exc
 
