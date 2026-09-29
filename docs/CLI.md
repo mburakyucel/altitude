@@ -1706,9 +1706,11 @@ unit, exit status and purpose. When Altitude restarts during a command, includin
 restarts itself, the next altd follows every unfinished row's unit to its end and completes the
 row and events from that saved status; the CLI tags its call with a request id, reconnects with it
 and prints the same command's result without running it again. A missing grant, a non-running
-task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason;
-no exit status within the limit is reported as a timeout, and a unit that ended without one while
-altd restarted as an explicit uncertainty, never as success. `alt task status <slug> --brief` shows the active purpose.
+task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason,
+as does a request id from an earlier attempt. A unit stopped at the limit is reported as a timeout,
+and any other end without an exit status, including one that happened unseen while altd restarted,
+as an explicit uncertainty with its reason, never as success. When altd cannot be reached at all,
+the CLI fails at once. `alt task status <slug> --brief` shows the active purpose.
 
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,

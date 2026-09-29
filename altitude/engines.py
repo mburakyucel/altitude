@@ -813,7 +813,7 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
         try:  # the limit ends the job, so past it (and a little grace) nothing is still running
             ended = datetime.now(timezone.utc) >= begun + timedelta(seconds=timeout + 60) or \
                 not platform.job_active(unit, env)
-        except RuntimeError:
+        except (RuntimeError, OSError, subprocess.SubprocessError):
             ended = False
         if ended:
             break
@@ -827,7 +827,7 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
     except (OSError, ValueError):
         record["timed_out"] = watched and (finished - begun).total_seconds() >= timeout
         record["error"] = (f"stopped at the {timeout}s limit" if record["timed_out"] else
-                           f"no exit status recorded: {launch_error or 'the unit ended before the command ran'}"
+                           f"no exit status recorded: {launch_error or 'the unit ended without writing one'}"
                            if watched else "no exit status recorded: the unit ended while altd restarted, "
                                            "so the result is uncertain")
     return record

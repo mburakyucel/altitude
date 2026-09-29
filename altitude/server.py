@@ -2590,6 +2590,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
         rows = _machine_rows(runs)
         earlier = next((r for r in rows if r.get("request") == request), None)
+        if earlier is not None and earlier.get("attempt") != task.get("attempt"):
+            raise PermissionError("alt task run: this request belongs to an earlier attempt")
         if earlier is None:
             grant = task.get("machine_access")
             if not grant:
@@ -2602,7 +2604,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
                 raise ValueError("alt task run: one command at a time; the previous command is still running")
             # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
             sequence = len(rows) + 1
-            row = {"n": sequence, "request": request, "purpose": grant["purpose"], "command": command,
+            row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
+                   "command": command,
                    "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
                    "started": datetime.now(timezone.utc).isoformat(), "finished": None,
                    "error": "still running or interrupted with altd"}
@@ -2611,9 +2614,12 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             raise ValueError("alt task run: this request already ran a different command")
     if earlier is not None:
         return _await_machine_row(project, slug, earlier["n"])
-    launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
-                                           folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
-                                           identity=dispatch.l2_env(project, slug, task["attempt"]))
+    try:  # a launch that fails still settles its row, so it never holds the next command
+        launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
+                                               folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
+                                               identity=dispatch.l2_env(project, slug, task["attempt"]))
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        launch_error = str(exc)[:300]
     return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error)
 
 
@@ -2621,7 +2627,8 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
                            launch_error: str | None = None) -> dict:
     """Follow the row's unit to its end and complete its row, task event and project log entry once; return the
     completed row with the unit's output. The altd that started the command settles it, and the next altd settles
-    one that a restart interrupted."""
+    one that a restart interrupted. The row is written last, so a restart between the writes settles it again,
+    and the task event, found by unit, is not repeated."""
     folder = S.task_dir(project, slug)
     outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
                                       timeout=config.MACHINE_COMMAND_TIMEOUT, launch_error=launch_error,
@@ -2630,14 +2637,14 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
     with S.project_lock(project):
         rows = _machine_rows(runs)
         current = next(r for r in rows if r["n"] == row["n"])
-        settled = current["finished"] is None
-        if settled:
+        if current["finished"] is None:
             current.update(outcome)
+            if not any(e["kind"] == "machine-run" and e.get("unit") == current["unit"]
+                       for e in S.read_events(project, slug)):
+                S.project_log(project, "machine-run", slug=slug, command=current["command"], unit=current["unit"],
+                              exit=current["exit"], timed_out=current["timed_out"])
+                S.append_event(project, slug, "machine-run", actor="l2", **current)
             S.atomic_write(runs, "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-    if settled:
-        S.append_event(project, slug, "machine-run", actor="l2", **current)
-        S.project_log(project, "machine-run", slug=slug, command=current["command"], unit=current["unit"],
-                      exit=current["exit"], timed_out=current["timed_out"])
     return {**current, **engines.machine_output(folder, current["unit"])}
 
 
@@ -2653,16 +2660,21 @@ def _await_machine_row(project: str, slug: str, sequence: int) -> dict:
 
 
 def settle_interrupted_machine_commands() -> list[threading.Thread]:
-    """Follow every machine command a stopped altd left running, so its row and event get its real result."""
+    """Follow every machine command a stopped altd left running, so its row and event get its real result. A
+    ledger that cannot be read is logged and left as it is; it never stops altd from starting."""
     threads = []
     for project in config.load_projects():
         for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
-            for row in _machine_rows(runs):
-                if row["finished"] is None:
-                    thread = threading.Thread(target=settle_machine_command, args=(project, runs.parent.name, row),
-                                              kwargs={"watched": False}, name=f"machine-{row['unit']}", daemon=True)
-                    thread.start()
-                    threads.append(thread)
+            try:
+                rows = [row for row in _machine_rows(runs) if row["finished"] is None]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                log(f"machine commands: cannot read {runs}: {exc}")
+                continue
+            for row in rows:
+                thread = threading.Thread(target=settle_machine_command, args=(project, runs.parent.name, row),
+                                          kwargs={"watched": False}, name=f"machine-{row['unit']}", daemon=True)
+                thread.start()
+                threads.append(thread)
     return threads
 
 

@@ -401,15 +401,27 @@ class TestMachineAccess(AltitudeCase):
             thread.join(30)
         with runs.open("a") as ledger:
             ledger.write(json.dumps({**interrupted, "n": 2, "command": "make vm", "unit": self.unit(2)}) + "\n")
+        other = T.new(self.project, "Another task", "With an unreadable ledger.")["slug"]
+        (S.task_dir(self.project, other) / "machine.jsonl").write_text("{not json\n")
+        S.append_event(self.project, self.slug, "machine-run", actor="l2", unit=self.unit(2), exit=None)
+        answers = iter([OSError("bus timeout"), True, False])  # a status query that fails keeps waiting
+        def job_active(name, env):
+            answer = next(answers, False)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        self.patch(platform, "job_active", side_effect=job_active)
         for thread in server.settle_interrupted_machine_commands():
             thread.join(30)
         first, second = self.rows()
         self.assertEqual((first["exit"], first["error"], first["finished"]),
                          (0, None, datetime.fromtimestamp(1790000000, timezone.utc).isoformat()))
         self.assertEqual((second["exit"], second["timed_out"]), (None, False))
-        self.assertIn("uncertain", second["error"])
+        self.assertIn("the unit ended without writing one", second["error"])  # watched: it was seen running
         self.assertIsNotNone(second["finished"])
-        self.assertEqual([(e["n"], e["exit"]) for e in self.events("machine-run")], [(1, 0), (2, None)])
+        self.assertEqual(next(answers, "drained"), "drained")
+        # the second row's event was recorded before a restart stopped its row write; it is not repeated
+        self.assertEqual([(e.get("n"), e["exit"]) for e in self.events("machine-run")], [(1, 0), (None, None)])
         self.assertEqual(server.settle_interrupted_machine_commands(), [])
         self.assertEqual(self.run_command("true")["n"], 3)
 
@@ -426,3 +438,29 @@ class TestMachineAccess(AltitudeCase):
                                                           attempt="2", status=403)["error"])
         self.assertIn("hexadecimal", self.run_command("true", request="not-a-request", status=400)["error"])
         self.assertEqual((len(self.rows()), len(self.events("machine-run"))), (1, 1))
+
+    def test_a_request_from_an_earlier_attempt_is_refused(self):
+        self.granted()
+        request = uuid.uuid4().hex
+        self.run_command("echo first", request=request)
+        task = S.load_task(self.project, self.slug)
+        task["attempt"] = 2
+        task["machine_access"]["attempt"] = 2
+        S.save_task(self.project, task)
+        self.assertIn("earlier attempt", self.run_command("echo first", request=request, attempt="2",
+                                                          status=403)["error"])
+        self.assertEqual(self.run_command("echo fresh", attempt="2")["n"], 2)
+
+    def test_the_cli_fails_at_once_when_altd_never_received_the_command(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        started = time.monotonic()
+        for host in ("127.0.0.1", "unresolvable.invalid"):
+            result = self.alt("task", "run", self.slug, "true", env={
+                "ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": host, "ALTITUDE_PORT": str(port),
+                "ALTITUDE_TLS": "0", "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("altd unavailable", result.stderr)
+            self.assertNotIn("waiting for this command's result", result.stderr)
+        self.assertLess(time.monotonic() - started, 30)

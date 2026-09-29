@@ -515,6 +515,7 @@ def main(argv=None) -> None:
         request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                          headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
+        import http.client
         import time
         context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
@@ -541,9 +542,10 @@ def main(argv=None) -> None:
                 if exc.code == 401:
                     sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
                 sys.exit(("" if machine_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
-            except OSError as exc:
-                refused = isinstance(getattr(exc, "reason", exc), ConnectionRefusedError)
-                if machine_run and (reconnecting or not refused) and time.monotonic() < reconnect_until:
+            except (OSError, http.client.HTTPException, ValueError) as exc:
+                # urllib reports a failure to connect or send as URLError: altd never received that request.
+                if machine_run and (reconnecting or not isinstance(exc, urllib.error.URLError)) \
+                        and time.monotonic() < reconnect_until:
                     if not reconnecting:
                         print(f"[altitude] the connection to altd ended ({exc}); waiting for this command's result",
                               file=sys.stderr)
