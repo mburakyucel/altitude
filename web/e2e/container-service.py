@@ -3,7 +3,10 @@ from service_support import configure, serve
 from tests.support import SUITE
 from altitude import config, platform, server, state as S
 
+speech_runtime = platform.speech_runtime
 configure()
+# Keep the real container capability refusal instead of the shared native-host fixture.
+platform.speech_runtime = speech_runtime
 platform.containerized = lambda: True
 platform.socket.gethostname = lambda: "fixture-container"
 platform.container_shell_command = lambda: "podman exec -it --user 1000 --env HOME=/home/altitude fixture-container bash"
