@@ -41,6 +41,8 @@ if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is
     SOURCE = (REPO / ".altitude-source/current").resolve()
 # Incident issue target's initial value; the `incident_repository` machine setting replaces it (incident_repository()).
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
+# The branch a source service runs and self-deploys: main unless the operator chooses another.
+SOURCE_BRANCH = os.environ.get("ALTITUDE_SOURCE_BRANCH") or "main"
 #: Altitude's own repository: the destination First run fills in when the operator turns incident publishing on.
 ALTITUDE_REPOSITORY = "mburakyucel/altitude"
 # A repository whose base commit ships this workflow requires its PR `check` on the exact candidate head.
@@ -467,7 +469,12 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     entry = {"path": str(path), "approval": approval,
              **{key: value for key, value in {"l2_engine": l2_engine, "l3_engine": l3_engine}.items() if value}}
     with S.project_lock(name):
-        previous = load_projects().get(name)
+        registered = load_projects()
+        # Runtime folders are named after projects, and a case-insensitive disk (macOS by default) holds one folder.
+        clash = next((other for other in registered if other != name and other.casefold() == name.casefold()), None)
+        if clash:
+            raise ValueError(f"Project {clash} is already registered; project names must differ by more than case")
+        previous = registered.get(name)
         _write_project(name, entry)
         try:
             yield entry

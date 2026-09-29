@@ -143,7 +143,7 @@ class TestToolchain(AltitudeCase):
                         f"print({json.dumps(init)!r}, flush=True)\n"
                         f"print({json.dumps(end)!r}, flush=True)\n")
 
-                    def service_command(unit, command, child_env):
+                    def service_command(unit, command, child_env, **_):
                         self.assertEqual("resume" in command or "--resume" in command, resume)
                         # Preserve the real transient unit's clean child environment without contacting systemd.
                         return ["/usr/bin/env", "-i", *(f"{k}={v}" for k, v in child_env.items()),

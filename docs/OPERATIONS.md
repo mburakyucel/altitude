@@ -4,6 +4,10 @@ This is the runtime guide for an already configured installation. New users shou
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
 its checkout path, PATH and tunnel binding need deliberate configuration for another machine.
+On a Mac, `make install-service` writes the same settings as a LaunchAgent for the checkout
+(`scripts/source_launch_agent.py`), with `ALTITUDE_HOST` and the PATH it runs with (the address defaults to
+`127.0.0.1`) and, when the checkout is not on `main`, that branch as `ALTITUDE_SOURCE_BRANCH`. Its PATH needs `pnpm` (`corepack enable pnpm`), since a self-restart
+rebuilds the web app.
 Private archives generate their own user service; they do not install that source template.
 
 ## Runtime and inspection
@@ -177,7 +181,7 @@ The daemon makes the same lookup at startup and every twelve hours and records w
 `alt doctor`, Settings › This machine and a notice in the app show a newer stable release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
 **Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
-in its own user unit so the update survives the restart. **Check for new versions** in Settings
+in a job of its own so the update survives the restart. **Check for new versions** in Settings
 turns the lookup off. Nothing updates on its own.
 
 `alt update` asks GitHub for the newest stable release of the repository the installed release
@@ -194,7 +198,10 @@ selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
-independent task workers are not stopped with the daemon. Projects continue using ordinary checked
+independent task workers are not stopped with the daemon. On a Mac the service is the LaunchAgent
+`dev.altitude.altd`: `alt service stop` boots it out until the next login or `alt service start`,
+and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
+`altitude-update-<version>.log` beside it. Projects continue using ordinary checked
 PR delivery; a managed source clone does not update the installed application. Project Git guards
 point at installation-owned `hooks` launchers that run the `current` version, and every dispatch
 and resume repairs and rechecks them, so registered projects dispatch on the updated version

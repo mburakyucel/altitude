@@ -5,6 +5,7 @@ import http.server
 import io
 import json
 import os
+import plistlib
 from pathlib import Path
 import shlex
 import shutil
@@ -24,7 +25,9 @@ from altitude import config, dispatch, engines, git_policy, installation, monito
 
 
 class InstallationCase(unittest.TestCase):
-    """A throwaway home and prefix; native service, TLS and health probes are fixtures."""
+    """A throwaway home and prefix; native service, TLS and health probes are fixtures. HOST selects the platform's
+    service definition and location; the supported-host gate is tested in Platform."""
+    HOST = "linux"
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="install-", dir=SUITE))
@@ -33,7 +36,6 @@ class InstallationCase(unittest.TestCase):
         self.home.mkdir()
         self.prefix = self.home / ".local/share/altitude"
         self.settings = self.home / ".config/altitude/install.json"
-        self.unit = self.home / ".config/systemd/user/altitude.service"
         self.launcher = self.home / ".local/bin/alt"
         self.runtime = self.home / ".altitude"
         self.certificates = self.home / ".config/altitude/tls"
@@ -52,10 +54,13 @@ class InstallationCase(unittest.TestCase):
             (config, "HOST", "127.0.0.1"),
             (config, "PORT", 19443),
             (config, "INSTALL_PREFIX", self.prefix),
+            (platform.sys, "platform", self.HOST),
+            (platform, "require_supported", lambda: None),
         ):
             patcher = mock.patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        self.unit = platform.service_path()
         patcher = mock.patch.dict(os.environ, {"ALTITUDE_CONFIG": str(self.settings)})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -213,7 +218,9 @@ class Installation(InstallationCase):
         self.assertEqual(self.unit.read_bytes(), unit_before)
         # Reproduce the generated service's environment without a login shell or manager root.
         environment = {"HOME": str(self.home), "PATH": before["PATH"]}
-        for line in self.unit.read_text().splitlines():
+        if self.HOST == "darwin":
+            environment.update(plistlib.loads(self.unit.read_bytes())["EnvironmentVariables"])
+        for line in self.unit.read_text().splitlines() if self.HOST == "linux" else ():
             if line.startswith("Environment="):
                 key, value = shlex.split(line.partition("=")[2])[0].split("=", 1)
                 environment[key] = value
@@ -537,7 +544,20 @@ class Installation(InstallationCase):
                 self.assertFalse(target.exists())
 
 
+class InstallationDarwin(Installation):
+    """The same lifecycle with the macOS LaunchAgent definition in ~/Library/LaunchAgents."""
+    HOST = "darwin"
+
+
 class Platform(unittest.TestCase):
+    """The systemd definition and status; the macOS ones are in test_platform_darwin."""
+
+    def setUp(self):
+        for patcher in (mock.patch.object(platform.sys, "platform", "linux"),
+                        mock.patch.object(platform.host_platform, "machine", return_value="x86_64")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_unit_quotes_spaces_percent_backslashes_and_quotes(self):
         unit = platform.definition(Path('/tmp/A 100% "trial"'), Path("/usr/bin/python3"),
                                    Path('/tmp/A 100% "trial"/install.json'), {"PATH": "/bin:/tmp/back\\slash"})
@@ -586,14 +606,25 @@ class Platform(unittest.TestCase):
                 platform.status()
 
     def test_unsupported_platform_and_control_operation_are_refused(self):
-        with mock.patch.object(platform.sys, "platform", "darwin"):
-            with self.assertRaisesRegex(RuntimeError, "macOS validation is pending"):
-                platform.require_supported()
-        with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
+        for host, machine, release, supported in (
+                ("linux", "x86_64", "", True), ("darwin", "arm64", "15.0", True), ("darwin", "arm64", "26.6.2", True),
+                ("linux", "aarch64", "", False), ("darwin", "x86_64", "15.0", False), ("darwin", "arm64", "14.7", False),
+                ("win32", "AMD64", "", False)):
+            with self.subTest(host=host, machine=machine, release=release), \
+                    mock.patch.object(platform.sys, "platform", host), \
+                    mock.patch.object(platform.host_platform, "machine", return_value=machine), \
+                    mock.patch.object(platform.host_platform, "mac_ver", return_value=(release, ("", "", ""), "")):
+                if supported:
+                    platform.require_supported()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "macOS 15 or newer on Apple silicon"):
+                        platform.require_supported()
+        with mock.patch.object(platform, "require_supported"), \
+                self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
 
     def test_detached_update_keeps_dollar_expressions_in_paths_literal(self):
-        with mock.patch.object(platform.sys, "platform", "linux"), mock.patch.object(platform, "run", return_value="") as run:
+        with mock.patch.object(platform, "require_supported"), mock.patch.object(platform, "run", return_value="") as run:
             platform.detach("altitude-update-v0.2.0", ["/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"], {"PATH": "/usr/bin"})
         self.assertIn("--expand-environment=no", run.call_args.args)
         self.assertEqual(run.call_args.args[-3:], ("/tmp/${HOME}/python", "-B", "/tmp/${HOME}/current/bin/alt"))

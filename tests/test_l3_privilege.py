@@ -244,6 +244,8 @@ def _claude_result(session="claude-l3"):
 
 
 class TestL3CheckoutConfinement(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)

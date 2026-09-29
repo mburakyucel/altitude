@@ -13,6 +13,8 @@ from altitude import config, platform, source_tls, tls
 
 
 class TestSourceTLS(AltitudeCase):
+    host = "linux"  # systemd fixtures: the source service is a systemd unit
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()

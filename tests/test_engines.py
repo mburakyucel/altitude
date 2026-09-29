@@ -29,6 +29,8 @@ class _Process:
 
 
 class TestForegroundUnits(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.job_root = self.tmp / "jobs"

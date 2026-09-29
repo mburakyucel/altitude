@@ -83,7 +83,7 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   // Both paste as the shell asks (bracketed), so pasted lines wait for Enter.
   await page.evaluate(() => navigator.clipboard.writeText("echo pasted-$((7+7))\necho twice-$((1+1))"));
   if (phone) await keys.getByRole("button", { name: "Paste" }).click();
-  else await page.keyboard.press("Control+V");
+  else await page.keyboard.press("ControlOrMeta+V");
   await expect(output).toContainText("echo twice-$((1+1))");
   await page.waitForTimeout(500);
   await expect(output).not.toContainText("pasted-14");
@@ -109,12 +109,12 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
     await walk.state("03b-enter-key", { visible: [enter], hidden: [] });
   }
   if (!phone) {
-    // Ctrl+C with text selected copies it; the line being typed is not interrupted.
+    // Ctrl+C (Cmd+C on a Mac) with text selected copies it; the line being typed is not interrupted.
     await page.evaluate(() => navigator.clipboard.writeText(""));
     await page.keyboard.type("echo still-");
     const word = await output.getByText("pasted-14").last().boundingBox();
     await page.mouse.dblclick(word!.x + 12, word!.y + word!.height / 2);
-    await page.keyboard.press("Control+C");
+    await page.keyboard.press("ControlOrMeta+C");  // copy is Cmd+C on a Mac, where Ctrl+C always interrupts
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("pasted");
     await page.keyboard.type("here");
     await page.keyboard.press("Enter");

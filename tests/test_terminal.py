@@ -563,6 +563,8 @@ class TestOwnerHttp(TerminalCase):
 
 
 class TestTerminalJob(AltitudeCase):
+    host = "linux"  # systemd and procfs fixtures
+
     def test_the_shell_runs_in_its_own_job_without_altds_hardening_and_ends_with_altitude(self):
         argv = platform.terminal_job("altitude-terminal-x.service", "/dev/pts/9", ["bash", "-l"], {"TERM": "xterm"},
                                      grace=2)
@@ -592,6 +594,8 @@ def fake_proc(root: Path, processes: dict[int, tuple[int, str, list[int]]], conn
 
 
 class TestAgentRefusal(AltitudeCase):
+    host = "linux"  # systemd and procfs fixtures
+
     PEER, LOCAL = ("127.0.0.1", 51000), ("127.0.0.1", 8443)
 
     def setUp(self):
@@ -629,7 +633,8 @@ class TestAgentRefusal(AltitudeCase):
         self.patch(terminal, "_this_host", side_effect=lambda ip: this_host(ip) if ip.is_loopback else False)
         self.assertTrue(terminal.agent_connection(self.PEER, self.LOCAL))
         self.assertTrue(terminal.agent_connection(("::ffff:127.0.0.1", 51000), ("::ffff:127.0.0.1", 8443)))
-        self.assertTrue(terminal.agent_connection(("127.8.9.10", 51000), ("127.0.0.1", 8443)))
+        if this_host(terminal._address("127.8.9.10")):  # Linux owns all of 127/8; macOS binds 127.0.0.1 only
+            self.assertTrue(terminal.agent_connection(("127.8.9.10", 51000), ("127.0.0.1", 8443)))
         self.assertFalse(terminal.agent_connection(("203.0.113.20", 51000), ("192.168.1.5", 8443)))
 
     def test_a_client_on_the_other_address_family_is_still_identified(self):
@@ -790,12 +795,12 @@ class TestTerminalHttp(TerminalCase):
         self.assertEqual(response.version, 11)
         sock = connection.sock
         self.output(until="$ ")  # the shell is reading its terminal
-        for key in "echo kept\n":
+        for key in "echo ke''pt\n":  # the echoed input never reads as the output
             post(f"{base}/input", {"id": opened["id"], "data": key})
             self.assertEqual(json.loads(connection.getresponse().read()), {"ok": True})
             self.assertIs(connection.sock, sock)
         self.assertEqual(self.agent.call_count, 1)  # asked once for the connection
-        self.output(until="\rkept\r\n")
+        self.output(until="kept\r\n")
         connection.request("GET", "/api/machine")
         response = connection.getresponse()
         response.read()

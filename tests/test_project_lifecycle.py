@@ -137,6 +137,18 @@ with l3._turn_scope(sys.argv[1], 'chat') as turn:
         self.assertNotIn(self.project, server._l3_verb_brokers)
 
 
+    def test_a_name_differing_only_by_case_is_refused_on_every_host(self):
+        # A case-insensitive disk (the macOS default) gives both names one runtime folder.
+        before = config.load_projects()
+        for name in (self.project.upper(), self.project.capitalize()):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "must differ by more than case"):
+                with config.add_project(name, path=self.repo):
+                    pass
+        self.assertEqual(config.load_projects(), before)
+        with config.add_project(self.project, path=self.repo):  # re-registering the same name still works
+            pass
+
+
 class TestProjectLifecycleHTTP(AltitudeCase):
     def setUp(self):
         super().setUp()

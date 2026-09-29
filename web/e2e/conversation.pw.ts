@@ -561,11 +561,11 @@ async function expectVoiceDraftLocked(page: Page, field: Locator, text: string) 
   await expect(field).toBeVisible();
   await expect(field).not.toBeEditable();
   await field.focus();
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type("unwanted keyboard edit");
   await page.keyboard.press("Backspace");
   await page.evaluate(() => navigator.clipboard.writeText("unwanted clipboard edit"));
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("ControlOrMeta+v");
   await expect(field).toHaveValue(text);
 }
 

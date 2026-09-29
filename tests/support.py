@@ -22,7 +22,10 @@ from unittest import mock
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
-SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
+# Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
+# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes).
+SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir="/tmp")).resolve()
+tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
 OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
@@ -107,7 +110,7 @@ def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arg
 
 os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
 sys.path.insert(0, str(REPO))
-from altitude import access, config, engines, incidents, monitor  # noqa: E402
+from altitude import access, config, engines, incidents, monitor, platform  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
 
@@ -309,12 +312,16 @@ def add_worktree(repo: Path, slug: str) -> Path:
 
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
-    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`."""
+    their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
 
     gated = False
+    host: str | None = None
 
     def setUp(self) -> None:
         super().setUp()
+        if self.host:
+            self.patch(platform.sys, "platform", self.host)
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
@@ -396,20 +403,22 @@ class AltitudeCase(unittest.TestCase):
 # --- The operator terminal's job, without a service manager --------------------------------------------------------
 
 #: The job's start: the shell's terminal becomes its controlling terminal and its input and output.
-TERMINAL_LAUNCHER = ("import os, sys\nfd = os.open(sys.argv[1], os.O_RDWR)\nfor n in (0, 1, 2):\n    os.dup2(fd, n)\n"
-                     "os.close(fd)\nos.execvp(sys.argv[2], sys.argv[2:])\n")
+TERMINAL_LAUNCHER = ("import fcntl, os, sys, termios\nfd = os.open(sys.argv[1], os.O_RDWR)\nfor n in (0, 1, 2):\n"
+                     "    os.dup2(fd, n)\nos.close(fd)\n"
+                     "fcntl.ioctl(0, termios.TIOCSCTTY, 0)  # macOS assigns no controlling terminal on open\n"
+                     "os.execvp(sys.argv[2], sys.argv[2:])\n")
 
 
 def terminal_session(leader: int) -> list[int]:
     """The processes still in a terminal's session."""
+    rows = subprocess.run(["ps", "-Ao", "pid=,stat="], capture_output=True, text=True, check=True).stdout
     found = []
-    for entry in Path("/proc").iterdir():
+    for pid, state in (line.split() for line in rows.splitlines()):
         try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-        except (OSError, IndexError):
+            if os.getsid(int(pid)) == leader and not state.startswith("Z"):
+                found.append(int(pid))
+        except OSError:
             continue
-        if entry.name.isdigit() and int(fields[3]) == leader and fields[0] != "Z":
-            found.append(int(entry.name))
     return found
 
 

@@ -7,6 +7,8 @@ from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 class TestWorkerStatusResume(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)

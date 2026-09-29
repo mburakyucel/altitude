@@ -2,7 +2,6 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -108,8 +107,9 @@ class TestLifecycleHarness(AltitudeCase):
         harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, "a" * 40)
         harness.home = self.tmp / "altitude-installation.fixture/alt-install-1"
         (results / "reboot-state.json").write_text(json.dumps({"env": {}, "release": {}, "pid": "1",
-            "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}))
-        with mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
+                                                                "boot_id": "fixture-boot"}))
+        with mock.patch("scripts.installation_lifecycle.boot_id", return_value="fixture-boot"), \
+                mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
                 mock.patch("scripts.installation_lifecycle.os.getuid", return_value=1000), \
                 mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
             user.return_value.pw_name = "alt-install-1"

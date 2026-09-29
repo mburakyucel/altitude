@@ -16,6 +16,8 @@ from altitude import config, dispatch, engines, reviews, route, server, state as
 
 
 class TestReviews(AltitudeCase):
+    host = "linux"  # the source service restarts itself only on Linux
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()

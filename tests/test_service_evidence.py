@@ -10,6 +10,8 @@ from altitude import engines, platform, server
 
 
 class TestServiceEvidence(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.register(self.project, path=self.repo)

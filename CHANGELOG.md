@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
+  rights: `make install-service` makes it a background service of your login (it starts when you log in and
+  keeps running with the screen locked). Each agent job runs as its own background job that Stop ends
+  completely, and Claude Code jobs may write only in their task's worktree and their own state. `install.sh`
+  still stops on macOS: native acceptance is pending, so macOS is not yet a supported platform.
+
 ## v0.1.0-rc.2 — 2026-09-29
 
 Second release candidate of the early preview, for Linux x86_64 with a systemd user service

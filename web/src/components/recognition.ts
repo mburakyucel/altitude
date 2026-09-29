@@ -11,7 +11,7 @@
  * and `unpunctuated` says why.
  */
 import { loadPunctuator, type Punctuator } from "../punctuation";
-import { traceVoice, traceVoiceTracks, voiceError } from "./voiceDiagnostics";
+import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
 
 type RecognitionResult = { isFinal: boolean; 0: { transcript: string } };
 type RecognitionEvent = { results: ArrayLike<RecognitionResult> };

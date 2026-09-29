@@ -15,6 +15,11 @@ from altitude import config, installation, platform, tls
 
 ORIGINAL_STATUS = platform.status
 
+# A validity period already over. OpenSSL 3.4 and newer refuse negative -days but take explicit dates.
+_help = subprocess.run(["openssl", "x509", "-help"], capture_output=True, text=True)
+EXPIRED = (["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"]
+           if "-not_after" in _help.stdout + _help.stderr else ["-days", "-1"])
+
 
 def handshake(server_context, ca: Path | None, host="localhost"):
     client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -252,7 +257,8 @@ class TestTLS(unittest.TestCase):
         def expired_leaf(*args, **kwargs):
             arguments = list(args)
             if "-days" in arguments:
-                arguments[arguments.index("-days") + 1] = "-1"
+                at = arguments.index("-days")
+                arguments[at:at + 2] = EXPIRED
             return run(*arguments, **kwargs)
 
         with tempfile.TemporaryDirectory(dir=self.root) as temporary:
@@ -264,7 +270,7 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(tls.check(), self.directory / "ca.crt"), b"typed conversation")
         self.assertEqual((self.directory / "ca.crt").read_bytes(), ca_before)
         run("x509", "-in", self.directory / "ca.crt", "-signkey", self.directory / "ca.key",
-            "-days", "-1", "-out", self.directory / "expired-ca.crt")
+            *EXPIRED, "-out", self.directory / "expired-ca.crt")
         (self.directory / "ca.crt").write_bytes((self.directory / "expired-ca.crt").read_bytes())
         before = self.snapshot()
         with self.assertRaises(tls.TLSFailure):
@@ -389,6 +395,9 @@ class ServiceCase(unittest.TestCase):
     manager started it, while this shell carries none of them."""
 
     def setUp(self):
+        host = mock.patch.object(platform.sys, "platform", "linux")  # systemd and procfs fixtures
+        host.start()
+        self.addCleanup(host.stop)
         temporary = tempfile.TemporaryDirectory(dir=SUITE)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
@@ -456,10 +465,6 @@ class TestServiceDiscovery(ServiceCase):
         self.running({})
         (self.proc / "4242" / "environ").unlink()
         with self.assertRaisesRegex(tls.TLSFailure, "Cannot read the Altitude service's settings"):
-            tls.service()
-        with mock.patch.object(platform, "status", ORIGINAL_STATUS), \
-                mock.patch.object(platform, "sys", mock.Mock(platform="darwin")), \
-                self.assertRaisesRegex(tls.TLSFailure, "native macOS validation is pending"):
             tls.service()
 
 
