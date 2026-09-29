@@ -154,7 +154,8 @@ a missing task returns HTTP 404 without a failure traceback. Archival only renam
 folder into the archive, so a status read that misses the live record reads the archived one; polls
 and action responses crossing the move return the archived task and state.
 Task status, documents and events share the archive lock while their snapshot is read.
-`GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+`GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
+running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
 `config.DEFAULT_SETTINGS` names one requested model and one requested effort per role and engine
@@ -2391,6 +2392,5 @@ or the task is not running; Conversation hides the preview instead.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
-that `git_policy` installs into every managed repository, the Claude inbox hook, and the statusline
-monitor. [AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages
-retain the system's operating decisions and rationale. Git history preserves completed migrations.
+that `git_policy` installs into every managed repository and the Claude inbox hook.
+[AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages retain the system's operating decisions and rationale. Git history preserves completed migrations.

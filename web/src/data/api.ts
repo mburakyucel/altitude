@@ -176,8 +176,8 @@ export function useChangeStream() {
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
 /**
- * One seat's reading, as that seat reports it. A seat names either the two windows a statusline
- * snapshot carries or windows that name their own length in minutes; a window the seat does not
+ * One seat's reading, as that seat reports it. A seat names either a five-hour and a seven-day
+ * window or windows that name their own length in minutes; a window the seat does not
  * report is absent, never zero. `known` is the routing contract — false once the snapshot behind it
  * passes its freshness age; `stale` then says the figures are still here, only old, and a reading
  * with no figure at all is genuinely unknown, with `why` saying what would produce one.

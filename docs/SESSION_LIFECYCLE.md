@@ -1396,8 +1396,7 @@ omits rows when the server fetch fails. Altitude validates named percentages and
 observation time; it does not restamp cached scalar windows or parse presentation text. The CLI owns
 subscription authentication. Safe mode, empty tools and no session persistence keep the local usage
 command separate from task conversations. No inference prompt or credential extraction is involved.
-Codex retains its native `account/rateLimits/read` reader. Statusline snapshots remain session-display
-evidence, not account-quota inputs.
+Codex retains its native `account/rateLimits/read` reader.
 
 Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
 or timeout yield unknown quota and replace the prior success. A partial response keeps only its

@@ -14,7 +14,7 @@ Private archives generate their own user service; they do not install that sourc
 
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI; `personas/` contains the
 project coordinator (L3) and task owner (L2) instructions, `schemas/` defines delivery reports,
-and `hooks/` contains managed-repository Git hooks, inbox delivery and statusline telemetry.
+and `hooks/` contains managed-repository Git hooks, and inbox delivery.
 `web/` builds into ignored `web/dist/`, served by the same Python process as the API.
 See [architecture](ARCHITECTURE.md) for authorization and engine containment.
 

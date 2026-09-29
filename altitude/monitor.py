@@ -7,15 +7,8 @@ from .engines import transcript_context_percent
 
 
 def sessions() -> list[dict]:
-    """Everything the monitor dir knows: statusline snapshots (interactive sessions), L2 live rows, L3 infos."""
+    """The sessions Altitude runs: each project's L3 and its live task owners (L2)."""
     out = []
-    for p in sorted(config.MONITOR_DIR.glob("statusline-*.json")):
-        d = S.read_json(p, {}) or {}
-        out.append({"kind": "statusline", "session_id": p.stem.split("-", 1)[1], "at": d.get("_at"),
-                    "context_percent": ((d.get("context_window") or {}).get("used_percentage")),
-                    "five_hour": ((d.get("rate_limits") or {}).get("five_hour") or {}).get("used_percentage"),
-                    "seven_day": ((d.get("rate_limits") or {}).get("seven_day") or {}).get("used_percentage"),
-                    "cwd": d.get("cwd") or (d.get("workspace") or {}).get("current_dir"), "model": (d.get("model") or {}).get("display_name")})
     for name in config.load_projects():
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
