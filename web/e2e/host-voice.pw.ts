@@ -103,11 +103,78 @@ test("host voice: Starting voice, live words, Transcribing, landed; Cancel and S
   expect(sent[0]).toMatch(/^Send this Heard \d+ chunks\.$/);
 });
 
+/** Every value the field shows over `ms`, one per animation frame, without repeats. */
+function fieldValues(page: Page, ms: number) {
+  return page.evaluate((duration) => new Promise<string[]>((resolve) => {
+    const field = document.querySelector<HTMLTextAreaElement>("main textarea.composer-field")!;
+    const seen = [field.value];
+    const end = performance.now() + duration;
+    const frame = () => {
+      if (seen.at(-1) !== field.value) seen.push(field.value);
+      if (performance.now() < end) requestAnimationFrame(frame);
+      else resolve(seen);
+    };
+    requestAnimationFrame(frame);
+  }), ms);
+}
+
+test("host voice: live words flow in at a steady pace; reduced motion shows them at once; Stop lands the whole text", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const host = await fixtureHost(page);
+  const said = "check the build, then the timer, and after that the tests on both phones";
+  host.live = "check the build,";
+  host.final = `${said}.`;
+  await walk.open(project.path);
+  await v.field.fill("Please");
+  await v.mic.click();
+  await expect(v.field).toHaveValue("Please check the build,", { timeout: 5000 });
+
+  // The next answer adds many words at once: they arrive letter by letter, each frame a longer prefix of them.
+  host.live = said;
+  const flowed = await fieldValues(page, 1500);
+  const after = flowed.slice(flowed.indexOf("Please check the build,") + 1);
+  expect(after.at(-1)).toBe(`Please ${said}`);
+  expect(after.length).toBeGreaterThan(10);
+  after.forEach((value, index) => {
+    expect(`Please ${said}`.startsWith(value)).toBe(true);
+    if (index) expect(value.length).toBeGreaterThan(after[index - 1].length);
+  });
+  await walk.state("host-voice-18-words-flowed-in", {
+    visible: [v.listening, v.stop, v.cancel],
+    hidden: [v.mic],
+  });
+  await walk.state("host-voice-19-stop-lands-whole-text", {
+    action: () => v.stop.click(),
+    visible: [v.mic, v.field],
+    hidden: [v.listening, v.stop, v.cancel, v.transcribing],
+  });
+  await expect(v.field).toHaveValue(`Please ${said}.`);
+  await expect(v.field).not.toHaveAttribute("readonly", "");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await v.field.fill("Again");
+  host.live = "check the build,";
+  await v.mic.click();
+  await expect(v.field).toHaveValue("Again check the build,", { timeout: 5000 });
+  host.live = said;
+  const instant = await fieldValues(page, 1500);
+  expect(instant.filter((value) => value !== "Again check the build,")).toEqual([`Again ${said}`]);
+  await walk.state("host-voice-20-reduced-motion-at-once", {
+    visible: [v.listening, v.stop],
+    hidden: [v.mic],
+  });
+  await v.cancel.click();
+  await expect(v.field).toHaveValue("Again");
+});
+
 test("host voice: a stopped recording keeps its words and says why; busy says so", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const host = await fixtureHost(page);
+  host.live = "check";
   await walk.open(project.path);
   await v.mic.click();
   await expect(v.field).toHaveValue("check", { timeout: 5000 });
@@ -231,7 +298,7 @@ test("host voice through a lost connection: keeps recording, catches up, waits a
 
   host.offline = false;
   await v.mic.click();
-  await expect(v.field).toHaveValue(/^Draft check/, { timeout: 5000 });
+  await expect(v.field).toHaveValue("Draft check the build", { timeout: 5000 });
   const shown = await v.field.inputValue();
   host.offline = true;
   await v.stop.click();

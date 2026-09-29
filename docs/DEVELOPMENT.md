@@ -202,7 +202,7 @@ words while listening, landed, Send at once, cancel, failed, denied and no-recog
 both viewports, and asserts that nothing reaches `/api/voice/live`. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
 `host-voice.pw.ts` overlays `/api/voice` with `host` and answers `/api/voice/live` from a page-level
 fixture, so no model runs; the page's real audio worklet turns the synthetic microphone into 16 kHz
-chunks. It walks starting, live words, transcribing, landed, cancel, Send, stopped, busy, needs
+chunks. It walks starting, live words (flowing in frame by frame, and at once under reduced motion), transcribing, landed, cancel, Send, stopped, busy, needs
 setup, setup progress, ready and unavailable at both viewports. `tests/test_speech.py` runs the
 supervisor against a fake worker process (load failure, hangs, crashes) and setup against a fake
 download of small checksummed files; nothing downloads the real model.

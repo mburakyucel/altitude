@@ -1825,7 +1825,12 @@ loads afresh. No text leaves the device and no
 server component is involved.
 The composer runs one capture state machine for every backend: recognized words appear after the
 typed draft while listening (the field scrolls to keep the latest words in view once they pass its
-height), the last phrase may change until final, the recognizer restarts when
+height), the last phrase may change until final,
+and the display alone paces them: `liveReveal.ts` reveals each update's text letter by letter at a
+rate that finishes about when the next update is due (the recent update gaps, at least twelve letters
+a second), keeps the revealed length through a revision so corrected words change in place, and shows
+each update whole under reduced motion. Stop, Send and failures read the capture's own text, never the
+revealed prefix, so pacing cannot drop or delay a word; the recognizer restarts when
 the browser ends a session on silence (five immediate ends in a row are a failure, not a loop),
 and Stop waits at most three seconds for the recognizer's last phrase, then for its punctuation, before
 landing the words; no upload follows. A recognizer refusal is the denied state, and because a refusal can be temporary, the

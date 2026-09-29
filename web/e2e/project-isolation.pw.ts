@@ -462,7 +462,7 @@ test("listening, late Stop transcription and denied microphone reset without cro
   host.holdFinal = transcript.promise;
   const delivered = finalSettled(page);
   await mic.click();
-  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft check", { timeout: 5000 });
+  await expect(v.field("alpha")).toHaveValue("Alpha preexisting draft check the build", { timeout: 5000 });
   await stop.click();
   await expect.poll(() => host.finals).toBe(1);
   await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
@@ -508,7 +508,7 @@ for (const result of ["success", "failure", "cancel"] as const) {
     await v.field("alpha").fill("Alpha original draft");
     await v.convo.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.convo.getByRole("button", { name: "Stop voice input" })).toBeVisible();
-    await expect(v.field("alpha")).toHaveValue("Alpha original draft check", { timeout: 5000 });
+    await expect(v.field("alpha")).toHaveValue("Alpha original draft check the build", { timeout: 5000 });
     await v.send.click();
     await switchProject(page, info, "beta");
     await v.field("beta").fill("Beta independent draft");

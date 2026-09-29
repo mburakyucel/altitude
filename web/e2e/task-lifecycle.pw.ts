@@ -25,7 +25,7 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   await field.fill("Keep retry bounded.");
   await conversation.getByRole("button", { name: "Start voice input" }).click();
   await expect(conversation.getByRole("button", { name: "Stop voice input" })).toBeVisible();
-  await expect(field).toHaveValue("Keep retry bounded. check", { timeout: 5000 });
+  await expect(field).toHaveValue("Keep retry bounded. check the build", { timeout: 5000 });
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   await expect.poll(() => host.finals).toBe(1);
   const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });

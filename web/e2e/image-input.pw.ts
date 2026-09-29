@@ -225,7 +225,7 @@ for (const scope of ["project", "task"] as const) {
     host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
     host.final = "Please fix the overlap.";
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible();
-    await expect(v.field).toHaveValue(`${caption} Keep this edit. check`, { timeout: 5000 });
+    await expect(v.field).toHaveValue(`${caption} Keep this edit. check the build`, { timeout: 5000 });
     await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByText("Transcribing…", { exact: true })], hidden: [v.add, stop] });
     await expect(v.field).toBeVisible();
     await expect(v.field).not.toBeEditable();
@@ -293,7 +293,7 @@ for (const scope of ["project", "task"] as const) {
     await v.composer.getByRole("button", { name: "Start voice input" }).click();
     await expect(v.composer.getByRole("button", { name: "Stop voice input" })).toBeVisible();
     await expect(v.listening).toBeVisible();
-    await expect(v.field).toHaveValue(`${caption} check`, { timeout: 5000 });
+    await expect(v.field).toHaveValue(`${caption} check the build`, { timeout: 5000 });
     await v.send.click();
     await expect.poll(() => host.finals).toBe(1);
     await leave();
