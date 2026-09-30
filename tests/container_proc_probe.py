@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import sys
 import time
 
 TOP = ('acpi','asound','bus','fs','irq','kallsyms','kcore','keys','latency_stats',
@@ -45,7 +44,7 @@ def inspect():
 def differences(result,policy,baseline=None):
     uid=str(result['uid'])
     if uid not in policy['writable']: return ['Unexpected probe principal']
-    readable=set(policy['readable']) | (set(policy['root_extra_readable']) if uid=='0' else set())
+    readable=set(policy['readable'])
     if baseline is not None:
         if baseline['uid']!=result['uid']: return ['Default-protection principal differs']
         default={row['path']:row for row in baseline['rows']}

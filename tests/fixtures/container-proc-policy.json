@@ -12,7 +12,6 @@
     "/proc/scsi",
     "/proc/sys"
   ],
-  "root_extra_readable": [],
   "writable": {
     "0": [
       "/proc/sys/fs/mqueue/msg_default",
