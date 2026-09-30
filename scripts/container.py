@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 
@@ -23,34 +26,88 @@ def name(value: str) -> str:
     return value
 
 
-def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = None) -> dict:
+def build_command(root: Path, arguments: list[str], **kwargs) -> str:
+    return platform.container_command(["--root", str(root / "store"), "--runroot", str(root / "run"),
+                                       *arguments], runtime_dir=root / "runtime", **kwargs)
+
+
+def cleanup_build(root: Path) -> None:
+    """Retire only this build's private store and pause helper, including after SIGKILL (#543)."""
+    if not root.exists():
+        return
+    info = root.lstat()
+    if not root.is_absolute() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("Build cleanup requires its owned private directory")
+    store = json.loads(build_command(root, ["info", "--format=json"]))["store"]
+    if Path(store["graphRoot"]) != root / "store" or Path(store["runRoot"]) != root / "run":
+        raise RuntimeError("Build store identity changed; retain it for inspection")
+    # Podman --external lists interrupted Buildah working containers too. Force
+    # removal accepts those IDs; inventory is confined to the verified private store.
+    containers = build_command(root, ["ps", "--all", "--external", "--quiet"]).split()
+    if containers:
+        build_command(root, ["rm", "--force", *containers], timeout=20)
+    build_command(root, ["rmi", "--force", "--all"], timeout=20)
+    if build_command(root, ["ps", "--all", "--external", "--quiet"]).strip() or build_command(root, ["images", "--quiet"]).strip():
+        raise RuntimeError("Private build resources remain; retain the directory")
+    build_command(root, ["system", "migrate"])
+    # No more Podman calls after migration: they can create another pause helper.
+    shutil.rmtree(root)
+
+
+def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = None,
+          root: Path | None = None) -> dict:
     platform.container_runtime()
     if not re.fullmatch(r"localhost/[a-z0-9][a-z0-9/_.-]*:[a-zA-Z0-9_.-]+", tag):
         raise ValueError("Use a local image tag such as localhost/altitude:v0.1.0-rc.2")
     if delegated is None:
         import uuid
         unit = "altitude-container-build-" + uuid.uuid4().hex + ".service"
+        root = Path(tempfile.mkdtemp(prefix="acb-"))
+        (root / "runtime").mkdir(mode=0o700)
+        (root / "runtime/bus").symlink_to(f"/run/user/{os.getuid()}/bus")
         command = [sys.executable, "-c", "import json,sys;from pathlib import Path;"
-            "from scripts.container import build;print(json.dumps(build(Path(sys.argv[1]),sys.argv[2],sys.argv[3],delegated=sys.argv[4])))",
-            str(archive.resolve()), checksum, tag, unit]
-        return json.loads(platform.container_job(unit, command, wait=True))
+            "from scripts.container import build;print(json.dumps(build(Path(sys.argv[1]),sys.argv[2],sys.argv[3],delegated=sys.argv[4],root=Path(sys.argv[5]))))",
+            str(archive.resolve()), checksum, tag, unit, str(root)]
+        cleanup = [sys.executable, "-c", "import sys;from pathlib import Path;"
+                   "from scripts.container import cleanup_build;cleanup_build(Path(sys.argv[1]))", str(root)]
+        try:
+            return json.loads(platform.container_job(unit, command, wait=True, after_stop=cleanup))
+        finally:
+            if root.exists():
+                # If the waiting client timed out, stop the exact build service before
+                # touching its store. A refused stop retains evidence; never prune shared data.
+                environment = platform.container_user_environment()
+                if platform.job_active(unit, environment):
+                    stopped = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
+                                             capture_output=True, text=True, timeout=70)
+                    if stopped.returncode or platform.job_active(unit, environment):
+                        raise RuntimeError(f"Build remains active; private artifacts retained at {root}")
+                cleanup_build(root)
     parent = platform.container_parent(delegated)
-    with tempfile.TemporaryDirectory(prefix="altitude-image-") as folder:
-        context = Path(folder)
-        app = context / "app"
-        app.mkdir()
-        release = installation.extract(archive, checksum, app)
-        packaging = app / "container"
-        if not (packaging / "Containerfile").is_file():
-            raise ValueError("This release predates container support; use a release containing container packaging")
-        shutil.copyfile(packaging / "Containerfile", context / "Containerfile")
-        platform.container_command(["build", "--force-rm", "--isolation=oci", "--network=slirp4netns",
+    if root is None:
+        raise ValueError("The build needs its private store")
+    context = root / "context"
+    app = context / "app"
+    app.mkdir(parents=True)
+    release = installation.extract(archive, checksum, app)
+    packaging = app / "container"
+    if not (packaging / "Containerfile").is_file():
+        raise ValueError("This release predates container support; use a release containing container packaging")
+    shutil.copyfile(packaging / "Containerfile", context / "Containerfile")
+    build_command(root, ["build", "--force-rm", "--isolation=oci", "--network=slirp4netns",
                                     "--cgroup-parent", parent + "/image-build",
                                     "--memory=1g", "--cpu-quota=100000", "--tag", tag,
                                     "--label", f"{LABEL}=1", "--label", f"org.opencontainers.image.version={release['version']}",
                                     "--label", f"org.opencontainers.image.revision={release['commit']}",
                                     "--label", f"io.altitude.archive.sha256={checksum.lower()}", str(context)], timeout=480)
-    return json.loads(platform.container_command(["image", "inspect", tag]))[0]
+    image = json.loads(build_command(root, ["image", "inspect", tag]))[0]
+    exported = root / "image.tar"
+    build_command(root, ["save", "--format=oci-archive", "--output", str(exported), tag], timeout=60)
+    platform.container_command(["load", "--input", str(exported)], timeout=60)
+    imported = json.loads(platform.container_command(["image", "inspect", tag]))[0]
+    if imported["Id"] != image["Id"]:
+        raise RuntimeError("Loaded image differs from the completed private build")
+    return imported
 
 
 def local_volume(volume: str) -> None:

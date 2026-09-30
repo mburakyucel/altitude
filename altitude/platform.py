@@ -347,13 +347,13 @@ def container_runtime() -> dict:
         raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
 
 
-def container_user_environment() -> dict[str, str]:
+def container_user_environment(runtime_dir: Path | None = None) -> dict[str, str]:
     """Keep Podman and its environment-stripped OCI children on the same user bus (#543)."""
     if _darwin():
         raise RuntimeError("The Linux container launcher cannot yet manage a Mac container VM")
     environment = dict(os.environ)
     canonical = Path(f"/run/user/{os.getuid()}/bus")
-    runtime = Path(environment.get("XDG_RUNTIME_DIR", str(canonical.parent)))
+    runtime = runtime_dir or Path(environment.get("XDG_RUNTIME_DIR", str(canonical.parent)))
     address = f"unix:path={canonical}"
     if not runtime.is_absolute() or environment.get("DBUS_SESSION_BUS_ADDRESS", address) != address:
         raise RuntimeError("Podman requires the local user runtime bus, not a redirected bus address")
@@ -607,13 +607,14 @@ def container_arguments(arguments: list[str]) -> list[str]:
     return ["podman", "--remote=false", "--cgroup-manager=cgroupfs", "--runtime=/usr/bin/crun", *arguments]
 
 
-def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False) -> str:
+def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False,
+                      runtime_dir: Path | None = None) -> str:
     """Only the local rootless controller; callers select exact task/image/volume resources."""
     if os.getuid() == 0:
         raise RuntimeError("Run Podman as your ordinary Linux account")
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
-    environment = container_user_environment()
+    environment = container_user_environment(runtime_dir) if runtime_dir else container_user_environment()
     result = subprocess.run(container_arguments(arguments), text=True,
                             capture_output=not interactive, timeout=timeout, env=environment)
     if result.returncode:

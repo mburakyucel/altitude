@@ -250,6 +250,10 @@ positive control proves that its detector is active. This is not protection agai
 same-account software that ignores the launcher, nor a change to host polkit or service policy.
 The image gate retires only its verified empty private store's pause helper with Podman's own
 operation. It never migrates a shared store or guesses a helper's executable/PID.
+Image construction uses a separate private build store and imports only the completed image into
+the operator's store, verifying its identity. The finite build service's stop cleanup removes its
+own working containers, image layers and pause helper, including after an interrupted build.
+It never prunes shared storage. Refused cleanup retains the private directory for diagnosis.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

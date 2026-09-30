@@ -8,7 +8,9 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE))
@@ -28,6 +30,7 @@ def main():
     def command(arguments, **kwargs):
         nonlocal count
         count += 1
+        number = count
         item = {'arguments':arguments}
         try:
             value = actual(arguments, **kwargs)
@@ -37,7 +40,7 @@ def main():
             item['error'] = repr(error)
             raise
         finally:
-            (evidence/f'command-{count:03d}.json').write_text(json.dumps(item,indent=2)+'\n')
+            (evidence/f'command-{number:03d}.json').write_text(json.dumps(item,indent=2)+'\n')
     platform.container_command = command
     with container_acceptance.environment(root):
         isolated = False
@@ -59,6 +62,54 @@ def main():
                 raise RuntimeError('Fresh image is not admitted/ready')
             neighbor = container.start(image['Id'],instances[1],'neighbor-home','neighbor-projects',
                                        '127.0.0.1','localhost',19444)
+            # Real interrupted Buildah work in an exact private store. Kill only
+            # its fictional guest supervisor; the service's stop-post must clean
+            # it while both unrelated application containers keep running.
+            build_root = Path(tempfile.mkdtemp(prefix='acb-'))
+            building, observed = {}, threading.Event()
+            job = platform.container_job
+            def observe_job(unit, args, **kwargs):
+                building['unit'] = unit
+                observed.set()
+                return job(unit, args, **kwargs)
+            def interruptible_build():
+                try:
+                    container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),
+                                    'localhost/altitude:interrupted')
+                    building['unexpected_success'] = True
+                except Exception as error:
+                    building['error'] = repr(error)
+            with mock.patch.object(container.tempfile,'mkdtemp',return_value=str(build_root)), \
+                 mock.patch.object(platform,'container_job',side_effect=observe_job):
+                builder = threading.Thread(target=interruptible_build)
+                builder.start()
+                try:
+                    if not observed.wait(10):
+                        raise RuntimeError('Build service was not launched')
+                    limit = time.monotonic()+180
+                    while True:
+                        if not builder.is_alive() or time.monotonic()>limit:
+                            raise RuntimeError('No live build container available for interruption')
+                        if (build_root/'runtime/bus').exists():
+                            ids = container.build_command(build_root,['ps','--all','--external','--quiet']).split()
+                            if ids:
+                                building['working_containers'] = ids
+                                break
+                        time.sleep(.2)
+                    subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',
+                                    building['unit']],check=True,timeout=10)
+                finally:
+                    builder.join(timeout=85)
+                    if builder.is_alive():
+                        subprocess.run(['systemctl','--user','stop',building['unit']],check=True,timeout=70)
+                        builder.join(timeout=20)
+                    if builder.is_alive():
+                        raise RuntimeError('Interrupted build thread survived cleanup')
+            if build_root.exists() or not building.get('error') or building.get('unexpected_success'):
+                raise RuntimeError('Interrupted build did not remove its private artifacts')
+            if any(not container.owned(instance)['State']['Running'] for instance in instances[:2]):
+                raise RuntimeError('Build cleanup affected a running deployment')
+            record['interrupted_build'] = building
             platform.container_stop(instances[0])
             stopped = container.owned(instances[0])
             record['graceful_stop'] = stopped['State']
