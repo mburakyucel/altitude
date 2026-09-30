@@ -350,9 +350,10 @@ class TestMachineAccess(AltitudeCase):
         self.assertIsNone(json.loads(result.stdout)["machine_access"])
         grant_args = ("--grant", "--approval", row["id"], "--question", question["id"],
                       "--revision", str(question["revision"]), "--reason", "Same answer.")
-        result = self.alt("task", "machine", "other-task", *grant_args, env=owner)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("only on its own task", result.stderr)
+        for elsewhere in (("task", "machine", "other-task"), ("--project", "other", "task", "machine", self.slug)):
+            result = self.alt(*elsewhere, *grant_args, env=owner)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("only on its own task", result.stderr)
         result = self.alt("task", "machine", self.slug, *grant_args, env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((json.loads(result.stdout)["purpose"], json.loads(result.stdout)["actor"]),

@@ -772,7 +772,8 @@ def main(argv=None) -> None:
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "machine":
             attempt = os.environ.get("ALTITUDE_ATTEMPT")
-            if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK") or not attempt):
+            if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK")
+                                  or p != os.environ.get("ALTITUDE_PROJECT") or not attempt):
                 sys.exit("alt task machine: an L2 records or revokes the grant only on its own task")
             if args.grant:
                 if not (args.approval and args.question and args.revision):
