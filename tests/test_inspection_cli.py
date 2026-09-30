@@ -88,10 +88,10 @@ class TestInspectionCLI(AltitudeCase):
         self.assertEqual(self.gh_log(), [])
 
     def test_operator_issue_cli_sends_stdin_and_options_to_daemon(self):
+        self.serving(8890)  # the transport is replaced; nothing listens
         for args, operation in ((["new", "--title", "Backlog", "--label", "later", "-"], "new"),
                                 (["comment", "42", "-"], "comment")):
-            with self.subTest(operation=operation), mock.patch.object(config, "TLS", False), \
-                 mock.patch("sys.stdin", io.StringIO("Body\nfrom stdin\n")), \
+            with self.subTest(operation=operation), mock.patch("sys.stdin", io.StringIO("Body\nfrom stdin\n")), \
                  mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(
                      b'{"url":"https://github.com/team/project/issues/42"}')) as send:
                 self.assertEqual(cli("issue", *args), "https://github.com/team/project/issues/42")

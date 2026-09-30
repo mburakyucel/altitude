@@ -296,8 +296,8 @@ class TestValidationRunner(AltitudeCase):
         self.assertTrue(any(e["kind"] == "machine-run" for e in S.read_events(self.project, self.slug)))
 
     def test_cli_door(self):
-        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        self.serving(self.httpd.server_address[1])
+        base = {"ALTITUDE_PROJECT": self.project}
         owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
         result = self.alt("task", "validate", "--", "true", env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertEqual(result.returncode, 1)

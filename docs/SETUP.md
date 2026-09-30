@@ -186,9 +186,9 @@ the end of the ten minutes closes the link, and Ctrl-C closes the command's link
 **Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
 then use another channel.
 
-`alt tls-share` reads the address, port and certificate folder from the running Altitude service
-itself, so the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
-`ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
+`alt tls-share` reads the address, port and certificate folder the running Altitude service
+recorded when it started, so the shell's own `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` and
+`ALTITUDE_TLS_DIR` play no part. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
 service's address, and offers only a certificate the service proves it serves under. **Add a phone**
 is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
@@ -196,10 +196,10 @@ in any terminal, including Altitude's own.
 
 Both stop with the reason when the service serves plain HTTP or listens only on loopback
 (`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
-service restarts). `alt tls-share` also stops when the service is not installed or not running,
-does not answer, or answers without proving that certificate. It reads the Linux user service or,
-on a Mac, the source service's LaunchAgent, whose address comes from `ALTITUDE_HOST` when it is
-installed: `ALTITUDE_HOST=<address> make install-service`.
+service restarts). `alt tls-share` also stops when no service has recorded its address, or the
+service does not answer or answers without proving that certificate. On a Mac, the source
+service's LaunchAgent takes its address from `ALTITUDE_HOST` when it is installed:
+`ALTITUDE_HOST=<address> make install-service`.
 
 The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
 iPad:

@@ -87,6 +87,7 @@ class TestReviewInterfaces(AltitudeCase):
                                                    expected_attempt=2, reason="Scope changed")
 
     def test_run_uses_fixed_daemon_operation_and_returns_receipt(self):
+        self.serving(8890)  # the transport is replaced; nothing listens
         for proposal_id in (None, "original-proposal"):
             arguments = ("--proposal-message", proposal_id) if proposal_id else ()
             response = mock.MagicMock()
@@ -102,6 +103,7 @@ class TestReviewInterfaces(AltitudeCase):
                 self.assertIsNone(transport.call_args.kwargs["timeout"])
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):
+        self.serving(8890)  # the transport is replaced; nothing listens
         response = mock.MagicMock()
         response.__enter__.return_value = io.BytesIO(b'  {"ok":false,"error":"Review interrupted"}')
         with mock.patch("urllib.request.urlopen", return_value=response), self.assertRaisesRegex(SystemExit, "Review interrupted"):

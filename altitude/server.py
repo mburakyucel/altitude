@@ -2991,10 +2991,12 @@ def main(host: str | None = None, port: int | None = None) -> None:
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)
+        if os.environ.get("ALTITUDE_SERVICE"):  # clients reach the service it records, not their launch settings
+            tls.publish({"host": host, "port": srv.server_port, "tls": context is not None, "tls_dir": config.TLS_DIR})
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()
-        log(f"cannot initialize HTTPS or the L3 verb broker ({e}); refusing to start")
+        log(f"cannot initialize HTTPS, the L3 verb broker or the service record ({e}); refusing to start")
         raise SystemExit(1) from e
     scheme = "https" if context is not None else "http"
     # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
