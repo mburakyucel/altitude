@@ -2313,21 +2313,25 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
 
 
 def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
-                         actor: str, source: str = "task") -> dict:
+                         actor: str, source: str = "task", expected_attempt: int | None = None) -> dict:
     """The operator's answer to the owner's purpose question is the only authority that opens the machine to a task.
 
     The check is mechanical: the cited operator message resolved that exact current question revision as answered
-    with no remainder, so the recorded purpose is the question the operator actually read. L3 or the operator
-    records it after judging that the answer is a yes to that purpose; the owner cannot record its own grant,
-    and nobody can widen one. The grant binds to the current attempt.
+    with no remainder, so the recorded purpose is the question the operator actually read. Whoever records it
+    judges that the answer is a yes to that purpose: the running owner from a task-chat answer, as it applies a
+    merge approval, or L3 or the operator from either chat. Nobody can widen a grant; it binds to the current attempt.
     """
-    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("a machine grant needs the coordinator or the operator and a reason")
+    if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("a machine grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         try:
             if task["state"] not in ("running", "blocked", "reported"):
                 raise ValueError("task is not active")
+            if actor == "l2" and (task["state"] != "running" or expected_attempt != task.get("attempt")
+                                  or source != "task"):
+                raise ValueError("the owner records a grant only while running its current attempt, "
+                                 "from the operator's task-chat answer")
             decision = _question_target(task, question, revision)
             saved = decision.get("resolution") or {}
             if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
