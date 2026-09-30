@@ -108,8 +108,10 @@ try {
       await page.getByRole('button',{name:'Send',exact:true}).click();
       await expect(page.getByRole('button',{name:'Resuming…',exact:true})).toBeDisabled();
       if (invoke('task').inputs.length!==1) throw Error('Task launched before host Continue');
-      invoke("continue");
-      await expect(page.getByRole('status',{name:'Container work paused'})).toBeHidden({timeout:20000});
+      if (!invoke("continue").ready) throw Error('Host Continue did not admit the current instance');
+      // The existing overview poll is twenty seconds; allow its next complete
+      // request rather than racing its interval boundary.
+      await expect(page.getByRole('status',{name:'Container work paused'})).toBeHidden({timeout:45000});
       await state("14-replacement-task-continued",page.getByRole('button',{name:/^Stop/}));
       await expect.poll(()=>invoke('task').inputs.length,{timeout:30000}).toBe(2);
       const resumed=invoke('task');
