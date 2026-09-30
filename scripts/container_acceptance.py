@@ -25,17 +25,19 @@ from scripts import container
 
 
 @contextmanager
-def environment(root: Path):
+def environment(root: Path, *, reuse=False):
     saved = dict(os.environ)
     names = {"HOME": "home", "XDG_RUNTIME_DIR": "runtime", "XDG_DATA_HOME": "data",
              "XDG_CONFIG_HOME": "config", "XDG_CACHE_HOME": "cache"}
     for child in names.values():
-        (root / child).mkdir(mode=0o700)
+        (root / child).mkdir(mode=0o700, exist_ok=reuse)
     # Podman passes only XDG_RUNTIME_DIR to crun delete. A private replacement
     # loses the real user bus and crun falls back to the system manager (#543).
     # Preserve the same already-used bus for stripped children while retaining
     # private pause-process, OCI and storage state (all keyed by this directory).
-    (root / "runtime/bus").symlink_to(f"/run/user/{os.getuid()}/bus")
+    bus=root / 'runtime/bus'
+    if not reuse or not bus.is_symlink():
+        bus.symlink_to(f"/run/user/{os.getuid()}/bus")
     os.environ.clear()
     os.environ.update({key: str(root / child) for key, child in names.items()})
     os.environ.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", LANG="C.UTF-8",

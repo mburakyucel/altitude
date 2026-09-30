@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO))
 from scripts import installation_vm as vm
 
 
-def run(results, cache, *, image_workflow=False, native_binary=None):
+def run(results, cache, *, image_workflow=False, native_binary=None, browser=False):
     results = results.resolve()
     results.mkdir()
     record = {'passed': False, 'scope': 'fictional Ubuntu VM committed Altitude container launcher and image lifecycle in disposable Linux VM'}
@@ -32,6 +32,7 @@ def run(results, cache, *, image_workflow=False, native_binary=None):
     work = Path(tempfile.mkdtemp(prefix='acg-vm-'))
     machine = None
     monitor = None
+    forwarding = None
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
         missing = vm.missing_prerequisites()
@@ -40,12 +41,17 @@ def run(results, cache, *, image_workflow=False, native_binary=None):
         original_data = vm.user_data
         vm.user_data = lambda key: original_data(key).replace(
             'packages: [git, gh, openssl]',
-            'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin]')
+            'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin, libnss3-tools]')
         cache.mkdir(parents=True, exist_ok=True)
         record['image'] = vm.base_image(cache)
         release = work / 'release'
         subprocess.run([sys.executable,str(REPO/'scripts/build_release.py'),'--version','v0.1.0-rc.2',
                         '--output',str(release)],check=True,timeout=240, cwd=REPO)
+        if browser:
+            # This command itself is run in alt task validate; the browser keeps
+            # its own sandbox in that disposable runner, not in the worker.
+            subprocess.run(['node',str(REPO/'scripts/browser_sandbox.mjs'),str(results/'browser-sandbox.json')],
+                           check=True,timeout=60,cwd=REPO)
         machine = vm.Machine(work, cache / vm.IMAGE)
         machine.start()
         machine.wait_ready(time.monotonic() + 600)
@@ -84,9 +90,26 @@ def run(results, cache, *, image_workflow=False, native_binary=None):
                 '--results','input/product-result','--lifecycle','--workflow','--recovery']
             if native_binary:
                 guest_command += ['--native-sandbox-binary','input/native-sandbox']
-        run = machine.ssh(
-            'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
-            + shlex.join(guest_command), timeout=1050, check=False)
+        if browser:
+            port=vm.free_port()
+            forwarding=subprocess.Popen(['ssh',*machine.options('-p'),'-N','-o','ExitOnForwardFailure=yes',
+                '-L',f'127.0.0.1:{port}:127.0.0.1:19448','ubuntu@127.0.0.1'],stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            # Only the public CA is imported into an isolated browser NSS database.
+            # Use the guest's distribution certutil; runner Chromium already has NSS libraries.
+            certutil=work/'certutil'
+            machine.copy('ubuntu@127.0.0.1:/usr/bin/certutil',str(certutil)); certutil.chmod(0o755)
+            settings=work/'browser.json'
+            settings.write_text(json.dumps({'ssh':machine.options('-p'),'port':port,
+                'results':str(results),'certutil':str(certutil)}))
+            run=subprocess.run(['node',str(REPO/'scripts/container_browser.mjs'),str(settings)],
+                cwd=REPO,capture_output=True,text=True,timeout=1050)
+            inner=json.loads((results/'browser.json').read_text())
+            machine.ssh('mkdir -p input/product-result && printf %s '+shlex.quote(json.dumps(inner))+' > input/product-result/result.json')
+        else:
+            run = machine.ssh(
+                'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
+                + shlex.join(guest_command), timeout=1050, check=False)
         (results / 'probe.log').write_text(run.stdout + run.stderr)
         record['probe_exit'] = run.returncode
         machine.copy('ubuntu@127.0.0.1:input/product-result', str(results))
@@ -113,6 +136,11 @@ def run(results, cache, *, image_workflow=False, native_binary=None):
     except Exception as error:
         record['error'] = repr(error)
     finally:
+        if forwarding:
+            forwarding.terminate()
+            try: forwarding.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                forwarding.kill(); forwarding.wait(timeout=5)
         if machine:
             machine.stop()
             record['vm_stopped'] = machine.process is None or machine.process.poll() is not None
@@ -139,10 +167,13 @@ def main():
     parser.add_argument('--cache', type=Path, default=Path.home()/'.cache/altitude-installation-vm')
     parser.add_argument('--image-workflow', action='store_true', help='run image profile/lifecycle/workflow/recovery instead of launcher lifecycle')
     parser.add_argument('--native-sandbox-binary', type=Path, help='diagnostic executable for the image workflow lane; no provider calls')
+    parser.add_argument('--browser', action='store_true', help='actual published HTTPS daemon onboarding with fictional engine on phone/desktop')
     args = parser.parse_args()
     if args.native_sandbox_binary and not args.image_workflow:
         parser.error('--native-sandbox-binary needs --image-workflow')
-    return run(args.results, args.cache, image_workflow=args.image_workflow, native_binary=args.native_sandbox_binary)
+    if args.browser and args.image_workflow:
+        parser.error('--browser and --image-workflow are separate acceptance lanes')
+    return run(args.results, args.cache, image_workflow=args.image_workflow, native_binary=args.native_sandbox_binary,browser=args.browser)
 
 
 if __name__ == '__main__':
