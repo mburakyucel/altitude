@@ -1581,17 +1581,26 @@ def _validate_questions(payload: dict) -> list[dict]:
     return normalized
 
 
+def _audience(block: str, previous: dict | None, text: str) -> str:
+    """A member follows the audience of the block that publishes it. Re-parking an unchanged operator question keeps
+    it the operator's, so an escalation is never parked away; a reworded one, such as a wait on L3 or an external
+    event, leaves the operator's list."""
+    unchanged = previous is not None and previous["detail"].strip() == text.strip()
+    return "operator" if block == "operator" or (unchanged and previous["audience"] == "operator") else "l3"
+
+
 def _publish_question(task: dict, text: str, actor: str, *, recommendation: str | None = None,
                       label: str | None = None, why: str | None = None, force_revision: bool = False,
                       previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
-                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET) -> dict:
+                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET,
+                      audience: str | None = None) -> dict:
     questions = task.setdefault("questions", [])
     if previous is _UNSET:
         previous = questions[-1] if questions else None
     if design is _UNSET:
         design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
     groups = _store_groups(task)
-    audience = previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator"
+    audience = audience or (previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator")
     parsed = parse_dilemma(text)
     structured = options is not None
     selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
@@ -1644,7 +1653,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     return question
 
 
-def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, design: dict | None = None) -> list[dict]:
+def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audience: str, *,
+                       design: dict | None = None) -> list[dict]:
     inputs = _validate_questions(payload)
     groups = _store_groups(task)
     group = groups[-1] if groups else None
@@ -1667,8 +1677,6 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         raise TransitionError("a group has at most three open questions; resolve existing questions before adding another")
     before = len(task.get("questions", []))
     for item, previous in targets:
-        if previous and previous["audience"] == "operator":
-            task["waiting_on"] = OPERATOR_MESSAGE_ROLE
         keep_options = previous and previous["detail"] == item["question"] and not item["options_supplied"]
         options = question_choices(previous) if keep_options else item["options"]
         recommended = _recommended_key(previous) if keep_options else item["recommended_key"]
@@ -1677,7 +1685,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET,
+                          audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:
         group["revision"] += 1
@@ -1687,43 +1696,53 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
 def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict | None,
                              recommendation: str | None, label: str | None, why: str | None,
                              *, design: dict | None = None) -> list[dict]:
+    members = _publish_block_members(task, reason, actor, payload, recommendation, label, why, design=design)
+    # The operator has the turn only while an open member is theirs; otherwise the block waits on L3.
+    if any(q["status"] == "open" and q["audience"] == "operator" for q in members):
+        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    return members
+
+
+def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | None,
+                           recommendation: str | None, label: str | None, why: str | None,
+                           *, design: dict | None = None) -> list[dict]:
     groups = _store_groups(task)
     group = groups[-1] if groups else None
     members = _group_members(task, group) if group else []
     pending = [q for q in members if q["status"] == "open"]
-    if any(q["audience"] == "operator" for q in pending):
-        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if payload is not None:
         if any(value is not None for value in (recommendation, label, why)):
             raise TransitionError("questions JSON supplies its own options and recommendation")
-        return _publish_questions(task, payload, actor, reason, design=design)
+        return _publish_questions(task, payload, actor, reason, audience, design=design)
     previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
     no_replacement = all(value is None for value in (recommendation, label, why))
-    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if design is None and no_replacement and group and reason.strip() == group["reason"].strip() and pending:
         # The ordinary block verb parks the same whole group after discussing a follow-up.
-        if all(q["audience"] == audience for q in pending):
+        if all(q["audience"] == _audience(audience, q, q["detail"]) for q in pending):
             return members
         for question in pending:
             _publish_question(task, question["detail"], actor, previous=question, group=group, bump=False,
                               options=question_choices(question), recommended_key=_recommended_key(question),
-                              why=(question.get("recommendation") or {}).get("why"))
+                              why=(question.get("recommendation") or {}).get("why"),
+                              audience=_audience(audience, question, question["detail"]))
         group["revision"] += 1
         return _group_members(task, group)
     if previous is None and len(pending) > 1:
         raise TransitionError("several questions remain open; use --questions-file with their ids or park with the saved group reason")
     previous = previous or (pending[0] if pending else None)
+    target = _audience(audience, previous, reason)
     if previous and previous["detail"].strip() == reason.strip() and no_replacement:
-        if previous["audience"] == audience and (design is None or previous.get("design") == design):
+        if previous["audience"] == target and (design is None or previous.get("design") == design):
             return members
         _publish_question(task, reason, actor, previous=previous, group=group,
                           options=question_choices(previous), recommended_key=_recommended_key(previous),
                           why=(previous.get("recommendation") or {}).get("why"),
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     else:
         _publish_question(task, reason, actor, previous=previous, group=group if pending else None,
                           recommendation=recommendation, label=label, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     current_group = _groups(task)[-1]
     current_group["reason"] = reason
     return _group_members(task, current_group)
@@ -1819,10 +1838,12 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
     return question
 
 
-def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
+def _decision_messages(project: str, slug: str, source: str, *, resumes: bool = False) -> list[dict]:
     if source == "task":
-        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
-        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
+        # A resume reason never answers an operator question or approves a merge; `resumes` admits L3's
+        # reason for the L3-audience question it settles (the grant it recorded before resuming the owner).
+        return [row for row in task_messages(project, slug)
+                if not row.get("removed_at") and (resumes or not row.get("resume"))]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
@@ -1839,8 +1860,10 @@ def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
 def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str, *,
                      l3_authority: str | None = None, exact: bool = False) -> dict:
     """Original authority and viewed revision shared by decisions and merge reconciliation."""
-    row = next((r for r in _decision_messages(project, slug, source) if r["id"] == message_id), None)
-    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
+    resumes = question["audience"] == "l3" and not l3_authority and not exact
+    row = next((r for r in _decision_messages(project, slug, source, resumes=resumes) if r["id"] == message_id), None)
+    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE
+                           and not row.get("resume"))
                           or (source == "task" and (question["audience"] == "l3" or l3_authority)
                               and row["role"] == "l3" and row.get("by") == "l3"))
     if l3_authority and not (source == "task" and row and row["role"] == "l3" and row.get("by") == "l3"):
@@ -2343,6 +2366,37 @@ def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
         S.append_event(project, slug, "machine-revoke", actor=actor, reason=reason.strip(),
                        purpose=previous["purpose"], approval=previous["approval"])
         return task
+
+
+def start_machine_run(project: str, slug: str, fields) -> dict:
+    """Number and record a command altd runs outside the worker sandbox (`machine.jsonl`) before its unit starts, so
+    a command that restarts altd keeps its number and unit. `fields(n)` gives the row's purpose, command and unit."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+        row = {"n": len(rows) + 1, **fields(len(rows) + 1), "exit": None, "timed_out": False, "started": S.now(), "finished": None,
+               "error": "still running or interrupted with altd"}
+        _append_jsonl(runs, row)
+    return row
+
+
+def finish_machine_run(project: str, slug: str, row: dict) -> None:
+    """Add the run's task and project events once, then replace its row with the outcome. The row is written last,
+    so an interruption between the writes leaves it unfinished to finish again, and a second finish keeps the
+    outcome the first one recorded."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        recorded = next((e for e in S.read_events(project, slug)
+                         if e["kind"] == "machine-run" and e.get("unit") == row["unit"]), None)
+        if recorded is None:
+            S.append_event(project, slug, "machine-run", actor="l2", **row)
+            S.project_log(project, "machine-run", slug=slug, command=row["command"], unit=row["unit"],
+                          exit=row["exit"], timed_out=row["timed_out"], purpose=row["purpose"])
+        else:
+            row = {key: value for key, value in recorded.items() if key not in ("at", "kind", "actor")}
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
+        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
+                                     for r in rows))
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,

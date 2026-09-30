@@ -28,7 +28,9 @@ TRUST_STEPS = (
     "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
     "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
     "Mac: open ca.crt in Keychain Access, then set Trust > When using this certificate > Always Trust.",
-    "iPhone/iPad: open ca.crt, then in Settings > Profile Downloaded check that it contains only a Certificate "
+    "iPhone/iPad: open the share link in Safari, tap Download the profile and Allow. Then open Settings > "
+    "Profile Downloaded; this entry appears after download, and an uninstalled profile expires after eight minutes. "
+    "Also check General > VPN & Device Management for profiles. Check that it contains only a Certificate "
     "named ca_name and that More Details shows its SHA-256 before tapping Install. Then turn it on under "
     "General > About > Certificate Trust Settings.",
     "Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate. "
@@ -328,26 +330,44 @@ def info(host: str | None = None) -> dict:
 SHARE_MINUTES = 10
 
 
+def record() -> Path:
+    """Where the running service records how to reach it: beside the machine key rather than in the runtime home
+    task folders share, since it decides where `alt` sends that key and which CA it trusts."""
+    from . import access
+    return access.DIR / "service.json"
+
+
+def publish(found: dict) -> None:
+    """The service records, as it starts serving, where it listens and which certificate folder it serves from.
+    A later restart with other settings replaces the record, so clients never depend on their own launch
+    environment."""
+    import json
+
+    from . import state
+    state.atomic_write(record(), json.dumps({"pid": os.getpid(), "host": found["host"], "port": found["port"],
+                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"]),
+                                             "public_host": found.get("public_host", found["host"])}) + "\n")
+
+
 def service() -> dict:
     """Where the running Altitude service listens and which certificate folder it serves from, as the service
-    itself started, so every shell reaches the same service. A shell setting that disagrees is refused."""
+    itself recorded when it started, so every shell and agent reaches the same service whatever its own
+    environment says."""
+    import json
     from . import platform
+
+    path = record()
     try:
-        pid, environment = platform.service_settings()
-        found = config.network(environment)
-    except (RuntimeError, ValueError) as exc:
-        raise TLSFailure(f"Cannot find the running Altitude service: {exc}") from exc
-    shell = config.network(os.environ)
-    settings = [("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
-                ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir")]
-    if platform.containerized():
-        settings.append(("ALTITUDE_PUBLIC_HOST", "public_host"))
-    differing = [key for key, name in settings
-                 if key in config.SHELL_SETTINGS and shell[name] != found[name]]
-    if differing:
-        raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
-                         "Unset them in this shell, then retry.")
-    return {**located(found), "pid": pid}
+        saved = json.loads(path.read_text())
+        found = {"host": str(saved["host"]), "port": int(saved["port"]), "tls": saved["tls"] is True,
+                 "tls_dir": Path(saved["tls_dir"]), "pid": int(saved["pid"]),
+                 "public_host": str(saved["public_host"] if platform.containerized() else saved["host"])}
+    except FileNotFoundError as exc:
+        raise TLSFailure(f"The Altitude service has not recorded where it listens ({path}). Start the service, "
+                         "then retry.") from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise TLSFailure(f"Cannot read the Altitude service's record {path}: {exc}.") from exc
+    return located(found)
 
 
 def located(found: dict) -> dict:
@@ -450,15 +470,21 @@ a{{color:#4da3ff}}a.button.secondary{{background:#2c2c2e;color:#f5f5f7}}small{{c
 <div class="check"><strong>{name}</strong><br><small>SHA-256</small><div class="sha">{rows}</div>
 <small>It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.</small></div>
 <h2>iPhone or iPad</h2>
+<p>Open this page in <strong>Safari</strong>, then tap <strong>Download the profile</strong>.</p>
 <a class="button" href="/altitude.mobileconfig">Download the profile</a>
 <ol>
 <li>Tap <strong>Allow</strong>, then <strong>Close</strong>.</li>
-<li>Open <strong>Settings › Profile Downloaded</strong>. Check that it contains only a certificate named
+<li>Open <strong>Settings › Profile Downloaded</strong> after the download completes. Check that it contains only a certificate named
 <strong>{name}</strong> and that <strong>More Details</strong> shows the SHA-256 above. Then tap
-<strong>Install</strong> and enter your passcode. If anything differs, tap <strong>Remove</strong>.</li>
+<strong>Install</strong> and enter your passcode. If details are unavailable, stop before installing.
+If anything differs, tap <strong>Remove</strong>.</li>
 <li>Open <strong>Settings › General › About › Certificate Trust Settings</strong> and turn on <strong>{name}</strong>.</li>
 <li>Open <a href="{address}">{address}</a> in a new Private tab. It must load with no warning; then pair this phone.</li>
 </ol>
+<p><strong>No Profile Downloaded?</strong> This shortcut appears only after a profile download.
+Check <strong>Settings › General › VPN &amp; Device Management</strong> for profiles, too.
+iOS deletes an uninstalled profile after eight minutes. If none is there, return to this page in Safari
+and download again. If there is no Allow prompt or the download fails, stop and report what Safari shows.</p>
 <h2>Android and other devices</h2>
 <a class="button secondary" href="/ca.crt">Download the certificate</a>
 <ol>

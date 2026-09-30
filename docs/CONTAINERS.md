@@ -62,7 +62,7 @@ Sharing either volume between active controllers refuses startup. These protect 
 not malicious same-UID software that can remove lock files. Bootstrap changes only the two mount
 roots' ownership and never recursively rewrites user data.
 
-Browser terminal, task-terminal transcript reads, host speech and in-app update/restart actions are
+Browser terminal, task-terminal transcript reads, host speech, the optional validation runner and in-app update/restart actions are
 unavailable for every peer: published-port forwarding cannot reliably identify agent connections.
 Browser recognition remains available where the browser supports it. Host voice is unavailable in
 the container; the image does not pass through host audio devices or a GPU.

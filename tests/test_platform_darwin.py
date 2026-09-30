@@ -140,16 +140,6 @@ class Service(DarwinCase):
         with self.assertRaisesRegex(RuntimeError, "still running"):
             platform.control("stop")
 
-    def test_service_settings_come_from_the_running_service(self):
-        environment = self.patch(platform, "_environment", return_value=[b"ALTITUDE_PORT=9443", b"HOME=/Users/x"])
-        with self.assertRaisesRegex(RuntimeError, "No Altitude service is installed"):
-            platform.service_settings()
-        platform.service_path().parent.mkdir(parents=True)
-        platform.service_path().write_text("defined")
-        self.launchd.jobs[platform.LABEL] = described(platform.LABEL, path=platform.service_path())
-        self.assertEqual(platform.service_settings(), (4242, {"ALTITUDE_PORT": "9443"}))
-        environment.assert_called_with(4242)
-
     def test_logs_read_the_service_log(self):
         self.assertEqual(platform.logs(), "")
         platform.logs_dir().mkdir(parents=True)

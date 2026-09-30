@@ -394,6 +394,12 @@ class AltitudeCase(unittest.TestCase):
         log = self.tmp / "gh-state" / "log.jsonl"
         return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
 
+    def serving(self, port: int, host: str = "127.0.0.1") -> None:
+        """Record a plain-HTTP altd at `port`, as the running service records itself for `alt` to reach."""
+        from altitude import tls
+        tls.publish({"host": host, "port": port, "tls": False, "tls_dir": config.TLS_DIR})
+        self.addCleanup(tls.record().unlink, missing_ok=True)
+
     def alt(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
         """Run `bin/alt` with empty input against this runtime home."""
         merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), **(env or {})}

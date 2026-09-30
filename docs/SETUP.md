@@ -183,16 +183,19 @@ alt tls-share
 Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
 and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
 fingerprint, an iPhone profile download, a plain certificate download for Android and other
-devices, and the steps below. The link serves only that page and the public CA certificate, as a
+devices, and the steps below. On the same device, tap **Open setup page** in Settings; it opens a
+new tab while the original tab keeps the QR code, certificate details and sharing timer. Keep that
+original Settings page open during setup. Close and expiry remove the setup link as well as the QR.
+The link serves only that page and the public CA certificate, as a
 configuration profile holding only the certificate or as the certificate file; it never serves a
 key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
 the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new
 **Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
 then use another channel.
 
-`alt tls-share` reads the address, port and certificate folder from the running Altitude service
-itself, so the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
-`ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
+`alt tls-share` reads the address, port and certificate folder the running Altitude service
+recorded when it started, so the shell's own `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` and
+`ALTITUDE_TLS_DIR` play no part. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
 service's address, and offers only a certificate the service proves it serves under. **Add a phone**
 is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
@@ -200,23 +203,34 @@ in any terminal, including Altitude's own.
 
 Both stop with the reason when the service serves plain HTTP or listens only on loopback
 (`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
-service restarts). `alt tls-share` also stops when the service is not installed or not running,
-does not answer, or answers without proving that certificate. It reads the Linux user service or,
-on a Mac, the source service's LaunchAgent, whose address comes from `ALTITUDE_HOST` when it is
-installed: `ALTITUDE_HOST=<address> make install-service`.
+service restarts). `alt tls-share` also stops when no service has recorded its address, or the
+service does not answer or answers without proving that certificate. On a Mac, the source
+service's LaunchAgent takes its address from `ALTITUDE_HOST` when it is installed:
+`ALTITUDE_HOST=<address> make install-service`.
 
 The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
 iPad:
 
-1. Tap **Download the profile**, then **Allow**. Open Settings → **Profile Downloaded**.
+1. Open the share link in **Safari**, even if scanning the QR code opened another browser.
+   Tap **Download the profile**, then **Allow**. After the download completes, open Settings →
+   **Profile Downloaded**. Scanning the QR code alone does not download a profile.
 2. Before tapping **Install**, check that it contains only a **Certificate** with the name shown on
    the trusted screen, and that **More Details** → that certificate shows the same SHA-256. If
-   anything differs, tap **Remove** and stop: someone else answered the link.
+   anything differs, tap **Remove** and stop: someone else answered the link. If the certificate
+   details cannot be viewed, stop before installing and report what the phone shows.
 3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
    Trust Settings**. Installing the profile alone does not enable TLS trust.
    [Apple guidance](https://support.apple.com/en-us/102390).
 4. Open the HTTPS address in a new Private tab. It must load with no warning; then
    [pair](#pair-each-device) and add the Home Screen app.
+
+**No Profile Downloaded?** The shortcut appears after a profile download; it is not a permanent
+Settings item. Check **Settings → General → VPN & Device Management** for profiles as well.
+[Apple deletes an uninstalled profile after eight minutes](https://support.apple.com/en-us/102400).
+If no profile is present, return to the share page in Safari and download again; open a new sharing
+window if the ten-minute link has closed. If no **Allow** prompt appears or the download fails,
+report the browser, iOS version and exact message. A working download link does not establish that
+iOS accepted a profile. Do not change certificate trust or disable device protections to diagnose this.
 
 Safari may remember an earlier "visit this website" exception, which can hide missing trust in an
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
@@ -448,10 +462,9 @@ repair cannot make this choice for you. See the
 | `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
-zero usage. Codex readings come from its app-server integration. For Claude usage readings,
-`alt install-statusline` installs a global CLI statusline hook and an interactive session supplies
-the snapshot; inspect your existing settings before choosing that optional installation. Unknown
-readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
+zero usage. The daemon reads both accounts itself: Codex through its app-server integration and
+Claude through its headless usage command. Neither needs an interactive session or a change to your
+global CLI settings. Unknown readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
 configured order when weekly readings are unknown or incomparable, retaining a current L3 option
 in that tier. It never invents separate model allowances from a shared account reading.
 

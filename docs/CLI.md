@@ -434,9 +434,12 @@ any capability or authority gap through `alt task escalate <slug> --question 'â€
 the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
 correction follows the existing task/PR path. A changed operational contract requires its decision
 before execution. The owner investigates as part of its task: relevant, non-invasive diagnosis
-proceeds iteratively on its judgment without a plan to approve or per-round permission. A question
-arises only for access the owner lacks, a material machine or service change, unapproved spend, a
-live-provider test or an explicit restriction. Diagnosis does not expand fix scope, machine access or
+proceeds iteratively on its judgment without a plan to approve or per-round permission, and an
+authorized investigation continues through failed attempts until it has a result or reaches a
+genuinely new boundary. A question arises only for access the owner lacks, a material machine or
+service change, unapproved spend, a live-provider test or an explicit restriction. Runaway work
+shows in the task's live activity, token usage and L3's stalled-work observation rather than through
+per-attempt approval. Diagnosis does not expand fix scope, machine access or
 merge permission. Unavailable history and unrelated successful checks never establish recovery.
 
 For fictional Atlas tasks whose original worker units were collected, the procedure is:
@@ -620,7 +623,7 @@ Every other `alt` command that calls altd sends the machine key from the same st
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
-from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
+from the record the service wrote when it started, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
 phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
 link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and
@@ -1062,7 +1065,10 @@ in its reply/checkpoint, and withdraws only the redundant current question with 
 decisions still require their own answer; original authority, existing receipts and merge holds
 remain intact. A later reaffirmation already recorded needs no further reconciliation.
 
-`block` is the current L2's question to L3; its operator flag uses the operator audience. L3 can
+`block` is the current L2's question to L3; its operator flag uses the operator audience. Each block
+sets the audience of the members it publishes or rewords: re-parking an unchanged operator question
+keeps it the operator's, and a member reworded without the flag, such as a wait on L3 or an external
+event, leaves the operator's turn. The task waits on the operator only while an open member is theirs. L3 can
 `escalate` the actual dilemma and explicit recommendation. Both publish into the owning L2 human
 conversation with their source attribution. The model chooses a plain question, one recommended
 quick action, or two to three explicit options with one recommendation. A fault is operational and
@@ -1156,7 +1162,8 @@ operator chat `turn_id`, available from the project's recorded chat; an L3-autho
 operator source. The existing CLI door checks owning task and attempt, and the resolution checks
 source provenance and timing. An operator message sent after the question was first asked can settle
 its current revision, including after re-publication; the owner judges whether it still answers the
-question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer can settle an L3-audience question. For an
+question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer, including L3's resume reason, can settle an L3-audience question; a resume reason
+never answers an operator question or approves a merge. For an
 unnecessary operator escalation already settled within delegated L3 authority, the owner adds
 `--l3-authority` with the specific brief/rule/recorded-decision evidence and why it applies. This requires
 an authentic L3 task message bound to that exact question revision. The owner judges the substance;
@@ -1682,7 +1689,8 @@ operator-only; approval mode cannot combine with it or `--why`.
 
 A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
 or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant:
+under a machine grant. Installation VMs, containers and sandboxed-browser checks run through
+[validation runs](#validation-runs) instead, with no grant:
 
 ```text
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
@@ -1690,18 +1698,23 @@ alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
 
-The owner asks the operator a plain question naming the purpose and its verification and resolves
-the operator's answer with `alt task resolve`. L3 or the operator then records the grant citing that
-same message after judging that the answer is a yes; the owner cannot record its own. The rest is
+The owner asks the operator once per purpose, in a plain question naming the purpose and its bounds
+(what may run and what may not, limits, cleanup, verification and when the purpose ends), and
+resolves the operator's answer with `alt task resolve`. L3 or the operator then records the grant
+citing that same message after judging that the answer is a yes, and L3 resumes the owner; the owner
+cannot record its own. L3's resume reason can settle the owner's L3-audience wait for the grant. The rest is
 mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
 attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
 answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
 record `machine-grant-refused` and change nothing.
 
-The purpose grant covers relevant run/inspect/adjust iteration without approval for each command;
-one command at a time is an execution limit. Broader access or purpose still needs its own authority,
-and explicit one-run restrictions remain binding. Retain evidence and revoke the grant when done.
+The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
+including after a failed attempt, without approval for each command or attempt. One command at a time
+is an execution limit. The grant records the purpose as approved, no narrower; a one-run limit exists
+only when the operator's answer sets one, because a single run is itself the risk. A materially
+different access, service change, spend or live-provider test still needs its own answer. Retain
+evidence and revoke the grant when done.
 
 `alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
@@ -1725,6 +1738,24 @@ the CLI fails at once. `alt task status <slug> --brief` shows the active purpose
 The door is altd's operator-trusted HTTP surface, which every worker on this single-account host
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
+
+### Validation runs
+
+```text
+alt task validate [--kvm] [--publish PORT] -- <command>
+```
+
+The current owner runs one command against its task's committed `HEAD` in a disposable rootless
+container that altd starts from its own image. No grant is needed; the Settings switch **Validation
+runs** turns the verb off for the whole computer. `--kvm` adds `/dev/kvm`; `--publish` forwards a
+container port to a free loopback port and prints it. The command runs in `/work`, and whatever it
+writes to `/results` is copied to the task folder's `validation/<n>/`, and its output to
+`validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose `validation`, and adds the
+same `machine-run` events as `alt task run`. The CLI prints the output, a status line with the results path, and exits with the command's
+status (124 on timeout). altd accepts the request only from a process in the task's current worker
+job. A non-running task, a stale attempt, another caller, a turned-off switch, missing KVM, low disk
+or a run already in progress refuses with the reason. The
+[validation runner](DEVELOPMENT.md#validation-runner) describes the container, its limits and cleanup.
 
 ### Reading the task terminal
 

@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
+import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, Update } from "../data/api";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
@@ -163,30 +163,47 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   </>;
 }
 
-/** The operator's terminal, off after install: one switch for this computer. */
-function TerminalSwitch({ enabled, unavailable }: { enabled: boolean | undefined; unavailable?: string | null }) {
-  const client = useQueryClient();
+/** One on/off setting for this computer; a failed change keeps the switch where it was and says why. */
+function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: {
+  id: string; title: string; detail: string; enabled: boolean | undefined; unavailable?: string | null;
+  save: (on: boolean) => Promise<unknown>;
+}) {
   const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
   const change = async (on: boolean) => {
     setSave({ status: "saving" });
     try {
-      client.setQueryData(["machine"], await saveTerminalAccess(on));
-      await client.invalidateQueries({ queryKey: ["terminal"] });
+      await send(on);
       setSave({ status: "idle" });
     } catch (error) {
       setSave({ status: "failed", error: error as Error });
     }
   };
-  if (unavailable) return <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{unavailable}</small></span></div>;
   return <div className="settings-row settings-switch-row">
-    <label htmlFor="terminal-switch">
-      <strong>Terminal</strong>{" "}
-      <small>Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off.</small>
+    <label htmlFor={id}>
+      <strong>{title}</strong>{" "}
+      <small>{unavailable ? `Not available here: ${unavailable}.` : detail}</small>
       {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
     </label>
-    <input id="terminal-switch" type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
-      disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+    <input id={id} type="checkbox" role="switch" className="settings-switch" checked={!unavailable && (enabled ?? false)}
+      disabled={enabled === undefined || Boolean(unavailable) || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
   </div>;
+}
+
+/** The operator's terminal, off after install, and the agents' validation runs, on after install. */
+function MachineSwitches({ machine }: { machine: Machine | undefined }) {
+  const client = useQueryClient();
+  return <>
+    {machine?.terminal_unavailable ? <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{machine.terminal_unavailable}</small></span></div> : <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
+      detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
+      save={async (on) => {
+        client.setQueryData(["machine"], await saveTerminalAccess(on));
+        await client.invalidateQueries({ queryKey: ["terminal"] });
+      }} />}
+    <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
+      unavailable={machine?.validation_unavailable}
+      detail="Agents test installs, containers and browsers in throwaway containers on this computer, and each run is recorded on its task. Turning this off stops a running one."
+      save={async (on) => { client.setQueryData(["machine"], await saveValidationAccess(on)); }} />
+  </>;
 }
 
 /** A date without its time: a device's last use is recorded at most daily. */
@@ -269,7 +286,7 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
   const rows = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
   return <section className="settings-card device-certificate" aria-label="Certificate">
     <h2>Certificate</h2>
-    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a QR code for its camera, or run <code>alt tls-share</code> on the computer running Altitude.</p>
+    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a setup link and QR code, or run <code>alt tls-share</code> on the computer running Altitude.</p>
     <AddPhone />
     <p className="text-meta text-muted">Before installing it on the phone, check that its name and SHA-256 match these.</p>
     <dl className="settings-network">
@@ -322,8 +339,9 @@ function AddPhone() {
         return;
       }
       live.current.link = share.link;
-      setNow(Date.now());
-      setState({ status: "open", share, until: Date.now() + share.seconds * 1000 });
+      const opened = Date.now();
+      setNow(opened);
+      setState({ status: "open", share, until: opened + share.seconds * 1000 });
     } catch (error) {
       if (live.current.mounted) setState({ status: "failed", error: error as Error });
     }
@@ -342,7 +360,8 @@ function AddPhone() {
     const minutes = Math.floor(left / 60), seconds = String(left % 60).padStart(2, "0");
     return <div className="phone-share">
       <QRCode rows={state.share.qr} label={`QR code for ${state.share.link}`} />
-      <p className="text-meta">Scan it with the phone’s camera. The page it opens has the download and the steps.</p>
+      <p className="text-meta">Scan it with another phone’s camera, or open setup on this device in a new tab.</p>
+      {state.status === "open" && <a className="btn btn-primary" href={state.share.link} target="_blank" rel="noopener noreferrer">Open setup page</a>}
       <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
       <div className="phone-share-time">
         <span role="timer" aria-live="off">Closes in {minutes}:{seconds}</span>
@@ -481,7 +500,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
           <Link className="settings-row" to="/settings/devices" state={state}>
             <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
           </Link>
-          <TerminalSwitch enabled={machine.data?.terminal} unavailable={machine.data?.terminal_unavailable} />
+          <MachineSwitches machine={machine.data} />
           {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
         </> : null}
         {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>

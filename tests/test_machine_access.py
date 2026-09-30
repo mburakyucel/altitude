@@ -15,9 +15,10 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 
-from tests.support import REPO, AltitudeCase, make_repo
+from tests.support import REPO, AltitudeCase, add_worktree, make_repo
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 SHIM = r'''#!/usr/bin/env python3
@@ -102,10 +103,10 @@ class TestMachineAccess(AltitudeCase):
                                               "command": command, "request": request or uuid.uuid4().hex},
                             status=status)
 
-    def ask(self, text="May I edit the service unit, reload and restart it to keep TLS?"):
+    def ask(self, text="May I edit the service unit, reload and restart it to keep TLS?", waiting_on="burak"):
         self.tick()
         T.block(self.project, self.slug, text, actor="l2", expected_state="running", expected_attempt=1,
-                updates={"waiting_on": "burak"})
+                updates={"waiting_on": waiting_on})
         return S.load_task(self.project, self.slug)["questions"][-1]
 
     def answer(self, question, text="Yes, go ahead."):
@@ -177,6 +178,36 @@ class TestMachineAccess(AltitudeCase):
             T.grant_machine_access(self.project, self.slug, row["id"], question=revised["id"],
                                    revision=revised["revision"], reason="r", actor="l3")
         self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+
+    def resumed_by(self, actor, reason):
+        """altd performs the requested resume; the reason reaches the owner as the requester's message."""
+        self.tick()
+        request = dispatch.request_task_operation(self.project, self.slug, "resume", reason, actor=actor)["request"]
+        launched = {"returncode": 0, "agent": {"id": "agent", "sessionId": "session", "input_delivered": True}}
+        with mock.patch.object(engines, "resume_l2", return_value=launched):
+            self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "done")
+        self.tick()
+        return request["id"]
+
+    def test_l3_resume_after_recording_the_grant_settles_the_owners_grant_dependency(self):
+        task = S.load_task(self.project, self.slug)
+        S.save_task(self.project, {**task, "worktree": str(add_worktree(self.repo, self.slug))})
+        self.patch(engines, "worker_live", return_value=False)
+        grant, _question, _row = self.granted()
+        waiting = self.ask("L3: record the machine grant for the approved purpose, then resume me.", "l3")
+        self.assertEqual(waiting["audience"], "l3")
+        # An operator's resume reason authorizes that resume only; it answers no question.
+        operator_resume = self.resumed_by("burak", "Go on.")
+        with self.assertRaisesRegex(T.TransitionError, "original message with authority"):
+            T.resolve_question(self.project, self.slug, waiting["id"], waiting["revision"], operator_resume,
+                               disposition="answered", reason="Resumed.", expected_attempt=1)
+        waiting = self.ask("L3: record the machine grant for the approved purpose, then resume me.", "l3")
+        l3_resume = self.resumed_by("l3", "Grant recorded for the approved purpose.")
+        view = T.resolve_question(self.project, self.slug, waiting["id"], waiting["revision"], l3_resume,
+                                  disposition="answered", reason="L3 recorded the grant and resumed me.",
+                                  expected_attempt=1)
+        self.assertEqual((view["status"], view["resolution"]["by"]), ("resolved", "l3"))
+        self.assertEqual(S.load_task(self.project, self.slug)["machine_access"], grant)
 
     def test_commands_run_only_under_a_grant_and_are_recorded(self):
         refused = self.run_command("echo hello", status=403)
@@ -277,8 +308,8 @@ class TestMachineAccess(AltitudeCase):
 
     def test_cli_door_and_exit_status(self):
         grant, question, row = self.granted()
-        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        self.serving(self.httpd.server_address[1])
+        base = {"ALTITUDE_PROJECT": self.project}
         owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
         result = self.alt("task", "run", self.slug, "true", env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertEqual(result.returncode, 1)
@@ -343,13 +374,13 @@ class TestMachineAccess(AltitudeCase):
         self.addCleanup(earlier.stdout.close)
         self.addCleanup(earlier.kill)
         self.assertEqual(earlier.stdout.readline(), "ready\n")
+        self.serving(port)
         started, release = self.tmp / "started", self.tmp / "release"
         owner = subprocess.Popen(
             [sys.executable, str(REPO / "bin" / "alt"), "task", "run", self.slug,
              f"echo before; touch {started}; while [ ! -e {release} ]; do sleep .02; done; echo after; exit 5"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": self.project,
-                 "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(port), "ALTITUDE_TLS": "0",
                  "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
         self.addCleanup(owner.kill)
         wait_for(started.exists, "the command to start")
@@ -360,8 +391,10 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual((row["exit"], row["finished"]), (None, None))
         self.assertIn("interrupted", row["error"])
         self.assertIn("one command at a time", self.run_command("echo meanwhile", status=400)["error"])
-        replacement = server.ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+        # The replacement listens elsewhere; the waiting owner follows the record it writes.
+        replacement = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         replacement.daemon_threads = True
+        self.serving(replacement.server_port)
         threading.Thread(target=replacement.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
         self.addCleanup(replacement.server_close)
         self.addCleanup(replacement.shutdown)
@@ -457,9 +490,10 @@ class TestMachineAccess(AltitudeCase):
             port = probe.getsockname()[1]
         started = time.monotonic()
         for host in ("127.0.0.1", "unresolvable.invalid"):
+            self.serving(port, host)
             result = self.alt("task", "run", self.slug, "true", env={
-                "ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": host, "ALTITUDE_PORT": str(port),
-                "ALTITUDE_TLS": "0", "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+                "ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+                "ALTITUDE_ATTEMPT": "1"})
             self.assertEqual(result.returncode, 1)
             self.assertIn("altd unavailable", result.stderr)
             self.assertNotIn("waiting for this command's result", result.stderr)

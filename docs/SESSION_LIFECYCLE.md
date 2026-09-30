@@ -36,7 +36,8 @@ with its own durable conversation, isolated worktree and PR delivery. Questions 
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
 Other reports wait quietly while L3 has no available engine and reach it once one is; a failed
-report turn retries after a growing delay instead of repeating into the conversation.
+report turn retries after a growing delay instead of repeating into the conversation. An owner that
+blocks on its own question is not reporting, so a report file beside that block produces no report turn.
 
 An [increment's brief](CLI.md#incremental-issue-delivery) identifies its acceptance, parent issue and
 outstanding scope. Completing that increment completes the task; L2 supplies PR/acceptance evidence and
@@ -319,7 +320,9 @@ the operator commands and retention. Fixtures do not establish native macOS conf
 
 Source TLS preparation checks the existing process, listener and certificate before setting its
 explicit TLS-directory service override. It reloads the user-unit definition without restarting
-the daemon or its workers; task ownership, sessions, messages and holds are unaffected. Actual
+the daemon or its workers; task ownership, sessions, messages and holds are unaffected. When the
+daemon later starts on that directory, running workers' `alt` calls reach it through the
+[service record](ARCHITECTURE.md#responsibilities) rather than the environment they launched with. Actual
 source preparation is a separate operator action from archive installation and code activation.
 Verification retains the live PID, invocation and main-start timestamp across unit reloads,
 independently of resettable command-history metadata; actual identity changes still refuse success.
@@ -951,15 +954,15 @@ report handoff. Existing restart adoption and merge activation observe the conti
 ## Engine containment
 
 Every fresh and resumed owner receives the same browser capability instruction. Worker admission does
-not certify browser isolation. Before dependent deployment verification, the owner preflights the intended
-browser with its sandbox enabled, finite blank/local fictional content and disposable writable storage,
-then cleans up. Unavailable launch becomes an explicit capability fault through `alt task block --fault`;
-the owner preserves evidence and L3 owns supported recovery. Neither a fictional sandbox-disabled test
-harness nor a diagnostic machine grant authorizes bypassing required browser or worker protections.
-Namespace-visible helper ownership leaves host permissions unknown until authorized host diagnostics.
-This instruction takes effect on launches/resumes after normal source activation; running turns retain
-their delivered instructions. Deterministic launch fixtures prove delivery, not provider adherence or
-live browser isolation. See [the browser contract](DEVELOPMENT.md#browser-verification-and-recovery).
+not certify browser isolation, so verification that needs the browser's own sandbox runs through
+`alt task validate`, in a disposable container where Playwright's Chromium keeps it with
+`chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
+owner blocks through `alt task block --fault`, preserving the evidence, and L3 owns supported recovery.
+Neither a fictional sandbox-disabled test harness nor a machine grant authorizes bypassing required
+browser or worker protections. The instruction takes effect on launches/resumes after normal source
+activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
+delivery, not provider adherence or live browser isolation. See
+[browser verification](DEVELOPMENT.md#browser-verification).
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
 directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
@@ -1424,8 +1427,7 @@ omits rows when the server fetch fails. Altitude validates named percentages and
 observation time; it does not restamp cached scalar windows or parse presentation text. The CLI owns
 subscription authentication. Safe mode, empty tools and no session persistence keep the local usage
 command separate from task conversations. No inference prompt or credential extraction is involved.
-Codex retains its native `account/rateLimits/read` reader. Statusline snapshots remain session-display
-evidence, not account-quota inputs.
+Codex retains its native `account/rateLimits/read` reader.
 
 Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
 or timeout yield unknown quota and replace the prior success. A partial response keeps only its

@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -979,6 +979,10 @@ def resume_stranded_reports(project: str) -> None:
             continue
         if t.get("report_after") and not T.report_current(t, report_path):
             continue
+        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
+                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
+        if t["state"] == "blocked" and last_block and last_block.get("by") == "l2":
+            continue  # The owner's own block, even beside a report file, is a question, not a landed report.
         retry = _report_retries.get((project, t["slug"]))
         if (retry and retry[0] == json.dumps(T.report_owner(t), sort_keys=True)
                 and time.monotonic() < retry[2]):
@@ -994,8 +998,6 @@ def resume_stranded_reports(project: str) -> None:
         except (OSError, ValueError) as e:
             log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
             report = None
-        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
-                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
         if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
                 and not report.get("blocked") and "attempt" in v and v.get("attempt") == t.get("attempt")
                 and last_block and last_block.get("frm") == "running"):
@@ -1720,6 +1722,20 @@ class Handler(BaseHTTPRequestHandler):
             log(f"update request failed: {exc!r}")
             return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
 
+    def _validation_post(self, body: dict) -> None:
+        """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
+        denied = self._terminal_denied(json_body=True, subject="Validation")
+        if denied:
+            return self._json({"error": denied}, 403)
+        if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
+            return self._json({"error": "Choose on or off."}, 400)
+        try:
+            validation.set_enabled(body["enabled"])
+        except OSError as exc:
+            return self._json({"error": f"Could not save the validation switch: {exc.strerror}"}, 400)
+        log(f"validation runs turned {'on' if body['enabled'] else 'off'} by the operator")
+        return self._json(machine_view())
+
     def _terminal_post(self, parts: list[str], body: dict) -> None:
         denied = self._terminal_denied(json_body=True)
         if denied:
@@ -1988,6 +2004,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._devices_post(parts[2], o)
             if api in ("update", "update-check"):
                 return self._update_post(parts, o)
+            if parts == ["api", "validation-access"]:
+                return self._validation_post(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2029,6 +2047,20 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("alt task terminal: unsupported fields")
                     return self._json(owner_terminal_output(o["project"], o["slug"], o.get("attempt"),
                                                             self.client_address, self.connection.getsockname()))
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "task", "validate"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
+                        raise ValueError("alt task validate: unsupported fields")
+                    peer, local = self.client_address, self.connection.getsockname()
+
+                    def owner(task: dict) -> bool:
+                        return task_owner_connection(o["project"], o["slug"], task, peer, local)
+                    return self._json(validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                                     kvm=o.get("kvm", False), publish=o.get("publish"), owner=owner))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
@@ -2539,12 +2571,13 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name, incident publication, the terminal and update-check switches, as First run and
+    """The operator's name, incident publication, the terminal, validation and update-check switches, as First run and
     Settings show them."""
     return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
             "terminal_unavailable": platform.container_unavailable("Terminal"),
             "container_shell": platform.container_shell_command(),
+            "validation": validation.enabled(), "validation_unavailable": platform.validation_unavailable(),
             "deployment": "container" if platform.containerized() else "native",
             "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False}
 
@@ -2702,7 +2735,9 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
     for project in config.load_projects():
         for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
             try:
-                rows = [row for row in _machine_rows(runs) if row["finished"] is None]
+                # the validation runner records its own interrupted runs (validation.reconcile)
+                rows = [row for row in _machine_rows(runs) if row["finished"] is None
+                        and not row["unit"].startswith(validation.UNIT_PREFIX)]
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 log(f"machine commands: cannot read {runs}: {exc}")
                 continue
@@ -2712,6 +2747,13 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
                 thread.start()
                 threads.append(thread)
     return threads
+
+
+def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, local: tuple) -> bool:
+    """Whether this connection comes from a process in the task's current worker job, so another agent holding this
+    machine's key cannot act as the owner."""
+    return bool(task.get("agent_id")) and terminal.owner_connection(
+        peer, local, engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug)))
 
 
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
@@ -2724,8 +2766,7 @@ def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple,
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
         raise PermissionError("alt task terminal: only the running owner's current attempt may read its terminal")
-    unit = engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug))
-    if not terminal.owner_connection(peer, local, unit):
+    if not task_owner_connection(project, slug, task, peer, local):
         raise PermissionError("alt task terminal: only this task's owner may read its terminal")
     return terminal.owner_output(project, slug)
 
@@ -2942,22 +2983,6 @@ def task_view(project: str, slug: str) -> dict:
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 
-def install_statusline() -> dict:
-    """Wrap the global statusline so interactive sessions feed the quota monitor. Edits ~/.claude/settings.json."""
-    settings = Path.home() / ".claude" / "settings.json"
-    cur = S.read_json(settings, {}) or {}
-    sl = cur.get("statusLine") or {}
-    wrapper = str(config.HOOKS / "statusline-monitor.sh")
-    if sl.get("command") == wrapper:
-        return {"ok": True, "already": True}
-    orig = sl.get("command")
-    cur["statusLine"] = {"type": "command", "command": wrapper}
-    if orig:
-        cur.setdefault("env", {})["ALTITUDE_ORIG_STATUSLINE"] = orig
-    S.write_json(settings, cur)
-    return {"ok": True, "wrapped": orig}
-
-
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     dispatch.forget_speech_service()
@@ -2993,10 +3018,13 @@ def main(host: str | None = None, port: int | None = None) -> None:
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)
+        if os.environ.get("ALTITUDE_SERVICE"):  # clients reach the service it records, not their launch settings
+            tls.publish({"host": host, "public_host": certificate_host, "port": srv.server_port,
+                         "tls": context is not None, "tls_dir": config.TLS_DIR})
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()
-        log(f"cannot initialize HTTPS or the L3 verb broker ({e}); refusing to start")
+        log(f"cannot initialize HTTPS, the L3 verb broker or the service record ({e}); refusing to start")
         raise SystemExit(1) from e
     scheme = "https" if context is not None else "http"
     # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
@@ -3006,6 +3034,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
+        threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")

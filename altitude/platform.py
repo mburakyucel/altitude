@@ -616,31 +616,6 @@ def service_unit() -> dict[str, str]:
     return dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
 
 
-#: The settings that say where the service listens and which HTTPS identity it serves.
-SERVICE_SETTINGS = ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_PUBLIC_HOST", "ALTITUDE_TLS", "ALTITUDE_TLS_DIR")
-
-
-def service_settings() -> tuple[int, dict[str, str]]:
-    """The running service's main process and the settings it started with, whichever unit, drop-in or
-    environment file supplied them. A shell's own environment does not describe the service."""
-    values = status()
-    pid = int(values.get("MainPID") or 0)
-    if values["LoadState"] != "loaded":
-        raise RuntimeError("No Altitude service is installed for this user.")
-    if values.get("ActiveState") != "active" or not pid:
-        raise RuntimeError("The Altitude service is not running. Start it, then retry.")
-    try:
-        entries = _environment(pid) if _darwin() else (PROC / str(pid) / "environ").read_bytes().split(b"\0")
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read the Altitude service's settings: {exc}.") from exc
-    settings = {}
-    for entry in entries:
-        key, _, value = entry.decode(errors="replace").partition("=")
-        if key in SERVICE_SETTINGS:
-            settings[key] = value
-    return pid, settings
-
-
 def control(action: str) -> str:
     require_supported()
     if _darwin():
@@ -777,9 +752,10 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
 
 
 def logged_job_command(name: str, command: str, *, log: Path, status: Path, env: dict[str, str],
-                       timeout: int) -> list[str]:
+                       timeout: int, properties: tuple[str, ...] = ()) -> list[str]:
     """One shell command as a job that appends its own output to `log` and writes its exit status to `status`
-    (whole, by renaming), so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds it."""
+    (whole, by renaming), so a command that restarts Altitude still leaves a durable record. ``RuntimeMaxSec`` bounds
+    it; `properties` adds resource limits for everything the job starts."""
     runner = 'bash -lc "$1"; status=$?; printf %s "$status" > "$2.tmp" && mv "$2.tmp" "$2"; exit "$status"'
     if _darwin():
         return _entry("launch", json.dumps({
@@ -788,7 +764,7 @@ def logged_job_command(name: str, command: str, *, log: Path, status: Path, env:
     return [SYSTEMD_RUN, "--user", "--wait", "--collect", "--quiet", f"--unit={name}", "--same-dir",
             "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
             f"--property=RuntimeMaxSec={timeout}", "--property=TimeoutStopSec=5",
-            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}",
+            f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}", *properties,
             "--", *_scrub(env), "/bin/bash", "-c", runner, "altitude-machine", command, str(status)]
 
 
@@ -1795,22 +1771,6 @@ def _stop_members(coalition: int, *, spare: int | None = None, first: int = sign
         time.sleep(0.05)
 
 
-def _environment(pid: int) -> list[bytes]:
-    """The process's environment as KERN_PROCARGS2 reports it: argc, the executable path, argv, then environ. Only
-    this user's processes are readable, and not Apple's own binaries."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    mib = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
-    size = ctypes.c_size_t(0)
-    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0):
-        raise OSError(ctypes.get_errno(), f"process {pid} is unreadable")
-    buffer = ctypes.create_string_buffer(size.value)
-    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
-        raise OSError(ctypes.get_errno(), f"process {pid} is unreadable")
-    raw = buffer.raw[:size.value]
-    argc = int.from_bytes(raw[:4], sys.byteorder)
-    return [part for part in raw[4:].split(b"\0") if part][1 + argc:]
-
-
 def _footprint(pid: int) -> int:
     usage = ctypes.create_string_buffer(512)
     if _libproc().proc_pid_rusage(int(pid), 0, usage):  # RUSAGE_INFO_V0
@@ -1847,6 +1807,27 @@ def _tcp_handles(pid: int) -> set[str]:
 
 def _socket_port(value: int) -> int:
     return int.from_bytes((value & 0xFFFF).to_bytes(2, sys.byteorder), "big")
+
+
+# --- Validation runner ---------------------------------------------------------------------------------------------
+
+KVM = Path("/dev/kvm")
+
+
+def validation_unavailable() -> str | None:
+    """Why this host cannot run the validation runner's rootless Podman containers, or None when it can. macOS
+    runs Podman inside a virtual machine of its own and has no KVM, so the runner is not implemented there."""
+    if containerized():
+        return "validation runs are unavailable inside this container image"
+    if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
+        return "validation runs need Linux x86_64 for now"
+    missing = [tool for tool in ("podman", "slirp4netns") if not shutil.which(tool)]
+    return f"validation runs need {' and '.join(missing)} on this computer" if missing else None
+
+
+def validation_runroot() -> str:
+    """Podman's runtime folder for the runner, in the user's runtime directory: Podman limits its length."""
+    return f"/run/user/{os.getuid()}/altitude-validation"
 
 
 # --- Host speech -------------------------------------------------------------------------------------------------

@@ -11,10 +11,10 @@ from altitude import config, engines, monitor, route, server, state as S, tasks 
 
 
 def write_snapshot(path, at, five=10, seven=20):
-    """One statusline wrapper snapshot: the wrapper stamps `_at`, the payload has no time of its own."""
+    """A snapshot an unrelated interactive session's statusline left in the monitor directory."""
     path.write_text(json.dumps({
         "session_id": "s1",
-        "cwd": "/repo",
+        "cwd": "/home/someone/private-project",
         "model": {"display_name": "Opus 5"},
         "context_window": {"used_percentage": 8},
         "rate_limits": {"five_hour": {"used_percentage": five, "resets_at": at + 3600},
@@ -56,14 +56,13 @@ class TestQuotaAge(AltitudeCase):
         self.assertTrue(quota["stale"])
         self.assertEqual((quota["five_hour"], quota["seven_day"], quota["at"]), (41, 52, at))
 
-    def test_a_session_row_carries_the_time_it_was_observed(self):
-        at = int(time.time())
-        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at)
-        row = next(s for s in monitor.sessions() if s["kind"] == "statusline")
-        self.assertEqual(row["at"], at)
-
-    def test_even_a_fresh_interactive_snapshot_cannot_replace_missing_native_account_evidence(self):
+    def test_unrelated_sessions_never_become_rows_or_account_evidence(self):
         write_snapshot(config.MONITOR_DIR / "statusline-s1.json", int(time.time()))
+        S.write_json(config.project_dir(self.project) / "l3.json", {"engine_last": "claude", "last_turn": "2026-09-29T21:00:00+00:00"})
+        rows = monitor.sessions()
+        self.assertEqual([row["kind"] for row in rows], ["l3"])
+        self.assertEqual(rows[0]["at"], "2026-09-29T21:00:00+00:00")
+        self.assertNotIn("private-project", json.dumps(rows))
         self.assertFalse(monitor.quota()["known"])
         self.assertNotIn("seven_day", monitor.quota())
 

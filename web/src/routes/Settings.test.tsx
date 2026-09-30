@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { defaultScheduler, notifyManager } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
 const saved = { backend: "host", selection: "host-one", host: { state: "ready", download_bytes: 698435338 } };
@@ -301,6 +301,17 @@ describe("Add a phone", () => {
     await within(card).findByRole("img", { name: "QR code for http://192.168.1.20:40002/" });
     await user.click(screen.getByRole("link", { name: "‹ Settings" }));
     await waitFor(() => expect(posts).toContainEqual({ path: "/api/devices/share-close", body: { link: "http://192.168.1.20:40002/" } }));
+  });
+
+  it("starts at the full ten minutes even when the clock ticks while the window opens", async () => {
+    shareFixture();
+    let clock = 1_800_000_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock++);
+    onTestFinished(() => now.mockRestore());
+    const { user } = renderApp({ route: "/settings/devices" });
+    await user.click(await screen.findByRole("button", { name: "Add a phone" }));
+    await screen.findByRole("img", { name: /^QR code/ });
+    expect(screen.getByRole("timer")).toHaveTextContent("Closes in 10:00");
   });
 
   it("shows the window closed when its time runs out, as the service closes it itself", async () => {

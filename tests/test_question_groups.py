@@ -397,6 +397,24 @@ class QuestionGroups(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "answers a different question"):
             self.resolve(group["questions"][1], explicit)
 
+    def test_an_unchanged_escalation_stays_the_operators_when_its_owner_reparks_for_l3(self):
+        group = self.ask(waiting="l3")
+        payload = copy.deepcopy(self.payload)
+        for item, question in zip(payload["questions"], group["questions"]):
+            item["id"] = question["id"]
+        T.escalate(self.project, self.slug, "Please choose these rollout details.", questions=payload)
+        escalated = self.group()
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Please choose these rollout details.", actor="l2", updates={"waiting_on": "l3"})
+        self.assertEqual(self.group()["questions"], escalated["questions"])
+        T.resume(self.project, self.slug)
+        first = escalated["questions"][0]
+        T.block(self.project, self.slug, "Rollout waits.", actor="l2", updates={"waiting_on": "l3"},
+                questions={"questions": [{"id": first["id"], "question": first["detail"]}]})
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual([q["audience"] for q in self.group()["questions"]], ["operator"] * 3)
+        self.assertEqual((task["waiting_on"], len(T.decisions(self.project))), (T.OPERATOR_MESSAGE_ROLE, 3))
+
     def test_l3_structured_escalation_preserves_every_actual_question_without_waking(self):
         group = self.ask(waiting="l3")
         payload = copy.deepcopy(self.payload)

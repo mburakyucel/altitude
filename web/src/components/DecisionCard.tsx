@@ -28,8 +28,8 @@ type QuestionProps = {
 };
 
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
-export function QuestionSet({ decisions, group, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project" }: QuestionProps & {
-  decisions: Decision[]; group?: QuestionGroup | null;
+export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project" }: QuestionProps & {
+  decisions: Decision[]; group?: QuestionGroup | null; target?: Decision;
 }) {
   const decide = useDecide();
   useEffect(() => { decide.reset(); }, [refreshKey]);
@@ -58,6 +58,8 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
   if (!first) return null;
   const grouped = decisions.length > 1;
   const shown = chat ? decisions : decisions.filter((q) => q.status !== "resolved");
+  // While a member is open, closed members fold into one collapsed row so the card leads with what is current.
+  const earlier = shown.some((q) => q.status !== "resolved") ? shown.filter((q) => q.status === "resolved") : [];
   const denied = decide.error instanceof ApiError && [401, 403].includes(decide.error.status);
   const stale = decide.error instanceof ApiError && decide.error.status === 409;
   const groupId = group?.id ?? first.group_id;
@@ -99,61 +101,71 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
     onRefresh?.();
     for (const queryKey of [["overview"], ["project", first.project], ["task", first.project, first.slug]]) void queryClient.invalidateQueries({ queryKey });
   };
+  // Open questions that are not the operator's (waits on L3) need no summary; their turn line says who answers.
+  const summary = open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer`
+    : decisions.some((q) => q.response && q.status !== "resolved") ? "Responses sent to L2"
+    : decisions.every((q) => q.status === "resolved") ? "Questions closed" : null;
+  const render = (question: Decision) => {
+    const resolved = question.status === "resolved";
+    const withdrawn = question.resolution?.disposition === "withdrawn";
+    const options = optionsFor(question);
+    const draft = drafts[draftKey(question)];
+    const custom = !options.length || draft?.text !== undefined;
+    const actionable = open.includes(question);
+    const inputDisabled = unavailable || !question.id || question.revision == null;
+    const recommendation = <>
+      {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
+      {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
+    </>;
+    const content = <>
+      <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />
+      {!resolved && !question.response && question.audience === "l3" ? <p className="text-meta text-muted">L3 is handling this</p> : null}
+      {resolved ? <div className="decision-receipt" role="status">
+        {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
+        {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
+      </div> : null}
+      {!resolved && question.response ? <div className="decision-receipt" role="status">
+        <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>
+        <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
+      </div> : null}
+      {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
+      {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
+      {chat && question.detail && question.detail !== question.question ? <details className="question-context">
+        <summary>More context</summary>
+        <Prose text={question.detail} />
+      </details> : null}
+      {actionable && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
+        {options.map((option) => {
+          // The recommendation is marked on its own choice; only the operator's pick is pressed.
+          const recommended = option.key === recommendedKey(question);
+          return <button key={option.key} className="btn btn-ghost" type="button" data-recommended={recommended || undefined}
+            aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} title={recommended ? "Recommended" : undefined} disabled={inputDisabled}
+            onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
+            {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">★</span> : null}
+          </button>;
+        })}
+        <button className="btn btn-ghost" type="button" aria-pressed={custom} disabled={inputDisabled}
+          onClick={() => edit(question, custom ? {} : { text: "" })}>Other…</button>
+      </div> : null}
+      {actionable && custom ? <textarea className="question-answer" rows={2} aria-label={`Your answer to: ${question.question || question.title || question.slug}`}
+        placeholder="Your answer or a follow-up question…" value={draft?.text ?? ""} disabled={inputDisabled}
+        autoFocus={options.length > 0} onChange={(event) => edit(question, { text: event.target.value })} /> : null}
+    </>;
+    return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
+      {withdrawn ? <details className="question-history">
+        <summary>Question withdrawn</summary>
+        <div className="question-body">{content}</div>
+      </details> : content}
+    </div>;
+  };
   return (
     <div className="question-set" data-group-id={group?.id ?? first.group_id} data-grouped={grouped || undefined}>
-      {decisions.length > 1 ? <p className="text-meta text-muted">{open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer` : decisions.some((q) => q.response && q.status !== "resolved") ? "Responses sent to L2" : "Questions closed"}</p> : null}
-      {shown.map((question) => {
-        const resolved = question.status === "resolved";
-        const withdrawn = question.resolution?.disposition === "withdrawn";
-        const options = optionsFor(question);
-        const draft = drafts[draftKey(question)];
-        const custom = !options.length || draft?.text !== undefined;
-        const actionable = open.includes(question);
-        const inputDisabled = unavailable || !question.id || question.revision == null;
-        const recommendation = <>
-          {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
-          {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
-        </>;
-        const content = <>
-          <QuestionProse className="decision-question" text={question.question || question.title || question.slug} />
-          {resolved ? <div className="decision-receipt" role="status">
-            {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
-            {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
-          </div> : null}
-          {!resolved && question.response ? <div className="decision-receipt" role="status">
-            <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>
-            <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
-          </div> : null}
-          {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
-          {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
-          {chat && question.detail && question.detail !== question.question ? <details className="question-context">
-            <summary>More context</summary>
-            <Prose text={question.detail} />
-          </details> : null}
-          {actionable && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
-            {options.map((option) => {
-              // The recommendation is marked on its own choice; only the operator's pick is pressed.
-              const recommended = option.key === recommendedKey(question);
-              return <button key={option.key} className="btn btn-ghost" type="button" data-recommended={recommended || undefined}
-                aria-pressed={draft?.option === option.key} aria-description={recommended ? "Recommended" : undefined} title={recommended ? "Recommended" : undefined} disabled={inputDisabled}
-                onClick={() => edit(question, { option: draft?.option === option.key ? undefined : option.key })}>
-                {option.label}{recommended ? <span className="option-recommended" aria-hidden="true">★</span> : null}
-              </button>;
-            })}
-            <button className="btn btn-ghost" type="button" aria-pressed={custom} disabled={inputDisabled}
-              onClick={() => edit(question, custom ? {} : { text: "" })}>Other…</button>
-          </div> : null}
-          {actionable && custom ? <textarea className="question-answer" rows={2} aria-label={`Your answer to: ${question.question || question.title || question.slug}`}
-            placeholder="Your answer or a follow-up question…" value={draft?.text ?? ""} disabled={inputDisabled}
-            autoFocus={options.length > 0} onChange={(event) => edit(question, { text: event.target.value })} /> : null}
-        </>;
-        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
-          {withdrawn ? <details className="question-history">
-            <summary>Question withdrawn</summary>
-            <div className="question-body">{content}</div>
-          </details> : content}
-        </div>;
-      })}
+      {decisions.length > 1 && summary ? <p className="text-meta text-muted">{summary}</p> : null}
+      {earlier.length ? <details className="question-history question-earlier" open={earlier.some((q) => q.id === target?.id && q.revision === target?.revision) || undefined}>
+        <summary>{earlier.length} earlier question{earlier.length === 1 ? "" : "s"}</summary>
+        {earlier.map(render)}
+      </details> : null}
+      {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
         <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? "Sending…" : selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
         <p className="text-meta text-muted">{selected.length ? "Only these answers will be sent. You can answer the rest later." : "Choose an answer or write your own. Follow-up questions are welcome."}</p>

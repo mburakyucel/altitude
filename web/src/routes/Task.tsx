@@ -387,7 +387,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         });
       }}>
         {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
-        <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question && message.review_id) {
       const review = task.review?.history.find((entry) => entry.id === message.review_id);
@@ -448,7 +448,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           }}>
             {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
-              <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+              <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
             </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
           </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
           : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}

@@ -182,7 +182,8 @@ a missing task returns HTTP 404 without a failure traceback. Archival only renam
 folder into the archive, so a status read that misses the live record reads the archived one; polls
 and action responses crossing the move return the archived task and state.
 Task status, documents and events share the archive lock while their snapshot is read.
-`GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+`GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
+running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
 `config.DEFAULT_SETTINGS` names one requested model and one requested effort per role and engine
@@ -319,16 +320,17 @@ channel is unauthenticated, so the trusted screen that opened it shows the CA's 
 fingerprint for the phone to compare before installing. `altitude/qr.py` draws its link as a QR
 code (byte mode, level M) for terminals and the browser. `alt tls-share` (operator only) opens a
 window in the CLI process, not in altd. It takes the address, port and TLS directory from the
-running service's own process environment through the platform seam (`platform.service_settings`),
-since the service manager, not the operator's shell, configures the service; a disagreeing shell
-setting is refused. It fetches `/api/health` over HTTPS trusting only that directory's CA and
-requires the answer from the service's main process before offering those bytes. Settings → Devices
-→ **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
+service record (below), not from the operator's shell. It fetches `/api/health` over HTTPS trusting
+only that directory's CA and requires the answer from the process that wrote the record before
+offering those bytes. Settings → Devices → **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
 cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
 keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
 the page sends on Close (confirming only once it succeeds) or when it is left, including while the
 window is still opening. The page keeps the window only in component state, never in a
-query cache. `alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
+query cache. **Open setup page** opens that same share URL in a new tab without opener access,
+retaining the original Settings page, certificate facts and sharing timer. The link is available
+only while sharing is open and disappears during closing or after expiry. `alt pair` takes its link
+from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
@@ -349,7 +351,15 @@ Then `access.py` decides who is asking. The page and its files, `GET /api/health
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
-restart script send it as `X-Altitude-Key`, and it is compared in constant time. Only the operator's
+restart script send it as `X-Altitude-Key`. The CLI finds altd through the service record: as the
+service instance (`ALTITUDE_SERVICE=1`) starts serving, it writes `service.json` beside the key with
+its PID, address, port, scheme and TLS directory, replacing the previous record. It decides where
+`alt` sends the key and which CA it trusts, so it lives in this store rather than in the runtime home
+that task folders share. `alt` reads it for its altd calls instead of its own launch environment, so a worker started before a restart onto
+another certificate folder or port reaches the new service without relaunching. It verifies altd with
+that folder's `ca.crt` (the system trust store when the folder has none) and refuses, naming the CA,
+an altd that does not prove its identity; there is no unverified fallback, and a missing record is
+named. Serve-only instances write no record. The key is compared in constant time. Only the operator's
 account can read it, so it proves a caller runs on this machine as the operator; Altitude's workers
 share that account, as they share its files. `alt pair` (operator only) writes one pairing code
 straight to `devices.json`: eight characters from an alphabet without look-alikes, valid ten minutes,
@@ -997,7 +1007,18 @@ altd follows every unfinished row's unit to its end (`server.settle_interrupted_
 from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
-not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent job with Altitude's
+not caller identity. Both engines share the verb; only the launcher is host-specific.
+Installation VMs, containers and sandboxed-browser checks need no grant: `POST /api/task/validate`
+lets the running owner's current attempt, from a process in its own worker job, run one command
+against its committed `HEAD` in a disposable rootless Podman container. altd starts that container
+from its own deployed image, with fixed flags and limits, and keeps the runner's storage beside
+Altitude's home, outside every worker's writable roots. The run is recorded like a machine run with
+purpose `validation`, and results reach the task folder without following links. The worker's own
+confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
+storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
+admitting a run, altd records interrupted runs and removes what they left. See the
+[validation runner](DEVELOPMENT.md#validation-runner).
+Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
@@ -1522,12 +1543,10 @@ worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
 That sandbox-disabled launch belongs only to Altitude's fictional local UI harness. The shared worker
-launcher supplies fresh and resumed owners with a browser capability instruction: preflight required
-browser isolation in the intended worker before deployment verification, retaining both protections,
-and fault-block if unavailable. It is instruction delivery, not an automatic browser probe or an OS
-capability guarantee. Namespace-visible SUID helper ownership cannot establish host package ownership;
-host diagnosis follows existing machine authority. No browser broker or new permission path exists.
-See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-recovery).
+launcher tells fresh and resumed owners to run verification that needs the browser's own sandbox
+through `alt task validate`, where Playwright's Chromium keeps it, and to fault-block if the runner is
+unavailable or the browser refuses its sandbox there. `make browser-sandbox` records the protections
+Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. Pushing the approved tag runs the release
@@ -2061,7 +2080,10 @@ If a provider limit queues a fresh attempt, the existing dilemma remains answera
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
 or its recorded resolution. A queued task without a question retains its ordinary initial state.
 
-A direct L2 block publishes its question into that human thread. A block that publishes or revises
+A direct L2 block publishes its question into that human thread. A published or reworded member takes
+the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
+escalation away, and `waiting_on` names the operator only while one of the group's open members is
+theirs. A block that publishes or revises
 questions queues one L3 notification, including operator-directed blocks. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
@@ -2112,7 +2134,9 @@ recommendation. A remainder retains the question's audience without changing ind
 capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
-The shared question component appears on Needs you and at its conversation anchor. Choices and custom
+The shared question component appears on Needs you and at its conversation anchor. While a group has
+an open member, its closed members fold into one collapsed **N earlier questions** row, open when a
+link targets one of them; an open member addressed to L3 reads **L3 is handling this**. Choices and custom
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
@@ -2407,6 +2431,5 @@ or the task is not running; Conversation hides the preview instead.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
-that `git_policy` installs into every managed repository, the Claude inbox hook, and the statusline
-monitor. [AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages
-retain the system's operating decisions and rationale. Git history preserves completed migrations.
+that `git_policy` installs into every managed repository and the Claude inbox hook.
+[AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages retain the system's operating decisions and rationale. Git history preserves completed migrations.

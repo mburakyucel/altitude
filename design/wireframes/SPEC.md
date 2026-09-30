@@ -724,6 +724,9 @@ A withdrawn question occupies one muted **Question withdrawn** disclosure row, c
 Expanding it reveals the question, owner's reason and former recommendation together, without answer
 controls or a second recommendation disclosure. Collapsing it restores the compact audit trail;
 independent open questions remain visible. Withdrawal records no operator decision or merge authority.
+While a group has an open member, its closed and withdrawn members fold into one collapsed
+**N earlier questions** row above it, so the card leads with what is open; a link to one of them opens
+the row. An open member waiting on L3 carries **L3 is handling this** and no controls.
 Recorded acceptance and execution are separate observations:
 show **Waiting to resume** while waiting for capacity, and **Work resumed** only after observing the
 worker running. An old question URL stays readable and links to the current revision when one exists.
@@ -1236,8 +1239,9 @@ a reading with model rows but no account windows says "No account windows report
 
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
-in `--danger`, with the router's reason below. Rows wrap within the card. Session rows show their
-kind and task, engine and model when supplied, context meter and recorded status, and a snapshot
+in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
+Altitude runs: each project's coordinator (L3) and its live task owners (L2). Session rows show their
+kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
 process list.
 
@@ -1304,7 +1308,7 @@ the current one) with **Cancel** and a red **Remove**; removing the current devi
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
 With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. Add a phone shows a QR code for its camera, or run `alt tls-share` on the computer running
+once. Add a phone shows a setup link and QR code, or run `alt tls-share` on the computer running
 Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
 name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
@@ -1315,8 +1319,8 @@ without HTTPS or a CA file the card is absent.
 | --- | --- |
 | Ready | **Add a phone**. |
 | Opening | **Opening…**, disabled. |
-| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
-| Closing | **Closing…**, disabled, while the service closes the link. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with another phone’s camera, or open setup on this device in a new tab.", a primary **Open setup page** link, the address in small monospace, "Closes in 9:41" counting down each second and **Close**. Opening setup creates a new tab without opener access; the original page keeps the QR, timer, name and SHA-256 for the check. |
+| Closing | **Closing…**, disabled, while the service closes the link; **Open setup page** is absent. |
 | Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
 | Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
 | Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
@@ -1335,6 +1339,12 @@ A **Terminal** switch row (off after install) says "Every paired browser can run
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
+A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
+containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
+Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
+refuses new ones. Where the runner is unavailable the switch is off and disabled and the copy reads "Not
+available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
+unavailable at both widths.
 An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
 or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
