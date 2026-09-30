@@ -225,6 +225,10 @@ graceful Stop, same-container identity/admission, replacement pause, the display
 supervisor death, an unaffected neighboring container and private-store/VM cleanup. The guest gets
 no host credentials or repositories beyond the committed candidate, and downloads public distribution
 and image prerequisites. This is Linux fixture evidence, not Mac or provider acceptance.
+`scripts/container_vm.py RESULTS --image-workflow` runs the separate image-level task/coordinator,
+Stop/recreation and state-recovery fixtures in that VM. Add `--native-sandbox-binary PATH` for the
+existing actual-profile diagnostic matrix. That executable is copied only into the disposable
+guest/image; the lane makes no authenticated provider calls. It complements the actual launcher lane.
 
 The VM observes system-manager calls independently of the launcher's environment, before their result
 is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management

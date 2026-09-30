@@ -11,6 +11,7 @@ import concurrent.futures
 import hashlib
 import json
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,10 +23,12 @@ sys.path.insert(0, str(REPO))
 from scripts import installation_vm as vm
 
 
-def run(results, cache):
+def run(results, cache, *, image_workflow=False, native_binary=None):
     results = results.resolve()
     results.mkdir()
     record = {'passed': False, 'scope': 'fictional Ubuntu VM committed Altitude container launcher and image lifecycle in disposable Linux VM'}
+    if image_workflow:
+        record['scope'] = 'fictional Ubuntu VM image confinement and deterministic application workflow/recovery'
     work = Path(tempfile.mkdtemp(prefix='acg-vm-'))
     machine = None
     monitor = None
@@ -57,6 +60,12 @@ def run(results, cache):
         identity = work/'source-identity'
         identity.write_text(record['source_commit']+'\n')
         machine.copy(str(release/'altitude-v0.1.0-rc.2.tar.gz'),str(identity),'ubuntu@127.0.0.1:input/')
+        if native_binary:
+            diagnostic = work/'native-sandbox'
+            shutil.copyfile(native_binary, diagnostic)
+            diagnostic.chmod(0o755)
+            record['native_sandbox_sha256'] = vm.sha256(diagnostic)
+            machine.copy(str(diagnostic),'ubuntu@127.0.0.1:input/')
         # Monitor only this fictional guest. Never read or connect to the real host's system bus.
         monitor = pool.submit(machine.ssh,
             'sudo -n env ALTITUDE_FICTIONAL_VM=1 timeout 1100s python3 input/source/tests/container_bus_monitor.py input/bus-evidence',
@@ -67,9 +76,17 @@ def run(results, cache):
             'timeout 8s busctl --system call org.freedesktop.systemd1 /org/freedesktop/systemd1 '
             'org.freedesktop.systemd1.Manager StopUnit ss altitude-fictional-missing.scope replace', check=False)
         record['control'] = {'exit': control.returncode, 'stdout': control.stdout, 'stderr': control.stderr}
+        guest_command = ['python3','input/source/tests/container_launcher_probe.py']
+        if image_workflow:
+            guest_command = ['python3','input/source/scripts/container_acceptance.py',
+                '--archive','input/altitude-v0.1.0-rc.2.tar.gz',
+                '--sha256',vm.sha256(release/'altitude-v0.1.0-rc.2.tar.gz'),
+                '--results','input/product-result','--lifecycle','--workflow','--recovery']
+            if native_binary:
+                guest_command += ['--native-sandbox-binary','input/native-sandbox']
         run = machine.ssh(
             'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus '
-            'python3 input/source/tests/container_launcher_probe.py', timeout=1050, check=False)
+            + shlex.join(guest_command), timeout=1050, check=False)
         (results / 'probe.log').write_text(run.stdout + run.stderr)
         record['probe_exit'] = run.returncode
         machine.copy('ubuntu@127.0.0.1:input/product-result', str(results))
@@ -120,8 +137,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('results', type=Path)
     parser.add_argument('--cache', type=Path, default=Path.home()/'.cache/altitude-installation-vm')
+    parser.add_argument('--image-workflow', action='store_true', help='run image profile/lifecycle/workflow/recovery instead of launcher lifecycle')
+    parser.add_argument('--native-sandbox-binary', type=Path, help='diagnostic executable for the image workflow lane; no provider calls')
     args = parser.parse_args()
-    return run(args.results, args.cache)
+    if args.native_sandbox_binary and not args.image_workflow:
+        parser.error('--native-sandbox-binary needs --image-workflow')
+    return run(args.results, args.cache, image_workflow=args.image_workflow, native_binary=args.native_sandbox_binary)
 
 
 if __name__ == '__main__':
