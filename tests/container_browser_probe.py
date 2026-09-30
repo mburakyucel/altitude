@@ -45,6 +45,8 @@ def run(action, value):
         if action=='control':
             return container.execute(instance,['python3','-c',
                 "import json,sys;from pathlib import Path;p=Path.home()/'.fixture-control.json';v=json.loads(p.read_text());v.update(json.loads(sys.argv[1]));p.write_text(json.dumps(v))",json.dumps(value['values'])])
+        if action=='diagnostics':
+            return {'journal':container.execute(instance,['journalctl','--user','-u','altitude.service','--no-pager','--lines=100'])}
         if action=='pair':
             return json.loads(container.execute(instance,['python3','-c',
                 "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import access;print(json.dumps(access.issue_code()))"]))

@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-const { chromium, expect } = createRequire(new URL("../web/package.json", import.meta.url))("@playwright/test");
+const { chromium, expect: baseExpect } = createRequire(new URL("../web/package.json", import.meta.url))("@playwright/test");
+const expect=baseExpect.configure({timeout:30000});
 const cfg=JSON.parse(readFileSync(process.argv[2],"utf8"));
 const result={passed:false,viewports:[],fixtures:"external engine, installation/authentication observations only"};
 const shell=(text)=>"'"+text.replaceAll("'", "'\\''")+"'";
@@ -71,6 +72,7 @@ try {
       const panel=page.getByRole("dialog",{name:"Project setup"});
       const coordinator=panel.getByRole("listitem").filter({has:page.getByRole("heading",{name:"Coordinator",exact:true})});
       await state("09-first-conversation-failed",coordinator.getByRole("button",{name:"Retry",exact:true}));
+      await expect(coordinator.getByText(/Fixture authentication refused/)).toBeVisible();
       invoke("control",{values:{intro_failure:false}});
       await coordinator.getByRole("button",{name:"Retry",exact:true}).click();
       await state("10-setup-ready",panel.getByRole("status").filter({hasText:/^Ready$/}));
@@ -127,6 +129,7 @@ try {
       if (errors.length) throw Error(errors.join("\n"));
       result.viewports.push({name,viewport,walked,passed:true});
     } catch(error) {
+      try {writeFileSync(join(evidence,'daemon.json'),JSON.stringify(invoke('diagnostics'),null,2));}catch{}
       if(context) {const p=context.pages().at(-1);await p.screenshot({path:join(evidence,"failure.png"),fullPage:true}).catch(()=>{});writeFileSync(join(evidence,"failure.html"),await p.content());}
       throw error;
     } finally {

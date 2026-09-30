@@ -47,7 +47,7 @@ def main():
         'why':'deterministic fixture installation observation'}
     engines.sign_in=lambda engine: {'signed_in':engine=='codex' and control()['signed_in'],
         'command':engines.SIGN_IN[engine][1]}
-    engines.usage_hold=lambda _engine: None
+    engines.usage_hold=lambda *args,**kwargs: None
     engines.claude_agents=lambda: []
     engines.refresh_quotas=lambda: None
     monitor.quota=lambda: {'known':True}
