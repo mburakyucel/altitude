@@ -61,6 +61,12 @@ try {
       await state("07-host-voice-unavailable",first.getByText(/Voice to text can’t run on this computer/));
       await first.getByRole("button",{name:"Continue",exact:true}).click();
       await state("08-container-folders",first.getByText(/Choose another folder in the container projects volume/));
+      await first.getByRole('button',{name:'Choose a folder elsewhere…'}).click();
+      await first.getByRole('button',{name:'Type a path instead'}).click();
+      await first.getByLabel('A folder in the container projects volume').fill('/tmp');
+      await first.getByRole('button',{name:'Add',exact:true}).click();
+      await state('08a-outside-volume-denied',first.getByRole('alert').filter({hasText:/inside the container/}));
+      await first.getByRole('button',{name:'Cancel',exact:true}).click();
       await first.getByRole("listitem").filter({has:page.getByText('atlas',{exact:true})}).getByRole("button",{name:"Add project",exact:true}).click();
       const panel=page.getByRole("dialog",{name:"Project setup"});
       const coordinator=panel.getByRole("listitem").filter({has:page.getByRole("heading",{name:"Coordinator",exact:true})});
@@ -105,6 +111,19 @@ try {
         throw Error('Task continuity or exactly-once queued input evidence differs');
       await page.getByRole('button',{name:/^Stop/}).click();
       await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeVisible();
+      await page.goto(url+'/projects/atlas');
+      if(name==='phone') await page.getByRole('button',{name:'atlas',exact:true}).click();
+      else await page.getByRole('button',{name:'Add a folder',exact:true}).click();
+      await page.getByRole('region',{name:'First run'}).getByRole('listitem')
+        .filter({has:page.getByText('custom',{exact:true})}).getByRole('button',{name:'Add project',exact:true}).click();
+      const guards=panel.getByRole('listitem').filter({has:page.getByRole('heading',{name:'Git guards',exact:true})});
+      await state('15-custom-hooks-decision',guards.getByRole('button',{name:'Review integration'}));
+      await guards.getByRole('button',{name:'Review integration'}).click();
+      await guards.getByRole('button',{name:'Keep current setup'}).click();
+      await state('16-custom-hooks-kept',guards.getByRole('button',{name:'Review integration'}));
+      await guards.getByRole('button',{name:'Review integration'}).click();
+      await guards.getByRole('button',{name:'Use both hook sets'}).click();
+      await state('17-custom-hooks-integrated',guards.getByText('Both hook sets are configured and verified.'));
       if (errors.length) throw Error(errors.join("\n"));
       result.viewports.push({name,viewport,walked,passed:true});
     } catch(error) {
