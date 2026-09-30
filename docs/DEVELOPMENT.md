@@ -275,6 +275,8 @@ with upstream `just assemble-codex-package`; give it a distinct custom package v
 commit stamp. Keep upstream archive, patch, toolchain, lockfile, build command and target, package
 inputs and executable SHA-256 digests in the task's private build record. A prepared build is not
 an installed runtime or recovery evidence.
+The CLI's `--version` reports the source-build version `0.0.0`; identify this candidate by its
+custom package metadata, compiled stamp and executable digests, rather than an official-release label.
 
 Installation and selection require their own operator-approved machine purpose and a protected
 artifact. The existing executable setting covers several roles; exclusion is proved in their

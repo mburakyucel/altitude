@@ -41,7 +41,7 @@
      }
 --- a/codex-rs/sandboxing/src/seatbelt_tests.rs
 +++ b/codex-rs/sandboxing/src/seatbelt_tests.rs
-@@ -114,6 +114,216 @@
+@@ -114,6 +114,287 @@
  }
  
  struct TestConfigReloader;
@@ -114,7 +114,78 @@
 +            FileSystemAccessMode::Write,
 +        ),
 +    ]);
++    let coordinator = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("runtime path")
++                .into(),
++            FileSystemAccessMode::Write,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path().join("project"))
++                .expect("project path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            absolute_path("/run/user/12345/bus").into(),
++            FileSystemAccessMode::Deny,
++        ),
++    ]);
++    let captured_review = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Deny,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Minimal,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("review runtime path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path().join("snapshot"))
++                .expect("snapshot path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++    ]);
 +    for (name, filesystem, network, profile, permitted) in [
++        (
++            "coordinator role",
++            coordinator.clone(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "coordinator filesystem with network enabled",
++            coordinator,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "captured reviewer role",
++            captured_review,
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
 +        (
 +            "workspace",
 +            canonical.clone(),
