@@ -348,6 +348,41 @@ def main():
                 raise RuntimeError('Private archive content reached the user journal')
             record['backup_restore']={'private_file':True,'paused_new_identity':True,
                 'both_copy_start_orders_refused':True,'journal_sentinel_absent':True}
+            # Recovery must not depend on the image still being cached, or repoint
+            # a mutable tag now owned by another image. Only this private store is touched.
+            for instance in instances:
+                platform.container_stop(instance)
+            collision=command(['commit','--change','LABEL io.altitude.fixture=tag-collision',
+                container.owned(instances[1])['Id'],'localhost/altitude:fixture'],timeout=45).strip()
+            command(['rm','--all'],timeout=30)
+            command(['rmi',image['Id']],timeout=30)
+            if image['Id'] in command(['images','--no-trunc','--quiet']).split():
+                raise RuntimeError('Recovery test did not remove the original image')
+            mode='crash-worker'
+            with mock.patch.object(platform,'container_job',side_effect=audited_job):
+                try:
+                    container.restore_backup(backup_dir,'interrupted-home','interrupted-projects')
+                except RuntimeError:
+                    pass
+                else:
+                    raise RuntimeError('Killed restore worker was reported complete')
+            remaining=command(['volume','ls','--quiet']).split()
+            if any(name in remaining for name in ('interrupted-home','interrupted-projects')):
+                raise RuntimeError('Interrupted restore retained incomplete new volumes')
+            # The failed restore may already have loaded the image; remove it again
+            # so the successful path also proves recovery from an absent image.
+            command(['rmi',image['Id']],timeout=30)
+            second=container.restore_backup(backup_dir,'recovered-home','recovered-projects')
+            tagged=json.loads(command(['image','inspect','localhost/altitude:fixture']))[0]['Id']
+            if tagged!=collision or second['image']!=image['Id']:
+                raise RuntimeError('Restore changed the unrelated tag or used a different image')
+            recovered_name='fixture-image-recovered'; instances.append(recovered_name)
+            container.start(second['image'],recovered_name,'recovered-home','recovered-projects',
+                '127.0.0.1','localhost',19446)
+            if container.lifecycle(recovered_name)['ready'] or metadata(recovered_name)!=original_metadata:
+                raise RuntimeError('Pruned-image recovery lost admission or private metadata')
+            record['backup_image_recovery']={'pruned_image_restored':True,'mutable_tag_unchanged':True,
+                'interrupted_restore_volumes_removed':True,'restored_metadata_and_paused_identity':True}
             record['passed'] = True
         except Exception as error:
             record['error'] = repr(error)
