@@ -109,7 +109,7 @@ def run(action, value):
                 "'task_session':t['session_id'],'hold':t['hold_merge'],'version':config.RELEASE['version'],"
                 "'later_state_absent':not (config.HOME/'.fixture-after-upgrade').exists()}))"]))
             platform.container_stop(restored)
-            return {'complete':saved['format']==1,'paused':not receipt['ready'],'upgraded_version':version,**observed}
+            return {'complete':saved['complete'],'paused':not receipt['ready'],'upgraded_version':version,**observed}
         if action=='cleanup':
             for name in state['instances']:
                 platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())

@@ -11,7 +11,8 @@ const result={passed:false,viewports:[],fixtures:"external engine, installation/
 const shell=(text)=>"'"+text.replaceAll("'", "'\\''")+"'";
 const control=(action,value={})=> {
   const args=["python3","input/source/tests/container_browser_probe.py",action,JSON.stringify(value)];
-  const output=execFileSync("ssh",[...cfg.ssh,"ubuntu@127.0.0.1",args.map(shell).join(" ")],{encoding:"utf8",timeout:360000});
+  const output=execFileSync("ssh",[...cfg.ssh,"ubuntu@127.0.0.1",args.map(shell).join(" ")],{
+    encoding:"utf8",timeout:360000,stdio:['ignore','pipe','pipe']});
   return JSON.parse(output.trim().split("\n").at(-1));
 };
 let prepared=false;
