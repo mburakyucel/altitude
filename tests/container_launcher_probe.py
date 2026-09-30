@@ -51,8 +51,24 @@ def main():
                    for key in ('graphRoot','runRoot')):
                 raise RuntimeError('Not a private store')
             isolated = True
+            def pause_state():
+                files = list((root/'runtime').rglob('pause.pid'))
+                if len(files) != 1:
+                    raise RuntimeError(f'Expected one private pause PID file, found {files}')
+                pid = int(files[0].read_text())
+                process = Path('/proc')/str(pid)
+                state = {'pid':pid,'cgroup':(process/'cgroup').read_text().strip(),
+                         'start':(process/'stat').read_text().rsplit(')',1)[1].split()[19]}
+                expected = '0::/user.slice/user-1000.slice/user@1000.service/user.slice/podman-pause-'
+                if not state['cgroup'].startswith(expected) or not state['cgroup'].endswith('.scope'):
+                    raise RuntimeError(f'Pause helper is not independent of the launcher/build: {state}')
+                return state
+            record['pause_before_build'] = pause_state()
             image = container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),
                                     'localhost/altitude:fixture')
+            record['pause_after_build'] = pause_state()
+            if record['pause_before_build'] != record['pause_after_build']:
+                raise RuntimeError('Successful build replaced the shared runtime pause helper')
             record['image'] = image['Id']
             first = container.start(image['Id'],instances[0],'fictional-home','fictional-projects',
                                     '127.0.0.1','localhost',19443)
@@ -154,6 +170,9 @@ def main():
                 raise RuntimeError('Supervisor death left a running payload')
             if not container.owned(instances[1])['State']['Running']:
                 raise RuntimeError('Supervisor death affected neighbor')
+            record['pause_after_failures'] = pause_state()
+            if record['pause_before_build'] != record['pause_after_failures']:
+                raise RuntimeError('Build/application failure replaced the neighboring runtime pause helper')
             record['passed'] = True
         except Exception as error:
             record['error'] = repr(error)
