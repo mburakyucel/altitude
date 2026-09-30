@@ -28,8 +28,9 @@ then `alt serve` with the same environment. It still needs the systemd user mana
 logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
-`make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
-isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output, written
+`make check` runs the full Python suite alongside the ordered web unit, TypeScript/build,
+full Chromium browser suite and headless-shell recovery lane. Each phase retains
+`/usr/bin/time -p` wall/user/system output, written
 as one block so the parallel branches never interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
@@ -173,10 +174,18 @@ and execution. Only this fictional local UI harness disables Chromium's own sand
 filesystem sandbox; profiles/configuration remain temporary or under
 ignored `web/ui-artifacts/`. Missing browsers fail with installation guidance.
 Incident I-20260907-041446 records an installed Chrome AppArmor network restriction in that worker
-context. The harness uses Playwright's locked bundled Chromium headless shell in Altitude home's
-shared `browsers/` directory, with no full-browser channel override;
+context. The full harness uses locked bundled Chromium in Altitude home's shared `browsers/` directory;
 a missing bundle is a failed prerequisite. This historical observation does not diagnose other hosts
 or establish that bundled Chromium supports its own sandbox inside a worker.
+
+`make ui-shell` repeats the project-isolation/draft and file-reference/clipboard walkthroughs in
+Playwright's locked headless shell at both viewports. The required check runs this lane after the
+unchanged full browser suite. `pnpm ui:shell` selects it explicitly; output and HTML reports live in
+`web/ui-artifacts/shell-results/` and `report/shell/` beside the full suite's retained report.
+Both distributions use the same fictional services, permissions and temporary storage. The shell
+lacks notification APIs needed by the alert
+walkthroughs; it is a recovery path for these named journeys, not full browser parity. The primary
+suite retains its full Chromium channel and all existing tests, workers, retries and gates.
 
 `web/e2e/fixtures.ts` starts the disposable services. `acceptance-service.py` supplies fictional
 tasks/history for route and component walkthroughs. Project-isolation and project-lifecycle

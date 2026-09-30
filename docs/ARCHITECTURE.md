@@ -458,6 +458,10 @@ A named custom profile with identical effective permissions has the same allowan
 roots, metadata protections, process/signal restrictions and service denies remain in force.
 This is an unadopted preparation artifact, with separate installation, isolation acceptance and
 operator merge gates; it grants no LaunchServices, WindowServer or host clipboard access.
+The fictional recovery lane selects the locked headless shell only for project-isolation/draft and
+file-reference/clipboard walkthroughs; the full Chromium suite remains the default and both lanes
+run in required CI. Missing shell notification APIs do not narrow the primary suite or establish
+native Mac parity.
 
 Auto uses the highest-priority configured tier with an eligible option. The default ties Codex and
 Claude on their role defaults, so a Claude L2 launches on Opus and L3 on Fable, with Opus below as

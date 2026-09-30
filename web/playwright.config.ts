@@ -2,12 +2,16 @@ import { resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { defineConfig, devices } from "@playwright/test";
 
+// The recovery lane exercises local project/draft/clipboard fixtures; the full suite keeps
+// Chromium's full distribution, whose notification APIs are absent from the headless shell.
+const shell = process.env.ALTITUDE_UI_HEADLESS_SHELL === "1";
+
 export default defineConfig({
   testDir: "./e2e",
   // Separate from Vitest's *.test/spec.ts discovery without changing the unit suite.
   testMatch: "**/*.pw.ts",
-  outputDir: "./ui-artifacts/results",
-  reporter: [["list"], ["html", { outputFolder: "ui-artifacts/report", open: "never" }]],
+  outputDir: shell ? "./ui-artifacts/shell-results" : "./ui-artifacts/results",
+  reporter: [["list"], ["html", { outputFolder: shell ? "ui-artifacts/report/shell" : "ui-artifacts/report", open: "never" }]],
   workers: process.env.CI ? availableParallelism() : 2,
   fullyParallel: Boolean(process.env.CI),
   retries: 0,
@@ -17,6 +21,7 @@ export default defineConfig({
     browserName: "chromium",
     // I-20260907-041446: the host's installed Chrome profile denies sandboxed networking.
     // pnpm ui sets a shared, writable browser cache under the Altitude home before runner startup.
+    channel: shell ? undefined : "chromium",
     launchOptions: {
       chromiumSandbox: false,
       // Capture stays inside Chromium; walkthroughs never request a physical microphone.

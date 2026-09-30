@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui ui-ios audit-history installation-vm browser-sandbox restart install-service
+.PHONY: run test check check-python check-web web ui ui-shell ui-ios audit-history installation-vm browser-sandbox restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -14,10 +14,13 @@ check-web:
 	cd web && $(TIME) pnpm test
 	cd web && $(TIME) pnpm build
 	cd web && $(TIME) pnpm ui
+	cd web && $(TIME) pnpm ui:shell
 web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
 ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first)
 	cd web && pnpm ui $(UI_ARGS)
+ui-shell:       ## fictional project/draft/clipboard recovery lane in Chromium headless shell (build first)
+	cd web && pnpm ui:shell $(UI_ARGS)
 ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first)
 	cd web && pnpm ui:ios $(UI_ARGS)
 installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]]); inside a task, through the validation runner
