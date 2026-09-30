@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import sys
 from pathlib import Path
 import tarfile
 from unittest import mock
@@ -45,14 +46,21 @@ class BackupTests(AltitudeCase):
         platform.container_copy_available('1'*32,['home','projects'],except_id='self')
 
     def test_binary_transfer_never_uses_text_capture_or_journal(self):
-        run=self.patch(platform.subprocess,'run',return_value=mock.Mock(returncode=0))
-        source,target=io.BytesIO(),io.BytesIO()
-        platform.container_binary(['start','--attach','fixture'],source=source,target=target)
-        kwargs=run.call_args.kwargs
-        self.assertIs(kwargs['stdin'],source); self.assertIs(kwargs['stdout'],target)
-        self.assertNotIn('text',kwargs); self.assertNotIn('capture_output',kwargs)
-        self.assertEqual(kwargs['stderr'],platform.subprocess.DEVNULL)
-        self.assertTrue(callable(kwargs['preexec_fn']))
+        self.patch(platform,'container_arguments',return_value=[sys.executable,'-c',
+            "import os;os.write(1,b'private\\x00bytes');os.write(2,b'not retained')"])
+        target=io.BytesIO()
+        platform.container_binary(['fixture'],target=target,seconds=5)
+        self.assertEqual(target.getvalue(),b'private\x00bytes')
+
+    def test_output_limit_does_not_limit_runtime_store_files(self):
+        unrelated=self.tmp/'runtime-store'
+        self.patch(platform,'container_arguments',return_value=[sys.executable,'-c',
+            "import os,sys;open(sys.argv[1],'wb').write(b'x'*8192);os.write(1,b'too large')",str(unrelated)])
+        target=io.BytesIO()
+        with self.assertRaisesRegex(RuntimeError,'byte limit'):
+            platform.container_binary(['fixture'],target=target,seconds=5,max_bytes=4)
+        self.assertEqual(unrelated.stat().st_size,8192)
+        self.assertLessEqual(len(target.getvalue()),4)
 
     def test_stopped_backup_refuses_before_output_directory_creation(self):
         self.patch(platform,'container_runtime',return_value={})

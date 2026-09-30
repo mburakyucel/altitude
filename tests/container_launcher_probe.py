@@ -306,7 +306,7 @@ def main():
             observed_audits=[json.loads(path.read_text()) for path in audit_outputs if path.exists()]
             if sum(len(item['helper_logs']) for item in observed_audits)<2:
                 raise RuntimeError('Both native export and restore helper log observations are required')
-            record['backup_failure_cleanup']=['truncated transport after helper exit0','actual file-size limit',
+            record['backup_failure_cleanup']=['truncated transport after helper exit0','binary output byte limit',
                 'transfer worker SIGKILL','waiting client killed before transfer worker; independent cleanup']
             record['backup_log_observations']=observed_audits
             restored_name='fixture-restored'

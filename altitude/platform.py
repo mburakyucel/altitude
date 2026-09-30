@@ -490,20 +490,42 @@ def container_copy_available(lineage: str, volumes: list[str], *, except_id: str
 
 def container_binary(arguments: list[str], *, source=None, target=None, seconds=1500, max_bytes=64*1024**3):
     """Binary descriptors only; never journal/capture/decode a private archive (issue543/F6)."""
-    import resource
-    def limits():
-        resource.setrlimit(resource.RLIMIT_FSIZE, (max_bytes, max_bytes))
-    result = subprocess.run(container_arguments(arguments), env=container_user_environment(),
-        stdin=source if source is not None else subprocess.DEVNULL,
-        stdout=target if target is not None else subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, timeout=seconds, preexec_fn=limits)
-    if result.returncode:
+    inputs=source if source is not None else subprocess.DEVNULL
+    if target is None:
+        code=subprocess.run(container_arguments(arguments),env=container_user_environment(),stdin=inputs,
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=seconds).returncode
+    else:
+        # Bound only this output, not every file Podman writes in its store. A low
+        # process-wide RLIMIT_FSIZE would also interrupt its database/metadata writes.
+        child=subprocess.Popen(container_arguments(arguments),env=container_user_environment(),stdin=inputs,
+            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        deadline=time.monotonic()+seconds
+        total=0
+        try:
+            while True:
+                remaining=deadline-time.monotonic()
+                if remaining<=0: raise RuntimeError('Private transfer exceeded its time limit')
+                if not select.select([child.stdout],[],[],min(remaining,1))[0]: continue
+                value=os.read(child.stdout.fileno(),1024*1024)
+                if not value: break
+                total+=len(value)
+                if total>max_bytes: raise RuntimeError('Private archive exceeds its byte limit; source volumes retained')
+                target.write(value)
+            code=child.wait(timeout=max(.1,deadline-time.monotonic()))
+        finally:
+            child.stdout.close()
+            if child.poll() is None:
+                child.terminate()
+                try: child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.kill(); child.wait(timeout=5)
+    if code:
         reasons={70:'Cannot read/write private volume data; check permissions and free space',
                  71:'A controller owns the volumes; stop it before backup or restore',
                  72:'Unsupported, damaged or incomplete backup data; keep the source volumes',
                  73:'Backup helper protections or resource limits are unavailable',
                  74:'Backup helper failed; keep the source volumes and inspect the operation'}
-        raise RuntimeError(reasons.get(result.returncode,'Private container transfer failed; no completed backup/restore is admitted'))
+        raise RuntimeError(reasons.get(code,'Private container transfer failed; no completed backup/restore is admitted'))
 
 
 def container_archive_environment() -> tuple[Path, Path]:
