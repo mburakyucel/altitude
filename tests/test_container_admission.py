@@ -43,6 +43,22 @@ class ContainerAdmission(AltitudeCase):
         with mock.patch.object(platform, 'containerized', return_value=False):
             self.assertEqual(l3.verb_socket_path('fictional').parent,config.ROOT/'l3-verbs')
 
+    def test_paused_stranded_reports_stay_due_without_repeated_work_or_logs(self):
+        self.change('pause')
+        retries = dict(server._report_retries)
+        with mock.patch.object(server, 'spawn') as spawn, mock.patch.object(server, 'log') as log, \
+             mock.patch.object(S, 'list_tasks') as listing:
+            for _ in range(3):
+                server.resume_stranded_reports('fictional')
+            spawn.assert_not_called()
+            log.assert_not_called()
+            listing.assert_not_called()
+            self.assertEqual(server._report_retries, retries)
+            self.change('continue')
+            listing.return_value = []
+            server.resume_stranded_reports('fictional')
+            listing.assert_called_once()
+
     def test_same_instance_restart_preserves_admission_replacement_and_bad_receipts_close_it(self):
         self.assertTrue(platform.container_lifecycle()["ready"])
         self.assertFalse(self.change("pause")["ready"])

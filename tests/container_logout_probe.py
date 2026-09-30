@@ -24,8 +24,8 @@ def prepare():
     root = Path(tempfile.mkdtemp(prefix='acl-'))
     result = {'passed': False, 'root': str(root)}
     STATE.write_text(json.dumps(result))
+    archive = Path.home() / 'input/altitude-v0.1.0-rc.2.tar.gz'
     with container_acceptance.environment(root):
-        archive = Path.home() / 'input/altitude-v0.1.0-rc.2.tar.gz'
         image = container.build(archive, hashlib.sha256(archive.read_bytes()).hexdigest(),
                                 'localhost/altitude:logout-fixture')
         ident = container.start(image['Id'], NAME, 'logout-home', 'logout-projects',

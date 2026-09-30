@@ -13,12 +13,21 @@ TOP = ('acpi','asound','bus','fs','irq','kallsyms','kcore','keys','latency_stats
 def inspect():
     started=time.monotonic()
     paths={Path('/proc')/name for name in TOP}
+    mounts=[]
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        fields=line.split()
+        if fields[4]=='/proc' or fields[4].startswith('/proc/'):
+            mounts.append({'path':fields[4],'options':fields[5],'filesystem':fields[fields.index('-')+1:]})
+            if fields[4]!='/proc':
+                paths.add(Path(fields[4]))
     def refused(error): raise error
-    for base,dirs,files in os.walk('/proc/sys',followlinks=False,onerror=refused):
-        for name in sorted(dirs+files):
-            if len(paths)>=4096 or time.monotonic()-started>25:
-                raise RuntimeError('Proc metadata inventory exceeded its bound')
-            paths.add(Path(base)/name)
+    for directory in sorted(paths):
+        if directory.is_dir() and not directory.is_symlink():
+            for base,dirs,files in os.walk(directory,followlinks=False,onerror=refused):
+                for name in sorted(dirs+files):
+                    if len(paths)>=4096 or time.monotonic()-started>25:
+                        raise RuntimeError('Proc metadata inventory exceeded its bound')
+                    paths.add(Path(base)/name)
     rows=[]
     for path in sorted(paths):
         row={'path':str(path)}
@@ -32,11 +41,6 @@ def inspect():
             if error.errno!=errno.ENOENT: raise
             row['absent']=True
         rows.append(row)
-    mounts=[]
-    for line in Path('/proc/self/mountinfo').read_text().splitlines():
-        fields=line.split()
-        if fields[4]=='/proc' or fields[4].startswith('/proc/'):
-            mounts.append({'path':fields[4],'options':fields[5],'filesystem':fields[fields.index('-')+1:]})
     return {'uid':os.getuid(),'rows':rows,'mounts':mounts,
             'warning':'Access predicates only; no kernel contents read or tunables written.'}
 
@@ -45,18 +49,23 @@ def differences(result,policy,baseline=None):
     uid=str(result['uid'])
     if uid not in policy['writable']: return ['Unexpected probe principal']
     readable=set(policy['readable'])
+    failures=[]
     if baseline is not None:
         if baseline['uid']!=result['uid']: return ['Default-protection principal differs']
         default={row['path']:row for row in baseline['rows']}
-        # Network interfaces and kernel versions have different tunable names.
-        # A read already available through the default read-only /proc/sys mount
-        # is not exposure added by unmask. Never apply this to masked device
+        inventoried={row['path'] for row in result['rows']}
+        for mount in baseline.get('mounts',[]):
+            if mount['path']!='/proc' and mount['path'] not in inventoried:
+                failures.append(mount['path']+':uninventoried default protection')
+        # A descendant read already available through a default-protected directory
+        # is not exposure added by unmask. Never apply this to top-level masked device
         # placeholders (kcore/keys/etc.), or to any writable predicate.
-        readable.update(row['path'] for row in result['rows'] if row['path'].startswith('/proc/sys/')
+        readable.update(row['path'] for row in result['rows'] if
+            any(row['path'].startswith('/proc/'+name+'/') for name in TOP)
             and row.get('mode') and default.get(row['path'],{}).get('mode','')[0:1]==row['mode'][0]
             and default.get(row['path'],{}).get('readable'))
     writable=set(policy['writable'][uid])
-    return [row['path']+':'+access for row in result['rows'] for access,allowed in
+    return failures+[row['path']+':'+access for row in result['rows'] for access,allowed in
             (('readable',readable),('writable',writable)) if row.get(access) and row['path'] not in allowed]
 
 

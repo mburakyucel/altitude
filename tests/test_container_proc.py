@@ -7,6 +7,19 @@ from tests.container_proc_probe import differences
 
 
 class ProcPolicy(unittest.TestCase):
+    def test_unknown_default_mask_and_new_subtree_access_fail_closed(self):
+        policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
+        row={'path':'/proc/irq/fixture','mode':'-rw-r--r--','readable':True,'writable':False}
+        baseline={'uid':0,'rows':[row], 'mounts':[{'path':'/proc/unknown-masked'}]}
+        current={'uid':0,'rows':[row]}
+        self.assertEqual(differences(current,policy,baseline),
+                         ['/proc/unknown-masked:uninventoried default protection'])
+        baseline['mounts']=[]
+        current['rows']=[dict(row,writable=True)]
+        self.assertEqual(differences(current,policy,baseline),['/proc/irq/fixture:writable'])
+        baseline['rows']=[]
+        self.assertIn('/proc/irq/fixture:readable',differences(current,policy,baseline))
+
     def test_approved_predicates_and_unexpected_exposure(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
         for uid in (0,1000):

@@ -971,6 +971,9 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
 
 def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    lifecycle = platform.container_lifecycle()
+    if lifecycle is not None and not lifecycle['ready']:
+        return  # Keep reports due, without spawning/logging a refused turn every tick (#543).
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
