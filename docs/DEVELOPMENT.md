@@ -330,7 +330,7 @@ blocks automating it.
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
-| Container deployment | `python3 scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` | Finite rootless bootstrap, actual daemon bind/port/certificate, image API boundary and elevation inventory; optional native diagnostic permission matrix | Full task/onboarding/lifecycle, published networking, provider-session confinement parity, Mac, native installation | Bootstrap and optional diagnostic passed on `171d802`. See [exact identity and coverage](CONTAINERS.md) |
+| Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Full daemon-driven onboarding, backup/restore, device routing/trust, provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 VM lanes pass; [coverage and limits](CONTAINERS.md#evidence) |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
 
@@ -338,8 +338,6 @@ The container gate removes its verified private containers, volumes and images b
 to retire that store's pause process with `system migrate`. It never applies this operation to a
 shared store. Cleanup failure retains the runtime directory and fails the gate; the helper does not
 identify pause processes by executable name, which differs between Podman installations.
-
-## Device evidence
 
 Container admission regressions run with
 `python3 -m unittest tests.test_container_admission tests.test_installed_runtime tests.test_resume_priority`.
@@ -364,6 +362,8 @@ then replaces the container. A prelaunch claim restores its message before expli
 an uncertain launch records a recovery fault without replay. Workspace tests simulate the lost
 process lifetime; the native lane reads actual lifetime evidence. Neither simulates a real provider
 having acted before the interruption, nor establishes automatic recovery of a running task.
+
+## Device evidence
 
 Device results name their evidence class; a result in one class never stands in for another.
 
