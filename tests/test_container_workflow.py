@@ -14,6 +14,9 @@ from altitude import config, dispatch, engines, platform, state as S
 class ContainerWorkflow(AltitudeCase):
     def setUp(self):
         super().setUp()
+        # The test simulates container identity in an ordinary worker; keep its
+        # real broker sockets in the disposable fixture's runtime directory.
+        self.patch(platform, 'coordinator_socket_directory', return_value=self.tmp/'runtime-brokers')
         self.private_ledgers()
         self.units = {}
         self.patch(platform, "job_command", side_effect=self.command)
