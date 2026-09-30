@@ -273,25 +273,12 @@ def helper(action: str, descriptor: dict):
     """Fixed image entrypoint; stdout is binary for export and silent for restore."""
     from altitude import platform
     import re
-    if action not in ('export', 'restore') or os.getuid() != 0 or not platform.containerized():
-        raise ValueError('Backup helper requires the explicit container-root image entrypoint')
+    if action not in ('export', 'restore'):
+        raise ValueError('Invalid backup helper operation')
     for key, length in (('lineage', 32), ('pair', 32), ('archive', 64)):
         if not re.fullmatch('[0-9a-f]{'+str(length)+'}', descriptor.get(key, '')):
             raise ValueError('Invalid backup operation identity')
-    home, projects = Path('/backup/home'), Path('/backup/projects')
-    status = dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
-    group = Path('/sys/fs/cgroup')
-    quota, period = (group/'cpu.max').read_text().split()
-    if (status.get('NoNewPrivs','').strip()!='1' or status.get('Seccomp','').strip()!='2'
-            or int(status['CapEff'].strip(),16) & ~0xb
-            or (group/'memory.max').read_text().strip()!=str(1024**3)
-            or (group/'pids.max').read_text().strip()!='64'
-            or not quota.isdigit() or int(quota)!=int(period)
-            or not os.statvfs('/').f_flag & os.ST_RDONLY):
-        raise RuntimeError('Backup helper protections or effective limits are unavailable')
-    mounts = {line.split()[4] for line in Path('/proc/self/mountinfo').read_text().splitlines()}
-    if not {str(home), str(projects)} <= mounts:
-        raise ValueError('Mount the two separate named volumes for the backup helper')
+    home, projects = platform.container_archive_environment()
     with platform.container_volume_locks(home, projects):
         if action == 'export':
             export(sys.stdout.buffer, home, projects)

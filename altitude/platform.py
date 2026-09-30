@@ -494,6 +494,27 @@ def container_binary(arguments: list[str], *, source=None, target=None, seconds=
         raise RuntimeError("Private container transfer failed; no completed backup/restore is admitted")
 
 
+def container_archive_environment() -> tuple[Path, Path]:
+    """Assert the Linux image helper's actual protections before reading private volumes."""
+    if os.getuid()!=0 or not containerized():
+        raise ValueError('Backup helper requires the explicit container-root image entrypoint')
+    home, projects = Path('/backup/home'), Path('/backup/projects')
+    status = dict(line.split(':',1) for line in (PROC/'self/status').read_text().splitlines() if ':' in line)
+    group = CONTAINER_CGROUP_ROOT
+    quota, period = (group/'cpu.max').read_text().split()
+    if (status.get('NoNewPrivs','').strip()!='1' or status.get('Seccomp','').strip()!='2'
+            or int(status['CapEff'].strip(),16) & ~0xb
+            or (group/'memory.max').read_text().strip()!=str(1024**3)
+            or (group/'pids.max').read_text().strip()!='64'
+            or not quota.isdigit() or int(quota)!=int(period)
+            or not os.statvfs('/').f_flag & os.ST_RDONLY):
+        raise RuntimeError('Backup helper protections or effective limits are unavailable')
+    mounts = {line.split()[4] for line in (PROC/'self/mountinfo').read_text().splitlines()}
+    if not {str(home), str(projects)} <= mounts:
+        raise ValueError('Mount the two separate named volumes for the backup helper')
+    return home, projects
+
+
 def container_owned(instance: str, *, timeout: int = 30) -> dict:
     unit = container_unit(instance)
     value = json.loads(container_command(["inspect", instance], timeout=timeout))[0]
