@@ -47,13 +47,19 @@ def prepare():
         STATE.write_text(json.dumps(result))
         # This SSH process belongs to its login session, outside user@1000.service.
         # The request uses ONLY the fictional guest's user bus; no system-manager stop.
+        manager = Path('/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/init.scope/cgroup.procs')
+        manager_pids = manager.read_text().split()
+        if not manager_pids:
+            raise RuntimeError('No user-manager process identity before exit')
+        result['manager_pids'] = manager_pids
         subprocess.run(['systemctl', '--user', 'exit'], check=True, timeout=10)
         limit = time.monotonic() + platform.CONTAINER_STOP_WAIT
-        while Path('/proc', str(result['pid'])).exists():
+        while any(Path('/proc', str(pid)).exists() for pid in [result['pid'], *manager_pids]):
             if time.monotonic() > limit:
-                raise RuntimeError('Container PID survived user-manager exit')
+                raise RuntimeError('Container or user-manager PID survived exit')
             time.sleep(.2)
         result['container_pid_gone_after_manager_exit'] = True
+        result['user_manager_exit_complete'] = True
         STATE.write_text(json.dumps(result))
 
 
