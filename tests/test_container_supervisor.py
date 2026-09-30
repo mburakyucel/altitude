@@ -127,3 +127,22 @@ class ContainerSupervisorTests(AltitudeCase):
         with self.assertRaisesRegex(RuntimeError, "no active supervisor"):
             platform.container_stop("fixture")
         run.assert_not_called()
+
+    def test_stop_post_reaps_exact_owned_runtime_even_when_process_state_is_stale(self):
+        self.patch(platform, "container_owned", return_value=self.value)
+        command = self.patch(platform, "container_command", side_effect=[json.dumps([
+            {"Names": ["fixture"]}, {"Names": ["unrelated"]}]), "", ""])
+        platform._container_after_stop("fixture")
+        self.assertEqual(command.call_args_list[-2:], [
+            mock.call(["stop", "--time=30", self.value["Id"]], timeout=35),
+            mock.call(["container", "cleanup", self.value["Id"]], timeout=8)])
+
+    def test_stop_post_does_not_adopt_unowned_or_partially_created_instances(self):
+        command = self.patch(platform, "container_command", return_value='[{"Names":["unrelated"]}]')
+        owned = self.patch(platform, "container_owned", side_effect=RuntimeError("not adopted"))
+        platform._container_after_stop("fixture")
+        owned.assert_not_called()
+        command.return_value = '[{"Names":["fixture"]}]'
+        with self.assertRaisesRegex(RuntimeError, "not adopted"):
+            platform._container_after_stop("fixture")
+        self.assertEqual(command.call_count, 2)

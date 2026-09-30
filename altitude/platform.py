@@ -390,7 +390,8 @@ def container_parent(unit: str) -> str:
     return parent
 
 
-def container_job(unit: str, command: list[str], *, wait: bool = False) -> str:
+def container_job(unit: str, command: list[str], *, wait: bool = False,
+                  after_stop: list[str] | None = None) -> str:
     """Own the complete container/build lifetime in one bounded user-manager subtree."""
     environment = container_user_environment()
     selected = {key: value for key, value in environment.items()
@@ -404,6 +405,14 @@ def container_job(unit: str, command: list[str], *, wait: bool = False) -> str:
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:
         arguments += ["--wait", "--pipe", "--property=RuntimeMaxSec=600"]
+    if after_stop is not None:
+        # ExecStopPost is parsed by systemd, not a shell. Disable environment
+        # expansion and escape its specifiers/quoting independently of argv.
+        if any(any(character in value for character in "\n\r\x00") for value in after_stop):
+            raise ValueError("Invalid container cleanup command")
+        quoted = ['"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+                  for value in after_stop]
+        arguments.append("--property=ExecStopPost=:" + " ".join(quoted))
     arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
     result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
                             capture_output=True, timeout=660 if wait else 20)
@@ -423,6 +432,21 @@ def container_owned(instance: str) -> dict:
             or not parent.endswith("/app.slice/" + unit)):
         raise RuntimeError("This instance does not belong to the delegated cgroupfs launcher; it is not adopted")
     return value
+
+
+def _container_after_stop(instance: str) -> None:
+    """Reap through the runtime even if the supervisor died before Stop (#543).
+
+    A failed create has no container. Existing records must match the exact unit,
+    manager and parent before cleanup; there is no shared-store or name-pattern removal.
+    """
+    container_unit(instance)
+    rows = json.loads(container_command(["ps", "--all", "--format", "json"]))
+    if not any(instance in row.get("Names", []) for row in rows):
+        return
+    value = container_owned(instance)
+    container_command(["stop", "--time=30", value["Id"]], timeout=35)
+    container_command(["container", "cleanup", value["Id"]], timeout=8)
 
 
 def _container_supervise(instance: str, create: list[str] | None) -> None:
@@ -490,7 +514,9 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
             raise RuntimeError("The container is already running")
     command = [sys.executable, "-c", "import json,sys; from altitude.platform import _container_supervise; "
                "_container_supervise(sys.argv[1],json.loads(sys.argv[2]))", instance, json.dumps(create)]
-    container_job(unit, command)
+    cleanup = [sys.executable, "-c", "import sys;from altitude.platform import _container_after_stop;"
+               "_container_after_stop(sys.argv[1])", instance]
+    container_job(unit, command, after_stop=cleanup)
     deadline = time.monotonic() + 90
     error = "Container startup did not finish"
     environment = container_user_environment()

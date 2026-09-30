@@ -175,7 +175,9 @@ inspection. It does not establish full application task recovery, backup restore
 
 The host launcher owns one transient delegated user service per running instance. Its foreground
 supervisor translates service termination into the image's graceful stop signal; after the bounded
-grace, the user manager removes remaining descendants in that exact unit. The service outlives the
+grace, the user manager removes remaining descendants in that exact unit. Its stop-post action also
+stops and cleans the exact owned runtime record when the supervisor dies unexpectedly; a unit's
+inactive state alone is not accepted as container cleanup. The service outlives the
 launching terminal but follows the existing user-manager/login lifetime. The launcher does not enable
 lingering, host-boot startup or automatic restart. Keep its source location available while it runs.
 Startup verifies the running container identity, effective resource limits and internal HTTPS health.
