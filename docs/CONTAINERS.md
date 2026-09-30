@@ -310,6 +310,14 @@ Podman can move an ordinary frontend process as well as its pause helper into a 
 the monitor records attached PIDs and available executable/cgroup evidence. Application readiness
 separately requires both PID1 and conmon to remain in the deployment's delegated subtree.
 
+The proc exposure gate records bounded metadata for the listed masked interfaces and `/proc/sys`
+for container root and the application user. It never reads kernel-interface contents or writes
+tunables. Writable predicates must stay within the approved v5 list. For readable `/proc/sys`
+paths whose names differ across kernels/network interfaces, a second small container with default
+proc protections must show the same readable file type; this comparison never treats a masked
+device placeholder as a readable kernel file. Extra access fails the gate and retains both records
+for review. Access predicates are not successful opens/writes or proof of kernel isolation.
+
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
 image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-none payloads,
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
