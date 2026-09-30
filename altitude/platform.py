@@ -511,7 +511,7 @@ def container_limits(value: dict) -> None:
 
 
 def container_launch(instance: str, create: list[str] | None = None) -> str:
-    """Return only after exact identity, enforced limits and inner HTTPS readiness are proven."""
+    """Prove identity, limits, inner HTTPS and the published host endpoint (#543)."""
     unit = container_unit(instance)
     if create is None:
         value = container_owned(instance)
@@ -533,10 +533,18 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
                 value = container_owned(instance)
                 if value["State"]["Running"]:
                     container_limits(value)
-                    container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
+                    facts = json.loads(container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
                         "--env", "XDG_RUNTIME_DIR=/run/user/1000", value["Id"], "python3", "-c",
                         "import sys;sys.path.insert(0,'/opt/altitude');"
-                        "from altitude.platform import container_ready;container_ready()"], timeout=5)
+                        "from altitude.platform import container_ready;container_ready();"
+                        "from altitude import tls;import json;f=tls.service();"
+                        "print(json.dumps({'pid':f['pid'],'port':f['port'],'host':f['public_host'],"
+                        "'ca':(f['tls_dir']/'ca.crt').read_text()}))"], timeout=5))
+                    bindings = value["HostConfig"].get("PortBindings") or {}
+                    addresses = bindings.get(f"{facts['port']}/tcp", [])
+                    if len(addresses) != 1 or int(addresses[0]["HostPort"]) != facts["port"]:
+                        raise RuntimeError("The HTTPS service does not match its single published port")
+                    container_https(addresses[0]["HostIp"], facts)
                     return value["Id"]
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                 error = str(exc)
@@ -547,6 +555,37 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
                               text=True, capture_output=True, timeout=50)
         suffix = f"; cleanup failed: {stop.stderr.strip()}" if stop.returncode else ""
         raise RuntimeError(f"Container startup failed: {exc}; {job_logs_hint(unit)}{suffix}") from exc
+
+
+def container_https(address: str, facts: dict) -> None:
+    """Verify publication using this instance's public CA, advertised SNI and recorded PID.
+
+    Connect directly to the chosen host address: no proxy, DNS substitution, new
+    trust-store entry or private-key export is involved. Device routing/trust is
+    separate acceptance; this proves only the local published endpoint.
+    """
+    import http.client
+    import ssl
+
+    target = ipaddress.ip_address(address)
+    if target.is_unspecified or target.is_multicast:
+        raise RuntimeError("The container needs one concrete published host address")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_verify_locations(cadata=facts["ca"])
+    with socket.create_connection((str(target), facts["port"]), timeout=5) as raw:
+        with context.wrap_socket(raw, server_hostname=facts["host"]) as connection:
+            host = facts["host"]
+            authority = f"[{host}]" if ":" in host else host
+            connection.sendall((f"GET /api/health HTTP/1.1\r\nHost: {authority}:{facts['port']}\r\n"
+                                "Connection: close\r\n\r\n").encode("ascii"))
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            body = response.read(65537)
+            if response.status != 200 or len(body) > 65536:
+                raise RuntimeError("Published HTTPS did not return a bounded successful health response")
+            health = json.loads(body)
+            if not isinstance(health, dict) or health.get("pid") != facts["pid"]:
+                raise RuntimeError("Published HTTPS answers from another process")
 
 
 def container_stop(instance: str) -> None:

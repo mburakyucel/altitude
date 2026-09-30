@@ -181,6 +181,9 @@ inactive state alone is not accepted as container cleanup. The service outlives 
 launching terminal but follows the existing user-manager/login lifetime. The launcher does not enable
 lingering, host-boot startup or automatic restart. Keep its source location available while it runs.
 Startup verifies the running container identity, effective resource limits and internal HTTPS health.
+It also connects to the published host address with the advertised TLS name, trusting only that
+instance's public CA, and checks that the health response names the recorded service process.
+This installs no certificate trust and does not prove another device's routing or trust.
 A failed start reports the unit log and retains its stopped container for diagnosis.
 Image user jobs and the daemon have a 15-second stop grace, their user manager has 20 seconds,
 and Podman has 30 seconds before forced termination. The host supervisor has a 45-second stop
@@ -226,7 +229,7 @@ and image prerequisites. This is Linux fixture evidence, not Mac or provider acc
 The VM observes system-manager calls independently of the launcher's environment, before their result
 is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management
 calls fail, regardless of the unit's name. The permitted mutating calls are root logind's fictional
-login-session creation and the verified systemd user manager attaching its own processes within its
+login-session creation/abandonment and the verified systemd user manager attaching its own processes within its
 delegated unit; the latter has no polkit authorization path in the tested systemd version. Sender
 identity failures do not permit these exceptions. Raw calls and guest-only sender metadata remain
 in the result directory.

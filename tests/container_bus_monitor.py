@@ -29,6 +29,10 @@ def classify(block, identity):
         return "read"
     if interface == "org.freedesktop.DBus.Introspectable" and method == "Introspect":
         return "read"
+    if (interface == "org.freedesktop.systemd1.Scope" and method == "Abandon"
+            and identity.get("uid") == 0 and identity.get("exe") == "/usr/lib/systemd/systemd-logind"
+            and re.search(r"path=/org/freedesktop/systemd1/unit/session_2d\d+_2escope;", header)):
+        return "login-session"
     if interface != "org.freedesktop.systemd1.Manager":
         return None
     if method in {"GetUnit", "GetUnitByPID", "GetUnitByControlGroup", "ListUnits", "ListJobs"}:

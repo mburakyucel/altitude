@@ -10,7 +10,8 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, str(Path.home() / 'input/source'))
+SOURCE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SOURCE))
 from altitude import platform
 from scripts import container, container_acceptance
 
@@ -83,9 +84,9 @@ def main():
                         '--instance',held['instance']]
             if shown != expected:
                 raise RuntimeError('Displayed Continue does not name the selected container instance')
-            continued = subprocess.run(shown,cwd=Path.home()/'input/source',
+            continued = subprocess.run(shown,cwd=SOURCE,
                                        capture_output=True,text=True,check=True,timeout=40)
-            record['replacement_continued'] = json.loads(continued.stdout)
+            record['replacement_continued'] = json.JSONDecoder().raw_decode(continued.stdout)[0]
             if not record['replacement_continued']['ready']:
                 raise RuntimeError('Explicit Continue did not release the replacement')
             # Only this fictional guest's exact owned user unit. Parent death must

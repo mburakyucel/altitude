@@ -38,6 +38,11 @@ class BusMonitorTests(unittest.TestCase):
         self.assertEqual("login-session", monitor.classify(call, identity))
         self.assertIsNone(monitor.classify(call, {**identity, "uid": 1000}))
         self.assertIsNone(monitor.classify(message("StartTransientUnit", "libpod-123.scope"), identity))
+        abandon = message("Abandon", interface="org.freedesktop.systemd1.Scope").replace(
+            "interface=", "path=/org/freedesktop/systemd1/unit/session_2d12_2escope; interface=")
+        self.assertEqual("login-session", monitor.classify(abandon, identity))
+        self.assertIsNone(monitor.classify(abandon, {"uid": 1000, "exe": "/usr/bin/crun"}))
+        self.assertIsNone(monitor.classify(abandon.replace("session_2d12", "libpod"), identity))
 
 
 if __name__ == "__main__":
