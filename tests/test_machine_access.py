@@ -308,8 +308,8 @@ class TestMachineAccess(AltitudeCase):
 
     def test_cli_door_and_exit_status(self):
         grant, question, row = self.granted()
-        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        self.serving(self.httpd.server_address[1])
+        base = {"ALTITUDE_PROJECT": self.project}
         owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
         result = self.alt("task", "run", self.slug, "true", env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertEqual(result.returncode, 1)
@@ -374,13 +374,13 @@ class TestMachineAccess(AltitudeCase):
         self.addCleanup(earlier.stdout.close)
         self.addCleanup(earlier.kill)
         self.assertEqual(earlier.stdout.readline(), "ready\n")
+        self.serving(port)
         started, release = self.tmp / "started", self.tmp / "release"
         owner = subprocess.Popen(
             [sys.executable, str(REPO / "bin" / "alt"), "task", "run", self.slug,
              f"echo before; touch {started}; while [ ! -e {release} ]; do sleep .02; done; echo after; exit 5"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": self.project,
-                 "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(port), "ALTITUDE_TLS": "0",
                  "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
         self.addCleanup(owner.kill)
         wait_for(started.exists, "the command to start")
@@ -488,9 +488,10 @@ class TestMachineAccess(AltitudeCase):
             port = probe.getsockname()[1]
         started = time.monotonic()
         for host in ("127.0.0.1", "unresolvable.invalid"):
+            self.serving(port, host)
             result = self.alt("task", "run", self.slug, "true", env={
-                "ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": host, "ALTITUDE_PORT": str(port),
-                "ALTITUDE_TLS": "0", "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+                "ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+                "ALTITUDE_ATTEMPT": "1"})
             self.assertEqual(result.returncode, 1)
             self.assertIn("altd unavailable", result.stderr)
             self.assertNotIn("waiting for this command's result", result.stderr)

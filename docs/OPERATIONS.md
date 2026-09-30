@@ -428,7 +428,7 @@ On the next start Altitude reissues its server certificate for that address unde
 trusted devices need no new step. A generated CA refuses public addresses and names.
 `ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
 Install the CA on the phone with **Add a phone** or `alt tls-share`, which reads these settings from
-the running service rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
+the running service's record rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
 private tunnel and any firewall rule for your chosen interface/port separately, and bind Altitude to
 that interface directly. A forwarder on this machine in front of Altitude (an SSH tunnel, a reverse
 proxy, a container's published port) hides which process connects, so the terminal cannot tell an
@@ -436,7 +436,9 @@ agent behind it from your browser; keep the terminal off while one serves Altitu
 service template's tunnel address and checkout path are not defaults to copy to another machine.
 Generated server certificates renew automatically while the original CA remains valid; an expired
 or replaced CA needs explicit new trust on every device. External certificate pairs are not renewed
-or overwritten. Existing configured TLS paths and exposure remain operator choices.
+or overwritten. A new certificate folder, CA, address or port reaches running task workers when the
+service next starts: their `alt` calls follow the address and CA the service records, so they need
+no relaunch and no per-command setting. Existing configured TLS paths and exposure remain operator choices.
 
 With the `browser` backend, recognized words appear in the draft while you speak, and the field keeps
 the latest words in view. English dictation gets sentence punctuation and capitals on every browser

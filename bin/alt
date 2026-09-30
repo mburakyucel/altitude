@@ -519,17 +519,22 @@ def main(argv=None) -> None:
             sys.exit(f"alt {c}: L3 must use its project-bound runtime alt socket")
         if setup_command and (bool(args.repair) != bool(args.reason and args.reason.strip())):
             ap.error("project setup --repair requires --reason; reads accept no reason")
-        tls = config.TLS
-        ca = config.TLS_DIR / "ca.crt"
-        from altitude import access, validation
+        from altitude import access, tls, validation
+        # The running service's record, not this process's launch environment, says where altd listens and which
+        # CA proves it, so a restart onto another certificate folder does not strand a running worker.
+        try:
+            found = tls.service()
+        except tls.TLSFailure as exc:
+            sys.exit(f"alt {c}: altd unavailable: {exc}")
+        ca = found["tls_dir"] / "ca.crt"
         from urllib.parse import quote
         endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else "task/validate" if validation_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
-        request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
+        request = urllib.request.Request(f"{found['url']}/api/{endpoint}",
                                          data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                          headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
         import http.client
         import time
-        context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if tls else None
+        context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
         # request waits for that command's result instead of running it again.
         reconnect_until, reconnecting = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 120, False
@@ -565,6 +570,9 @@ def main(argv=None) -> None:
                     reconnecting = True
                     time.sleep(2)
                     continue
+                if isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError):
+                    sys.exit(f"alt {c}: altd at {found['url']} does not prove its identity with "
+                             f"{ca if ca.exists() else 'the system trust store'}: {exc.reason.verify_message}")
                 sys.exit(f"alt {c}: altd unavailable: {exc}")
             break
         return

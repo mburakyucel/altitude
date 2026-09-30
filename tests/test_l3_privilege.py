@@ -152,11 +152,10 @@ class TestIssueVerbs(AltitudeCase):
         threading.Thread(target=http.serve_forever, daemon=True).start()
         self.addCleanup(http.server_close)
         self.addCleanup(http.shutdown)
+        self.serving(http.server_port)
         for reason in ("completed", "not-planned"):
             result = self.alt("issue", "close", "42", "--reason", reason,
-                              env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project,
-                                   "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(http.server_port),
-                                   "ALTITUDE_TLS": "0"})
+                              env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), self.url)
         payload = {"project": self.project, "operation": "close", "number": 42, "reason": "completed",

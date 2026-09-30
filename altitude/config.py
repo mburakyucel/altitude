@@ -17,8 +17,6 @@ SOURCE = Path(__file__).resolve().parent.parent
 RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
 INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
 INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
-#: What this process's own environment sets, before a release installation's saved settings fill the rest.
-SHELL_SETTINGS = frozenset(os.environ)
 if RELEASE is not None and INSTALL_CONFIG.exists():
     for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
         if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
