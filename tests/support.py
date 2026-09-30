@@ -16,8 +16,29 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+
+
+@contextmanager
+def container_namespace_metadata(root: Path):
+    """Model image UID/GID 1000 without requiring CI's host account to have those IDs.
+
+    Real filesystem content/type/mode/link/time observations remain intact. Native
+    VM lanes separately verify actual user-namespace mapping and ownership changes.
+    """
+    original = Path.lstat
+    def observed(path):
+        value = original(path)
+        if not path.is_relative_to(root):
+            return value
+        fields = {name: getattr(value, name) for name in dir(value) if name.startswith('st_')}
+        fields.update(st_uid=1000, st_gid=1000)
+        return SimpleNamespace(**fields)
+    with mock.patch.object(Path, 'lstat', new=observed):
+        yield
 
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))

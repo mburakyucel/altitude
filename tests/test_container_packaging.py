@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, container_namespace_metadata
 from altitude import config, engines, platform
 from scripts import container, container_acceptance
 
@@ -71,6 +71,7 @@ class TestContainerBusIdentity(AltitudeCase):
 
 class TestVolumeLocks(AltitudeCase):
     def test_bootstrap_recognizes_nested_same_device_mounts_before_starting_manager(self):
+        self.enterContext(container_namespace_metadata(self.tmp))
         home = self.tmp / "home"
         projects = home / "Projects"
         projects.mkdir(parents=True)

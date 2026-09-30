@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+from tests.support import container_namespace_metadata
 
 from altitude import container_archive as backup
 
@@ -16,6 +17,8 @@ class ArchiveTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.enterContext(container_namespace_metadata(self.root))
+        self.enterContext(mock.patch.object(backup.os, 'chown'))
         self.home, self.projects = self.root/'home', self.root/'projects'
         self.home.mkdir(); self.projects.mkdir()
         (self.home/'Projects').mkdir()

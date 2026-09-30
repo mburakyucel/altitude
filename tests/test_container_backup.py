@@ -9,7 +9,7 @@ from unittest import mock
 
 from altitude import platform, container_archive
 from scripts import container
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, container_namespace_metadata
 
 
 class BackupTests(AltitudeCase):
@@ -121,7 +121,8 @@ class BackupTests(AltitudeCase):
         for filename in ('data.tar','image.tar'):
             path=directory/filename; path.write_bytes(b'fixture'); path.chmod(0o600)
         home,projects=self.tmp/'home',self.tmp/'projects'; home.mkdir(); projects.mkdir()
-        with (directory/'data.tar').open('wb') as target: container_archive.export(target,home,projects)
+        with container_namespace_metadata(self.tmp), (directory/'data.tar').open('wb') as target:
+            container_archive.export(target,home,projects)
         manifest={'format':1,'lineage':'1'*32,'image':'2'*64,
                   'data':container.file_identity(directory/'data.tar',100000),
                   'image_archive':container.file_identity(directory/'image.tar',100)}
@@ -175,6 +176,7 @@ class BackupTests(AltitudeCase):
             container.image_archive_identity(archive('localhost/altitude:current'),'2'*64)
 
     def test_bootstrap_refuses_partial_or_wrong_restore_before_chown(self):
+        self.enterContext(container_namespace_metadata(self.tmp))
         home=self.tmp/'home'; projects=home/'Projects'; projects.mkdir(parents=True)
         proc=self.tmp/'proc'; (proc/'self').mkdir(parents=True)
         (proc/'self/mountinfo').write_text(f'1 0 8:2 / {home} rw - ext4 /dev/f rw\n2 0 8:2 / {projects} rw - ext4 /dev/f rw\n')
