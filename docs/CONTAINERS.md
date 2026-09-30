@@ -1,32 +1,19 @@
 # Linux container deployment
 
-Container support is under validation. The candidate uses rootless Podman with real systemd inside
-the image. The launcher selects cgroupfs inside a delegated host user service. The earlier image
-feasibility tuple used Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
-its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory passed on commit
-`1639f3102b9e07215d49b1f45dc4a1fc396071f7`, archive SHA-256
-`b014ddf7897ad177a60365e72c89a6cdc745e1c9b5c8c577d01cdb2ee7f5dfcc`.
-That same image passed the native diagnostic task/coordinator permission matrix and actual daemon
-environment/listener/certificate checks. Its admission lane also passed daemon and same-container
-restart, independent fixture-job survival/descendant Stop, and replacement with retained fixture
-project/certificate and explicit Continue. This evidence applies to that exact source and Linux tuple.
-The `--workflow` lane on harness `499038e` passed against the same archive: registered project,
-coordinator connection/resumption, real systemd task jobs, Stop, saved draft/session/merge hold,
-queued steering and deliberate continuation after replacement. Its synchronous driver owns separate
-fictional state; this does not establish background daemon scheduling or full onboarding.
-Harness `99e5b7e` also passed claim-recovery fault injection on that archive after actual container
-replacement: an exited owner's prelaunch claim restores input before continuation, while a launch
-without confirmed worker identity faults without replay. This is not evidence of a real provider crash.
-Full application, onboarding and recovery acceptance is not established yet. The tested rootless
-payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
-Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
-Host authorization acceptance remains open for the complete application. The confirmed crun cleanup
-fallback to the host system manager is removed by explicit cgroupfs selection and distribution crun.
-A disposable Ubuntu 24.04 VM (kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1) establishes nested real
-systemd, effective outer and inner service quotas, graceful Stop/restart, forced cleanup and private
-store retirement. Its system-manager monitor observes positive StopUnit controls before and after
-runtime work and no libpod manager calls. These fixture results do not establish the new launcher's
-complete lifecycle, final Altitude image, published HTTPS, provider sessions or Mac acceptance.
+Container support is under validation on Linux x86_64 (also called amd64). The candidate uses
+rootless Podman, cgroupfs inside a delegated host user service, and real systemd inside the image.
+The tested environment is Ubuntu 24.04, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1 and cgroup v2.
+The actual launcher/image lanes establish published local HTTPS, effective resource limits,
+Stop/restart/replacement, worker profiles, fictional task workflows, private backup/restore and
+bounded failure recovery. An independent guest service-manager monitor observes denied controls
+and fails on unexpected management requests, including cleanup. See [evidence](#evidence) for the
+reproducible commands and their limits.
+
+Complete daemon-driven browser onboarding remains under validation. Real provider sessions,
+Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation are unverified.
+The tested payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
+Containerized Linux does not provide native macOS, Xcode or iOS builds. The Mac stage needs its own
+reviewed VM/control transport and native host evidence before a support claim.
 
 ## Boundary
 
@@ -158,8 +145,8 @@ while paused and removes the notice after a fresh admitted status. It offers no 
 route. Task/coordinator credentials refuse the host action; same-UID trust limits remain unchanged.
 Policy-confined workers running as the application UID can rewrite the receipt directly. These
 controls manage Altitude launch admission and are not a security boundary against those workers.
-The OS-sandboxed engine's receipt-directory denial passed for both generated roles on the exact
-image above; the ordinary application-user control could write there. This establishes the tested
+The OS-sandboxed engine's receipt-directory denial passed for both generated roles in the native
+profile lane; the ordinary application-user control could write there. This establishes the tested
 native profile boundary, not real provider-session/configuration stacking or other-engine parity.
 
 Pause rejects new admissions atomically. Calls admitted earlier can finish, including a launch
@@ -363,8 +350,10 @@ file and TLS keys retain ownership, modes, timestamps and user/POSIX ACL metadat
 orders refuse for the exact lineage-admission reason; restored identity remains paused. Actual
 helper log commands and store paths contain no archive output, and the user journal contains no
 fictional secret sentinel. The byte limit applies to the binary output stream, not Podman's own
-database writes. These are fictional data and small-archive checks, not real-account or maximum-size
-throughput acceptance.
+database writes. The lane also omits a fixture cleanup callback, kills the transfer frontend/worker,
+then proves that the next preflight reports the retained private transfer and exact recovery removes
+its partial artifacts. This covers a skipped callback, not a physical host reboot during transfer.
+These are fictional data and small-archive checks, not real-account or maximum-size throughput acceptance.
 
 `scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
 external engine/tool observations through its published HTTPS endpoint. Chromium runs in the

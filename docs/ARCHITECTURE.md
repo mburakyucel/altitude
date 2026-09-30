@@ -17,11 +17,12 @@ inside a rootless Linux image. `platform.py` reads image identity outside writab
 runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
 refuse every peer in that deployment. Source merges remain ordinary project delivery; application
 activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
-manager. Immutable resources and persistent home/projects have separate lifetimes. Image startup,
-local HTTPS, elevation-file inventory and the native diagnostic permission matrix passed on
-`1639f31`, including receipt denial and primitive restart/replacement/descendant cleanup;
-[container evidence](CONTAINERS.md) names the exact archive and limits. Provider-session
-confinement parity, full workflow/lifecycle and Mac runtime evidence remain pending. Resume-claim ownership
+manager. Immutable resources and persistent home/projects have separate lifetimes. The reusable
+Linux image/launcher lanes establish startup, published local HTTPS, elevation-file inventory,
+the native diagnostic permission matrix, restart/replacement/descendant cleanup and private
+backup/restore. [Container evidence](CONTAINERS.md#evidence) names the tested runtime and limits.
+Provider-session confinement parity, complete browser onboarding and Mac runtime evidence remain
+pending. Resume-claim ownership
 uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
 Container admission has one persistent receipt and a root-owned container-instance identity.
 The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
