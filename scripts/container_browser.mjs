@@ -103,9 +103,10 @@ try {
       await page.goto(url+"/projects/atlas");
       await state("13-replacement-held",page.getByRole('status',{name:'Container work paused'}));
       await page.goto(url+'/projects/atlas/tasks/browser-fixture-task');
+      await page.getByRole('button',{name:'Continue',exact:true}).click();
       await page.getByRole('textbox',{name:'Message the L2'}).fill('Continue the saved fictional draft.');
       await page.getByRole('button',{name:'Send',exact:true}).click();
-      await page.getByRole('button',{name:'Continue',exact:true}).click();
+      await expect(page.getByRole('button',{name:'Resuming…',exact:true})).toBeDisabled();
       if (invoke('task').inputs.length!==1) throw Error('Task launched before host Continue');
       invoke("continue");
       await expect(page.getByRole('status',{name:'Container work paused'})).toBeHidden({timeout:20000});
