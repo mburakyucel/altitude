@@ -1292,7 +1292,7 @@ the current one) with **Cancel** and a red **Remove**; removing the current devi
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
 With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. Add a phone shows a QR code for its camera, or run `alt tls-share` on the computer running
+once. Add a phone shows a setup link and QR code, or run `alt tls-share` on the computer running
 Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
 name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
@@ -1303,8 +1303,8 @@ without HTTPS or a CA file the card is absent.
 | --- | --- |
 | Ready | **Add a phone**. |
 | Opening | **Opening…**, disabled. |
-| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
-| Closing | **Closing…**, disabled, while the service closes the link. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with another phone’s camera, or open setup on this device in a new tab.", a primary **Open setup page** link, the address in small monospace, "Closes in 9:41" counting down each second and **Close**. Opening setup creates a new tab without opener access; the original page keeps the QR, timer, name and SHA-256 for the check. |
+| Closing | **Closing…**, disabled, while the service closes the link; **Open setup page** is absent. |
 | Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
 | Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
 | Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |

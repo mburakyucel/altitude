@@ -301,7 +301,10 @@ cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directo
 keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
 the page sends on Close (confirming only once it succeeds) or when it is left, including while the
 window is still opening. The page keeps the window only in component state, never in a
-query cache. `alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
+query cache. **Open setup page** opens that same share URL in a new tab without opener access,
+retaining the original Settings page, certificate facts and sharing timer. The link is available
+only while sharing is open and disappears during closing or after expiry. `alt pair` takes its link
+from the same discovery. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
