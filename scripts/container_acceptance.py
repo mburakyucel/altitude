@@ -284,12 +284,18 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                             raise RuntimeError("Directory-lock helper never became ready")
                         time.sleep(.2)
                     call(["start", ident])
-                    for attempt in range(20):
-                        units = call(["exec", ident, "systemctl", "show", "altitude-volumes.service",
-                                      "user@1000.service", "--property=Id,ActiveState,Result"])
+                    for attempt in range(30):
+                        try:
+                            units = call(["exec", ident, "systemctl", "show", "altitude-volumes.service",
+                                          "user@1000.service", "--property=Id,ActiveState,Result"])
+                        except RuntimeError:
+                            if attempt == 29:
+                                raise
+                            time.sleep(.2)
+                            continue
                         if "ActiveState=failed" in units and "ActiveState=active" not in units:
                             break
-                        if attempt == 19:
+                        if attempt == 29:
                             raise RuntimeError("Racing controller was not refused before its user manager started")
                         time.sleep(.2)
                     result["volume_lock_refusal"] = units
