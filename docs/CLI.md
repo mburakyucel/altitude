@@ -434,9 +434,12 @@ any capability or authority gap through `alt task escalate <slug> --question 'â€
 the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
 correction follows the existing task/PR path. A changed operational contract requires its decision
 before execution. The owner investigates as part of its task: relevant, non-invasive diagnosis
-proceeds iteratively on its judgment without a plan to approve or per-round permission. A question
-arises only for access the owner lacks, a material machine or service change, unapproved spend, a
-live-provider test or an explicit restriction. Diagnosis does not expand fix scope, machine access or
+proceeds iteratively on its judgment without a plan to approve or per-round permission, and an
+authorized investigation continues through failed attempts until it has a result or reaches a
+genuinely new boundary. A question arises only for access the owner lacks, a material machine or
+service change, unapproved spend, a live-provider test or an explicit restriction. Runaway work
+shows in the task's live activity, token usage and L3's stalled-work observation rather than through
+per-attempt approval. Diagnosis does not expand fix scope, machine access or
 merge permission. Unavailable history and unrelated successful checks never establish recovery.
 
 For fictional Atlas tasks whose original worker units were collected, the procedure is:
@@ -1159,7 +1162,8 @@ operator chat `turn_id`, available from the project's recorded chat; an L3-autho
 operator source. The existing CLI door checks owning task and attempt, and the resolution checks
 source provenance and timing. An operator message sent after the question was first asked can settle
 its current revision, including after re-publication; the owner judges whether it still answers the
-question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer can settle an L3-audience question. For an
+question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer, including L3's resume reason, can settle an L3-audience question; a resume reason
+never answers an operator question or approves a merge. For an
 unnecessary operator escalation already settled within delegated L3 authority, the owner adds
 `--l3-authority` with the specific brief/rule/recorded-decision evidence and why it applies. This requires
 an authentic L3 task message bound to that exact question revision. The owner judges the substance;
@@ -1694,18 +1698,23 @@ alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
 
-The owner asks the operator a plain question naming the purpose and its verification and resolves
-the operator's answer with `alt task resolve`. L3 or the operator then records the grant citing that
-same message after judging that the answer is a yes; the owner cannot record its own. The rest is
+The owner asks the operator once per purpose, in a plain question naming the purpose and its bounds
+(what may run and what may not, limits, cleanup, verification and when the purpose ends), and
+resolves the operator's answer with `alt task resolve`. L3 or the operator then records the grant
+citing that same message after judging that the answer is a yes, and L3 resumes the owner; the owner
+cannot record its own. L3's resume reason can settle the owner's L3-audience wait for the grant. The rest is
 mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
 attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
 answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
 record `machine-grant-refused` and change nothing.
 
-The purpose grant covers relevant run/inspect/adjust iteration without approval for each command;
-one command at a time is an execution limit. Broader access or purpose still needs its own authority,
-and explicit one-run restrictions remain binding. Retain evidence and revoke the grant when done.
+The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
+including after a failed attempt, without approval for each command or attempt. One command at a time
+is an execution limit. The grant records the purpose as approved, no narrower; a one-run limit exists
+only when the operator's answer sets one, because a single run is itself the risk. A materially
+different access, service change, spend or live-provider test still needs its own answer. Retain
+evidence and revoke the grant when done.
 
 `alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
