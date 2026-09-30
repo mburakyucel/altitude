@@ -29,6 +29,10 @@ def run(action, value):
                 command(['cp',str(SOURCE/'tests'/source),ident+':/opt/fixture/'+dest])
             command(['exec',ident,'chmod','755','/opt/fixture/engine'])
             command(['exec',ident,'python3','-c',"from pathlib import Path;Path('/etc/systemd/user/altitude.service.d/fixture.conf').write_text('[Service]\\nExecStart=\\nExecStart=/usr/bin/python3 -B /opt/fixture/daemon.py\\n')"])
+            # A committed test image must not inherit the build container's
+            # admission identity. Production images are built without booting.
+            command(['exec',ident,'python3','-c',
+                "import sys;sys.path.insert(0,'/opt/altitude');from altitude.platform import CONTAINER_INSTANCE;CONTAINER_INSTANCE.unlink()"])
             platform.container_stop('fixture-browser-build')
             fixture=command(['commit',ident,'localhost/altitude:browser-fixture'],timeout=45).strip()
             command(['rm',ident]); command(['volume','rm','browser-build-home','browser-build-projects'])
