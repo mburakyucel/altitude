@@ -48,6 +48,9 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         subprocess.run([sys.executable,str(REPO/'scripts/build_release.py'),'--version','v0.1.0-rc.2',
                         '--output',str(release)],check=True,timeout=240, cwd=REPO)
         if browser:
+            upgrade=work/'upgrade'
+            subprocess.run([sys.executable,str(REPO/'scripts/build_release.py'),'--version','v0.1.0-rc.3',
+                            '--output',str(upgrade)],check=True,timeout=240,cwd=REPO)
             # This command itself is run in alt task validate; the browser keeps
             # its own sandbox in that disposable runner, not in the worker.
             subprocess.run(['pnpm','install','--frozen-lockfile'],
@@ -68,6 +71,8 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         identity = work/'source-identity'
         identity.write_text(record['source_commit']+'\n')
         machine.copy(str(release/'altitude-v0.1.0-rc.2.tar.gz'),str(identity),'ubuntu@127.0.0.1:input/')
+        if browser:
+            machine.copy(str(upgrade/'altitude-v0.1.0-rc.3.tar.gz'),'ubuntu@127.0.0.1:input/')
         if native_binary:
             diagnostic = work/'native-sandbox'
             shutil.copyfile(native_binary, diagnostic)

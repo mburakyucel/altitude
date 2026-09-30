@@ -15,29 +15,36 @@ STATE=Path.home()/'input/browser-state.json'
 ARCHIVE=Path.home()/'input/altitude-v0.1.0-rc.2.tar.gz'
 
 
+def fixture_image(archive, suffix):
+    command=platform.container_command
+    image=container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base-'+suffix)
+    ident=container.start(image['Id'],'fixture-browser-build','browser-build-home','browser-build-projects',
+        '127.0.0.1','localhost',19448,new_volumes=True)
+    command(['exec',ident,'mkdir','-p','/opt/fixture','/etc/systemd/user/altitude.service.d'])
+    for source,dest in [('container_browser_daemon.py','daemon.py'),('container_browser_engine.py','engine')]:
+        command(['cp',str(SOURCE/'tests'/source),ident+':/opt/fixture/'+dest])
+    command(['exec',ident,'chmod','755','/opt/fixture/engine'])
+    command(['exec',ident,'python3','-c',"from pathlib import Path;Path('/etc/systemd/user/altitude.service.d/fixture.conf').write_text('[Service]\\nExecStart=\\nExecStart=/usr/bin/python3 -B /opt/fixture/daemon.py\\n')"])
+    # A committed test image must not inherit the build container's
+    # admission identity. Production images are built without booting.
+    command(['exec',ident,'python3','-c',
+        "import sys;sys.path.insert(0,'/opt/altitude');from altitude.platform import CONTAINER_INSTANCE;CONTAINER_INSTANCE.unlink()"])
+    platform.container_stop('fixture-browser-build')
+    fixture=command(['commit',ident,'localhost/altitude:browser-fixture-'+suffix],timeout=45).strip()
+    command(['rm',ident]); command(['volume','rm','browser-build-home','browser-build-projects'])
+    return fixture,image['Id']
+
+
 def run(action, value):
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
         command=platform.container_command
         if action=='prepare':
-            archive=ARCHIVE
-            image=container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base')
-            ident=container.start(image['Id'],'fixture-browser-build','browser-build-home','browser-build-projects',
-                '127.0.0.1','localhost',19448,new_volumes=True)
-            command(['exec',ident,'mkdir','-p','/opt/fixture','/etc/systemd/user/altitude.service.d'])
-            for source,dest in [('container_browser_daemon.py','daemon.py'),('container_browser_engine.py','engine')]:
-                command(['cp',str(SOURCE/'tests'/source),ident+':/opt/fixture/'+dest])
-            command(['exec',ident,'chmod','755','/opt/fixture/engine'])
-            command(['exec',ident,'python3','-c',"from pathlib import Path;Path('/etc/systemd/user/altitude.service.d/fixture.conf').write_text('[Service]\\nExecStart=\\nExecStart=/usr/bin/python3 -B /opt/fixture/daemon.py\\n')"])
-            # A committed test image must not inherit the build container's
-            # admission identity. Production images are built without booting.
-            command(['exec',ident,'python3','-c',
-                "import sys;sys.path.insert(0,'/opt/altitude');from altitude.platform import CONTAINER_INSTANCE;CONTAINER_INSTANCE.unlink()"])
-            platform.container_stop('fixture-browser-build')
-            fixture=command(['commit',ident,'localhost/altitude:browser-fixture'],timeout=45).strip()
-            command(['rm',ident]); command(['volume','rm','browser-build-home','browser-build-projects'])
-            STATE.write_text(json.dumps({'image':fixture,'instances':[]}))
-            return {'image':fixture,'source_image':image['Id']}
+            fixture,base=fixture_image(ARCHIVE,'old')
+            upgraded,new=fixture_image(ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'),'new')
+            STATE.write_text(json.dumps({'image':fixture,'upgrade':upgraded,'instances':[]}))
+            return {'image':fixture,'source_image':base,'upgrade':upgraded,'upgrade_source_image':new,
+                    'version_scope':'Two fixture release versions from the same application schema; no arbitrary migration claim'}
         state=json.loads(STATE.read_text())
         instance=value.get('instance','browser-desktop')
         if action=='start':
@@ -76,6 +83,18 @@ def run(action, value):
         if action=='backup':
             platform.container_stop(instance)
             saved=container.backup(instance,ROOT/('backup-'+instance))
+            command(['rm',container.owned(instance)['Id']])
+            container.start(state['upgrade'],instance,instance+'-home',instance+'-projects',
+                '127.0.0.1','localhost',19448)
+            upgraded=container.lifecycle(instance)
+            if upgraded['ready']: raise RuntimeError('Version upgrade bypassed host Continue')
+            version=json.loads(container.execute(instance,['python3','-c',
+                "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import config;print(json.dumps(config.RELEASE['version']))"]))
+            if version!='v0.1.0-rc.3': raise RuntimeError('Updated image version is not active')
+            container.lifecycle(instance,'continue',expected=upgraded['instance'])
+            container.execute(instance,['python3','-c',
+                "from pathlib import Path;(Path.home()/'.fixture-after-upgrade').write_text('newer state')"])
+            platform.container_stop(instance)
             restored=instance+'-restored'
             copy=container.restore_backup(ROOT/('backup-'+instance),restored+'-home',restored+'-projects')
             container.start(copy['image'],restored,copy['home'],copy['projects'],
@@ -87,9 +106,10 @@ def run(action, value):
                 "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import config,state as S;"
                 "t=S.load_task('atlas','browser-fixture-task');"
                 "print(json.dumps({'projects':sorted(config.load_projects()),'operator':config.operator_name(),"
-                "'task_session':t['session_id'],'hold':t['hold_merge']}))"]))
+                "'task_session':t['session_id'],'hold':t['hold_merge'],'version':config.RELEASE['version'],"
+                "'later_state_absent':not (config.HOME/'.fixture-after-upgrade').exists()}))"]))
             platform.container_stop(restored)
-            return {'complete':saved['format']==1,'paused':not receipt['ready'],**observed}
+            return {'complete':saved['format']==1,'paused':not receipt['ready'],'upgraded_version':version,**observed}
         if action=='cleanup':
             for name in state['instances']:
                 platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())

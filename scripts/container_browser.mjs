@@ -153,7 +153,9 @@ try {
       const backup=invoke('backup');
       if(!backup.complete || !backup.paused || backup.operator!=='Ada Container' ||
          backup.projects.join(',')!=='atlas,custom,notes' || backup.task_session!==savedTask.session ||
-         backup.hold!==savedTask.hold) throw Error('Registered-project backup/restore lost saved identity');
+         backup.hold!==savedTask.hold || backup.version!=='v0.1.0-rc.2' ||
+         backup.upgraded_version!=='v0.1.0-rc.3' || !backup.later_state_absent)
+        throw Error('Registered-project update and backup recovery lost saved identity');
       result.viewports.push({name,viewport,walked,backup,passed:true});
     } catch(error) {
       try {writeFileSync(join(evidence,'daemon.json'),JSON.stringify(invoke('diagnostics'),null,2));}catch{}
