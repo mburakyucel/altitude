@@ -208,9 +208,9 @@ Stop/resume across planned replacement; destruction during a running task or lau
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
-The private backup/restore lane passes on the recorded Ubuntu amd64 fixture. Complete onboarding,
-Mac and final delivery acceptance remain open. Do not migrate an existing native installation with
-these commands.
+The private backup/restore and phone/desktop onboarding lanes pass on the recorded Ubuntu amd64
+fixture. Combining registered-project backup with version-upgrade recovery, Mac and final delivery
+acceptance remain open. Do not migrate an existing native installation with these commands.
 
 ### Private backup and restore
 
