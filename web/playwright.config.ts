@@ -17,7 +17,6 @@ export default defineConfig({
     browserName: "chromium",
     // I-20260907-041446: the host's installed Chrome profile denies sandboxed networking.
     // pnpm ui sets a shared, writable browser cache under the Altitude home before runner startup.
-    channel: "chromium",
     launchOptions: {
       chromiumSandbox: false,
       // Capture stays inside Chromium; walkthroughs never request a physical microphone.

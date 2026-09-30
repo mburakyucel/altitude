@@ -173,7 +173,8 @@ and execution. Only this fictional local UI harness disables Chromium's own sand
 filesystem sandbox; profiles/configuration remain temporary or under
 ignored `web/ui-artifacts/`. Missing browsers fail with installation guidance.
 Incident I-20260907-041446 records an installed Chrome AppArmor network restriction in that worker
-context. The harness uses locked bundled Chromium in Altitude home's shared `browsers/` directory;
+context. The harness uses Playwright's locked bundled Chromium headless shell in Altitude home's
+shared `browsers/` directory, with no full-browser channel override;
 a missing bundle is a failed prerequisite. This historical observation does not diagnose other hosts
 or establish that bundled Chromium supports its own sandbox inside a worker.
 
@@ -248,6 +249,43 @@ off the HTTP cache, and records each request's encoded size, encoding and cache 
 Chrome DevTools Protocol, with `Network.emulateNetworkConditions` for slow links. Wait for a landmark
 and the script's finished load, never network idle: the change stream stays open. Report cold, warm
 and slow opens separately, and keep simulated links distinct from the operator's real connection.
+
+## Native Mac browser runtime candidate
+
+The [pinned runtime patch](../patches/codex-0.159.0-seatbelt-browser.patch) is a preparation
+artifact for incident I-20260929-203338 ([issue 625](https://github.com/mburakyucel/altitude/issues/625)).
+It applies to upstream commit `687a119f0fcaace47e1f1abcc77cec6c813fd6da`. The release archive's
+workspace version is reset to `0.0.0` to match its unchanged Cargo lockfile; external dependency
+versions, checksums and Git revisions stay pinned. Rust uses the upstream `1.95.0` toolchain.
+Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
+`just test -p codex-sandboxing --lib --locked --target aarch64-apple-darwin --cargo-profile dev-small`.
+The added policy tests cover effective worker roots, read-only/reviewer, network-disabled/L3,
+filesystem-helper and narrowed custom profiles, plus whole-name matching. Native nested-sandbox
+tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
+
+Build the CLI and its code-mode host together using upstream's package builder's verified V8
+artifact pair:
+
+```sh
+cargo build --locked --target aarch64-apple-darwin --profile dev-small --bin codex --bin codex-code-mode-host
+```
+
+Assemble the canonical package from those two binaries
+with upstream `just assemble-codex-package`; give it a distinct custom package version and compiled
+commit stamp. Keep upstream archive, patch, toolchain, lockfile, build command and target, package
+inputs and executable SHA-256 digests in the task's private build record. A prepared build is not
+an installed runtime or recovery evidence.
+
+Installation and selection require their own operator-approved machine purpose and a protected
+artifact. The existing executable setting covers several roles; exclusion is proved in their
+effective policies. No automatic installation, update, general CLI replacement or service action
+is part of preparation. Maintainers review and rebase the patch for each upstream update.
+Adoption requires a new intended confined candidate worker, finite blank/local fictional preflight
+with disposable storage and cleanup, worker/role negative checks and synthetic namespace/peer tests.
+Matching-name collisions, spoofing or cross-task port exchange/disruption stop adoption; the name
+filter supplies no task identity and Chromium's separate peer enforcement is disabled by default.
+Required browser protections and the security merge hold still apply. The validation container
+does not establish native Mac acceptance; the sandbox-required runner is unavailable on macOS.
 
 ## Validation runner
 

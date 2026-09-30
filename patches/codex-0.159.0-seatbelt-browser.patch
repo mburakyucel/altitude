@@ -1,0 +1,260 @@
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -157,7 +157,7 @@
+ resolver = "2"
+ 
+ [workspace.package]
+-version = "0.159.0"
++version = "0.0.0"
+ # Track the edition for all workspace crates in one place. Individual
+ # crates can still override this value, but keeping it here means new
+ # crates created with `cargo new -w ...` automatically inherit the 2024
+--- a/codex-rs/sandboxing/src/seatbelt.rs
++++ b/codex-rs/sandboxing/src/seatbelt.rs
+@@ -1050,6 +1050,27 @@
+         file_write_policy,
+         network_policy,
+     ];
++    // I-20260929-203338: confined Chromium headless-shell startup needs its
++    // rendezvous service. A lossy legacy projection must not grant IPC to a
++    // narrower custom filesystem profile. Names are shared, not task identities.
++    if profile == MacosSeatbeltProfile::Process
++        && network_sandbox_policy.is_enabled()
++        && let Ok(legacy_policy @ SandboxPolicy::WorkspaceWrite { .. }) = file_system_sandbox_policy
++            .to_legacy_sandbox_policy(network_sandbox_policy, sandbox_policy_cwd)
++        && file_system_sandbox_policy.is_semantically_equivalent_to(
++            &FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
++                &legacy_policy,
++                sandbox_policy_cwd,
++            ),
++            sandbox_policy_cwd,
++        )
++    {
++        policy_sections.push(
++            r#"(allow mach-register mach-lookup
++  (global-name-regex #"^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][1-9][0-9]*$"))"#
++                .to_string(),
++        );
++    }
+     if file_system_sandbox_policy.has_full_disk_read_access() {
+         policy_sections.push(MACOS_SEATBELT_PREFERENCES_POLICY.to_string());
+     }
+--- a/codex-rs/sandboxing/src/seatbelt_tests.rs
++++ b/codex-rs/sandboxing/src/seatbelt_tests.rs
+@@ -114,6 +114,216 @@
+ }
+ 
+ struct TestConfigReloader;
++
++#[test]
++fn chromium_rendezvous_only_for_canonical_networked_workspace_processes() {
++    let workspace = TempDir::new().expect("temporary workspace");
++    let policy = SandboxPolicy::WorkspaceWrite {
++        writable_roots: Vec::new(),
++        network_access: true,
++        exclude_tmpdir_env_var: true,
++        exclude_slash_tmp: true,
++    };
++    let canonical =
++        FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, workspace.path());
++    let mut reordered = canonical.clone();
++    reordered.entries.reverse();
++    let mut denied_glob = canonical.clone();
++    denied_glob.entries.push(FileSystemSandboxEntry {
++        path: FileSystemPath::GlobPattern {
++            pattern: format!("{}/**/*.env", workspace.path().display()),
++        },
++        access: FileSystemAccessMode::Deny,
++        missing_path_behavior: None,
++    });
++    let git_common = workspace.path().join("repository/.git");
++    let git_worktree = git_common.join("worktrees/task");
++    let task_state = workspace.path().join("task-state");
++    for path in [&git_common, &git_worktree, &task_state] {
++        fs::create_dir_all(path).expect("create writable role root");
++    }
++    let worker_policy = SandboxPolicy::WorkspaceWrite {
++        writable_roots: vec![git_common, git_worktree, task_state]
++            .into_iter()
++            .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute root"))
++            .collect(),
++        network_access: true,
++        exclude_tmpdir_env_var: false,
++        exclude_slash_tmp: false,
++    };
++    let worker = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
++        &worker_policy,
++        workspace.path(),
++    );
++    let mut denied_read = canonical.clone();
++    denied_read.entries.push(FileSystemSandboxEntry::new(
++        AbsolutePathBuf::from_absolute_path(workspace.path().join("private"))
++            .expect("absolute private path")
++            .into(),
++        FileSystemAccessMode::Deny,
++    ));
++    let mut read_only_child = canonical.clone();
++    read_only_child.entries.push(FileSystemSandboxEntry::new(
++        AbsolutePathBuf::from_absolute_path(workspace.path().join("docs"))
++            .expect("absolute docs path")
++            .into(),
++        FileSystemAccessMode::Read,
++    ));
++    let minimal = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Minimal,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("absolute workspace")
++                .into(),
++            FileSystemAccessMode::Write,
++        ),
++    ]);
++    for (name, filesystem, network, profile, permitted) in [
++        (
++            "workspace",
++            canonical.clone(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "equivalent reordered profile",
++            reordered,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "worker with Git and task roots",
++            worker,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "network-disabled workspace",
++            canonical.clone(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "filesystem helper",
++            canonical,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::FileSystemHelper,
++            false,
++        ),
++        (
++            "read-only with network",
++            FileSystemSandboxPolicy::read_only(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "read-only without network",
++            FileSystemSandboxPolicy::read_only(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "unrestricted",
++            FileSystemSandboxPolicy::unrestricted(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "external sandbox",
++            FileSystemSandboxPolicy::external_sandbox(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom denied read",
++            denied_read,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom denied glob",
++            denied_glob,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom read-only child",
++            read_only_child,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "restricted minimal reviewer profile",
++            minimal,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++    ] {
++        let args = create_seatbelt_command_args_with_profile(
++            CreateSeatbeltCommandArgsParams {
++                command: vec!["/usr/bin/true".to_string()],
++                file_system_sandbox_policy: &filesystem,
++                network_sandbox_policy: network,
++                sandbox_policy_cwd: workspace.path(),
++                enforce_managed_network: false,
++                managed_network: None,
++                environment_id: None,
++                network: None,
++                extra_allow_unix_sockets: &[],
++            },
++            profile,
++            /*allowed_symlinked_codex_home*/ None,
++        )
++        .expect("policy assembly");
++        let text = seatbelt_policy_arg(&args);
++        assert_eq!(
++            text.contains("(allow mach-register mach-lookup"),
++            permitted,
++            "{name}"
++        );
++        if permitted {
++            let expression = text
++                .split("(global-name-regex #\"")
++                .nth(1)
++                .expect("rendezvous filter")
++                .split('"')
++                .next()
++                .expect("expression");
++            let matcher = regex_lite::Regex::new(expression).expect("name matcher");
++            assert!(matcher.is_match("org.chromium.Chromium.MachPortRendezvousServer.1234"));
++            for service in [
++                "com.apple.WindowServer",
++                "org.chromium.Chromium.MachPortRendezvousServer.0",
++                "org.chromium.Chromium.MachPortRendezvousServer.01",
++                "org.chromium.Chromium.MachPortRendezvousServer.1234.extra",
++                "prefix.org.chromium.Chromium.MachPortRendezvousServer.1234",
++                "orgXchromiumXChromiumXMachPortRendezvousServerX1234",
++            ] {
++                assert!(
++                    !matcher.is_match(service),
++                    "unexpected service match: {service}"
++                );
++            }
++        }
++    }
++}
+ 
+ impl ConfigReloader for TestConfigReloader {
+     fn source_label(&self) -> String {
