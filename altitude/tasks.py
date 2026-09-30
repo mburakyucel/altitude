@@ -1838,10 +1838,12 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
     return question
 
 
-def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
+def _decision_messages(project: str, slug: str, source: str, *, resumes: bool = False) -> list[dict]:
     if source == "task":
-        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
-        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
+        # A resume reason never answers an operator question or approves a merge; `resumes` admits L3's
+        # reason for the L3-audience question it settles (the grant it recorded before resuming the owner).
+        return [row for row in task_messages(project, slug)
+                if not row.get("removed_at") and (resumes or not row.get("resume"))]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
@@ -1858,8 +1860,10 @@ def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
 def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str, *,
                      l3_authority: str | None = None, exact: bool = False) -> dict:
     """Original authority and viewed revision shared by decisions and merge reconciliation."""
-    row = next((r for r in _decision_messages(project, slug, source) if r["id"] == message_id), None)
-    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
+    resumes = question["audience"] == "l3" and not l3_authority and not exact
+    row = next((r for r in _decision_messages(project, slug, source, resumes=resumes) if r["id"] == message_id), None)
+    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE
+                           and not row.get("resume"))
                           or (source == "task" and (question["audience"] == "l3" or l3_authority)
                               and row["role"] == "l3" and row.get("by") == "l3"))
     if l3_authority and not (source == "task" and row and row["role"] == "l3" and row.get("by") == "l3"):
