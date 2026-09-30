@@ -1,7 +1,17 @@
 {
-  "basis": "Approved v5 top-level proc exposure and writable predicates. Readable /proc/sys paths additionally require same-tuple default-protection evidence with the same file type.",
+  "basis": "Approved v5 whole-container exposure; validation/129 enumerates eleven ACPI/SCSI descendant read predicates for both UIDs, with no content reads or extra writes. Independently reviewed reconciliation retains exact matches. This measured tuple must not be inherited by Mac/ARM64 or other runtimes; re-derive and review the complete inventory there.",
+  "tuple": {
+    "distribution": "ubuntu",
+    "release": "24.04",
+    "architecture": "amd64",
+    "kernel": "6.8.0-142-generic",
+    "podman": "4.9.3",
+    "crun": "crun version 1.14.1",
+    "network": "slirp4netns"
+  },
   "readable": [
     "/proc/acpi",
+    "/proc/acpi/wakeup",
     "/proc/asound",
     "/proc/bus",
     "/proc/fs",
@@ -10,6 +20,16 @@
     "/proc/keys",
     "/proc/latency_stats",
     "/proc/scsi",
+    "/proc/scsi/device_info",
+    "/proc/scsi/scsi",
+    "/proc/scsi/sg",
+    "/proc/scsi/sg/allow_dio",
+    "/proc/scsi/sg/debug",
+    "/proc/scsi/sg/def_reserved_size",
+    "/proc/scsi/sg/device_hdr",
+    "/proc/scsi/sg/device_strs",
+    "/proc/scsi/sg/devices",
+    "/proc/scsi/sg/version",
     "/proc/sys"
   ],
   "writable": {

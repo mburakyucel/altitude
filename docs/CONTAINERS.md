@@ -324,6 +324,12 @@ or network interfaces, a second small container with default proc protections mu
 readable file type; this comparison never treats a top-level masked
 device placeholder as a readable kernel file. Extra access fails the gate and retains both records
 for review. Access predicates are not successful opens/writes or proof of kernel isolation.
+The reviewed Ubuntu tuple additionally permits these exact readable predicates for both UIDs:
+`/proc/acpi/wakeup`, `/proc/scsi/device_info`, `/proc/scsi/scsi`, `/proc/scsi/sg`, and
+`/proc/scsi/sg/{allow_dio,debug,def_reserved_size,device_hdr,device_strs,devices,version}`.
+The expanded inventory measured these descendants without reading their contents; none adds a
+writable predicate. The acceptance policy rejects another kernel/runtime/network/architecture
+tuple rather than inheriting this list. Mac and other tuples require full remeasurement and review.
 
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
 image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-none payloads,

@@ -3,10 +3,37 @@ import json
 from pathlib import Path
 import unittest
 
-from tests.container_proc_probe import differences
+from tests.container_proc_probe import differences, require_tuple
 
 
 class ProcPolicy(unittest.TestCase):
+    def test_measured_descendants_are_exact_read_only_predicates_for_both_principals(self):
+        policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
+        paths=[p for p in policy['readable'] if p.startswith(('/proc/acpi/','/proc/scsi/'))]
+        self.assertEqual(len(paths),11)
+        for uid in (0,1000):
+            baseline={'uid':uid,'rows':[]}
+            for path in paths:
+                row={'path':path,'readable':True,'writable':False}
+                self.assertEqual(differences({'uid':uid,'rows':[row]},policy,baseline),[])
+                row['writable']=True
+                self.assertEqual(differences({'uid':uid,'rows':[row]},policy,baseline),[path+':writable'])
+            for path in ('/proc/acpi/other','/proc/scsi/sg/new','/proc/scsi/sg/devices/child'):
+                self.assertEqual(differences({'uid':uid,'rows':[{'path':path,'readable':True}]},policy,baseline),
+                                 [path+':readable'])
+
+    def test_another_runtime_or_architecture_cannot_inherit_the_measured_allowlist(self):
+        policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
+        value=policy['tuple']
+        info={'host':{'distribution':{'distribution':value['distribution'],'version':value['release']},
+            'arch':value['architecture'],'kernel':value['kernel'],
+            'ociRuntime':{'version':value['crun']+'\nfixture metadata'}},'version':{'Version':value['podman']}}
+        self.assertEqual(require_tuple(info,value['network'],policy),value)
+        info['host']['arch']='arm64'
+        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+        info['host']['arch']=value['architecture'];info['host']['kernel']='another-kernel'
+        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+
     def test_unknown_default_mask_and_new_subtree_access_fail_closed(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
         row={'path':'/proc/irq/fixture','mode':'-rw-r--r--','readable':True,'writable':False}

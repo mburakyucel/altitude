@@ -10,6 +10,17 @@ TOP = ('acpi','asound','bus','fs','irq','kallsyms','kcore','keys','latency_stats
        'sched_debug','scsi','sys','sysrq-trigger','timer_list','timer_stats')
 
 
+def require_tuple(info, network, policy):
+    host=info['host']
+    observed={'distribution':host['distribution']['distribution'],
+        'release':host['distribution']['version'], 'architecture':host['arch'],
+        'kernel':host['kernel'], 'podman':info['version']['Version'],
+        'crun':host['ociRuntime']['version'].splitlines()[0], 'network':network}
+    if observed!=policy['tuple']:
+        raise RuntimeError('Unreviewed proc inventory tuple; record and review its full exposure: '+str(observed))
+    return observed
+
+
 def inspect():
     started=time.monotonic()
     paths={Path('/proc')/name for name in TOP}

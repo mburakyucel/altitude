@@ -26,11 +26,14 @@ from scripts import container
 
 def proc_exposure(command, ident: str, evidence: Path):
     """Retain the approved exposure inventory; any broader predicate fails release (#543)."""
-    from tests.container_proc_probe import differences
+    from tests.container_proc_probe import differences, require_tuple
     source=Path(__file__).resolve().parents[1]/'tests'
     policy=json.loads((source/'fixtures/container-proc-policy.json').read_text())
     program=(source/'container_proc_probe.py').read_text()
     controller=json.loads(command(['inspect',ident]))[0]
+    observed=require_tuple(json.loads(command(['info','--format=json'])),
+                           controller['HostConfig']['NetworkMode'],policy)
+    (evidence/'proc-tuple.json').write_text(json.dumps(observed,indent=2)+'\n')
     failures=[]
     for uid in ('0','1000'):
         baseline_name='fixture-proc-default-'+uuid.uuid4().hex
