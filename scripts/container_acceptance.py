@@ -26,15 +26,28 @@ from scripts import container
 
 def proc_exposure(command, ident: str, evidence: Path):
     """Retain the approved exposure inventory; any broader predicate fails release (#543)."""
+    from tests.container_proc_probe import differences
     source=Path(__file__).resolve().parents[1]/'tests'
-    for path in (source/'container_proc_probe.py',source/'fixtures/container-proc-policy.json'):
-        command(['cp',str(path),ident+':/tmp/'+path.name])
+    policy=json.loads((source/'fixtures/container-proc-policy.json').read_text())
+    program=(source/'container_proc_probe.py').read_text()
+    controller=json.loads(command(['inspect',ident]))[0]
+    failures=[]
     for uid in ('0','1000'):
-        value=json.loads(command(['exec','--user',uid,ident,'python3','/tmp/container_proc_probe.py',
-                                  '/tmp/container-proc-policy.json'],timeout=30))
+        baseline_name='fixture-proc-default-'+uuid.uuid4().hex
+        try:
+            baseline=json.loads(command(['run','--rm','--name',baseline_name,'--cgroupns=private',
+                '--cgroup-parent',controller['HostConfig']['CgroupParent'],'--network=slirp4netns',
+                '--read-only','--memory=128m','--cpus=0.5','--pids-limit=64','--user',uid,
+                '--entrypoint=python3',controller['Image'],'-c',program],timeout=30))
+        finally:
+            command(['rm','--force','--ignore',baseline_name],timeout=30)
+        (evidence/('proc-default-'+uid+'.json')).write_text(json.dumps(baseline,indent=2)+'\n')
+        value=json.loads(command(['exec','--user',uid,ident,'python3','-c',program],timeout=30))
+        value['unexpected_exposure']=differences(value,policy,baseline)
         (evidence/('proc-exposure-'+uid+'.json')).write_text(json.dumps(value,indent=2)+'\n')
-        if value['unexpected_exposure']:
-            raise RuntimeError('Unexpected proc exposure; stop for review: '+str(value['unexpected_exposure']))
+        failures.extend('uid'+uid+':'+item for item in value['unexpected_exposure'])
+    if failures:
+        raise RuntimeError('Unexpected proc exposure; stop for review: '+str(failures))
 
 
 @contextmanager

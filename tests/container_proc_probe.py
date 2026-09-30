@@ -42,10 +42,20 @@ def inspect():
             'warning':'Access predicates only; no kernel contents read or tunables written.'}
 
 
-def differences(result,policy):
+def differences(result,policy,baseline=None):
     uid=str(result['uid'])
     if uid not in policy['writable']: return ['Unexpected probe principal']
     readable=set(policy['readable']) | (set(policy['root_extra_readable']) if uid=='0' else set())
+    if baseline is not None:
+        if baseline['uid']!=result['uid']: return ['Default-protection principal differs']
+        default={row['path']:row for row in baseline['rows']}
+        # Network interfaces and kernel versions have different tunable names.
+        # A read already available through the default read-only /proc/sys mount
+        # is not exposure added by unmask. Never apply this to masked device
+        # placeholders (kcore/keys/etc.), or to any writable predicate.
+        readable.update(row['path'] for row in result['rows'] if row['path'].startswith('/proc/sys/')
+            and row.get('mode') and default.get(row['path'],{}).get('mode','')[0:1]==row['mode'][0]
+            and default.get(row['path'],{}).get('readable'))
     writable=set(policy['writable'][uid])
     return [row['path']+':'+access for row in result['rows'] for access,allowed in
             (('readable',readable),('writable',writable)) if row.get(access) and row['path'] not in allowed]
@@ -53,6 +63,4 @@ def differences(result,policy):
 
 if __name__=='__main__':
     result=inspect()
-    result['unexpected_exposure']=differences(result,json.loads(Path(sys.argv[1]).read_text()))
     print(json.dumps(result))
-    # The owner stores the complete evidence before failing the gate.

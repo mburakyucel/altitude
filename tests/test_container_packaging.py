@@ -238,16 +238,18 @@ class TestImageGate(AltitudeCase):
             if args[0] == "create":
                 containers.append("fixture-id"); return "fixture-id"
             if args[0] == "inspect":
-                return "[{}]"
+                return json.dumps([{'Image':'fixture-image','HostConfig':{'CgroupParent':'/fixture'}}])
             if args[0] == "ps":
                 return "\n".join(containers)
             if args[0] == "rm":
+                if '--ignore' in args and args[-1] not in containers:
+                    return ''
                 containers.remove(args[-1]); return ""
             if args[0] == "images":
                 return "\n".join(images)
             if args[0] == "rmi":
                 images.clear(); return ""
-            if "python3" in args:
+            if "python3" in args or '--entrypoint=python3' in args:
                 raise RuntimeError("fictional payload refusal")
             return "fixture"
         def facts():

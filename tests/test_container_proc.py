@@ -11,17 +11,28 @@ class ProcPolicy(unittest.TestCase):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
         for uid in (0,1000):
             with self.subTest(uid=uid):
-                rows=[{'path':'/proc/sys/kernel/ns_last_pid','readable':True,'writable':True},
+                rows=[{'path':'/proc/sys/kernel/ns_last_pid','mode':'-rw-rw-rw-','readable':True,'writable':True},
                       {'path':'/proc/kcore','readable':False,'writable':False}]
-                self.assertEqual(differences({'uid':uid,'rows':rows},policy),[])
+                baseline={'uid':uid,'rows':[dict(rows[0],writable=False)]}
+                self.assertEqual(differences({'uid':uid,'rows':rows},policy,baseline),[])
                 rows[1]['readable']=True
-                self.assertEqual(differences({'uid':uid,'rows':rows},policy),['/proc/kcore:readable'])
+                self.assertEqual(differences({'uid':uid,'rows':rows},policy,baseline),['/proc/kcore:readable'])
                 rows.append({'path':'/proc/sys/new-interface','readable':True,'writable':True})
                 self.assertIn('/proc/sys/new-interface:writable',differences({'uid':uid,'rows':rows},policy))
         self.assertTrue(differences({'uid':1001,'rows':[]},policy))
 
     def test_root_only_predicate_is_not_implicitly_available_to_application(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
-        row={'path':'/proc/sys/kernel/cad_pid','readable':True,'writable':True}
-        self.assertEqual(differences({'uid':0,'rows':[row]},policy),[])
+        row={'path':'/proc/sys/kernel/cad_pid','mode':'-rw-------','readable':True,'writable':True}
+        self.assertEqual(differences({'uid':0,'rows':[row]},policy,{'uid':0,'rows':[dict(row,writable=False)]}),[])
         self.assertEqual(len(differences({'uid':1000,'rows':[row]},policy)),2)
+
+    def test_default_read_only_tunable_is_not_new_exposure_but_masks_and_writes_still_refuse(self):
+        policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
+        rows=[{'path':'/proc/sys/net/example','mode':'-rw-r--r--','readable':True,'writable':False},
+              {'path':'/proc/kcore','mode':'crw-rw-rw-','readable':True,'writable':True}]
+        baseline={'uid':0,'rows':rows}
+        current={'uid':0,'rows':[rows[0],dict(rows[1],mode='-r--------',writable=False)]}
+        self.assertEqual(differences(current,policy,baseline),['/proc/kcore:readable'])
+        current['rows'][0]=dict(rows[0],writable=True)
+        self.assertIn('/proc/sys/net/example:writable',differences(current,policy,baseline))
