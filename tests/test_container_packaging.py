@@ -225,8 +225,15 @@ class TestImageGate(AltitudeCase):
         evidence = self.tmp / "evidence"
         volumes, containers, calls, images = [], [], [], ["fixture-image"]
         volume_labels = {}
+        reviewed = json.loads((Path(__file__).parent / "fixtures/container-proc-policy.json").read_text())["tuple"]
         def command(args, **kwargs):
             calls.append(args)
+            if args == ["info", "--format=json"]:
+                return json.dumps({"host": {
+                    "distribution": {"distribution": reviewed["distribution"], "version": reviewed["release"]},
+                    "arch": reviewed["architecture"], "kernel": reviewed["kernel"],
+                    "ociRuntime": {"version": reviewed["crun"]}},
+                    "version": {"Version": reviewed["podman"]}})
             if args[:2] == ["volume", "ls"]:
                 return json.dumps([{"Name": name} for name in volumes])
             if args[:2] == ["volume", "create"]:
@@ -239,7 +246,8 @@ class TestImageGate(AltitudeCase):
             if args[0] == "create":
                 containers.append("fixture-id"); return "fixture-id"
             if args[0] == "inspect":
-                return json.dumps([{'Image':'fixture-image','HostConfig':{'CgroupParent':'/fixture'}}])
+                return json.dumps([{'Image':'fixture-image','HostConfig':{
+                    'CgroupParent':'/fixture', 'NetworkMode':reviewed['network']}}])
             if args[0] == "ps":
                 return "\n".join(containers)
             if args[0] == "rm":
