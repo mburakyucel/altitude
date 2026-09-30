@@ -1012,7 +1012,10 @@ def resume_stranded_reports(project: str) -> None:
 
 
 def dispatch_waiting(project: str) -> None:
-    if config.restart_in_progress():
+    # Keep a replacement's queued work untouched without logging a refused
+    # launch per task on every timer tick. Dispatch still rechecks under its lease.
+    lifecycle = platform.container_lifecycle()
+    if config.restart_in_progress() or lifecycle is not None and not lifecycle['ready']:
         return
     queued = [T.release_dependency(project, t["slug"]) if t.get("planned_wait") else t
               for t in S.list_tasks(project) if t["state"] == "queued"]

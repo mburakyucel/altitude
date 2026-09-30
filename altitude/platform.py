@@ -82,7 +82,15 @@ def container_unavailable(subject: str) -> str | None:
         return "Host voice is unavailable in this container. Use browser recognition where supported"
     if subject == "Add a phone":
         return "Export the public CA with the host container command's certificate action; this image publishes no certificate-sharing port."
+    if subject == "Validation":
+        return validation_unavailable()
     return IMAGE_MANAGED
+
+
+def coordinator_socket_directory() -> Path:
+    """Runtime sockets must not become persistent backup data (#543)."""
+    from . import config
+    return Path('/run/user/1000/altitude-l3') if containerized() else config.ROOT / 'l3-verbs'
 
 
 def require_native_application() -> None:

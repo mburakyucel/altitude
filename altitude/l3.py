@@ -40,7 +40,7 @@ def _write_executable(path: Path, text: str) -> None:
 def verb_socket_path(project: str) -> Path:
     """One capability socket per project; the pathname, not model-supplied JSON, binds its authority."""
     name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return config.ROOT / "l3-verbs" / f"{name}.sock"
+    return platform.coordinator_socket_directory() / f"{name}.sock"
 
 
 def _remove_runtime(runtime: Path) -> None:

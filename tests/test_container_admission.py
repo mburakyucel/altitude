@@ -27,6 +27,22 @@ class ContainerAdmission(AltitudeCase):
     def change(self, action):
         return platform.change_container_lifecycle(action, self.identity.return_value)
 
+    def test_paused_dispatch_tick_does_not_attempt_or_log_each_queued_task(self):
+        self.change('pause')
+        with mock.patch.object(dispatch, 'run') as run, mock.patch.object(server, 'log') as log, \
+             mock.patch.object(S, 'list_tasks') as listing:
+            server.dispatch_waiting('fictional')
+        run.assert_not_called()
+        log.assert_not_called()
+        listing.assert_not_called()
+
+    def test_container_broker_is_ephemeral_and_validation_refusal_is_specific(self):
+        self.assertEqual(l3.verb_socket_path('fictional').parent, Path('/run/user/1000/altitude-l3'))
+        self.assertNotEqual(l3.verb_socket_path('fictional'),l3.verb_socket_path('other'))
+        self.assertEqual(platform.container_unavailable('Validation'), platform.validation_unavailable())
+        with mock.patch.object(platform, 'containerized', return_value=False):
+            self.assertEqual(l3.verb_socket_path('fictional').parent,config.ROOT/'l3-verbs')
+
     def test_same_instance_restart_preserves_admission_replacement_and_bad_receipts_close_it(self):
         self.assertTrue(platform.container_lifecycle()["ready"])
         self.assertFalse(self.change("pause")["ready"])

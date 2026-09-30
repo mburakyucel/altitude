@@ -45,6 +45,9 @@ hostile tasks or engines. Existing engine differences remain. Deliberate contain
 trusted host administration. Networking uses explicitly selected slirp4netns, without a destination
 allowlist or a claim that containerization prevents exfiltration.
 
+The daemon's per-project capability sockets live in `/run/user/1000/altitude-l3`, outside both
+persistent volumes. They are recreated with the user-manager lifetime and are not backup data.
+
 Root bootstrap holds kernel locks on both volumes before the application user manager starts.
 Sharing either volume between active controllers refuses startup. These protect normal operations,
 not malicious same-UID software. Locks cover the mounted directory inodes, so restoring entries
