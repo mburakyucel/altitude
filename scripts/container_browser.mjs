@@ -59,7 +59,7 @@ try {
       await state("06-private-incidents",first.getByRole("radio",{name:"Keep incidents on this computer"}));
       await first.getByRole("button",{name:"Continue",exact:true}).click();
       await state("07-host-voice-unavailable",first.getByText(/Voice to text can’t run on this computer/));
-      await first.getByRole("button",{name:"Skip",exact:true}).click();
+      await first.getByRole("button",{name:"Continue",exact:true}).click();
       await state("08-container-folders",first.getByText(/Choose another folder in the container projects volume/));
       await first.getByRole("listitem").filter({hasText:/^atlas\b/}).getByRole("button",{name:"Add project",exact:true}).click();
       const panel=page.getByRole("dialog",{name:"Project setup"});
