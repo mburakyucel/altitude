@@ -391,8 +391,10 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual((row["exit"], row["finished"]), (None, None))
         self.assertIn("interrupted", row["error"])
         self.assertIn("one command at a time", self.run_command("echo meanwhile", status=400)["error"])
-        replacement = server.ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+        # The replacement listens elsewhere; the waiting owner follows the record it writes.
+        replacement = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         replacement.daemon_threads = True
+        self.serving(replacement.server_port)
         threading.Thread(target=replacement.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
         self.addCleanup(replacement.server_close)
         self.addCleanup(replacement.shutdown)

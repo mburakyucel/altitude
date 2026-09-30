@@ -520,25 +520,26 @@ def main(argv=None) -> None:
         if setup_command and (bool(args.repair) != bool(args.reason and args.reason.strip())):
             ap.error("project setup --repair requires --reason; reads accept no reason")
         from altitude import access, tls, validation
-        # The running service's record, not this process's launch environment, says where altd listens and which
-        # CA proves it, so a restart onto another certificate folder does not strand a running worker.
-        try:
-            found = tls.service()
-        except tls.TLSFailure as exc:
-            sys.exit(f"alt {c}: altd unavailable: {exc}")
-        ca = found["tls_dir"] / "ca.crt"
         from urllib.parse import quote
         endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else "task/validate" if validation_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
-        request = urllib.request.Request(f"{found['url']}/api/{endpoint}",
-                                         data=None if setup_command and not args.repair else json.dumps(payload).encode(),
-                                         headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
         import http.client
         import time
-        context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
         # request waits for that command's result instead of running it again.
         reconnect_until, reconnecting = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 120, False
         while True:
+            # The running service's record, not this process's launch environment, says where altd listens and
+            # which CA proves it, read afresh for each attempt, so a restart onto another certificate folder or
+            # port strands neither a running worker nor a command waiting across that restart.
+            try:
+                found = tls.service()
+            except tls.TLSFailure as exc:
+                sys.exit(f"alt {c}: altd unavailable: {exc}")
+            ca = found["tls_dir"] / "ca.crt"
+            request = urllib.request.Request(f"{found['url']}/api/{endpoint}",
+                                             data=None if setup_command and not args.repair else json.dumps(payload).encode(),
+                                             headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
+            context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
                 with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 if validation_run else 130) as response:
                     result = json.load(response)
