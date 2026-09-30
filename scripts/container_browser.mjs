@@ -111,6 +111,7 @@ try {
       invoke("continue");
       await expect(page.getByRole('status',{name:'Container work paused'})).toBeHidden({timeout:20000});
       await state("14-replacement-task-continued",page.getByRole('button',{name:/^Stop/}));
+      await expect.poll(()=>invoke('task').inputs.length,{timeout:30000}).toBe(2);
       const resumed=invoke('task');
       if(resumed.session!==savedTask.session || resumed.draft!==savedTask.draft || resumed.hold!==savedTask.hold ||
          resumed.inputs.length!==2 || resumed.pending!==0 || resumed.inputs[1].prompt.split('Continue the saved fictional draft.').length!==2)
@@ -130,6 +131,22 @@ try {
       await guards.getByRole('button',{name:'Review integration'}).click();
       await guards.getByRole('button',{name:'Use both hook sets'}).click();
       await state('17-custom-hooks-integrated',guards.getByText('Both hook sets are configured and verified.'));
+      await panel.getByRole('button',{name:'Open conversation'}).click();
+      if(name==='phone') await page.getByRole('button',{name:'custom',exact:true}).click();
+      else await page.getByRole('button',{name:'Add a folder',exact:true}).click();
+      await page.getByRole('region',{name:'First run'}).getByRole('listitem')
+        .filter({has:page.getByText('notes',{exact:true})}).getByRole('button',{name:'Add project',exact:true}).click();
+      await state('18-conversation-only-folder',panel.getByRole('status').filter({hasText:/^Conversation ready$/}));
+      await expect(panel.getByText('No Git repository. Conversation is available; Git tasks are unavailable.')).toBeVisible();
+      await expect(panel.getByText(/No project instructions/)).toBeVisible();
+      await panel.getByRole('button',{name:'Open conversation'}).click();
+      await expect(page.getByRole('textbox',{name:'Message L3 about notes'})).toBeVisible();
+      await page.goto(url+'/settings/incident-reports');
+      await state('19-incident-preference-persists',page.getByRole('radio',{name:'Keep incidents on this computer'}));
+      await expect(page.getByRole('radio',{name:'Keep incidents on this computer'})).toBeChecked();
+      await page.goto(url+'/settings/prerequisites');
+      await state('20-container-settings-tools',page.getByText('Run on the host to open the container shell:',{exact:false}));
+      await page.getByRole('button',{name:'Check again',exact:true}).click();
       if (errors.length) throw Error(errors.join("\n"));
       result.viewports.push({name,viewport,walked,passed:true});
     } catch(error) {
