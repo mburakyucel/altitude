@@ -249,8 +249,66 @@ def main():
             if record['pause_before_build'] != record['pause_after_failures']:
                 raise RuntimeError('Build/application failure replaced the neighboring runtime pause helper')
             backup_dir=root/'private-backup'
-            record['backup']=container.backup(instances[2],backup_dir)
-            restored=container.restore_backup(backup_dir,'restored-home','restored-projects')
+            real_job=platform.container_job
+            mode='observe'
+            audit_outputs=[]
+            def audited_job(unit,args,**options):
+                if not unit.startswith('altitude-container-transfer-'):
+                    return real_job(unit,args,**options)
+                source_record=Path(args[-1])
+                observed=[sys.executable,'-c','import json,sys;from pathlib import Path;'
+                    'from tests.container_backup_audit import worker;print(json.dumps(worker(Path(sys.argv[1]),sys.argv[2])))',
+                    str(source_record),mode]
+                # Copy only content-free fixture observation before the real cleanup removes its private directory.
+                audit_path=evidence/f'backup-audit-{unit}.json'
+                audit_outputs.append(audit_path)
+                options['after_stop']=[sys.executable,'-c','import sys,shutil;from pathlib import Path;'
+                    'from scripts.container import cleanup_transfer;p=Path(sys.argv[1]);a=p.parent/"fixture-audit.json";'
+                    'shutil.copyfile(a,sys.argv[2]) if a.exists() else None;cleanup_transfer(p)',str(source_record),str(audit_path)]
+                return real_job(unit,observed,**options)
+            with mock.patch.object(platform,'container_job',side_effect=audited_job):
+                for mode in ('truncate','disk-limit','crash-worker'):
+                    failed_dir=root/('failed-backup-'+mode)
+                    try:
+                        container.backup(instances[2],failed_dir)
+                    except (RuntimeError,ValueError):
+                        pass
+                    else:
+                        raise RuntimeError('Faulted backup was reported complete: '+mode)
+                    if any((failed_dir/name).exists() for name in ('manifest.json','data.tar','image.tar','operation.json')):
+                        raise RuntimeError('Faulted backup retained a payload or completion record: '+mode)
+                mode='wait-for-client-death'
+                abandoned=root/'abandoned-backup'
+                def lose_client():
+                    os.setsid()
+                    container.backup(instances[2],abandoned)
+                frontend=multiprocessing.get_context('fork').Process(target=lose_client)
+                frontend.start()
+                deadline=time.monotonic()+30
+                while not (abandoned/'fixture-ready').exists():
+                    if time.monotonic()>deadline or not frontend.is_alive():
+                        raise RuntimeError('Transfer did not reach the client-death fixture checkpoint')
+                    time.sleep(.1)
+                operation=json.loads((abandoned/'operation.json').read_text())
+                os.killpg(frontend.pid,signal.SIGKILL)
+                frontend.join(10)
+                if frontend.is_alive(): raise RuntimeError('Backup frontend survived the exact fixture kill')
+                subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',operation['unit']],check=True,timeout=10)
+                deadline=time.monotonic()+55
+                while platform.job_active(operation['unit'],platform.container_user_environment()):
+                    if time.monotonic()>deadline: raise RuntimeError('Abandoned transfer service survived cleanup')
+                    time.sleep(.2)
+                if any((abandoned/name).exists() for name in ('manifest.json','data.tar','image.tar','operation.json')):
+                    raise RuntimeError('Client-independent transfer cleanup did not remove partial payloads')
+                mode='observe'
+                record['backup']=container.backup(instances[2],backup_dir)
+                restored=container.restore_backup(backup_dir,'restored-home','restored-projects')
+            observed_audits=[json.loads(path.read_text()) for path in audit_outputs if path.exists()]
+            if sum(len(item['helper_logs']) for item in observed_audits)<2:
+                raise RuntimeError('Both native export and restore helper log observations are required')
+            record['backup_failure_cleanup']=['truncated transport after helper exit0','actual file-size limit',
+                'transfer worker SIGKILL','waiting client killed before transfer worker; independent cleanup']
+            record['backup_log_observations']=observed_audits
             restored_name='fixture-restored'
             instances.append(restored_name)
             container.start(restored['image'],restored_name,'restored-home','restored-projects','127.0.0.1','localhost',19446)
