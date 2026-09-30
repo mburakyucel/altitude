@@ -61,7 +61,7 @@ try {
       await state("07-host-voice-unavailable",first.getByText(/Voice to text can’t run on this computer/));
       await first.getByRole("button",{name:"Continue",exact:true}).click();
       await state("08-container-folders",first.getByText(/Choose another folder in the container projects volume/));
-      await first.getByRole("listitem").filter({hasText:/^atlas\b/}).getByRole("button",{name:"Add project",exact:true}).click();
+      await first.getByRole("listitem").filter({has:page.getByText('atlas',{exact:true})}).getByRole("button",{name:"Add project",exact:true}).click();
       const panel=page.getByRole("dialog",{name:"Project setup"});
       const coordinator=panel.getByRole("listitem").filter({has:page.getByRole("heading",{name:"Coordinator",exact:true})});
       await state("09-first-conversation-failed",coordinator.getByRole("button",{name:"Retry",exact:true}));
@@ -71,6 +71,15 @@ try {
       await expect(panel.getByText("Using AGENTS.md; its contents are unchanged.")).toBeVisible();
       await panel.getByRole("button",{name:"Open conversation"}).click();
       await state("11-coordinator-connected",page.getByText("Fictional container coordinator connected.",{exact:true}).last());
+      await page.getByRole('textbox',{name:'Message L3 about atlas'}).fill('Create the fictional browser task.');
+      await page.getByRole('button',{name:'Send',exact:true}).click();
+      await expect.poll(()=>{try{return invoke('task').inputs.length;}catch{return 0;}},{timeout:45000}).toBe(1);
+      await page.goto(url+'/projects/atlas/tasks/browser-fixture-task');
+      await state('11a-task-running',page.getByRole('button',{name:/^Stop/}));
+      await page.getByRole('button',{name:/^Stop/}).click();
+      await state('11b-task-stopped',page.getByRole('button',{name:'Continue',exact:true}));
+      const savedTask=invoke('task');
+      if (!savedTask.terminated || savedTask.hold!=='Fixture review' || savedTask.inputs.length!==1) throw Error('Task Stop/hold evidence incomplete');
       await page.goto(url+"/settings/name");
       await expect(page.getByLabel("Your name")).toHaveValue("Ada Container");
       await state("12-settings-persist",page.getByLabel("Your name"));
@@ -82,9 +91,20 @@ try {
       if (replaced.ready) throw Error("Replacement did not pause admission");
       await page.goto(url+"/projects/atlas");
       await state("13-replacement-held",page.getByRole('status',{name:'Container work paused'}));
+      await page.goto(url+'/projects/atlas/tasks/browser-fixture-task');
+      await page.getByRole('textbox',{name:'Message the L2'}).fill('Continue the saved fictional draft.');
+      await page.getByRole('button',{name:'Send',exact:true}).click();
+      await page.getByRole('button',{name:'Continue',exact:true}).click();
+      if (invoke('task').inputs.length!==1) throw Error('Task launched before host Continue');
       invoke("continue");
       await expect(page.getByRole('status',{name:'Container work paused'})).toBeHidden({timeout:20000});
-      await state("14-replacement-continued",page.getByRole("textbox",{name:"Message L3 about atlas"}));
+      await state("14-replacement-task-continued",page.getByRole('button',{name:/^Stop/}));
+      const resumed=invoke('task');
+      if(resumed.session!==savedTask.session || resumed.draft!==savedTask.draft || resumed.hold!==savedTask.hold ||
+         resumed.inputs.length!==2 || resumed.pending!==0 || resumed.inputs[1].prompt.split('Continue the saved fictional draft.').length!==2)
+        throw Error('Task continuity or exactly-once queued input evidence differs');
+      await page.getByRole('button',{name:/^Stop/}).click();
+      await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeVisible();
       if (errors.length) throw Error(errors.join("\n"));
       result.viewports.push({name,viewport,walked,passed:true});
     } catch(error) {

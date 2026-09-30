@@ -48,6 +48,15 @@ def run(action, value):
         if action=='pair':
             return json.loads(container.execute(instance,['python3','-c',
                 "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import access;print(json.dumps(access.issue_code()))"]))
+        if action=='task':
+            return json.loads(container.execute(instance,['python3','-c',
+                "import sys,json;from pathlib import Path;sys.path.insert(0,'/opt/altitude');"
+                "from altitude import state as S,tasks as T,engines,dispatch;"
+                "t=S.load_task('atlas','browser-fixture-task');w=Path(t['worktree']);"
+                "print(json.dumps({'state':t['state'],'session':t.get('session_id'),'stop_id':t.get('stop_id'),"
+                "'hold':t.get('hold_merge'),'draft':(w/'fixture-draft.txt').read_text(),"
+                "'inputs':[json.loads(s) for s in (w/'fixture-input.jsonl').read_text().splitlines()],"
+                "'pending':len(T.pending('atlas',t['slug'])),'terminated':engines.worker_termination(t,job_root=dispatch.l2_job_root('atlas',t['slug']))}))"]))
         if action=='restart':
             platform.container_stop(instance); platform.container_launch(instance)
             return container.lifecycle(instance)
