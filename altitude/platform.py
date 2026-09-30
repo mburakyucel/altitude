@@ -35,7 +35,7 @@ import time
 
 
 SERVICE = "altitude.service"
-CONTAINER_STOP_WAIT = 105  # service stop45 + stop-post45 + transport margin15
+CONTAINER_STOP_WAIT = 150  # explicit stop45 + process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the service on macOS.
 LABEL = "dev.altitude.altd"
@@ -403,7 +403,8 @@ def container_parent(unit: str) -> str:
 
 
 def container_job(unit: str, command: list[str], *, wait: bool = False,
-                  after_stop: list[str] | None = None, seconds: int = CONTAINER_BUILD_SECONDS) -> str:
+                  after_stop: list[str] | None = None, before_stop: list[str] | None = None,
+                  seconds: int = CONTAINER_BUILD_SECONDS) -> str:
     """Own the complete container/build lifetime in one bounded user-manager subtree."""
     environment = container_user_environment()
     selected = {key: value for key, value in environment.items()
@@ -417,14 +418,16 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:
         arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={seconds}"]
-    if after_stop is not None:
+    for property_name, stop_command in (('ExecStop',before_stop), ('ExecStopPost',after_stop)):
+        if stop_command is None:
+            continue
         # ExecStopPost is parsed by systemd, not a shell. Disable environment
         # expansion and escape its specifiers/quoting independently of argv.
-        if any(any(character in value for character in "\n\r\x00") for value in after_stop):
+        if any(any(character in value for character in "\n\r\x00") for value in stop_command):
             raise ValueError("Invalid container cleanup command")
         quoted = ['"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
-                  for value in after_stop]
-        arguments.append("--property=ExecStopPost=:" + " ".join(quoted))
+                  for value in stop_command]
+        arguments.append('--property='+property_name+'=:' + " ".join(quoted))
     arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
     try:
         result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
@@ -477,7 +480,7 @@ def container_copy_available(lineage: str, volumes: list[str], *, except_id: str
         unit = labels.get("io.altitude.unit")
         pending = (unit and re.fullmatch(r"altitude-container-[a-zA-Z0-9_.-]+\.service", unit)
                    and job_active(unit, environment))
-        if value.get("State", {}).get("Running") or pending:
+        if not container_stopped(value) or pending:
             raise RuntimeError("Stop the other active container using this volume pair or backup lineage first")
 
 
@@ -528,6 +531,20 @@ def container_owned(instance: str, *, timeout: int = 30) -> dict:
     return value
 
 
+def container_stopped(value: dict) -> bool:
+    """Running=false also describes Stopping; require a settled no-process state (#543)."""
+    state=value.get('State',{})
+    return (state.get('Status') in ('configured','created','exited','stopped')
+            and not state.get('Running') and not state.get('Pid'))
+
+
+def _container_stop_payload(instance: str) -> None:
+    """ExecStop runs before systemd can kill conmon and lose its exit receipt."""
+    value=container_owned(instance,timeout=5)
+    if not container_stopped(value):
+        container_command(['stop','--time=30',value['Id']],timeout=35)
+
+
 def _container_after_stop(instance: str) -> None:
     """Reap through the runtime even if the supervisor died before Stop (#543).
 
@@ -545,9 +562,11 @@ def _container_after_stop(instance: str) -> None:
     if not any(instance in row.get("Names", []) for row in rows):
         return
     value = container_owned(instance, timeout=5)
-    if value["State"]["Running"]:
+    if not container_stopped(value):
         call(["stop", "--time=30", value["Id"]], timeout=35)
     call(["container", "cleanup", value["Id"]], timeout=8)
+    if not container_stopped(container_owned(instance,timeout=3)):
+        raise RuntimeError('Runtime did not settle after forced stop; retain evidence and recreate from the stopped volume pair')
 
 
 def _container_supervise(instance: str, create: list[str] | None) -> None:
@@ -649,7 +668,9 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
                "_container_supervise(sys.argv[1],json.loads(sys.argv[2]))", instance, json.dumps(create)]
     cleanup = [sys.executable, "-c", "import sys;from altitude.platform import _container_after_stop;"
                "_container_after_stop(sys.argv[1])", instance]
-    container_job(unit, command, after_stop=cleanup)
+    stop = [sys.executable, '-c', 'import sys;from altitude.platform import _container_stop_payload;'
+            '_container_stop_payload(sys.argv[1])',instance]
+    container_job(unit, command, before_stop=stop, after_stop=cleanup)
     deadline = time.monotonic() + 90
     error = "Container startup did not finish"
     environment = container_user_environment()
@@ -741,9 +762,9 @@ def container_stop(instance: str) -> None:
     environment = container_user_environment()
     if job_active(unit, environment):
         container_stop_unit(unit, environment)
-    elif value["State"]["Running"]:
+    elif not container_stopped(value):
         raise RuntimeError("Container has no active supervisor; retain it for recovery, do not report stopped")
-    if container_owned(instance)["State"]["Running"] or job_active(unit, environment):
+    if not container_stopped(container_owned(instance)) or job_active(unit, environment):
         raise RuntimeError("Container or supervisor remains active after Stop")
 
 

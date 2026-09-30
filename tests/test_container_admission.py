@@ -250,6 +250,9 @@ with config.provider_admission() as held:
 
     def test_host_launcher_fences_the_instance_seen_before_the_mutation(self):
         calls = []
+        self.patch(container,'owned',return_value={'Id':'fictional','Config':{'Labels':{'io.altitude.lineage':'1'*32}},'Mounts':[]})
+        self.patch(platform,'container_user_environment',return_value={'XDG_RUNTIME_DIR':str(self.tmp)})
+        self.patch(platform,'container_copy_available')
         def execute(instance, command):
             calls.append(command)
             return json.dumps(platform.change_container_lifecycle(command[-2], command[-1]))

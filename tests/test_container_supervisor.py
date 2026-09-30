@@ -213,13 +213,30 @@ class ContainerSupervisorTests(AltitudeCase):
         run.assert_not_called()
 
     def test_stop_post_reaps_exact_owned_runtime_even_when_process_state_is_stale(self):
-        self.patch(platform, "container_owned", return_value=self.value)
+        settled={**self.value,'State':{'Running':False,'Status':'exited','Pid':0}}
+        self.patch(platform, "container_owned", side_effect=[self.value,settled])
         command = self.patch(platform, "container_command", side_effect=[json.dumps([
             {"Names": ["fixture"]}, {"Names": ["unrelated"]}]), "", ""])
         platform._container_after_stop("fixture")
         self.assertEqual(command.call_args_list[-2:], [
             mock.call(["stop", "--time=30", self.value["Id"]], timeout=35),
             mock.call(["container", "cleanup", self.value["Id"]], timeout=8)])
+
+    def test_stopping_is_never_accepted_as_stopped_or_backup_ready(self):
+        value={**self.value,'State':{'Running':False,'Status':'stopping','Pid':42}}
+        self.assertFalse(platform.container_stopped(value))
+        self.patch(platform,'container_owned',return_value=value)
+        self.patch(platform,'container_command',side_effect=['[{"Names":["fixture"]}]','',''])
+        with self.assertRaisesRegex(RuntimeError,'did not settle'):
+            platform._container_after_stop('fixture')
+
+    def test_user_service_stops_runtime_before_killing_its_monitor(self):
+        self.patch(platform,'container_user_environment',return_value={})
+        run=self.patch(platform.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'',''))
+        platform.container_job(self.unit,['fictional'],before_stop=['stop-exact'],after_stop=['cleanup-exact'])
+        args=run.call_args.args[0]
+        self.assertIn('--property=ExecStop=:"stop-exact"',args)
+        self.assertIn('--property=ExecStopPost=:"cleanup-exact"',args)
 
     def test_stop_post_does_not_adopt_unowned_or_partially_created_instances(self):
         command = self.patch(platform, "container_command", return_value='[{"Names":["unrelated"]}]')

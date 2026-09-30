@@ -354,7 +354,7 @@ def transfer_worker(record: Path) -> dict:
         platform.container_copy_available(identity['lineage'],[identity['home'],identity['projects']])
         if operation['action']=='backup':
             value = owned(operation['instance'])
-            if value['State']['Running'] or value['Image'] != operation['image'] or instance_pair_unlocked(value) != identity:
+            if not platform.container_stopped(value) or value['Image'] != operation['image'] or instance_pair_unlocked(value) != identity:
                 raise ValueError('The stopped source changed; backup refused')
             with (directory/'data.tar').open('xb') as data:
                 os.fchmod(data.fileno(),0o600)
@@ -430,7 +430,7 @@ def transfer_job(operation: dict, record: Path) -> dict:
 def backup(instance: str, directory: Path) -> dict:
     platform.container_runtime()
     value=owned(instance)
-    if value['State']['Running']:
+    if not platform.container_stopped(value):
         raise ValueError('Stop the container before a consistent backup')
     identity=instance_pair(value)
     image=json.loads(platform.container_command(['image','inspect',value['Image']]))[0]

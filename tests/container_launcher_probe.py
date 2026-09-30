@@ -222,8 +222,8 @@ def main():
                     raise RuntimeError('Supervisor death left its unit alive')
                 time.sleep(.5)
             record['supervisor_death'] = container.owned(instances[2])['State']
-            if record['supervisor_death']['Running']:
-                raise RuntimeError('Supervisor death left a running payload')
+            if not platform.container_stopped(container.owned(instances[2])):
+                raise RuntimeError('Supervisor death did not settle the runtime to a no-process stopped state')
             if not container.owned(instances[1])['State']['Running']:
                 raise RuntimeError('Supervisor death affected neighbor')
             record['pause_after_failures'] = pause_state()
@@ -240,6 +240,7 @@ def main():
                 raise RuntimeError('Restored copy did not require deliberate new-instance continuation')
             content=container.execute(restored_name,['cat','/home/altitude/private-fixture'])
             if content!='backup-secret-sentinel-7392': raise RuntimeError('Private file did not round trip')
+            record['restored_private_file_and_new_paused_identity']=True
             try:
                 platform.container_launch(instances[2])
             except RuntimeError:
