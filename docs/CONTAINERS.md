@@ -59,7 +59,8 @@ allowlist or a claim that containerization prevents exfiltration.
 
 Root bootstrap holds kernel locks on both volumes before the application user manager starts.
 Sharing either volume between active controllers refuses startup. These protect normal operations,
-not malicious same-UID software that can remove lock files. Bootstrap changes only the two mount
+not malicious same-UID software. Locks cover the mounted directory inodes, so restoring entries
+cannot replace the locks. Bootstrap changes only the two mount
 roots' ownership and never recursively rewrites user data.
 
 Browser terminal, task-terminal transcript reads, host speech, the optional validation runner and in-app update/restart actions are

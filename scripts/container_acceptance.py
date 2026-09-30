@@ -258,6 +258,45 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                                 raise
                             time.sleep(1)
                 if lifecycle:
+                    locker = ("import sys,time;from pathlib import Path;sys.path.insert(0,'/opt/altitude');"
+                              "from altitude.platform import container_volume_locks;"
+                              "locks=container_volume_locks(Path('/locks/home'),Path('/locks/projects'));"
+                              "locks.__enter__();print('directory-locks-held',flush=True);time.sleep(120)")
+                    helper = ["--name", "fixture-lock-holder", "--network=none", "--read-only",
+                              "--cap-drop=all", "--security-opt=no-new-privileges", "--user=1000:1000",
+                              "--cgroup-parent", parent, "--memory=128m", "--cpus=1", "--pids-limit=32",
+                              "--volume", "fixture-home:/locks/home:nocopy",
+                              "--volume", "fixture-projects:/locks/projects:nocopy",
+                              "--entrypoint=python3", image["Id"], "-c", locker]
+                    try:
+                        call(["run", "--rm", *helper], timeout=10)
+                    except RuntimeError as exc:
+                        if "Another Altitude container owns this volume" not in str(exc):
+                            raise
+                    else:
+                        raise RuntimeError("Backup-style helper acquired a running controller's volumes")
+                    call(["stop", "--time", "10", ident])
+                    locked = call(["run", "--detach", *helper]).strip()
+                    for attempt in range(20):
+                        if "directory-locks-held" in call(["logs", locked]):
+                            break
+                        if attempt == 19:
+                            raise RuntimeError("Directory-lock helper never became ready")
+                        time.sleep(.2)
+                    call(["start", ident])
+                    for attempt in range(20):
+                        units = call(["exec", ident, "systemctl", "show", "altitude-volumes.service",
+                                      "user@1000.service", "--property=Id,ActiveState,Result"])
+                        if "ActiveState=failed" in units and "ActiveState=active" not in units:
+                            break
+                        if attempt == 19:
+                            raise RuntimeError("Racing controller was not refused before its user manager started")
+                        time.sleep(.2)
+                    result["volume_lock_refusal"] = units
+                    call(["rm", "--force", locked])
+                    call(["stop", "--time", "10", ident])
+                    start_ready()
+                    result["volume_lock_races_and_recovery"] = True
                     probe("prepare")
                     call(["stop", "--time", "10", ident])
                     start_ready()
@@ -269,7 +308,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     start_ready()
                     probe("replaced")
                     result["uncovered"].remove("Stop/restart/recreation and volume lock concurrency")
-                    result["uncovered"].extend(["full task Stop/resume across image replacement", "volume lock concurrency"])
+                    result["uncovered"].append("full task Stop/resume across image replacement")
                 if workflow or recovery:
                     source = Path(__file__).resolve().parent.parent / "tests/container_workflow_probe.py"
                     result["workflow_probe_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()

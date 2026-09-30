@@ -256,8 +256,7 @@ def _initialize_container_lifecycle(home: Path, projects: Path) -> None:
         temporary.chmod(0o444)
         os.replace(temporary, CONTAINER_INSTANCE)
     instance = _container_instance()
-    fresh = (set(p.name for p in home.iterdir()) <= {".altitude-instance.lock", "Projects"}
-             and set(p.name for p in projects.iterdir()) <= {".altitude-projects.lock"})
+    fresh = set(p.name for p in home.iterdir()) <= {"Projects"} and not any(projects.iterdir())
     if fresh:
         # Do not traverse an application-owned home as root. No user shell, hooks or mutable code.
         subprocess.run([sys.executable, "-B", "-c",
@@ -271,16 +270,13 @@ def _initialize_container_lifecycle(home: Path, projects: Path) -> None:
 def container_volume_locks(home: Path, projects: Path):
     """Hold both controller-volume locks, including across user-manager/daemon restarts.
 
-    Issue #543: a second controller must not race the first on either persistent store. These are
-    operational locks, not protection against malicious software running as the application user.
+    Issue #543: lock the mounted directory inodes so restoring entries cannot replace a
+    lock file. These coordinate supported controllers/helpers, not hostile same-account software.
     """
     with ExitStack() as stack:
-        for directory, filename in ((home, ".altitude-instance.lock"), (projects, ".altitude-projects.lock")):
-            fd = os.open(directory / filename, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        for directory in (home, projects):
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
             stack.callback(os.close, fd)
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise RuntimeError(f"Volume lock is not a private regular file: {directory}")
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -303,7 +299,7 @@ def container_bootstrap() -> None:
         if info.st_uid not in (0, 1000):
             raise RuntimeError(f"Volume {directory} must belong to container UID 1000 or be newly created")
     with container_volume_locks(home, projects):
-        # Only the two mount roots, never recursive data or host paths. Locks stay owned by root.
+        # Only the two mount roots, never recursive data or host paths. Open descriptors retain locks.
         for directory in (home, projects):
             os.chown(directory, 1000, 1000)
             directory.chmod(0o700)

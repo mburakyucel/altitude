@@ -118,15 +118,28 @@ class TestVolumeLocks(AltitudeCase):
                 raise ValueError("fixture startup failure")
         with platform.container_volume_locks(home, projects):
             pass
-        marker = home / ".altitude-instance.lock"
-        marker.unlink()
         outside = self.tmp / "outside"
         outside.write_text("do not touch")
-        marker.symlink_to(outside)
+        home.rmdir()
+        home.symlink_to(outside)
         with self.assertRaises(OSError):
             with platform.container_volume_locks(home, projects):
                 self.fail("symlink lock must refuse")
         self.assertEqual(outside.read_text(), "do not touch")
+
+    def test_replacing_volume_contents_cannot_replace_held_directory_lock(self):
+        home, projects = self.tmp / "home", self.tmp / "projects"
+        home.mkdir(); projects.mkdir()
+        with platform.container_volume_locks(home, projects):
+            marker = home / '.altitude-instance.lock'
+            marker.write_text('fictional restored entry')
+            marker.unlink()
+            marker.write_text('replacement inode')
+            with self.assertRaisesRegex(RuntimeError, 'Another Altitude'):
+                with platform.container_volume_locks(home, projects):
+                    self.fail('Restoring files must not release mounted-directory ownership')
+        with platform.container_volume_locks(home, projects):
+            pass
 
 
 class TestContainerLauncher(AltitudeCase):
