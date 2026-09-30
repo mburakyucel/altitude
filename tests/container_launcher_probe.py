@@ -1,14 +1,15 @@
 """Fictional VM only: actual committed launcher/image lifecycle, with private Podman state."""
 import hashlib
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from unittest import mock
 
@@ -40,11 +41,11 @@ def main():
             item['error'] = repr(error)
             raise
         finally:
-            (evidence/f'command-{number:03d}.json').write_text(json.dumps(item,indent=2)+'\n')
+            (evidence/f'command-{os.getpid()}-{number:03d}.json').write_text(json.dumps(item,indent=2)+'\n')
     platform.container_command = command
     with container_acceptance.environment(root):
         isolated = False
-        instances = ['fictional-primary','fictional-neighbor','fictional-replacement']
+        instances = ['fictional-primary','fictional-neighbor','fictional-replacement','fictional-tls-failure']
         try:
             record['runtime'] = platform.container_runtime()
             if any(not Path(record['runtime']['store'][key]).resolve().is_relative_to(root)
@@ -76,56 +77,108 @@ def main():
             record['before'] = before
             if not before['ready']:
                 raise RuntimeError('Fresh image is not admitted/ready')
+            addresses = json.loads(subprocess.check_output(['ip','-j','-4','address'],text=True))
+            private_ip = next(info['local'] for row in addresses for info in row['addr_info']
+                              if info.get('scope')=='global')
             neighbor = container.start(image['Id'],instances[1],'neighbor-home','neighbor-projects',
-                                       '127.0.0.1','localhost',19444)
-            # Real interrupted Buildah work in an exact private store. Kill only
-            # its fictional guest supervisor; the service's stop-post must clean
-            # it while both unrelated application containers keep running.
+                                       private_ip,'neighbor.fixture.invalid',19444)
+            record['non_localhost_publication'] = {'bind':private_ip,'public_host':'neighbor.fixture.invalid'}
+            # Remove the frontend AND its waiting systemd-run client before the
+            # build unit. ExecStopPost must work with no Python finally fallback.
             build_root = Path(tempfile.mkdtemp(prefix='acb-'))
-            building, observed = {}, threading.Event()
+            building = {}
+            unit_file = evidence/'interrupted-build-unit'
             job = platform.container_job
             def observe_job(unit, args, **kwargs):
-                building['unit'] = unit
-                observed.set()
+                unit_file.write_text(unit)
                 return job(unit, args, **kwargs)
             def interruptible_build():
-                try:
+                os.setsid()
+                with mock.patch.object(container.tempfile,'mkdtemp',return_value=str(build_root)), \
+                     mock.patch.object(platform,'container_job',side_effect=observe_job):
                     container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),
                                     'localhost/altitude:interrupted')
-                    building['unexpected_success'] = True
-                except Exception as error:
-                    building['error'] = repr(error)
-            with mock.patch.object(container.tempfile,'mkdtemp',return_value=str(build_root)), \
-                 mock.patch.object(platform,'container_job',side_effect=observe_job):
-                builder = threading.Thread(target=interruptible_build)
-                builder.start()
+            builder = multiprocessing.get_context('fork').Process(target=interruptible_build)
+            builder.start()
+            try:
+                limit = time.monotonic()+180
+                while True:
+                    if not builder.is_alive() or time.monotonic()>limit:
+                        raise RuntimeError('No live build container available for interruption')
+                    if unit_file.exists() and (build_root/'runtime/bus').exists():
+                        ids = container.build_command(build_root,['ps','--all','--external','--quiet']).split()
+                        if ids:
+                            building.update(unit=unit_file.read_text(),working_containers=ids)
+                            break
+                    time.sleep(.2)
+                private_pause = int(next((build_root/'runtime').rglob('pause.pid')).read_text())
+                pause_start = Path(f'/proc/{private_pause}/stat').read_text().rsplit(')',1)[1].split()[19]
+                os.killpg(builder.pid,signal.SIGKILL)
+                builder.join(timeout=5)
+                building['client_exit_before_unit_stop'] = builder.exitcode
+                if builder.exitcode != -signal.SIGKILL:
+                    raise RuntimeError('Frontend did not exit before build interruption')
+                subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',
+                                building['unit']],check=True,timeout=10)
+                limit = time.monotonic()+platform.CONTAINER_STOP_WAIT
+                while platform.job_active(building['unit'],platform.container_user_environment()):
+                    if time.monotonic()>limit:
+                        raise RuntimeError('Build stop-post did not finish')
+                    time.sleep(.2)
                 try:
-                    if not observed.wait(10):
-                        raise RuntimeError('Build service was not launched')
-                    limit = time.monotonic()+180
-                    while True:
-                        if not builder.is_alive() or time.monotonic()>limit:
-                            raise RuntimeError('No live build container available for interruption')
-                        if (build_root/'runtime/bus').exists():
-                            ids = container.build_command(build_root,['ps','--all','--external','--quiet']).split()
-                            if ids:
-                                building['working_containers'] = ids
-                                break
-                        time.sleep(.2)
-                    subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',
-                                    building['unit']],check=True,timeout=10)
-                finally:
-                    builder.join(timeout=85)
-                    if builder.is_alive():
-                        subprocess.run(['systemctl','--user','stop',building['unit']],check=True,timeout=70)
-                        builder.join(timeout=20)
-                    if builder.is_alive():
-                        raise RuntimeError('Interrupted build thread survived cleanup')
-            if build_root.exists() or not building.get('error') or building.get('unexpected_success'):
+                    current = Path(f'/proc/{private_pause}/stat').read_text().rsplit(')',1)[1].split()[19]
+                except FileNotFoundError:
+                    current = None
+                if current == pause_start:
+                    raise RuntimeError('Client-independent cleanup left its private pause helper alive')
+                building['private_pause_retired'] = True
+            finally:
+                if builder.is_alive():
+                    os.killpg(builder.pid,signal.SIGKILL)
+                builder.join(timeout=5)
+                if unit_file.exists():
+                    platform.container_stop_unit(unit_file.read_text(),platform.container_user_environment())
+            if build_root.exists():
                 raise RuntimeError('Interrupted build did not remove its private artifacts')
             if any(not container.owned(instance)['State']['Running'] for instance in instances[:2]):
                 raise RuntimeError('Build cleanup affected a running deployment')
             record['interrupted_build'] = building
+            unit = platform.container_unit(instances[0])
+            supervisor = int(subprocess.check_output(['systemctl','--user','show',unit,'--property=MainPID','--value'],text=True))
+            children = Path(f'/proc/{supervisor}/task/{supervisor}/children').read_text().split()
+            attached = [int(pid) for pid in children if b'--attach\0' in Path(f'/proc/{pid}/cmdline').read_bytes()]
+            if len(attached) != 1:
+                raise RuntimeError('Cannot identify the exact attached runtime client')
+            descriptor = os.pidfd_open(attached[0])
+            try:
+                signal.pidfd_send_signal(descriptor,signal.SIGKILL)
+            finally:
+                os.close(descriptor)
+            limit=time.monotonic()+platform.CONTAINER_STOP_WAIT
+            while platform.job_active(unit,platform.container_user_environment()):
+                if time.monotonic()>limit:
+                    raise RuntimeError('Attach failure did not finish cleanup')
+                time.sleep(.2)
+            record['attach_failure'] = container.owned(instances[0])['State']
+            if record['attach_failure']['Running'] or record['attach_failure']['ExitCode']:
+                raise RuntimeError('Attach failure did not stop the container gracefully')
+            platform.container_launch(instances[0])
+            https = platform.container_https
+            def mismatched_tls(address,facts):
+                return https(address,{**facts,'host':'wrong.fixture.invalid'})
+            with mock.patch.object(platform,'container_https',side_effect=mismatched_tls):
+                try:
+                    container.start(image['Id'],instances[3],'failed-home','failed-projects','127.0.0.1','localhost',19445)
+                except RuntimeError as error:
+                    if 'Container startup failed' not in str(error) or 'certificate' not in str(error).lower():
+                        raise
+                    record['readiness_refusal'] = str(error)
+                else:
+                    raise RuntimeError('Real TLS mismatch did not refuse readiness')
+            if container.owned(instances[3])['State']['Running']:
+                raise RuntimeError('Failed readiness left its container running')
+            if not container.owned(instances[1])['State']['Running']:
+                raise RuntimeError('Readiness/attach failure affected its neighbor')
             platform.container_stop(instances[0])
             stopped = container.owned(instances[0])
             record['graceful_stop'] = stopped['State']
@@ -180,7 +233,7 @@ def main():
             try:
                 for instance in instances:
                     unit = platform.container_unit(instance)
-                    subprocess.run(['systemctl','--user','stop',unit],capture_output=True,timeout=50)
+                    platform.container_stop_unit(unit,platform.container_user_environment())
                     log = subprocess.run(['journalctl','--user','--unit',unit,'--no-pager','--lines=100'],
                                          capture_output=True,text=True,timeout=10)
                     (evidence/(instance+'.log')).write_text(log.stdout+log.stderr)

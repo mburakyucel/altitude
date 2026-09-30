@@ -35,6 +35,8 @@ import time
 
 
 SERVICE = "altitude.service"
+CONTAINER_STOP_WAIT = 105  # service stop45 + stop-post45 + transport margin15
+CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the service on macOS.
 LABEL = "dev.altitude.altd"
 #: What First run shows for a missing command-line tool, run in the operator's own terminal.
@@ -400,7 +402,7 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
                  "--property=MemoryMax=5G", "--property=TasksMax=1536",
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:
-        arguments += ["--wait", "--pipe", "--property=RuntimeMaxSec=600"]
+        arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={CONTAINER_BUILD_SECONDS}"]
     if after_stop is not None:
         # ExecStopPost is parsed by systemd, not a shell. Disable environment
         # expansion and escape its specifiers/quoting independently of argv.
@@ -410,16 +412,19 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
                   for value in after_stop]
         arguments.append("--property=ExecStopPost=:" + " ".join(quoted))
     arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
-    result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
-                            capture_output=True, timeout=660 if wait else 20)
+    try:
+        result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
+                                capture_output=True, timeout=CONTAINER_BUILD_SECONDS + CONTAINER_STOP_WAIT + 15 if wait else 20)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Timed out waiting for container user service; {job_logs_hint(unit)}") from exc
     if result.returncode:
         raise RuntimeError(f"Container user service failed: {result.stderr.strip()}; {job_logs_hint(unit)}")
     return result.stdout
 
 
-def container_owned(instance: str) -> dict:
+def container_owned(instance: str, *, timeout: int = 30) -> dict:
     unit = container_unit(instance)
-    value = json.loads(container_command(["inspect", instance]))[0]
+    value = json.loads(container_command(["inspect", instance], timeout=timeout))[0]
     labels = value.get("Config", {}).get("Labels") or {}
     host = value.get("HostConfig") or {}
     parent = labels.get("io.altitude.cgroup-parent", "")
@@ -437,12 +442,19 @@ def _container_after_stop(instance: str) -> None:
     manager and parent before cleanup; there is no shared-store or name-pattern removal.
     """
     container_unit(instance)
-    rows = json.loads(container_command(["ps", "--all", "--format", "json"]))
+    deadline = time.monotonic() + 40  # less than ExecStopPost's45-second bound
+    def call(arguments, timeout=30):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Container stop cleanup exhausted its budget; retain the instance for recovery")
+        return container_command(arguments, timeout=min(timeout, remaining))
+    rows = json.loads(call(["ps", "--all", "--format", "json"], timeout=5))
     if not any(instance in row.get("Names", []) for row in rows):
         return
-    value = container_owned(instance)
-    container_command(["stop", "--time=30", value["Id"]], timeout=35)
-    container_command(["container", "cleanup", value["Id"]], timeout=8)
+    value = container_owned(instance, timeout=5)
+    if value["State"]["Running"]:
+        call(["stop", "--time=30", value["Id"]], timeout=35)
+    call(["container", "cleanup", value["Id"]], timeout=8)
 
 
 def _container_supervise(instance: str, create: list[str] | None) -> None:
@@ -471,7 +483,20 @@ def _container_supervise(instance: str, create: list[str] | None) -> None:
                 pass
         if stopping.is_set():
             stop_attempted = True
-            container_command(["stop", "--time=30", ident], timeout=35)
+            # Start --attach is asynchronous. A stop while the container is
+            # still Created would be a no-op followed by an unobserved launch.
+            deadline = time.monotonic() + 3
+            while child is not None and child.poll() is None:
+                value = container_owned(instance, timeout=3)
+                if value["State"]["Running"]:
+                    break
+                if time.monotonic() >= deadline:
+                    child.terminate()
+                    raise RuntimeError("Stop interrupted container startup; forced unit cleanup required")
+                time.sleep(.1)
+            value = container_owned(instance, timeout=3)
+            if value["State"]["Running"]:
+                container_command(["stop", "--time=30", ident], timeout=35)
         if child is not None and child.wait(timeout=8) and not stopping.is_set():
             raise RuntimeError("The attached container exited unsuccessfully")
     finally:
@@ -498,6 +523,11 @@ def container_limits(value: dict) -> None:
     container_group = parent + "/libpod-" + value["Id"]
     if membership != container_group and not membership.startswith(container_group + "/"):
         raise RuntimeError("The container is outside its owned delegated subtree")
+    conmon = int(Path(value["ConmonPidFile"]).read_text().strip())
+    conmon_group = next(line[3:] for line in (PROC / str(conmon) / "cgroup").read_text().splitlines()
+                        if line.startswith("0::"))
+    if not conmon_group.startswith(parent + "/"):
+        raise RuntimeError("The container monitor is outside its owned delegated subtree")
     directory = CONTAINER_CGROUP_ROOT / container_group.lstrip("/")
     memory = (directory / "memory.max").read_text().strip()
     pids = (directory / "pids.max").read_text().strip()
@@ -540,6 +570,11 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
                     addresses = bindings.get(f"{facts['port']}/tcp", [])
                     if len(addresses) != 1 or int(addresses[0]["HostPort"]) != facts["port"]:
                         raise RuntimeError("The HTTPS service does not match its single published port")
+                    expected = dict(item.split("=",1) for item in value["Config"].get("Env",[]) if "=" in item)
+                    if (facts["host"] != expected.get("ALTITUDE_PUBLIC_HOST")
+                            or str(facts["port"]) != expected.get("ALTITUDE_PORT")
+                            or addresses[0]["HostIp"] != value["Config"]["Labels"].get("io.altitude.bind")):
+                        raise RuntimeError("Published HTTPS differs from the requested host identity or bind address")
                     container_https(addresses[0]["HostIp"], facts)
                     return value["Id"]
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -547,9 +582,11 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
             time.sleep(.25)
         raise RuntimeError(error)
     except Exception as exc:
-        stop = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
-                              text=True, capture_output=True, timeout=50)
-        suffix = f"; cleanup failed: {stop.stderr.strip()}" if stop.returncode else ""
+        try:
+            container_stop_unit(unit, environment)
+            suffix = ""
+        except RuntimeError as cleanup:
+            suffix = f"; cleanup not confirmed: {cleanup}"
         raise RuntimeError(f"Container startup failed: {exc}; {job_logs_hint(unit)}{suffix}") from exc
 
 
@@ -584,15 +621,24 @@ def container_https(address: str, facts: dict) -> None:
                 raise RuntimeError("Published HTTPS answers from another process")
 
 
+def container_stop_unit(unit: str, environment: dict) -> None:
+    if not job_active(unit, environment):
+        return
+    try:
+        response = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
+                                  text=True, capture_output=True, timeout=CONTAINER_STOP_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Container stop timed out; cleanup unconfirmed; {job_logs_hint(unit)}") from exc
+    if response.returncode and job_active(unit, environment):
+        raise RuntimeError(f"Container stop failed: {response.stderr.strip()}; {job_logs_hint(unit)}")
+
+
 def container_stop(instance: str) -> None:
     value = container_owned(instance)
     unit = container_unit(instance)
     environment = container_user_environment()
     if job_active(unit, environment):
-        response = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
-                                  text=True, capture_output=True, timeout=50)
-        if response.returncode:
-            raise RuntimeError(f"Container stop failed: {response.stderr.strip()}")
+        container_stop_unit(unit, environment)
     elif value["State"]["Running"]:
         raise RuntimeError("Container has no active supervisor; retain it for recovery, do not report stopped")
     if container_owned(instance)["State"]["Running"] or job_active(unit, environment):
@@ -604,13 +650,15 @@ def container_arguments(arguments: list[str]) -> list[str]:
 
 
 def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False,
-                      runtime_dir: Path | None = None) -> str:
+                      runtime_dir: Path | None = None, storage_conf: Path | None = None) -> str:
     """Only the local rootless controller; callers select exact task/image/volume resources."""
     if os.getuid() == 0:
         raise RuntimeError("Run Podman as your ordinary Linux account")
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
     environment = container_user_environment(runtime_dir) if runtime_dir else container_user_environment()
+    if storage_conf is not None:
+        environment['CONTAINERS_STORAGE_CONF'] = str(storage_conf)
     result = subprocess.run(container_arguments(arguments), text=True,
                             capture_output=not interactive, timeout=timeout, env=environment)
     if result.returncode:

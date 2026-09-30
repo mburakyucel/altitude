@@ -188,7 +188,10 @@ This installs no certificate trust and does not prove another device's routing o
 A failed start reports the unit log and retains its stopped container for diagnosis.
 Image user jobs and the daemon have a 15-second stop grace, their user manager has 20 seconds,
 and Podman has 30 seconds before forced termination. The host supervisor has a 45-second stop
-budget. These bounds do not promise graceful completion for a job that ignores termination.
+budget, followed by a bounded stop-post cleanup phase. The client waits for both phases and reports
+unconfirmed cleanup with the unit log location if that wait expires. Supervisor death and startup
+interruption can force termination; only an ordinary completed Stop is described as graceful.
+These bounds do not promise graceful completion for a job that ignores termination.
 
 `python3 scripts/container.py restart --name altitude` stops and restarts the same container under
 its stable user-unit/cgroup identity. It preserves the instance's admission state. A replacement
@@ -238,6 +241,9 @@ login-session creation/abandonment and the verified systemd user manager attachi
 delegated unit; the latter has no polkit authorization path in the tested systemd version. Sender
 identity failures do not permit these exceptions. Raw calls and guest-only sender metadata remain
 in the result directory.
+Podman can move an ordinary frontend process as well as its pause helper into a user-owned scope;
+the monitor records attached PIDs and available executable/cgroup evidence. Application readiness
+separately requires both PID1 and conmon to remain in the deployment's delegated subtree.
 
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
 image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-none payloads,
@@ -259,6 +265,9 @@ Image construction uses a separate private build store and imports only the comp
 the operator's store, verifying its identity. The finite build service's stop cleanup removes its
 own working containers, image layers and pause helper, including after an interrupted build.
 It never prunes shared storage. Refused cleanup retains the private directory for diagnosis.
+An explicit minimal storage configuration excludes inherited additional image stores. The build's
+15-minute service budget covers construction, image export and import; cleanup has a separate
+40-second command budget within the stop-post allowance.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

@@ -20,7 +20,7 @@ class ContainerBuildTests(AltitudeCase):
             {'store': {'graphRoot':'/unrelated','runRoot':str(self.root/'run')}}))
         with self.assertRaisesRegex(RuntimeError, 'identity changed'):
             container.cleanup_build(self.root)
-        command.assert_called_once_with(self.root, ['info','--format=json'])
+        command.assert_called_once_with(self.root, ['info','--format=json'], timeout=30)
         self.assertTrue(self.root.exists())
 
     def test_cleanup_includes_external_build_containers_and_migration_is_last(self):
@@ -54,7 +54,7 @@ class ContainerBuildTests(AltitudeCase):
             raise subprocess.TimeoutExpired('fixture wait',660)
         self.patch(platform,'container_job',side_effect=job)
         self.patch(platform,'container_user_environment',return_value={})
-        self.patch(platform,'job_active',side_effect=[True,False])
+        self.patch(platform,'job_active',side_effect=[True,True,False])
         stop=self.patch(container.subprocess,'run',return_value=subprocess.CompletedProcess([],0))
         clean=self.patch(container,'cleanup_build')
         with self.assertRaises(subprocess.TimeoutExpired):

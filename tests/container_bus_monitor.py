@@ -65,8 +65,15 @@ def sender_identity(sender):
         kind, value = result.stdout.split()
         if kind != "u":
             raise ValueError("Unexpected PID reply")
-        process = Path("/proc") / str(int(value))
-        return {"pid": int(value), "uid": process.stat().st_uid,
+        return process_identity(int(value))
+    except Exception as error:
+        return {"unavailable": str(error)}
+
+
+def process_identity(pid):
+    try:
+        process = Path("/proc") / str(pid)
+        return {"pid": pid, "uid": process.stat().st_uid,
                 "exe": str((process / "exe").resolve(strict=True)),
                 "argv": (process / "cmdline").read_bytes().decode().rstrip("\0").split("\0"),
                 "cgroup": (process / "cgroup").read_text().strip()}
@@ -89,7 +96,9 @@ def main():
     def save():
         if block:
             text = "".join(block)
-            calls.append({"message": text, "sender": identity, "allowed": classify(text, identity)})
+            attached = [process_identity(int(pid)) for pid in re.findall(r'^\s+uint32 (\d+)$',text,re.M)] \
+                       if 'member=AttachProcessesToUnit' in text else []
+            calls.append({"message": text, "sender": identity, "attached": attached, "allowed": classify(text, identity)})
             (output / "calls.json").write_text(json.dumps(calls, indent=2) + "\n")
     for line in process.stdout:
         if line.startswith("method call "):

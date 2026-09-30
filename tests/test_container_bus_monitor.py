@@ -1,7 +1,7 @@
 """Authorization-attempt detection regressions for the issue #543 VM lane."""
 import unittest
 
-import container_bus_monitor as monitor
+from tests import container_bus_monitor as monitor
 
 
 def message(method, *strings, interface="org.freedesktop.systemd1.Manager"):

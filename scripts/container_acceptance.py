@@ -146,7 +146,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
     sequence = 0
     started = time.monotonic()
     isolated = False
-    def call(arguments, *, timeout=30, interactive=False, runtime_dir=None):
+    def call(arguments, *, timeout=30, interactive=False, runtime_dir=None, storage_conf=None):
         nonlocal sequence
         sequence += 1
         remaining = int(480 - (time.monotonic() - started))
@@ -158,7 +158,8 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
         # Retain only fictional fixture output. No host/user credential files enter this controller.
         try:
             output = actual(arguments, timeout=limit, interactive=interactive,
-                            **({"runtime_dir": runtime_dir} if runtime_dir is not None else {}))
+                            **({"runtime_dir": runtime_dir} if runtime_dir is not None else {}),
+                            **({"storage_conf": storage_conf} if storage_conf is not None else {}))
         except Exception as exc:
             native = getattr(exc, "result", exc)
             def output_text(name):

@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import installation, platform
@@ -28,7 +29,7 @@ def name(value: str) -> str:
 
 def build_command(root: Path, arguments: list[str], **kwargs) -> str:
     return platform.container_command(["--root", str(root / "store"), "--runroot", str(root / "run"),
-                                       *arguments], runtime_dir=root / "runtime", **kwargs)
+                                       *arguments], runtime_dir=root / "runtime", storage_conf=root / "storage.conf", **kwargs)
 
 
 def cleanup_build(root: Path) -> None:
@@ -38,18 +39,24 @@ def cleanup_build(root: Path) -> None:
     info = root.lstat()
     if not root.is_absolute() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("Build cleanup requires its owned private directory")
-    store = json.loads(build_command(root, ["info", "--format=json"]))["store"]
+    deadline = time.monotonic()+40  # stop-post45 seconds includes interpreter/filesystem margin
+    def call(arguments, timeout=30):
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"Build cleanup budget exhausted; artifacts retained at {root}")
+        return build_command(root,arguments,timeout=min(timeout,remaining))
+    store = json.loads(call(["info", "--format=json"]))["store"]
     if Path(store["graphRoot"]) != root / "store" or Path(store["runRoot"]) != root / "run":
         raise RuntimeError("Build store identity changed; retain it for inspection")
     # Podman --external lists interrupted Buildah working containers too. Force
     # removal accepts those IDs; inventory is confined to the verified private store.
-    containers = build_command(root, ["ps", "--all", "--external", "--quiet"]).split()
+    containers = call(["ps", "--all", "--external", "--quiet"]).split()
     if containers:
-        build_command(root, ["rm", "--force", *containers], timeout=20)
-    build_command(root, ["rmi", "--force", "--all"], timeout=20)
-    if build_command(root, ["ps", "--all", "--external", "--quiet"]).strip() or build_command(root, ["images", "--quiet"]).strip():
+        call(["rm", "--force", *containers], timeout=20)
+    call(["rmi", "--force", "--all"], timeout=20)
+    if call(["ps", "--all", "--external", "--quiet"]).strip() or call(["images", "--quiet"]).strip():
         raise RuntimeError("Private build resources remain; retain the directory")
-    build_command(root, ["system", "migrate"])
+    call(["system", "migrate"])
     # No more Podman calls after migration: they can create another pause helper.
     shutil.rmtree(root)
 
@@ -63,6 +70,8 @@ def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = Non
         import uuid
         unit = "altitude-container-build-" + uuid.uuid4().hex + ".service"
         root = Path(tempfile.mkdtemp(prefix="acb-"))
+        (root / 'storage.conf').write_text('[storage]\ndriver="overlay"\n' +
+            'graphroot='+json.dumps(str(root/'store'))+'\nrunroot='+json.dumps(str(root/'run'))+'\n')
         (root / "runtime").mkdir(mode=0o700)
         (root / "runtime/bus").symlink_to(f"/run/user/{os.getuid()}/bus")
         command = [sys.executable, "-c", "import json,sys;from pathlib import Path;"
@@ -78,9 +87,8 @@ def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = Non
                 # touching its store. A refused stop retains evidence; never prune shared data.
                 environment = platform.container_user_environment()
                 if platform.job_active(unit, environment):
-                    stopped = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
-                                             capture_output=True, text=True, timeout=70)
-                    if stopped.returncode or platform.job_active(unit, environment):
+                    platform.container_stop_unit(unit, environment)
+                    if platform.job_active(unit, environment):
                         raise RuntimeError(f"Build remains active; private artifacts retained at {root}")
                 cleanup_build(root)
     parent = platform.container_parent(delegated)
@@ -154,6 +162,7 @@ def start(image: str, instance: str, home: str, projects: str, bind: str, public
     publish = f"[{address}]" if address.version == 6 else str(address)
     return platform.container_launch(instance, [
         "--name", instance, "--hostname", instance, "--label", f"{LABEL}=1",
+        "--label", f"io.altitude.bind={address}",
         "--network=slirp4netns", "--cgroupns=private", "--security-opt=unmask=/proc/*",
         "--memory=4g", "--cpus=2", "--pids-limit=1024", "--stop-timeout=30",
         "--volume", f"{home}:/home/altitude:nocopy", "--volume", f"{projects}:/home/altitude/Projects:nocopy",
@@ -250,7 +259,7 @@ def main() -> None:
         else:
             print(execute(args.name, ["/bin/bash", "--noprofile", "--norc"] if args.action == "shell" else ["alt", "pair"],
                           interactive=args.action == "shell"))
-    except (OSError, ValueError, RuntimeError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         parser.exit(1, f"Container operation refused: {exc}\n")
 
 

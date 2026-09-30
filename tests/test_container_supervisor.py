@@ -52,11 +52,20 @@ class ContainerSupervisorTests(AltitudeCase):
         membership = self.parent + "/libpod-" + self.value["Id"]
         (self.proc / "42").mkdir(parents=True)
         (self.proc / "42/cgroup").write_text("0::" + membership + "/init.scope\n")
+        monitor = self.tmp/'conmon.pid'
+        monitor.write_text('43\n')
+        self.value['ConmonPidFile'] = str(monitor)
+        (self.proc/'43').mkdir()
+        (self.proc/'43/cgroup').write_text('0::'+self.parent+'/conmon\n')
         group = self.groups / membership.lstrip("/")
         group.mkdir(parents=True)
         for name, value in {"memory.max": str(4 * 1024**3), "pids.max": "1024", "cpu.max": "200000 100000"}.items():
             (group / name).write_text(value)
         platform.container_limits(self.value)
+        (self.proc/'43/cgroup').write_text('0::/unrelated/conmon\n')
+        with self.assertRaisesRegex(RuntimeError, 'monitor is outside'):
+            platform.container_limits(self.value)
+        (self.proc/'43/cgroup').write_text('0::'+self.parent+'/conmon\n')
         (group / "memory.max").write_text("max")
         with self.assertRaisesRegex(RuntimeError, "not enforced"):
             platform.container_limits(self.value)
@@ -108,6 +117,32 @@ class ContainerSupervisorTests(AltitudeCase):
         command.assert_not_called()
         attach.assert_not_called()
 
+    def test_stop_during_start_waits_for_running_before_sending_stop(self):
+        self.patch(platform, 'container_parent', return_value=self.parent)
+        self.patch(platform, 'container_user_environment', return_value={})
+        self.patch(platform.signals, 'signal')
+        event=threading.Event()
+        self.patch(platform.threading, 'Event', return_value=event)
+        child=mock.Mock()
+        child.poll.return_value=None
+        child.wait.return_value=0
+        def start(*args,**kwargs):
+            event.set()
+            return child
+        self.patch(platform.subprocess,'Popen',side_effect=start)
+        calls=[]
+        def observed(*args,**kwargs):
+            calls.append('inspect')
+            return {**self.value,'State':{'Running':len(calls)>=3}}
+        self.patch(platform,'container_owned',side_effect=observed)
+        def stop(*args,**kwargs):
+            self.assertGreaterEqual(len(calls),3)
+            return ''
+        command=self.patch(platform,'container_command',side_effect=stop)
+        self.patch(platform.time,'sleep')
+        platform._container_supervise('fixture',None)
+        command.assert_called_once_with(['stop','--time=30',self.value['Id']],timeout=35)
+
     def test_failed_attach_still_stops_the_exact_running_payload(self):
         self.patch(platform, "container_parent", return_value=self.parent)
         self.patch(platform, "container_owned", return_value=self.value)
@@ -140,7 +175,7 @@ class ContainerSupervisorTests(AltitudeCase):
             platform._container_supervise("fixture", None)
         self.assertEqual(command.call_count, 1)
 
-    def test_readiness_failure_stops_exact_unit_and_retains_instance(self):
+    def test_collected_supervisor_is_not_reported_as_failed_stop(self):
         self.patch(platform, "container_job")
         self.patch(platform, "container_user_environment", return_value={})
         self.patch(platform, "job_active", return_value=False)
@@ -148,8 +183,22 @@ class ContainerSupervisorTests(AltitudeCase):
         stop = self.patch(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", ""))
         with self.assertRaisesRegex(RuntimeError, "before readiness"):
             platform.container_launch("fixture", ["--name", "fixture", "image"])
-        self.assertEqual(stop.call_args.args[0], ["systemctl", "--user", "stop", self.unit])
+        stop.assert_not_called()
         command.assert_not_called()
+
+    def test_readiness_error_survives_stop_timeout_with_recovery_hint(self):
+        self.patch(platform, 'container_job')
+        self.patch(platform, 'container_user_environment', return_value={})
+        self.patch(platform, 'job_active', return_value=True)
+        self.patch(platform, 'container_owned', return_value=self.value)
+        self.patch(platform, 'container_limits', side_effect=RuntimeError('fixture readiness failed'))
+        self.patch(platform.time, 'monotonic', side_effect=[0,0,91])
+        self.patch(platform.time, 'sleep')
+        stop = self.patch(platform.subprocess, 'run', side_effect=subprocess.TimeoutExpired('stop',105))
+        with self.assertRaisesRegex(RuntimeError, 'fixture readiness failed.*cleanup not confirmed.*timed out'):
+            platform.container_launch('fixture',['--name','fixture','image'])
+        self.assertEqual(stop.call_args.args[0], ['systemctl','--user','stop',self.unit])
+        self.assertEqual(stop.call_args.kwargs['timeout'],platform.CONTAINER_STOP_WAIT)
 
     def test_missing_supervisor_never_reports_running_container_stopped(self):
         self.patch(platform, "container_owned", return_value=self.value)
