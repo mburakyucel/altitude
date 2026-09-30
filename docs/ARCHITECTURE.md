@@ -292,11 +292,9 @@ channel is unauthenticated, so the trusted screen that opened it shows the CA's 
 fingerprint for the phone to compare before installing. `altitude/qr.py` draws its link as a QR
 code (byte mode, level M) for terminals and the browser. `alt tls-share` (operator only) opens a
 window in the CLI process, not in altd. It takes the address, port and TLS directory from the
-running service's own process environment through the platform seam (`platform.service_settings`),
-since the service manager, not the operator's shell, configures the service; a disagreeing shell
-setting is refused. It fetches `/api/health` over HTTPS trusting only that directory's CA and
-requires the answer from the service's main process before offering those bytes. Settings → Devices
-→ **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
+service record (below), not from the operator's shell. It fetches `/api/health` over HTTPS trusting
+only that directory's CA and requires the answer from the process that wrote the record before
+offering those bytes. Settings → Devices → **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
 cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
 keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
 the page sends on Close (confirming only once it succeeds) or when it is left, including while the
@@ -325,7 +323,15 @@ Then `access.py` decides who is asking. The page and its files, `GET /api/health
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
-restart script send it as `X-Altitude-Key`, and it is compared in constant time. Only the operator's
+restart script send it as `X-Altitude-Key`. The CLI finds altd through the service record: as the
+service instance (`ALTITUDE_SERVICE=1`) starts serving, it writes `service.json` beside the key with
+its PID, address, port, scheme and TLS directory, replacing the previous record. It decides where
+`alt` sends the key and which CA it trusts, so it lives in this store rather than in the runtime home
+that task folders share. `alt` reads it for its altd calls instead of its own launch environment, so a worker started before a restart onto
+another certificate folder or port reaches the new service without relaunching. It verifies altd with
+that folder's `ca.crt` (the system trust store when the folder has none) and refuses, naming the CA,
+an altd that does not prove its identity; there is no unverified fallback, and a missing record is
+named. Serve-only instances write no record. The key is compared in constant time. Only the operator's
 account can read it, so it proves a caller runs on this machine as the operator; Altitude's workers
 share that account, as they share its files. `alt pair` (operator only) writes one pairing code
 straight to `devices.json`: eight characters from an alphabet without look-alikes, valid ten minutes,

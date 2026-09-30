@@ -549,8 +549,8 @@ class TestOwnerHttp(TerminalCase):
         self.open(self.slug)
         self.type("echo via-cli\n", self.slug)
         self.output(self.slug, until="via-cli\r\n")
-        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        self.serving(self.httpd.server_address[1])
+        base = {"ALTITUDE_PROJECT": self.project}
         owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
         result = self.alt("task", "terminal", env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)

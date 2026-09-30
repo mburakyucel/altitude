@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase, add_worktree, fyi_rows, git, make_repo
-from altitude import config, dispatch, engines, git_policy, server, state as S
+from altitude import config, dispatch, engines, git_policy, server, state as S, tls
 from altitude import tasks as T
 
 
@@ -280,6 +280,8 @@ class TestServiceGitPreflight(AltitudeCase):
              mock.patch.object(config, "TLS", False), \
              mock.patch.object(server, "ThreadingHTTPServer") as httpd:
             httpd.return_value.serve_forever.side_effect = serve
+            httpd.return_value.server_port = 8890
+            self.addCleanup(tls.record().unlink, missing_ok=True)
             server.main()
         self.assertFalse(self.pending.exists())
         httpd.return_value.serve_forever.assert_called_once()

@@ -623,7 +623,7 @@ Every other `alt` command that calls altd sends the machine key from the same st
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
-from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
+from the record the service wrote when it started, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
 phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
 link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and

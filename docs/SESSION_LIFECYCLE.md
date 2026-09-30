@@ -313,7 +313,9 @@ the operator commands and retention. Fixtures do not establish native macOS conf
 
 Source TLS preparation checks the existing process, listener and certificate before setting its
 explicit TLS-directory service override. It reloads the user-unit definition without restarting
-the daemon or its workers; task ownership, sessions, messages and holds are unaffected. Actual
+the daemon or its workers; task ownership, sessions, messages and holds are unaffected. When the
+daemon later starts on that directory, running workers' `alt` calls reach it through the
+[service record](ARCHITECTURE.md#responsibilities) rather than the environment they launched with. Actual
 source preparation is a separate operator action from archive installation and code activation.
 Verification retains the live PID, invocation and main-start timestamp across unit reloads,
 independently of resettable command-history metadata; actual identity changes still refuse success.

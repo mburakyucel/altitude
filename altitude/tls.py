@@ -324,23 +324,41 @@ def info(host: str | None = None) -> dict:
 SHARE_MINUTES = 10
 
 
+def record() -> Path:
+    """Where the running service records how to reach it: beside the machine key rather than in the runtime home
+    task folders share, since it decides where `alt` sends that key and which CA it trusts."""
+    from . import access
+    return access.DIR / "service.json"
+
+
+def publish(found: dict) -> None:
+    """The service records, as it starts serving, where it listens and which certificate folder it serves from.
+    A later restart with other settings replaces the record, so clients never depend on their own launch
+    environment."""
+    import json
+
+    from . import state
+    state.atomic_write(record(), json.dumps({"pid": os.getpid(), "host": found["host"], "port": found["port"],
+                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"])}) + "\n")
+
+
 def service() -> dict:
     """Where the running Altitude service listens and which certificate folder it serves from, as the service
-    itself started, so every shell reaches the same service. A shell setting that disagrees is refused."""
-    from . import platform
+    itself recorded when it started, so every shell and agent reaches the same service whatever its own
+    environment says."""
+    import json
+
+    path = record()
     try:
-        pid, environment = platform.service_settings()
-        found = config.network(environment)
-    except (RuntimeError, ValueError) as exc:
-        raise TLSFailure(f"Cannot find the running Altitude service: {exc}") from exc
-    shell = config.network(os.environ)
-    differing = [key for key, name in (("ALTITUDE_HOST", "host"), ("ALTITUDE_PORT", "port"),
-                                       ("ALTITUDE_TLS", "tls"), ("ALTITUDE_TLS_DIR", "tls_dir"))
-                 if key in config.SHELL_SETTINGS and shell[name] != found[name]]
-    if differing:
-        raise TLSFailure(f"This shell sets {', '.join(differing)} differently from the running Altitude service. "
-                         "Unset them in this shell, then retry.")
-    return {**located(found), "pid": pid}
+        saved = json.loads(path.read_text())
+        found = {"host": str(saved["host"]), "port": int(saved["port"]), "tls": saved["tls"] is True,
+                 "tls_dir": Path(saved["tls_dir"]), "pid": int(saved["pid"])}
+    except FileNotFoundError as exc:
+        raise TLSFailure(f"The Altitude service has not recorded where it listens ({path}). Start the service, "
+                         "then retry.") from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise TLSFailure(f"Cannot read the Altitude service's record {path}: {exc}.") from exc
+    return located(found)
 
 
 def located(found: dict) -> dict:

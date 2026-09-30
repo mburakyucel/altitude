@@ -308,8 +308,8 @@ class TestMachineAccess(AltitudeCase):
 
     def test_cli_door_and_exit_status(self):
         grant, question, row = self.granted()
-        base = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-                "ALTITUDE_PORT": str(self.httpd.server_address[1]), "ALTITUDE_TLS": "0"}
+        self.serving(self.httpd.server_address[1])
+        base = {"ALTITUDE_PROJECT": self.project}
         owner = {**base, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
         result = self.alt("task", "run", self.slug, "true", env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertEqual(result.returncode, 1)
@@ -374,13 +374,13 @@ class TestMachineAccess(AltitudeCase):
         self.addCleanup(earlier.stdout.close)
         self.addCleanup(earlier.kill)
         self.assertEqual(earlier.stdout.readline(), "ready\n")
+        self.serving(port)
         started, release = self.tmp / "started", self.tmp / "release"
         owner = subprocess.Popen(
             [sys.executable, str(REPO / "bin" / "alt"), "task", "run", self.slug,
              f"echo before; touch {started}; while [ ! -e {release} ]; do sleep .02; done; echo after; exit 5"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env={**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": self.project,
-                 "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(port), "ALTITUDE_TLS": "0",
                  "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
         self.addCleanup(owner.kill)
         wait_for(started.exists, "the command to start")
@@ -391,8 +391,10 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual((row["exit"], row["finished"]), (None, None))
         self.assertIn("interrupted", row["error"])
         self.assertIn("one command at a time", self.run_command("echo meanwhile", status=400)["error"])
-        replacement = server.ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+        # The replacement listens elsewhere; the waiting owner follows the record it writes.
+        replacement = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         replacement.daemon_threads = True
+        self.serving(replacement.server_port)
         threading.Thread(target=replacement.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
         self.addCleanup(replacement.server_close)
         self.addCleanup(replacement.shutdown)
@@ -488,9 +490,10 @@ class TestMachineAccess(AltitudeCase):
             port = probe.getsockname()[1]
         started = time.monotonic()
         for host in ("127.0.0.1", "unresolvable.invalid"):
+            self.serving(port, host)
             result = self.alt("task", "run", self.slug, "true", env={
-                "ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": host, "ALTITUDE_PORT": str(port),
-                "ALTITUDE_TLS": "0", "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+                "ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+                "ALTITUDE_ATTEMPT": "1"})
             self.assertEqual(result.returncode, 1)
             self.assertIn("altd unavailable", result.stderr)
             self.assertNotIn("waiting for this command's result", result.stderr)
