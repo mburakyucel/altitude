@@ -157,8 +157,8 @@ native profile boundary, not real provider-session/configuration stacking or oth
 Pause rejects new admissions atomically. Calls admitted earlier can finish, including a launch
 already preparing its claim; status reports admitted calls still active. Detached workers can remain
 after those calls return. Neither a quiet status nor a pause proves that a backup is consistent:
-stop the controller before copying both volumes. Linux primitive admission/lifecycle checks pass
-on the recorded image; full application recovery and Mac validation remain pending.
+stop the controller before copying both volumes. Linux admission/lifecycle and planned application
+backup/recovery checks pass on the recorded image; Mac validation remains pending.
 
 The reusable image gate's `--lifecycle` lane checks daemon and same-container restart, independent
 fixture-job survival and descendant cleanup, then replacement with retained project data and TLS
@@ -208,9 +208,11 @@ Stop/resume across planned replacement; destruction during a running task or lau
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
-The private backup/restore and phone/desktop onboarding lanes pass on the recorded Ubuntu amd64
-fixture. Combining registered-project backup with version-upgrade recovery, Mac and final delivery
-acceptance remain open. Do not migrate an existing native installation with these commands.
+The combined phone/desktop lane passes registered-project backup, replacement by a distinct image
+version and restoration of the matching image/data backup on Ubuntu amd64. The two fixture release
+versions use the same application schema: this proves image replacement and matching-backup recovery,
+not arbitrary schema migrations or future-release compatibility. Mac and final delivery acceptance
+remain open. Do not migrate an existing native installation with these commands.
 
 ### Private backup and restore
 
@@ -372,12 +374,16 @@ These are fictional data and small-archive checks, not real-account or maximum-s
 external engine/tool observations through its published HTTPS endpoint. Chromium runs in the
 validation container with its own sandbox; a disposable SSH forward connects to the guest and a
 temporary browser trust database contains only the fictional public CA. It passes on candidate
-`0cb42bf` at 390×844 and 1440×900: pairing, operator identity, missing tools/sign-in observations,
+`222becf` at 390×844 and 1440×900: pairing, operator identity, missing tools/sign-in observations,
 Check again, interrupted first run, private incidents, unavailable host voice, volume selection and
 outside-volume refusal, repository/instructions/guards, coordinator failure/Retry, task creation
 and Stop, same-container restart, paused replacement and exactly-once queued continuation, custom
 hook keep/combine decisions, conversation-only folders and persisted Settings. Application routes,
 storage, Git and scheduling stay real; only external engine/tool observations are fictional.
+After those journeys, each viewport's registered projects and task survive private backup,
+replacement by a distinct fixture release image, and restoration of the matching older image/data.
+The restore retains operator settings, task session and hold, starts paused, and excludes a marker
+created after the backup. Both versions share one schema; the lane makes no migration claim.
 Named screenshots and failures are retained by the runner. No application response is intercepted.
 It neither changes host trust nor establishes physical phone or Mac access. The separate emulated
 iPhone container walkthrough passes in desktop WebKit; this is not physical iOS acceptance.

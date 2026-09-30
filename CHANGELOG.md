@@ -11,7 +11,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   Replacement pauses new AI work until host-side Continue; ordinary restarts preserve admission,
   messages stay queued while paused, and task Stop/review holds remain in force.
   Linux launcher lifecycle, private backup and phone/desktop onboarding pass with fixtures.
-  Registered-project backup/update recovery, Mac and final delivery acceptance remain pending; see
+  Registered-project backup and matching-image recovery pass with same-schema fixture versions;
+  Mac and final delivery acceptance remain pending. See
   [the container boundary and validation limits](docs/CONTAINERS.md).
 - Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
   rights: `make install-service` makes it a background service of your login (it starts when you log in and

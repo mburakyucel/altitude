@@ -3,8 +3,9 @@
 The [container lifecycle](CONTAINERS.md#lifecycle-and-recovery) uses host image replacement instead
 of native application updates or source activation. Browser terminal and host voice are explicitly
 unavailable. The recorded Ubuntu fixture passes launcher lifecycle, private backup/recovery and
-phone/desktop onboarding. Registered-project backup/version-upgrade recovery, Mac and final delivery
-acceptance remain pending; real-provider and physical-device compatibility are unverified.
+phone/desktop onboarding, registered-project backup and matching-image recovery. The version-swap
+fixture uses one application schema; arbitrary migrations, Mac and final delivery acceptance remain
+pending. Real-provider and physical-device compatibility are unverified.
 The host launcher exposes `status`, `pause` and `continue`. Replacement pauses new provider work;
 Continue releases eligible queued work without clearing task holds. Pause leaves Stop and already
 admitted work available. Stop the controller for a consistent backup; status alone cannot certify one.
