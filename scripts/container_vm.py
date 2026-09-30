@@ -50,6 +50,8 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         if browser:
             # This command itself is run in alt task validate; the browser keeps
             # its own sandbox in that disposable runner, not in the worker.
+            subprocess.run(['pnpm','--dir',str(REPO/'web'),'install','--frozen-lockfile','--silent'],
+                           check=True,timeout=180,cwd=REPO)
             subprocess.run(['node',str(REPO/'scripts/browser_sandbox.mjs'),str(results/'browser-sandbox.json')],
                            check=True,timeout=60,cwd=REPO)
         machine = vm.Machine(work, cache / vm.IMAGE)
