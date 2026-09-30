@@ -173,6 +173,10 @@ stops and cleans the exact owned runtime record when the supervisor dies unexpec
 inactive state alone is not accepted as container cleanup. The service outlives the
 launching terminal but follows the existing user-manager/login lifetime. The launcher does not enable
 lingering, host-boot startup or automatic restart. Keep its source location available while it runs.
+The `--logout` VM lane verifies actual user-manager exit, graceful inner-worker shutdown and a new
+login followed by an explicit same-container start. It preserves instance identity/admission and
+cleans up without unexpected system-manager requests. This passes on candidate `f280737`; it is
+not host-boot autostart or Mac sleep/wake evidence.
 Startup verifies the running container identity, effective resource limits and internal HTTPS health.
 It also connects to the published host address with the advertised TLS name, trusting only that
 instance's public CA, and checks that the health response names the recorded service process.

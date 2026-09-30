@@ -5,8 +5,9 @@ as container-volume paths and distinguishes host shell commands from tools/sign-
 container. Terminal and image-managed version rows explain unavailability without enable/update
 switches; the host-voice choice is unavailable with its reason. Browser and external-service voice
 remain available. Empty folders, outside-volume refusal, retry and reload use the existing form
-states. The approved Linux-first security model leaves final container/Mac onboarding validation
-open; fictional walkthroughs live in `web/e2e/container.pw.ts` and ignored UI artifacts.
+states. Actual-daemon Linux phone/desktop onboarding passes with fictional external engines;
+Mac and real-device acceptance remain open. Walkthroughs live in `web/e2e/container.pw.ts`,
+`scripts/container_browser.mjs` and ignored runner artifacts.
 
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
