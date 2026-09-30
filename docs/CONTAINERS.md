@@ -1,7 +1,8 @@
 # Linux container deployment
 
 Container support is under validation. The candidate uses rootless Podman with real systemd inside
-the image. The feasibility tuple is Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
+the image. The launcher selects cgroupfs inside a delegated host user service. The earlier image
+feasibility tuple used Ubuntu 24.04 x86_64, Podman 4.9.3, crun 1.14.1 and cgroup v2 with
 its systemd manager. Image bootstrap, local HTTPS and elevation-file inventory passed on commit
 `1639f3102b9e07215d49b1f45dc4a1fc396071f7`, archive SHA-256
 `b014ddf7897ad177a60365e72c89a6cdc745e1c9b5c8c577d01cdb2ee7f5dfcc`.
@@ -19,11 +20,13 @@ without confirmed worker identity faults without replay. This is not evidence of
 Full application, onboarding and recovery acceptance is not established yet. The tested rootless
 payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation remain unverified.
-Host authorization acceptance is also open: desktop authentication prompts were reported during
-native gates. Source inspection identifies a fixture runtime-directory error that can send crun
-cleanup to the host system manager. Successful fixture exits and cleanup do not establish absence
-of those requests. The corrected lookup and bus-denial adapter have workspace fixture evidence;
-exact host-event correlation, independent review and native verification remain required.
+Host authorization acceptance remains open for the complete application. The confirmed crun cleanup
+fallback to the host system manager is removed by explicit cgroupfs selection and distribution crun.
+A disposable Ubuntu 24.04 VM (kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1) establishes nested real
+systemd, effective outer and inner service quotas, graceful Stop/restart, forced cleanup and private
+store retirement. Its system-manager monitor observes positive StopUnit controls before and after
+runtime work and no libpod manager calls. These fixture results do not establish the new launcher's
+complete lifecycle, final Altitude image, published HTTPS, provider sessions or Mac acceptance.
 
 ## Boundary
 
@@ -170,6 +173,20 @@ identity. It checks paused provider refusal and rejects Continue for the previou
 accepting the replacement. The lane passed on the recorded image, including independent cleanup
 inspection. It does not establish full application task recovery, backup restore or a version upgrade.
 
+The host launcher owns one transient delegated user service per running instance. Its foreground
+supervisor translates service termination into the image's graceful stop signal; after the bounded
+grace, the user manager removes remaining descendants in that exact unit. The service outlives the
+launching terminal but follows the existing user-manager/login lifetime. The launcher does not enable
+lingering, host-boot startup or automatic restart. Keep its source location available while it runs.
+Startup verifies the running container identity, effective resource limits and internal HTTPS health.
+A failed start reports the unit log and retains its stopped container for diagnosis.
+
+`python3 scripts/container.py restart --name altitude` stops and restarts the same container under
+its stable user-unit/cgroup identity. It preserves the instance's admission state. A replacement
+creates a new container and still requires the explicit host-side Continue. Use these launcher
+operations rather than direct Podman start/stop; a container without its expected supervisor is not
+reported healthy or stopped merely because a command returned.
+
 Use task Stop for owned task work before stopping the whole container. Host `stop` stops the selected
 container; `remove` refuses a running one and retains both volumes. A new controller can use those
 volumes after the old controller stops. Registrations, settings, sessions and holds persist there;
@@ -199,27 +216,16 @@ resource/time limits, retained results and cleanup. It checks startup, local HTT
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
 The launcher requires the runtime directory's bus to resolve to the local account's owned user-bus
-socket. The gate links that socket into its private runtime directory, retaining isolated pause,
-OCI and storage state. Podman 4.9.3 passes only the runtime directory to `crun delete`; a private
-directory without that link loses the user bus and crun 1.14.1 can fall back to the system manager.
-The preflight refuses a missing or redirected bus. Each launcher command also routes system-bus
-fallback to a private rejecting socket, which accepts no authentication and forwards nothing.
-`bin/altitude-crun` reinstalls that guard before invoking the ordinary `/usr/bin/crun`, including
-when Podman strips its environment. The adapter checks its own secure-execution state and refuses
-an elevated runtime file; a security-domain transition during the runtime exec is not covered by
-those checks. Keep this host launcher and adapter available for the
-lifetime of containers it creates; Podman records the absolute OCI runtime path.
-
-A private runtime-directory ledger records attempted system-bus connections. The launcher fails on
-recorded attempts, including those between commands, even when a child cleanup error is swallowed;
-guarded cleanup can execute but cannot report success while denial evidence remains. The gate checks
-the ledger after cleanup and retains the result before removing fixture storage. This instruments the selected
-Podman/crun D-Bus clients; it is not an OS sandbox against a program that ignores D-Bus routing or
-against same-account software. It does not change host polkit or service policy. Native verification
-of the complete runtime, asynchronous cleanup, rootless mapping and default protections is pending.
-The command-scoped listener does not establish complete asynchronous attempt detection; inherited
-routing can point to a listener that has already closed. This guard is not yet an accepted native
-gate, and native retries remain blocked pending the remaining review findings.
+socket. This lets Podman place its pause helper in a separate user scope, independent of a build,
+application service or terminal. The system-bus address points beneath a non-directory, and every
+runtime command selects cgroupfs and ordinary distribution crun. Persisted container ownership,
+manager and parent checks refuse adoption of containers created with another lifecycle contract.
+No OCI adapter, rejecting socket or asynchronous denial ledger is installed. The disposable VM
+acceptance monitors system-manager methods independently of child environments; the fictional
+positive control proves that its detector is active. This is not protection against arbitrary
+same-account software that ignores the launcher, nor a change to host polkit or service policy.
+The image gate retires only its verified empty private store's pause helper with Podman's own
+operation. It never migrates a shared store or guesses a helper's executable/PID.
 The gate checks the running daemon's environment and owned listening socket using a non-default
 internal port and fictional advertised certificate name. The recorded run verifies `0.0.0.0:19443`
 and the requested certificate SAN; it does not test host port publication or client-device access.

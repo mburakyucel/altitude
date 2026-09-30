@@ -51,107 +51,8 @@ CONTAINER_MARKER = Path("/etc/altitude/container")
 CONTAINER_INSTANCE = Path("/etc/altitude/instance")
 CONTAINER_PROJECTS = Path("/home/altitude/Projects")
 CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
+CONTAINER_CGROUP_ROOT = Path("/sys/fs/cgroup")
 IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
-CONTAINER_OCI = Path(__file__).resolve().parent.parent / "bin/altitude-crun"
-CONTAINER_BUS_DENIAL = "Altitude refused a host system-manager connection"
-
-
-def container_bus_denials(environment: dict[str, str]) -> Path:
-    return Path(environment["XDG_RUNTIME_DIR"]) / "altitude-system-bus-denials"
-
-
-@contextmanager
-def container_bus_guard(environment: dict[str, str]):
-    """Reject system-bus fallback by the selected D-Bus clients and retain attempts (#543).
-
-    This instruments trusted Podman/crun, not arbitrary hostile programs. The OCI
-    adapter reinstalls it after Podman strips its child environment.
-    """
-    ledger = container_bus_denials(environment)
-    descriptor = os.open(ledger, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-    info = os.fstat(descriptor)
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
-        os.close(descriptor)
-        raise RuntimeError("Container bus-denial evidence must be an owned private regular file")
-    done = threading.Event()
-    failures: list[str] = []
-    attempts: list[bool] = []
-    try:
-        with tempfile.TemporaryDirectory(prefix="alt-bus-") as folder, \
-                socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-            endpoint = str(Path(folder) / "reject")
-            listener.bind(endpoint)
-            listener.listen(8)
-            listener.settimeout(.05)
-            def reject():
-                try:
-                    while True:
-                        try:
-                            peer, _ = listener.accept()
-                        except socket.timeout:
-                            if done.is_set():
-                                return
-                            continue
-                        with peer:
-                            attempts.append(True)
-                            # No authentication, method parsing, forwarding or payload logging.
-                            os.write(descriptor, b"system-manager connection refused\n")
-                except BaseException as exc:
-                    failures.append(str(exc))
-            thread = threading.Thread(target=reject, name="altitude-bus-denial")
-            thread.start()
-            guarded = {**environment, "DBUS_SYSTEM_BUS_ADDRESS": f"unix:path={endpoint}"}
-            try:
-                yield guarded
-            finally:
-                done.set()
-                thread.join(timeout=1)
-                if thread.is_alive() or failures:
-                    raise RuntimeError("Container bus-denial monitor failed: " + "; ".join(failures))
-                if attempts:
-                    raise RuntimeError(CONTAINER_BUS_DENIAL)
-    finally:
-        os.close(descriptor)
-
-
-def container_oci(arguments: list[str]) -> int:
-    """OCI adapter: preserve crun arguments/streams, prohibit its system-bus fallback."""
-    import ctypes
-    libc = ctypes.CDLL(None)
-    libc.getauxval.argtypes = [ctypes.c_ulong]
-    libc.getauxval.restype = ctypes.c_ulong
-    if libc.getauxval(23):  # AT_SECURE: secure_getenv would ignore the denial endpoint.
-        raise RuntimeError("Refuse a secure-execution OCI adapter that can ignore bus routing")
-    runtime = Path("/usr/bin/crun")
-    mode = runtime.stat().st_mode
-    if not stat.S_ISREG(mode) or mode & 0o6000 or "security.capability" in os.listxattr(runtime):
-        raise RuntimeError("The container adapter requires an ordinary distribution crun executable")
-    with container_bus_guard(dict(os.environ)) as environment:
-        # Preserve OCI/conmon descriptors just as direct execution does. Guard
-        # sockets and the evidence descriptor are themselves close-on-exec.
-        child = None
-        pending: list[int] = []
-        def forward(number, _frame):
-            if child is None:
-                pending.append(number)
-            else:
-                try:
-                    child.send_signal(number)
-                except ProcessLookupError:
-                    pass
-        previous = {number: signals.signal(number, forward)
-                    for number in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
-        try:
-            child = subprocess.Popen([str(runtime), *arguments], env=environment, close_fds=False)
-            for number in pending:
-                forward(number, None)
-            result = child.wait()
-            return result if result >= 0 else 128 - result
-        finally:
-            for number, handler in previous.items():
-                signals.signal(number, handler)
-
-
 def containerized() -> bool:
     """Recognize the image contract; an invalid existing marker fails closed, never as native mode."""
     try:
@@ -435,10 +336,10 @@ def container_runtime() -> dict:
         host = info["host"]
         if not host["security"]["rootless"] or not host["security"]["seccompEnabled"]:
             raise RuntimeError("Rootless Podman with default seccomp is required")
-        if host["cgroupVersion"] != "v2" or host["cgroupManager"] != "systemd":
-            raise RuntimeError("Rootless Podman needs delegated cgroup v2 and the systemd cgroup manager")
-        if host["ociRuntime"]["path"] != str(CONTAINER_OCI):
-            raise RuntimeError("This container deployment requires the guarded crun adapter")
+        if host["cgroupVersion"] != "v2" or host["cgroupManager"] != "cgroupfs":
+            raise RuntimeError("Rootless Podman needs delegated cgroup v2 and the cgroupfs manager")
+        if host["ociRuntime"]["path"] != "/usr/bin/crun":
+            raise RuntimeError("This container deployment requires distribution crun")
         if not shutil.which("slirp4netns"):
             raise RuntimeError("Install slirp4netns for the explicitly selected rootless network")
         return {"host": host, "version": info["version"], "store": info["store"]}
@@ -465,8 +366,175 @@ def container_user_environment() -> dict[str, str]:
     if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or \
             directory.st_mode & 0o022 or not stat.S_ISSOCK(bus.st_mode) or bus.st_uid != os.getuid():
         raise RuntimeError("Local user bus ownership/type is invalid; refuse container operations")
-    environment.update(XDG_RUNTIME_DIR=str(runtime), DBUS_SESSION_BUS_ADDRESS=address)
+    environment.update(XDG_RUNTIME_DIR=str(runtime), DBUS_SESSION_BUS_ADDRESS=address,
+                       DBUS_SYSTEM_BUS_ADDRESS="unix:path=/dev/null/altitude-system-bus-unavailable")
     return environment
+
+
+def container_unit(instance: str) -> str:
+    """A stable host user unit preserves the stopped container's immutable cgroup parent."""
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", instance):
+        raise ValueError("Invalid container instance name")
+    return f"altitude-container-{instance}.service"
+
+
+def container_parent(unit: str) -> str:
+    """Only the delegated supervisor may create resource-owning children (#543)."""
+    membership = [line[3:] for line in (PROC / "self/cgroup").read_text().splitlines() if line.startswith("0::")]
+    if len(membership) != 1 or not membership[0].endswith("/" + unit + "/supervisor"):
+        raise RuntimeError("Container creation requires its delegated user service")
+    parent = membership[0].removesuffix("/supervisor")
+    available = (CONTAINER_CGROUP_ROOT / parent.lstrip("/") / "cgroup.controllers").read_text().split()
+    if not {"cpu", "memory", "pids"} <= set(available):
+        raise RuntimeError("The user manager has not delegated CPU, memory and PID controllers")
+    return parent
+
+
+def container_job(unit: str, command: list[str], *, wait: bool = False) -> str:
+    """Own the complete container/build lifetime in one bounded user-manager subtree."""
+    environment = container_user_environment()
+    selected = {key: value for key, value in environment.items()
+                if key in {"HOME", "PATH", "LANG", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                           "XDG_CACHE_HOME", "DBUS_SESSION_BUS_ADDRESS", "CONTAINERS_CONF"}}
+    arguments = ["systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no",
+                 f"--unit={unit}", "--slice=app.slice", "--property=Type=exec", "--property=Delegate=yes",
+                 "--property=DelegateSubgroup=supervisor", "--property=KillMode=mixed",
+                 "--property=ExitType=cgroup", "--property=TimeoutStopSec=45", "--property=CPUQuota=200%",
+                 "--property=MemoryMax=5G", "--property=TasksMax=1536",
+                 f"--working-directory={Path(__file__).resolve().parent.parent}"]
+    if wait:
+        arguments += ["--wait", "--pipe", "--property=RuntimeMaxSec=600"]
+    arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
+    result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
+                            capture_output=True, timeout=660 if wait else 20)
+    if result.returncode:
+        raise RuntimeError(f"Container user service failed: {result.stderr.strip()}; {job_logs_hint(unit)}")
+    return result.stdout
+
+
+def container_owned(instance: str) -> dict:
+    unit = container_unit(instance)
+    value = json.loads(container_command(["inspect", instance]))[0]
+    labels = value.get("Config", {}).get("Labels") or {}
+    host = value.get("HostConfig") or {}
+    parent = labels.get("io.altitude.cgroup-parent", "")
+    if (labels.get("io.altitude.container") != "1" or labels.get("io.altitude.unit") != unit
+            or host.get("CgroupManager") != "cgroupfs" or host.get("CgroupParent") != parent
+            or not parent.endswith("/app.slice/" + unit)):
+        raise RuntimeError("This instance does not belong to the delegated cgroupfs launcher; it is not adopted")
+    return value
+
+
+def _container_supervise(instance: str, create: list[str] | None) -> None:
+    """Translate user-service termination to the image's stop signal before forced unit cleanup."""
+    unit = container_unit(instance)
+    parent = container_parent(unit)
+    stopping = threading.Event()
+    previous = {number: signals.signal(number, lambda *_: stopping.set())
+                for number in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
+    ident = None
+    child = None
+    try:
+        if create is not None:
+            ident = container_command(["create", "--cgroup-parent", parent,
+                "--label", f"io.altitude.unit={unit}", "--label", f"io.altitude.cgroup-parent={parent}",
+                *create], timeout=45).strip()
+        value = container_owned(instance)
+        ident = value["Id"]
+        if value["HostConfig"]["CgroupParent"] != parent:
+            raise RuntimeError("The stopped instance's delegated parent changed; do not recreate it implicitly")
+        if not stopping.is_set():
+            child = subprocess.Popen(container_arguments(["start", "--attach", ident]),
+                                     env=container_user_environment())
+            while child.poll() is None and not stopping.wait(.2):
+                pass
+        if stopping.is_set():
+            container_command(["stop", "--time=30", ident], timeout=35)
+        if child is not None and child.wait(timeout=8) and not stopping.is_set():
+            raise RuntimeError("The attached container exited unsuccessfully")
+    finally:
+        # A failed launch retains the exact stopped instance for diagnosis/restart.
+        # The unit's mixed KillMode supplies the final bounded descendant cleanup.
+        if ident and child is not None and child.poll() is None:
+            container_command(["stop", "--time=30", ident], timeout=35)
+            child.wait(timeout=8)
+        for number, handler in previous.items():
+            signals.signal(number, handler)
+
+
+def container_limits(value: dict) -> None:
+    """A requested quota is not an enforced quota: inspect the actual running cgroup (#543)."""
+    pid = int(value.get("State", {}).get("Pid") or 0)
+    if pid <= 0:
+        raise RuntimeError("Container PID is unavailable")
+    membership = next(line[3:] for line in (PROC / str(pid) / "cgroup").read_text().splitlines()
+                      if line.startswith("0::"))
+    parent = value["HostConfig"]["CgroupParent"]
+    container_group = parent + "/libpod-" + value["Id"]
+    if membership != container_group and not membership.startswith(container_group + "/"):
+        raise RuntimeError("The container is outside its owned delegated subtree")
+    directory = CONTAINER_CGROUP_ROOT / container_group.lstrip("/")
+    memory = (directory / "memory.max").read_text().strip()
+    pids = (directory / "pids.max").read_text().strip()
+    quota, period = (directory / "cpu.max").read_text().split()
+    if memory != str(4 * 1024**3) or pids != "1024" or not quota.isdigit() or int(quota) != 2 * int(period):
+        raise RuntimeError("The deployment CPU, memory or PID limit is not enforced")
+
+
+def container_launch(instance: str, create: list[str] | None = None) -> str:
+    """Return only after exact identity, enforced limits and inner HTTPS readiness are proven."""
+    unit = container_unit(instance)
+    if create is None:
+        value = container_owned(instance)
+        if value["State"]["Running"]:
+            raise RuntimeError("The container is already running")
+    command = [sys.executable, "-c", "import json,sys; from altitude.platform import _container_supervise; "
+               "_container_supervise(sys.argv[1],json.loads(sys.argv[2]))", instance, json.dumps(create)]
+    container_job(unit, command)
+    deadline = time.monotonic() + 90
+    error = "Container startup did not finish"
+    environment = container_user_environment()
+    try:
+        while time.monotonic() < deadline:
+            if not job_active(unit, environment):
+                raise RuntimeError("The container supervisor exited before readiness")
+            try:
+                value = container_owned(instance)
+                if value["State"]["Running"]:
+                    container_limits(value)
+                    container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
+                        "--env", "XDG_RUNTIME_DIR=/run/user/1000", value["Id"], "python3", "-c",
+                        "import sys;sys.path.insert(0,'/opt/altitude');"
+                        "from altitude.platform import container_ready;container_ready()"], timeout=5)
+                    return value["Id"]
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                error = str(exc)
+            time.sleep(.25)
+        raise RuntimeError(error)
+    except Exception as exc:
+        stop = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
+                              text=True, capture_output=True, timeout=50)
+        suffix = f"; cleanup failed: {stop.stderr.strip()}" if stop.returncode else ""
+        raise RuntimeError(f"Container startup failed: {exc}; {job_logs_hint(unit)}{suffix}") from exc
+
+
+def container_stop(instance: str) -> None:
+    value = container_owned(instance)
+    unit = container_unit(instance)
+    environment = container_user_environment()
+    if job_active(unit, environment):
+        response = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
+                                  text=True, capture_output=True, timeout=50)
+        if response.returncode:
+            raise RuntimeError(f"Container stop failed: {response.stderr.strip()}")
+    elif value["State"]["Running"]:
+        raise RuntimeError("Container has no active supervisor; retain it for recovery, do not report stopped")
+    if container_owned(instance)["State"]["Running"] or job_active(unit, environment):
+        raise RuntimeError("Container or supervisor remains active after Stop")
+
+
+def container_arguments(arguments: list[str]) -> list[str]:
+    return ["podman", "--remote=false", "--cgroup-manager=cgroupfs", "--runtime=/usr/bin/crun", *arguments]
 
 
 def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False) -> str:
@@ -476,16 +544,8 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
         raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
     environment = container_user_environment()
-    with container_bus_guard(environment) as guarded:
-        ledger = container_bus_denials(environment)
-        result = subprocess.run(["podman", "--remote=false", "--runtime", str(CONTAINER_OCI), *arguments], text=True,
-                                capture_output=not interactive, timeout=timeout, env=guarded)
-        # A runtime child can report a denied connection yet have its failure
-        # swallowed by Podman cleanup. Include denials between invocations; they
-        # must never become a silently accepted baseline. Still execute guarded
-        # cleanup, but never report it as successful while denial evidence exists.
-        if ledger.stat().st_size or CONTAINER_BUS_DENIAL in (result.stderr or ""):
-            raise RuntimeError(CONTAINER_BUS_DENIAL)
+    result = subprocess.run(container_arguments(arguments), text=True,
+                            capture_output=not interactive, timeout=timeout, env=environment)
     if result.returncode:
         error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
                              f"{(result.stderr or '').strip()[-2000:]}")

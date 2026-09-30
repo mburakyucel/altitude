@@ -23,10 +23,18 @@ def name(value: str) -> str:
     return value
 
 
-def build(archive: Path, checksum: str, tag: str) -> dict:
+def build(archive: Path, checksum: str, tag: str, *, delegated: str | None = None) -> dict:
     platform.container_runtime()
     if not re.fullmatch(r"localhost/[a-z0-9][a-z0-9/_.-]*:[a-zA-Z0-9_.-]+", tag):
         raise ValueError("Use a local image tag such as localhost/altitude:v0.1.0-rc.2")
+    if delegated is None:
+        import uuid
+        unit = "altitude-container-build-" + uuid.uuid4().hex + ".service"
+        command = [sys.executable, "-c", "import json,sys;from pathlib import Path;"
+            "from scripts.container import build;print(json.dumps(build(Path(sys.argv[1]),sys.argv[2],sys.argv[3],delegated=sys.argv[4])))",
+            str(archive.resolve()), checksum, tag, unit]
+        return json.loads(platform.container_job(unit, command, wait=True))
+    parent = platform.container_parent(delegated)
     with tempfile.TemporaryDirectory(prefix="altitude-image-") as folder:
         context = Path(folder)
         app = context / "app"
@@ -37,6 +45,7 @@ def build(archive: Path, checksum: str, tag: str) -> dict:
             raise ValueError("This release predates container support; use a release containing container packaging")
         shutil.copyfile(packaging / "Containerfile", context / "Containerfile")
         platform.container_command(["build", "--force-rm", "--isolation=oci", "--network=slirp4netns",
+                                    "--cgroup-parent", parent + "/image-build",
                                     "--memory=1g", "--cpu-quota=100000", "--tag", tag,
                                     "--label", f"{LABEL}=1", "--label", f"org.opencontainers.image.version={release['version']}",
                                     "--label", f"org.opencontainers.image.revision={release['commit']}",
@@ -86,20 +95,17 @@ def start(image: str, instance: str, home: str, projects: str, bind: str, public
     local_volume(home)
     local_volume(projects)
     publish = f"[{address}]" if address.version == 6 else str(address)
-    return platform.container_command([
-        "run", "--detach", "--name", instance, "--label", f"{LABEL}=1",
+    return platform.container_launch(instance, [
+        "--name", instance, "--label", f"{LABEL}=1",
         "--network=slirp4netns", "--cgroupns=private", "--security-opt=unmask=/proc/*",
         "--memory=4g", "--cpus=2", "--pids-limit=1024", "--stop-timeout=30",
         "--volume", f"{home}:/home/altitude:nocopy", "--volume", f"{projects}:/home/altitude/Projects:nocopy",
         "--publish", f"{publish}:{port}:{port}", "--env", f"ALTITUDE_PORT={port}",
-        "--env", f"ALTITUDE_PUBLIC_HOST={public_host}", image_info["Id"]], timeout=60).strip()
+        "--env", f"ALTITUDE_PUBLIC_HOST={public_host}", image_info["Id"]])
 
 
 def owned(instance: str) -> dict:
-    value = json.loads(platform.container_command(["inspect", name(instance)]))[0]
-    if (value.get("Config", {}).get("Labels") or {}).get(LABEL) != "1":
-        raise ValueError("The named container is not owned by this Altitude launcher")
-    return value
+    return platform.container_owned(name(instance))
 
 
 def execute(instance: str, command: list[str], *, interactive: bool = False) -> str:
@@ -143,7 +149,7 @@ def main() -> None:
     run.add_argument("--public-host", default="localhost")
     run.add_argument("--port", type=int, default=8890)
     sub.add_parser("preflight", help="check local rootless-runtime prerequisites without starting containers")
-    for action in ("status", "pause", "continue", "stop", "remove", "pair", "shell", "certificate"):
+    for action in ("status", "pause", "continue", "stop", "restart", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
         if action == "continue":
@@ -165,11 +171,17 @@ def main() -> None:
             print(json.dumps(lifecycle(args.name, args.action, expected=getattr(args, "instance", None)), indent=2))
             if args.action == "continue":
                 print("Queued coordinator work and authorized task requests may now run; existing holds still apply.")
+        elif args.action == "restart":
+            platform.container_stop(args.name)
+            print(platform.container_launch(args.name))
         elif args.action in ("stop", "remove"):
             value = owned(args.name)
             if args.action == "remove" and value["State"]["Running"]:
                 raise ValueError("Stop this container before removal; both data volumes are retained")
-            print(platform.container_command(["stop" if args.action == "stop" else "rm", value["Id"]], timeout=60))
+            if args.action == "stop":
+                platform.container_stop(args.name)
+            else:
+                print(platform.container_command(["rm", value["Id"]], timeout=60))
         elif args.action == "certificate":
             facts = execute(args.name, ["python3", "-c", "import sys,json; sys.path.insert(0,'/opt/altitude'); "
                                        "from altitude import tls; print(json.dumps(tls.info(),indent=2))"])

@@ -5,7 +5,6 @@ import shutil
 import stat
 import subprocess
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -52,12 +51,13 @@ class TestContainerBusIdentity(AltitudeCase):
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, "getuid", return_value=1000), \
              mock.patch.object(Path, "resolve", return_value=Path('/run/user/1000/bus')), \
              mock.patch.object(Path, "lstat", side_effect=metadata), \
-             mock.patch.object(platform, "container_bus_guard", side_effect=lambda env: nullcontext(env)), \
-             mock.patch.object(platform, "container_bus_denials", return_value=self.tmp / 'empty-denials'), \
              mock.patch.object(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, 'ok', '')) as run:
-            (self.tmp / 'empty-denials').touch()
             self.assertEqual(platform.container_command(["stop", "fixture"]), "ok")
             self.assertEqual(run.call_args.kwargs["env"]["XDG_RUNTIME_DIR"], "/run/user/1000")
+            self.assertIn("--cgroup-manager=cgroupfs", run.call_args.args[0])
+            self.assertIn("--runtime=/usr/bin/crun", run.call_args.args[0])
+            self.assertEqual(run.call_args.kwargs["env"]["DBUS_SYSTEM_BUS_ADDRESS"],
+                             "unix:path=/dev/null/altitude-system-bus-unavailable")
 
     def test_private_runtime_cannot_link_to_another_bus(self):
         with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": "/tmp/fixture-runtime"}, clear=True), \
@@ -67,92 +67,6 @@ class TestContainerBusIdentity(AltitudeCase):
             with self.assertRaisesRegex(RuntimeError, "must resolve to the local user bus"):
                 platform.container_command(["rm", "--force", "fixture"])
             run.assert_not_called()
-
-
-class TestSystemBusGuard(AltitudeCase):
-    def environment(self):
-        return {'PATH': '/usr/bin:/bin', 'XDG_RUNTIME_DIR': str(self.tmp)}
-
-    def test_local_attempt_is_recorded_even_when_child_exits_successfully(self):
-        environment = self.environment()
-        # The only connection is to the guard's fictional local socket. No host bus.
-        child = ('import os,socket; s=socket.socket(socket.AF_UNIX); '
-                 's.connect(os.environ["DBUS_SYSTEM_BUS_ADDRESS"].removeprefix("unix:path=")); s.close()')
-        with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
-            with platform.container_bus_guard(environment) as guarded:
-                result = subprocess.run([sys.executable, '-c', child], env=guarded, timeout=3)
-                self.assertEqual(result.returncode, 0)
-        ledger = platform.container_bus_denials(environment)
-        self.assertIn('connection refused', ledger.read_text())
-        self.assertEqual(stat.S_IMODE(ledger.stat().st_mode), 0o600)
-        self.assertFalse(Path(guarded['DBUS_SYSTEM_BUS_ADDRESS'].removeprefix('unix:path=')).exists())
-
-    def test_no_attempt_preserves_body_failure_and_removes_endpoint(self):
-        with self.assertRaisesRegex(ValueError, 'fixture failure'):
-            with platform.container_bus_guard(self.environment()) as guarded:
-                raise ValueError('fixture failure')
-        self.assertEqual(platform.container_bus_denials(self.environment()).read_text(), '')
-        self.assertFalse(Path(guarded['DBUS_SYSTEM_BUS_ADDRESS'].removeprefix('unix:path=')).exists())
-
-    def test_denial_evidence_cannot_follow_symlinks(self):
-        outside = self.tmp / 'outside'
-        outside.write_text('untouched')
-        platform.container_bus_denials(self.environment()).symlink_to(outside)
-        with self.assertRaises(OSError):
-            with platform.container_bus_guard(self.environment()):
-                self.fail('must refuse')
-        self.assertEqual(outside.read_text(), 'untouched')
-
-    def test_child_denial_cannot_be_hidden_by_successful_podman_exit(self):
-        environment = self.environment()
-        def ignored_failure(*args, **kwargs):
-            # Models a separately guarded OCI child's durable signal, not stderr matching.
-            with platform.container_bus_denials(environment).open('a') as evidence:
-                evidence.write('system-manager connection refused\n')
-            return subprocess.CompletedProcess([], 0, 'success', '')
-        with mock.patch.object(os, 'getuid', return_value=1000), \
-             mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(platform, 'container_user_environment', return_value=environment), \
-             mock.patch.object(platform.subprocess, 'run', side_effect=ignored_failure) as command:
-            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
-                platform.container_command(['rm', '--force', 'fixture'])
-            self.assertIn(str(platform.CONTAINER_OCI), command.call_args.args[0])
-
-    def test_oci_adapter_reinstalls_guard_after_environment_is_stripped(self):
-        environment = self.environment()
-        actual_popen = subprocess.Popen
-        observed = []
-        child = ('import os,socket; s=socket.socket(socket.AF_UNIX); '
-                 's.connect(os.environ["DBUS_SYSTEM_BUS_ADDRESS"].removeprefix("unix:path=")); s.close()')
-        def fictional_oci(arguments, *, env, close_fds):
-            observed.append(arguments)
-            self.assertFalse(close_fds)
-            return actual_popen([sys.executable, '-c', child], env=env, close_fds=close_fds)
-        actual_stat = Path.stat
-        def metadata(path, *args, **kwargs):
-            if path == Path('/usr/bin/crun'):
-                return mock.Mock(st_mode=stat.S_IFREG | 0o755)
-            return actual_stat(path, *args, **kwargs)
-        with mock.patch.dict(os.environ, environment, clear=True), \
-             mock.patch.object(Path, 'stat', metadata), mock.patch.object(os, 'listxattr', return_value=[]), \
-             mock.patch.object(platform.subprocess, 'Popen', side_effect=fictional_oci):
-            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
-                platform.container_oci(['delete', '--force', 'fictional-id'])
-        self.assertEqual(observed, [['/usr/bin/crun', 'delete', '--force', 'fictional-id']])
-        self.assertIn('connection refused', platform.container_bus_denials(environment).read_text())
-
-    def test_denial_between_commands_cannot_be_silently_absorbed(self):
-        environment = self.environment()
-        ledger = platform.container_bus_denials(environment)
-        ledger.touch(mode=0o600)
-        ledger.write_text('system-manager connection refused\n')
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(os, 'getuid', return_value=1000), \
-             mock.patch.object(platform, 'container_user_environment', return_value=environment), \
-             mock.patch.object(platform.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as command:
-            with self.assertRaisesRegex(RuntimeError, platform.CONTAINER_BUS_DENIAL):
-                platform.container_command(['rm', '--force', 'fixture'])
-            command.assert_called_once()  # Guarded cleanup remains possible; success is never claimed.
-        self.assertEqual(ledger.read_text(), 'system-manager connection refused\n')
 
 
 class TestVolumeLocks(AltitudeCase):
@@ -233,9 +147,10 @@ class TestContainerLauncher(AltitudeCase):
         return "fixture\n"
 
     def test_launch_has_only_named_volumes_and_the_explicit_approved_exception(self):
+        self.patch(platform, "container_launch", side_effect=lambda instance, args: self.command(["create", *args]).strip())
         self.assertEqual(container.start("image", "fixture", "fixture-home", "fixture-projects", "127.0.0.1", "localhost", 19443), "fixture")
         args = self.calls[-1]
-        self.assertEqual(args[0], "run")
+        self.assertEqual(args[0], "create")
         self.assertIn("--network=slirp4netns", args)
         self.assertIn("--security-opt=unmask=/proc/*", args)
         self.assertIn("--cgroupns=private", args)
@@ -281,6 +196,10 @@ class TestContainerLauncher(AltitudeCase):
 
 
 class TestImageGate(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.patch(platform, "container_parent", return_value="/fixture/gate.service")
+
     def test_failed_payload_keeps_evidence_and_cleans_only_its_isolated_store(self):
         archive = self.tmp / "fixture-archive"
         archive.write_bytes(b"fictional archive; the build is a fixture")
@@ -318,7 +237,7 @@ class TestImageGate(AltitudeCase):
         with mock.patch.object(platform, "container_runtime", side_effect=facts), \
              mock.patch.object(platform, "container_command", side_effect=command) as runtime, \
              mock.patch.object(container, "build", return_value={"Id": "fixture-image"}):
-            result = container_acceptance.run(archive, "0" * 64, evidence)
+            result = container_acceptance.run(archive, "0" * 64, evidence, delegated="gate.service")
             self.assertIs(platform.container_command, runtime)
         self.assertFalse(result["passed"])
         self.assertIn("payload refusal", result["error"])
@@ -339,7 +258,7 @@ class TestImageGate(AltitudeCase):
         with mock.patch.object(platform, "container_runtime", return_value={"store": {"graphRoot": "/operator/store"}}), \
              mock.patch.object(platform, "container_command", side_effect=AssertionError("not the fixture store")), \
              mock.patch.object(container, "build", side_effect=AssertionError("must not build")):
-            result = container_acceptance.run(archive, "0" * 64, self.tmp / "evidence")
+            result = container_acceptance.run(archive, "0" * 64, self.tmp / "evidence", delegated="gate.service")
         self.assertFalse(result["passed"])
         self.assertIn("outside its disposable runtime store", result["error"])
         self.assertTrue(result["temporary_directory_removed"])
@@ -365,7 +284,7 @@ class TestImageGate(AltitudeCase):
                 with mock.patch.object(platform, "container_runtime", side_effect=facts), \
                      mock.patch.object(platform, "container_command", side_effect=command), \
                      mock.patch.object(container, "build", side_effect=RuntimeError("fictional build failure")):
-                    result = container_acceptance.run(archive, "0" * 64, self.tmp / str(leftover))
+                    result = container_acceptance.run(archive, "0" * 64, self.tmp / str(leftover), delegated="gate.service")
                 self.assertFalse(result["passed"])
                 self.assertIn("images remain" if leftover else "pause retirement failure", result["cleanup_error"])
                 self.assertEqual(["system", "migrate"] in calls, not leftover)

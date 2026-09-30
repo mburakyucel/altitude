@@ -17,6 +17,7 @@ import stat
 import sys
 import tempfile
 import time
+import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import platform
@@ -120,9 +121,22 @@ print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges'
 
 
 def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | None = None,
-        lifecycle: bool = False, workflow: bool = False, recovery: bool = False) -> dict:
+        lifecycle: bool = False, workflow: bool = False, recovery: bool = False,
+        delegated: str | None = None) -> dict:
+    if delegated is None:
+        unit = "altitude-container-gate-" + uuid.uuid4().hex + ".service"
+        arguments = [sys.executable, str(Path(__file__).resolve()), "--archive", str(archive.resolve()),
+                     "--sha256", checksum, "--results", str(evidence.resolve()), "--delegated", unit]
+        for selected, flag in ((lifecycle, "--lifecycle"), (workflow, "--workflow"), (recovery, "--recovery")):
+            if selected:
+                arguments.append(flag)
+        if native_binary is not None:
+            arguments += ["--native-sandbox-binary", str(native_binary.resolve())]
+        platform.container_job(unit, arguments, wait=True)
+        return json.loads((evidence / "result.json").read_text())
+    parent = platform.container_parent(delegated)
     evidence.mkdir(parents=True, exist_ok=False)
-    root = Path(tempfile.mkdtemp(prefix="altitude-container-gate-"))
+    root = Path(tempfile.mkdtemp(prefix="acg-"))
     result = {"passed": False, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
               "scope": "image bootstrap with network-none payload", "cleanup": [],
               "uncovered": ["actual engine sandbox in stripped image", "project/coordinator/task workflow",
@@ -169,6 +183,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             for volume in ("fixture-home", "fixture-projects"):
                 container.local_volume(volume)
             create = ["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
+                          "--cgroup-parent", parent,
                           "--security-opt=unmask=/proc/*", "--memory=512m", "--cpus=1", "--pids-limit=256",
                           "--env", "ALTITUDE_PORT=19443", "--env", "ALTITUDE_PUBLIC_HOST=container-fixture.invalid",
                           "--volume", "fixture-home:/home/altitude:nocopy",
@@ -315,10 +330,6 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     # No later Podman call may recreate its pause process.
                     clean(["system", "migrate"])
                     result["pause_retired_by_podman"] = True
-                denials = platform.container_bus_denials(dict(os.environ))
-                result["host_system_bus_denials"] = denials.read_text() if denials.exists() else ""
-                if result["host_system_bus_denials"]:
-                    result.update(passed=False, error="A runtime attempted a host system-manager connection")
                 shutil.rmtree(root)
                 result["temporary_directory_removed"] = not root.exists()
             except Exception as exc:
@@ -332,6 +343,7 @@ if __name__ == "__main__":
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--delegated", help=argparse.SUPPRESS)
     parser.add_argument("--native-sandbox-binary", type=Path,
                         help="optional installed native diagnostic executable; copied as test tooling, never used for a provider session")
     parser.add_argument("--lifecycle", action="store_true",
@@ -342,6 +354,6 @@ if __name__ == "__main__":
                         help="also inject claimed/uncertain resume states and verify recovery after real container replacement")
     args = parser.parse_args()
     outcome = run(args.archive.resolve(), args.sha256, args.results.resolve(), native_binary=args.native_sandbox_binary,
-                  lifecycle=args.lifecycle, workflow=args.workflow, recovery=args.recovery)
+                  lifecycle=args.lifecycle, workflow=args.workflow, recovery=args.recovery, delegated=args.delegated)
     print(json.dumps(outcome, indent=2))
     raise SystemExit(0 if outcome["passed"] else 1)
