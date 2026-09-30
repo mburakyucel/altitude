@@ -176,7 +176,10 @@ alt tls-share
 Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
 and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
 fingerprint, an iPhone profile download, a plain certificate download for Android and other
-devices, and the steps below. The link serves only that page and the public CA certificate, as a
+devices, and the steps below. On the same device, tap **Open setup page** in Settings; it opens a
+new tab while the original tab keeps the QR code, certificate details and sharing timer. Keep that
+original Settings page open during setup. Close and expiry remove the setup link as well as the QR.
+The link serves only that page and the public CA certificate, as a
 configuration profile holding only the certificate or as the certificate file; it never serves a
 key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
 the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new

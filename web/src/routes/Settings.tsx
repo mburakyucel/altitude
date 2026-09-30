@@ -286,7 +286,7 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
   const rows = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
   return <section className="settings-card device-certificate" aria-label="Certificate">
     <h2>Certificate</h2>
-    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a QR code for its camera, or run <code>alt tls-share</code> on the computer running Altitude.</p>
+    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a setup link and QR code, or run <code>alt tls-share</code> on the computer running Altitude.</p>
     <AddPhone />
     <p className="text-meta text-muted">Before installing it on the phone, check that its name and SHA-256 match these.</p>
     <dl className="settings-network">
@@ -360,7 +360,8 @@ function AddPhone() {
     const minutes = Math.floor(left / 60), seconds = String(left % 60).padStart(2, "0");
     return <div className="phone-share">
       <QRCode rows={state.share.qr} label={`QR code for ${state.share.link}`} />
-      <p className="text-meta">Scan it with the phone’s camera. The page it opens has the download and the steps.</p>
+      <p className="text-meta">Scan it with another phone’s camera, or open setup on this device in a new tab.</p>
+      {state.status === "open" && <a className="btn btn-primary" href={state.share.link} target="_blank" rel="noopener noreferrer">Open setup page</a>}
       <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
       <div className="phone-share-time">
         <span role="timer" aria-live="off">Closes in {minutes}:{seconds}</span>
