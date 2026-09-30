@@ -1,6 +1,7 @@
 """Real volume lock contention and release/launcher contracts, without calling a host runtime."""
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -154,27 +155,6 @@ class TestSystemBusGuard(AltitudeCase):
         self.assertEqual(ledger.read_text(), 'system-manager connection refused\n')
 
 
-class TestFixtureCleanup(AltitudeCase):
-    def test_reused_pause_pid_is_not_signalled_after_identity_changes(self):
-        proc = self.tmp / "proc"
-        process = proc / "42"
-        process.mkdir(parents=True)
-        (process / "comm").write_text("podman pause\n")
-        home = self.tmp / "fixture-home"
-        (process / "environ").write_bytes(("HOME=" + str(home)).encode() + b"\0")
-        (process / "exe").symlink_to("/usr/bin/podman")
-        def acquire(pid):
-            (process / "environ").write_bytes(b"HOME=/unrelated\0")
-            return 123
-        with mock.patch.object(platform, "PROC", proc), mock.patch.object(os, "pidfd_open", side_effect=acquire), \
-             mock.patch.object(os, "close") as close, mock.patch.object(platform.shutil, "which", return_value="/usr/bin/podman"), \
-             mock.patch.object(platform.signals, "pidfd_send_signal") as send:
-            with self.assertRaisesRegex(RuntimeError, "identity changed"):
-                platform.cleanup_container_pause(home)
-            send.assert_not_called()
-            close.assert_called_once_with(123)
-
-
 class TestVolumeLocks(AltitudeCase):
     def test_bootstrap_recognizes_nested_same_device_mounts_before_starting_manager(self):
         home = self.tmp / "home"
@@ -305,7 +285,7 @@ class TestImageGate(AltitudeCase):
         archive = self.tmp / "fixture-archive"
         archive.write_bytes(b"fictional archive; the build is a fixture")
         evidence = self.tmp / "evidence"
-        volumes, containers, calls = [], [], []
+        volumes, containers, calls, images = [], [], [], ["fixture-image"]
         def command(args, **kwargs):
             calls.append(args)
             if args[:2] == ["volume", "ls"]:
@@ -325,7 +305,9 @@ class TestImageGate(AltitudeCase):
             if args[0] == "rm":
                 containers.remove(args[-1]); return ""
             if args[0] == "images":
-                return "fixture-image"
+                return "\n".join(images)
+            if args[0] == "rmi":
+                images.clear(); return ""
             if "python3" in args:
                 raise RuntimeError("fictional payload refusal")
             return "fixture"
@@ -335,7 +317,6 @@ class TestImageGate(AltitudeCase):
         before = dict(os.environ)
         with mock.patch.object(platform, "container_runtime", side_effect=facts), \
              mock.patch.object(platform, "container_command", side_effect=command) as runtime, \
-             mock.patch.object(platform, "cleanup_container_pause", return_value=[]), \
              mock.patch.object(container, "build", return_value={"Id": "fixture-image"}):
             result = container_acceptance.run(archive, "0" * 64, evidence)
             self.assertIs(platform.container_command, runtime)
@@ -346,6 +327,8 @@ class TestImageGate(AltitudeCase):
         self.assertTrue(result["temporary_directory_removed"])
         self.assertEqual(os.environ, before)
         self.assertIn(["rmi", "--force", "fixture-image"], calls)
+        self.assertEqual(calls[-1], ["system", "migrate"])
+        self.assertTrue(result["pause_retired_by_podman"])
         errors = [json.loads(path.read_text()) for path in evidence.glob("command-*.json")]
         self.assertTrue(any("payload refusal" in row.get("error", "") for row in errors))
         self.assertFalse(json.loads((evidence / "result.json").read_text())["passed"])
@@ -355,9 +338,37 @@ class TestImageGate(AltitudeCase):
         archive.write_bytes(b"fixture")
         with mock.patch.object(platform, "container_runtime", return_value={"store": {"graphRoot": "/operator/store"}}), \
              mock.patch.object(platform, "container_command", side_effect=AssertionError("not the fixture store")), \
-             mock.patch.object(platform, "cleanup_container_pause", return_value=[]), \
              mock.patch.object(container, "build", side_effect=AssertionError("must not build")):
             result = container_acceptance.run(archive, "0" * 64, self.tmp / "evidence")
         self.assertFalse(result["passed"])
         self.assertIn("outside its disposable runtime store", result["error"])
         self.assertTrue(result["temporary_directory_removed"])
+
+    def test_cleanup_retains_evidence_if_inventory_or_pause_retirement_fails(self):
+        archive = self.tmp / "fixture-archive"
+        archive.write_bytes(b"fixture")
+        for leftover in (True, False):
+            with self.subTest(leftover_image=leftover):
+                calls = []
+                def command(args, **kwargs):
+                    calls.append(args)
+                    if args[:2] == ["volume", "ls"]:
+                        return "[]"
+                    if args[0] == "images":
+                        return "still-present" if leftover else ""
+                    if args == ["system", "migrate"]:
+                        raise RuntimeError("fictional pause retirement failure")
+                    return ""
+                def facts():
+                    return {"store": {"graphRoot": os.environ["XDG_DATA_HOME"],
+                                      "runRoot": os.environ["XDG_RUNTIME_DIR"]}}
+                with mock.patch.object(platform, "container_runtime", side_effect=facts), \
+                     mock.patch.object(platform, "container_command", side_effect=command), \
+                     mock.patch.object(container, "build", side_effect=RuntimeError("fictional build failure")):
+                    result = container_acceptance.run(archive, "0" * 64, self.tmp / str(leftover))
+                self.assertFalse(result["passed"])
+                self.assertIn("images remain" if leftover else "pause retirement failure", result["cleanup_error"])
+                self.assertEqual(["system", "migrate"] in calls, not leftover)
+                retained = Path(result["retained_runtime"])
+                self.assertTrue(retained.is_dir())
+                shutil.rmtree(retained)

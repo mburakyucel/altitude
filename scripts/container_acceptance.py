@@ -306,9 +306,15 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     if images:
                         clean(["rmi", "--force", *images])
                         result["cleanup"].append({"images": images})
-                    if clean(["ps", "--all", "--quiet"]).strip() or json.loads(clean(["volume", "ls", "--format", "json"])):
-                        raise RuntimeError("Fixture containers or volumes remain")
-                result["pause_helpers_retired"] = platform.cleanup_container_pause(root / "home")
+                    if (clean(["ps", "--all", "--quiet"]).strip()
+                            or json.loads(clean(["volume", "ls", "--format", "json"]))
+                            or clean(["images", "--all", "--quiet"]).strip()):
+                        raise RuntimeError("Fixture containers, volumes or images remain")
+                    # Only the verified private, empty store is eligible. Podman
+                    # knows both built-in and catatonit pause helpers (#543).
+                    # No later Podman call may recreate its pause process.
+                    clean(["system", "migrate"])
+                    result["pause_retired_by_podman"] = True
                 denials = platform.container_bus_denials(dict(os.environ))
                 result["host_system_bus_denials"] = denials.read_text() if denials.exists() else ""
                 if result["host_system_bus_denials"]:

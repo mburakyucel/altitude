@@ -494,35 +494,6 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
     return result.stdout or ""
 
 
-def cleanup_container_pause(home: Path) -> list[int]:
-    """Retire only pause helpers belonging to a disposable fixture controller's exact private HOME."""
-    retired = []
-    for path in PROC.iterdir():
-        if not path.name.isdigit():
-            continue
-        try:
-            if (path / "comm").read_text().strip() != "podman pause":
-                continue
-            if ("HOME=" + str(home)).encode() not in (path / "environ").read_bytes().split(b"\0"):
-                continue
-            descriptor = os.pidfd_open(int(path.name))
-            try:
-                if (path.stat().st_uid != os.getuid() or (path / "exe").resolve() != Path(shutil.which("podman"))
-                        or ("HOME=" + str(home)).encode() not in (path / "environ").read_bytes().split(b"\0")):
-                    raise RuntimeError("Fixture pause helper identity changed; preserve it for inspection")
-                signals.pidfd_send_signal(descriptor, signals.SIGKILL)
-                poller = select.poll()
-                poller.register(descriptor, select.POLLIN)
-                if not poller.poll(5000):
-                    raise RuntimeError("Fixture pause helper termination is unconfirmed")
-                retired.append(int(path.name))
-            finally:
-                os.close(descriptor)
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
-            continue
-    return retired
-
-
 def require_supported() -> None:
     machine = host_platform.machine()
     if sys.platform == "linux" and machine in ("x86_64", "AMD64"):
