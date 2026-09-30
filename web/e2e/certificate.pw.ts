@@ -67,14 +67,15 @@ test("Settings › Devices › Add a phone shows the QR code with its time left,
   const card = page.getByRole("region", { name: "Certificate" });
   const add = card.getByRole("button", { name: "Add a phone" });
   const code = card.getByRole("img", { name: `QR code for ${LINK}` });
+  const setup = card.getByRole("link", { name: "Open setup page" });
   await certificate(page, LIMITED);
   await walk.open("/settings/devices");
-  await walk.state("05-add-a-phone", { action: () => add.scrollIntoViewIfNeeded(), visible: [add], hidden: [code, card.getByRole("alert")] });
+  await walk.state("05-add-a-phone", { action: () => add.scrollIntoViewIfNeeded(), visible: [add], hidden: [code, setup, card.getByRole("alert")] });
   // The suite's service listens on loopback only, so its real answer is the refusal.
   await walk.state("06-refused", {
     action: () => add.click(),
     visible: [card.getByRole("alert").getByText(/configured for 127\.0\.0\.1, which only this computer can open/), add],
-    hidden: [code],
+    hidden: [code, setup],
   });
   const closes: unknown[] = [];
   let seconds = 600;
@@ -85,35 +86,63 @@ test("Settings › Devices › Add a phone shows the QR code with its time left,
     await route.fulfill({ json: { link: LINK, seconds, name: LIMITED.name, sha256: FINGERPRINT, qr: QR } });
   });
   let closeFails = true;
+  let finishClose: () => void = () => undefined;
+  const closing = new Promise<void>((resolve) => { finishClose = resolve; });
   await page.route("**/api/devices/share-close", async (route) => {
     if (closeFails) {
       closeFails = false;
       return route.fulfill({ status: 503, json: { error: "Could not reach Altitude." } });
     }
+    await closing;
     closes.push(route.request().postDataJSON());
     await route.fulfill({ json: { closed: true } });
   });
   await walk.state("07-opening", {
     action: () => add.click(),
     visible: [card.getByRole("button", { name: "Opening…" })],
-    hidden: [card.getByRole("alert"), code],
+    hidden: [card.getByRole("alert"), code, setup],
   });
   await walk.state("08-qr-code", {
     action: async () => { release(); await card.getByRole("button", { name: "Close" }).scrollIntoViewIfNeeded(); },
     visible: [code, card.getByRole("timer").getByText(/^Closes in (10:00|9:5\d)$/), card.getByText(LINK),
-      card.getByText(/^Scan it with the phone’s camera/), card.getByText(/^10 17 1E 25 2C 33 3A 41/)],
+      setup, card.getByText(/^Scan it with another phone’s camera/), card.getByText(/^10 17 1E 25 2C 33 3A 41/)],
     hidden: [add, card.getByRole("alert")],
+  });
+  // The navigation is real; only the fictional private-network share destination is supplied here.
+  const html = python(`import sys; from altitude import tls
+sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.stringify(FINGERPRINT)}}, "https://192.168.1.20:8890", 10).decode())`);
+  await page.context().route(LINK, (route) => route.fulfill({ contentType: "text/html", body: html }));
+  const originalUrl = page.url();
+  const opened = page.waitForEvent("popup");
+  await setup.click();
+  const setupPage = await opened;
+  await walkthrough(setupPage, info).state("08a-setup-new-tab", {
+    visible: [setupPage.getByRole("heading", { name: "Add this phone to Altitude" }),
+      setupPage.getByRole("link", { name: "Download the profile" })], hidden: [],
+  });
+  expect(setupPage.url()).toBe(LINK);
+  expect(await setupPage.evaluate(() => window.opener)).toBeNull();
+  expect(page.url()).toBe(originalUrl);
+  expect(closeFails).toBe(true); // Opening setup did not send share-close.
+  await setupPage.close();
+  await walk.state("08b-original-tab-retained", {
+    visible: [code, setup, card.getByRole("timer"), card.getByText("Altitude local CA"),
+      card.getByText(/^10 17 1E 25 2C 33 3A 41/)], hidden: [add],
   });
   await walk.state("09-close-failed", {
     action: () => card.getByRole("button", { name: "Close" }).click(),
-    visible: [code, card.getByRole("alert").getByText("The link is still open: Could not reach Altitude."),
+    visible: [code, setup, card.getByRole("alert").getByText("The link is still open: Could not reach Altitude."),
       card.getByRole("button", { name: "Close" })],
     hidden: [add, card.getByRole("status")],
   });
-  await walk.state("10-closed", {
+  await walk.state("09a-closing", {
     action: () => card.getByRole("button", { name: "Close" }).click(),
+    visible: [card.getByRole("button", { name: "Closing…" }), code], hidden: [setup],
+  });
+  await walk.state("10-closed", {
+    action: async () => { finishClose(); },
     visible: [card.getByRole("status").getByText("The link is closed."), add],
-    hidden: [code, card.getByRole("timer"), card.getByRole("alert")],
+    hidden: [code, setup, card.getByRole("timer"), card.getByRole("alert")],
   });
   expect(closes).toEqual([{ link: LINK }]);
   seconds = 2;
@@ -122,7 +151,7 @@ test("Settings › Devices › Add a phone shows the QR code with its time left,
   await expect(code).toBeVisible();
   await walk.state("11-expired", {
     visible: [card.getByRole("status").getByText("The link is closed."), add],
-    hidden: [code],
+    hidden: [code, setup],
   });
   // The service closes an expired window itself.
   expect(closes).toEqual([{ link: LINK }]);
