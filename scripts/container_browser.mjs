@@ -78,6 +78,10 @@ try {
       await state("10-setup-ready",panel.getByRole("status").filter({hasText:/^Ready$/}));
       await expect(panel.getByText("Using AGENTS.md; its contents are unchanged.")).toBeVisible();
       await panel.getByRole("button",{name:"Open conversation"}).click();
+      // The real daemon records setup turns as system events; open their actual
+      // conversation group instead of replacing history with a fixture response.
+      if (await page.getByRole('button',{name:'Show',exact:true}).isVisible())
+        await page.getByRole('button',{name:'Show',exact:true}).click();
       await state("11-coordinator-connected",page.getByText("Fictional container coordinator connected.",{exact:true}).last());
       await page.getByRole('textbox',{name:'Message L3 about atlas'}).fill('Create the fictional browser task.');
       await page.getByRole('button',{name:'Send',exact:true}).click();
