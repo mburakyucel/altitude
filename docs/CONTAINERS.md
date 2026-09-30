@@ -268,6 +268,12 @@ sets can therefore fail below the byte limit; the source is retained and complet
 The OCI image is exported by immutable identity; mutable tags are refused before import. File and
 filesystem limits can still make an operation fail; an unfinished directory is not a completed
 backup. The launcher reports retained artifacts if cleanup cannot be confirmed.
+Policy refusals name their category without logging private file names: unsupported ownership,
+set-ID modes, special files, extended attributes, ACL identifiers or volume layout. Namespace file
+owners and named POSIX ACL users/groups must use IDs 0 or 1000. Paths have at most 128 components.
+Sockets left by Git fsmonitor or SSH ControlMaster must be removed only after their owner stops;
+setgid shared repositories and `security.selinux` labels are unsupported. Backup on an SELinux-labeled
+volume is therefore unavailable with this image; the tested Ubuntu tuple has no SELinux enforcement.
 
 Resume claims identify their owner by PID, process start time, boot identity and PID namespace through
 the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters

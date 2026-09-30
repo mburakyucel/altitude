@@ -524,7 +524,13 @@ def container_binary(arguments: list[str], *, source=None, target=None, seconds=
                  71:'A controller owns the volumes; stop it before backup or restore',
                  72:'Unsupported, damaged or incomplete backup data; keep the source volumes',
                  73:'Backup helper protections or resource limits are unavailable',
-                 74:'Backup helper failed; keep the source volumes and inspect the operation'}
+                 74:'Backup helper failed; keep the source volumes and inspect the operation',
+                 80:'Unsupported volume ownership: files must use container UID/GID 0 or 1000',
+                 81:'Set-ID files/directories are unsupported; inspect shared Git directory permissions',
+                 82:'Sockets, devices and FIFOs are unsupported; remove stale socket files only after stopping their owner',
+                 83:'Unsupported extended attributes: security/SELinux labels cannot be backed up by this image',
+                 84:'Unsupported POSIX ACL: named users/groups must use container IDs 0 or 1000',
+                 85:'Unsupported volume layout: paths need at most 128 components and home/Projects must be empty'}
         raise RuntimeError(reasons.get(code,'Private container transfer failed; no completed backup/restore is admitted'))
 
 

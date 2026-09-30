@@ -1,10 +1,12 @@
 import io
 import json
 import os
+import struct
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 from altitude import container_archive as backup
 
@@ -92,6 +94,45 @@ class ArchiveTest(unittest.TestCase):
         (self.home/'Projects/hidden').write_text('must not disappear')
         with self.assertRaisesRegex(ValueError, 'hidden Projects'):
             self.archive()
+
+    def test_export_uses_restore_path_policy_before_reading_regular_mountpoint(self):
+        (self.home/'Projects').rmdir()
+        (self.home/'Projects').write_bytes(b'data that must not be read')
+        with mock.patch.object(backup.os,'open',side_effect=AssertionError('read invalid source')):
+            with self.assertRaisesRegex(backup.PolicyError,'empty directory'): self.archive()
+
+    def test_export_refuses_depth_before_python_recursion_limit(self):
+        folder=self.projects
+        for _ in range(129):
+            folder=folder/'d'; folder.mkdir()
+        with self.assertRaisesRegex(backup.PolicyError,'128 components'): self.archive()
+
+    def test_acl_named_ids_obey_same_policy_on_export_and_restore(self):
+        def acl(identity):
+            return struct.pack('<I',2)+b''.join(struct.pack('<HHI',*entry) for entry in
+                [(1,6,0xffffffff),(2,4,identity),(4,0,0xffffffff),(16,0,0xffffffff),(32,0,0xffffffff)])
+        # This worker namespace cannot create an ACL for an unmapped ID. Feed
+        # the kernel observation at that seam; export must reject before reading.
+        with mock.patch.object(backup.os,'listxattr',return_value=['system.posix_acl_access']), \
+             mock.patch.object(backup.os,'getxattr',return_value=acl(1001)):
+            with self.assertRaisesRegex(backup.PolicyError,'namespace IDs'): self.archive()
+        os.setxattr(self.home/'private','system.posix_acl_access',acl(1000))
+        stream,_=self.archive(); home,projects=self.output()
+        backup.restore(stream,home,projects)
+        self.assertEqual(os.getxattr(home/'private','system.posix_acl_access'),acl(1000))
+        def change(member,data):
+            if member.name=='home/private':
+                import base64
+                member.pax_headers[backup.XATTR]=json.dumps({'system.posix_acl_access':base64.b64encode(acl(65534)).decode()})
+            return member,data
+        with self.assertRaisesRegex(backup.PolicyError,'namespace IDs'):
+            backup.restore(self.altered(change))
+
+    def test_policy_categories_survive_content_free_helper_exit(self):
+        for code in range(80,86):
+            with mock.patch.object(backup,'helper',side_effect=backup.PolicyError(code,'private filename')):
+                with self.assertRaises(SystemExit) as caught: backup.entrypoint('export',{})
+                self.assertEqual(caught.exception.code,code)
 
     def test_setgid_refused(self):
         (self.projects/'repo').chmod(0o2755)

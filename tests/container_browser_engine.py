@@ -10,11 +10,11 @@ import uuid
 
 prompt=sys.stdin.read()
 control=json.loads((Path.home()/'.fixture-control.json').read_text())
-if control['intro_failure'] and not os.environ.get('ALTITUDE_TASK'):
-    print('Fixture authentication refused',file=sys.stderr)
-    raise SystemExit(1)
 session=sys.argv[-2] if 'resume' in sys.argv else str(uuid.uuid4())
 print(json.dumps({'type':'thread.started','thread_id':session}),flush=True)
+if control['intro_failure'] and not os.environ.get('ALTITUDE_TASK'):
+    print(json.dumps({'type':'turn.failed','error':'Fixture authentication refused'}),flush=True)
+    raise SystemExit(1)
 if os.environ.get('ALTITUDE_TASK'):
     if not Path('fixture-draft.txt').exists():
         Path('fixture-draft.txt').write_text('Saved fictional task work.\n')

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import stat
+import struct
 import sys
 import tarfile
 
@@ -24,6 +25,34 @@ MAX_ENTRIES = 1_000_000
 MAX_BYTES = 64 * 1024**3
 CHUNK = 1024 * 1024
 XATTR = "ALTITUDE.xattrs"
+
+
+class PolicyError(ValueError):
+    """Content-free operator category; file names/data never reach helper logs."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code=code
+
+
+def _attribute(key: str, value: bytes):
+    if key.startswith('user.'):
+        return
+    if key not in ('system.posix_acl_access','system.posix_acl_default'):
+        raise PolicyError(83,'Unsupported file attribute; security labels are not supported')
+    if len(value)<4 or (len(value)-4)%8 or struct.unpack_from('<I',value)[0]!=2:
+        raise PolicyError(84,'Unsupported POSIX ACL encoding')
+    entries=[struct.unpack_from('<HHI',value,offset) for offset in range(4,len(value),8)]
+    tags=[tag for tag,_,_ in entries]
+    if any(tags.count(tag)!=1 for tag in (1,4,32)) or tags.count(16)>1 or ((2 in tags or 8 in tags) and 16 not in tags):
+        raise PolicyError(84,'Unsupported POSIX ACL structure')
+    identities=set()
+    previous=(0,0)
+    for tag,permissions,identity in entries:
+        order=(tag,identity)
+        if (tag not in (1,2,4,8,16,32) or permissions>7 or order<=previous or order in identities
+                or identity not in ((0,1000) if tag in (2,8) else (0xffffffff,))):
+            raise PolicyError(84,'POSIX ACL identifiers must use namespace IDs 0 or 1000')
+        identities.add(order); previous=order
 
 
 def _json(value) -> bytes:
@@ -48,9 +77,9 @@ class BoundedInfo(tarfile.TarInfo):
 def _attributes(path: Path) -> dict[str, str]:
     result = {}
     for key in os.listxattr(path, follow_symlinks=False):
-        if not (key.startswith("user.") or key in ("system.posix_acl_access", "system.posix_acl_default")):
-            raise ValueError(f"Unsupported file attribute {key!r} on {path}")
-        result[key] = base64.b64encode(os.getxattr(path, key, follow_symlinks=False)).decode()
+        value=os.getxattr(path,key,follow_symlinks=False)
+        _attribute(key,value)
+        result[key] = base64.b64encode(value).decode()
     return result
 
 
@@ -99,6 +128,7 @@ class DigestReader:
 def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entries=MAX_ENTRIES) -> dict:
     """Caller holds both directory locks and has proved the controller stopped."""
     contents = Contents(max_bytes, max_entries)
+    seen={}
     with tarfile.open(fileobj=stream, mode="w|", format=tarfile.PAX_FORMAT) as archive:
         for root_name, root in (("home", home), ("projects", projects)):
             links = {}
@@ -106,10 +136,6 @@ def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entri
             def visit(path, relative):
                 current = path.lstat()
                 mode = current.st_mode
-                if current.st_uid not in (0, 1000) or current.st_gid not in (0, 1000):
-                    raise ValueError(f"Unsupported namespace ownership on {relative}")
-                if mode & (stat.S_ISUID | stat.S_ISGID):
-                    raise ValueError(f"Set-ID metadata is unsupported: {relative}")
                 info = tarfile.TarInfo(relative)
                 info.mode = stat.S_IMODE(mode)
                 info.uid, info.gid = current.st_uid, current.st_gid
@@ -119,8 +145,6 @@ def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entri
                 if stat.S_ISDIR(mode):
                     info.type = tarfile.DIRTYPE
                 elif stat.S_ISLNK(mode):
-                    if relative == 'home/Projects':
-                        raise ValueError('Home Projects mountpoint must be an empty directory')
                     info.type, info.linkname = tarfile.SYMTYPE, os.readlink(path)
                 elif stat.S_ISREG(mode):
                     identity = (current.st_dev, current.st_ino)
@@ -130,10 +154,11 @@ def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entri
                         links[identity] = relative
                         info.size = current.st_size
                 else:
-                    raise ValueError(f"Unsupported file type: {relative}")
+                    raise PolicyError(82,'Unsupported file type: sockets, devices and FIFOs cannot be backed up')
+                _validate(info,seen)  # identical path, ownership and metadata policy before reading data
                 contents.member(info)
                 if info.isreg():
-                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os,'O_NOATIME',0))
                     with os.fdopen(fd, "rb") as source:
                         observed = os.fstat(source.fileno())
                         if (observed.st_dev, observed.st_ino, observed.st_size) != (current.st_dev, current.st_ino, current.st_size):
@@ -147,7 +172,7 @@ def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entri
                     # these helpers mount the two volumes at SEPARATE paths. Hidden
                     # content must not be silently lost or duplicated (review F3).
                     if relative == "home/Projects" and children:
-                        raise ValueError("Home volume contains hidden Projects data; backup refused")
+                        raise PolicyError(85,"Home volume contains hidden Projects data; backup refused")
                     for child in children:
                         if child.name == MARKER and path == root:
                             continue  # restore authority is never inherited from archive contents
@@ -165,20 +190,24 @@ def _validate(info: tarfile.TarInfo, seen: dict[str, bytes]):
     parts = PurePosixPath(info.name).parts
     if (not parts or parts[0] not in ("home", "projects") or info.name != "/".join(parts)
             or any(part in (".", "..", "") for part in parts) or "\0" in info.name
-            or len(parts) > 128 or info.name in seen or len(parts)==2 and parts[-1] == MARKER):
+            or info.name in seen or len(parts)==2 and parts[-1] == MARKER):
         raise ValueError("Invalid, duplicate or reserved backup path")
+    if len(parts)>128:
+        raise PolicyError(85,'Backup paths cannot exceed 128 components')
     if len(parts) > 1 and seen.get("/".join(parts[:-1])) != tarfile.DIRTYPE:
         raise ValueError("Backup parent must be an earlier directory")
-    if info.uid not in (0, 1000) or info.gid not in (0, 1000) or info.mode & ~0o1777:
-        raise ValueError("Unsupported ownership or mode")
+    if info.uid not in (0,1000) or info.gid not in (0,1000):
+        raise PolicyError(80,'Unsupported namespace ownership; use IDs 0 or 1000')
+    if info.mode & ~0o1777:
+        raise PolicyError(81,'Set-ID metadata is unsupported')
     if info.type not in (tarfile.REGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE, tarfile.LNKTYPE) or info.sparse:
-        raise ValueError("Unsupported archive file type")
+        raise PolicyError(82,"Unsupported archive file type")
     if info.size < 0 or (not info.isreg() and info.size):
         raise ValueError("Invalid archive size")
     if len(parts) == 1 and not info.isdir():
         raise ValueError("Volume root must be a directory")
     if info.name == "home/Projects" and not info.isdir() or info.name.startswith("home/Projects/"):
-        raise ValueError("Nested Projects data is not part of the home archive")
+        raise PolicyError(85,"Home Projects mountpoint must be an empty directory; nested data is not part of the home archive")
     if info.islnk() and (info.linkname.split("/")[0] != parts[0] or seen.get(info.linkname) != tarfile.REGTYPE):
         raise ValueError("Hardlinks require an earlier regular file in the same volume")
     if "\0" in info.linkname or len(info.linkname) > 4096:
@@ -192,9 +221,8 @@ def _validate(info: tarfile.TarInfo, seen: dict[str, bytes]):
         raise ValueError("Invalid file attributes")
     decoded = {}
     for key, value in attrs.items():
-        if not (key.startswith("user.") or key in ("system.posix_acl_access", "system.posix_acl_default")):
-            raise ValueError("Unsupported file attribute")
         decoded[key] = base64.b64decode(value, validate=True)
+        _attribute(key,decoded[key])
     times = tuple(int(info.pax_headers["ALTITUDE." + key + "_ns"]) for key in ("atime", "mtime"))
     if any(abs(value) >= 2**63 for value in times):
         raise ValueError("Timestamp is outside the supported range")
@@ -313,6 +341,8 @@ def entrypoint(action: str, descriptor: dict):
         helper(action, descriptor)
     except OSError:
         raise SystemExit(70) from None
+    except PolicyError as error:
+        raise SystemExit(error.code) from None
     except (ValueError, tarfile.TarError):
         raise SystemExit(72) from None
     except RuntimeError as error:
