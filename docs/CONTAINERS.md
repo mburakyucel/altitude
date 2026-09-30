@@ -9,8 +9,9 @@ bounded failure recovery. An independent guest service-manager monitor observes 
 and fails on unexpected management requests, including cleanup. See [evidence](#evidence) for the
 reproducible commands and their limits.
 
-Complete daemon-driven browser onboarding remains under validation. Real provider sessions,
-Mac/Apple Silicon, Docker, other runtime versions, host project binds and emulation are unverified.
+Daemon-driven onboarding and task continuation pass at phone and desktop viewports with fictional
+engines. Real provider sessions, physical-device routing/trust, Mac/Apple Silicon, Docker, other
+runtime versions, host project binds and emulation are unverified.
 The tested payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Containerized Linux does not provide native macOS, Xcode or iOS builds. The Mac stage needs its own
 reviewed VM/control transport and native host evidence before a support claim.
@@ -109,8 +110,9 @@ without pasting credentials into chat. One engine suffices; live provider/auth c
 Clone/import under `/home/altitude/Projects`, then follow First run: name, prerequisites, incident
 preference and project selection. Registration retains repository/instructions checks, custom-hook
 choices, Git guards and coordinator setup. The interface labels volume paths and refuses paths or
-links escaping the project volume. Check again/Retry retain their existing journeys; complete
-first-use and recreation acceptance remains pending.
+links escaping the project volume. Check again/Retry retain their existing journeys. The Linux
+browser lane covers fresh state through a working task and replacement; authentication observations
+come from fixtures and do not establish real account sign-in compatibility.
 
 ## Lifecycle and recovery
 
@@ -358,12 +360,19 @@ These are fictional data and small-archive checks, not real-account or maximum-s
 `scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
 external engine/tool observations through its published HTTPS endpoint. Chromium runs in the
 validation container with its own sandbox; a disposable SSH forward connects to the guest and a
-temporary browser trust database contains only the fictional public CA. This lane is under
-validation. It retains named phone/desktop states and explicit failures, and does not intercept
-application API responses. It neither changes host trust nor establishes physical phone or Mac access.
+temporary browser trust database contains only the fictional public CA. It passes on candidate
+`0cb42bf` at 390×844 and 1440×900: pairing, operator identity, missing tools/sign-in observations,
+Check again, interrupted first run, private incidents, unavailable host voice, volume selection and
+outside-volume refusal, repository/instructions/guards, coordinator failure/Retry, task creation
+and Stop, same-container restart, paused replacement and exactly-once queued continuation, custom
+hook keep/combine decisions, conversation-only folders and persisted Settings. Application routes,
+storage, Git and scheduling stay real; only external engine/tool observations are fictional.
+Named screenshots and failures are retained by the runner. No application response is intercepted.
+It neither changes host trust nor establishes physical phone or Mac access. The separate emulated
+iPhone container walkthrough passes in desktop WebKit; this is not physical iOS acceptance.
 
-Results explicitly name uncovered provider-session confinement parity, daemon-driven workflow and
-complete onboarding, real-device HTTPS routing/trust, maximum-size backup throughput and Mac.
+Results explicitly name uncovered provider-session confinement parity, real authentication,
+real-device HTTPS routing/trust, maximum-size backup throughput and Mac.
 Workspace tests cover route refusals, native regressions, lock contention and fictional phone/desktop
 states; they are not container/Mac acceptance. Required PR checks remain required, and optional hosted
 installation checks remain non-blocking.

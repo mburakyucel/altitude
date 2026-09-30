@@ -21,8 +21,9 @@ manager. Immutable resources and persistent home/projects have separate lifetime
 Linux image/launcher lanes establish startup, published local HTTPS, elevation-file inventory,
 the native diagnostic permission matrix, restart/replacement/descendant cleanup and private
 backup/restore. [Container evidence](CONTAINERS.md#evidence) names the tested runtime and limits.
-Provider-session confinement parity, complete browser onboarding and Mac runtime evidence remain
-pending. Resume-claim ownership
+The actual daemon's phone/desktop onboarding and queued task continuation pass with fictional
+external engines. Provider-session confinement parity, real-device access and Mac runtime evidence
+remain pending. Resume-claim ownership
 uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
 Container admission has one persistent receipt and a root-owned container-instance identity.
 The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
