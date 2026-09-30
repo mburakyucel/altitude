@@ -86,7 +86,7 @@ never a privileged/unconfined fallback.
 Private LAN/VPN access uses a host-side `--bind` address and matching `--public-host` DNS name/IP.
 The container binds its own interface while certificates and pairing links name the advertised
 address. This configures no firewall, public internet service, reverse proxy or tunnel. Published
-networking remains unverified in this candidate.
+LAN/VPN routing and real-device trust remain unverified; the local published HTTPS endpoint passes.
 
 ## First use
 

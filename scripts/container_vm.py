@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO))
 from scripts import installation_vm as vm
 
 
-def run(results, cache, *, image_workflow=False, native_binary=None, browser=False):
+def run(results, cache, *, image_workflow=False, native_binary=None, browser=False, logout=False):
     results = results.resolve()
     results.mkdir()
     record = {'passed': False, 'scope': 'fictional Ubuntu VM committed Altitude container launcher and image lifecycle in disposable Linux VM'}
@@ -97,7 +97,15 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
                 '--results','input/product-result','--lifecycle','--workflow','--recovery']
             if native_binary:
                 guest_command += ['--native-sandbox-binary','input/native-sandbox']
-        if browser:
+        if logout:
+            # Separate SSH sessions exercise a real user-manager exit then new login.
+            prepared = machine.ssh('python3 input/source/tests/container_logout_probe.py prepare',
+                                   timeout=600, check=False)
+            if prepared.returncode:
+                raise RuntimeError('Logout fixture preparation failed: ' + prepared.stderr[-4000:])
+            run = machine.ssh('python3 input/source/tests/container_logout_probe.py verify',
+                              timeout=300, check=False)
+        elif browser:
             port=vm.free_port()
             forwarding=subprocess.Popen(['ssh',*machine.options('-p'),'-N','-o','ExitOnForwardFailure=yes',
                 '-L',f'127.0.0.1:{port}:127.0.0.1:19448','ubuntu@127.0.0.1'],stdin=subprocess.DEVNULL,
@@ -175,12 +183,14 @@ def main():
     parser.add_argument('--image-workflow', action='store_true', help='run image profile/lifecycle/workflow/recovery instead of launcher lifecycle')
     parser.add_argument('--native-sandbox-binary', type=Path, help='diagnostic executable for the image workflow lane; no provider calls')
     parser.add_argument('--browser', action='store_true', help='actual published HTTPS daemon onboarding with fictional engine on phone/desktop')
+    parser.add_argument('--logout', action='store_true', help='user-manager shutdown and new-login recovery of the actual launcher')
     args = parser.parse_args()
     if args.native_sandbox_binary and not args.image_workflow:
         parser.error('--native-sandbox-binary needs --image-workflow')
-    if args.browser and args.image_workflow:
-        parser.error('--browser and --image-workflow are separate acceptance lanes')
-    return run(args.results, args.cache, image_workflow=args.image_workflow, native_binary=args.native_sandbox_binary,browser=args.browser)
+    if sum((args.browser, args.image_workflow, args.logout)) > 1:
+        parser.error('--browser, --image-workflow and --logout are separate acceptance lanes')
+    return run(args.results, args.cache, image_workflow=args.image_workflow,
+               native_binary=args.native_sandbox_binary,browser=args.browser,logout=args.logout)
 
 
 if __name__ == '__main__':
