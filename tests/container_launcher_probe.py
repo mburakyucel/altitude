@@ -350,8 +350,10 @@ def main():
                 'both_copy_start_orders_refused':True,'journal_sentinel_absent':True}
             # Recovery must not depend on the image still being cached, or repoint
             # a mutable tag now owned by another image. Only this private store is touched.
+            existing=set(command(['ps','--all','--format','{{.Names}}']).split())
             for instance in instances:
-                platform.container_stop(instance)
+                if instance in existing:
+                    platform.container_stop(instance)
             collision=command(['commit','--change','LABEL io.altitude.fixture=tag-collision',
                 container.owned(instances[1])['Id'],'localhost/altitude:fixture'],timeout=45).strip()
             command(['rm','--all'],timeout=30)
