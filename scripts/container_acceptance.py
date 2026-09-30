@@ -183,7 +183,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             image = container.build(archive, checksum, "localhost/altitude-bootstrap:fixture")
             result["image"] = {key: image.get(key) for key in ("Id", "Digest", "Architecture", "Labels")}
             for volume in ("fixture-home", "fixture-projects"):
-                container.local_volume(volume)
+                container.local_volume(volume,lineage='1'*32,pair='2'*32,role=volume.removeprefix('fixture-'),create=True)
             create = ["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
                           "--cgroup-parent", parent,
                           "--security-opt=unmask=/proc/*", "--memory=512m", "--cpus=1", "--pids-limit=256",

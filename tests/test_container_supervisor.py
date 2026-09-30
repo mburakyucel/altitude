@@ -2,6 +2,7 @@
 import json
 import subprocess
 import threading
+from contextlib import nullcontext
 from unittest import mock
 
 from altitude import platform
@@ -21,6 +22,8 @@ class ContainerSupervisorTests(AltitudeCase):
         self.groups = self.tmp / "cgroups"
         self.patch(platform, "PROC", self.proc)
         self.patch(platform, "CONTAINER_CGROUP_ROOT", self.groups)
+        self.patch(platform, 'container_lineage_lock', side_effect=lambda _: nullcontext())
+        self.patch(platform, 'container_copy_available')
 
     def test_stored_ownership_rejects_old_manager_and_parent_before_action(self):
         self.patch(platform, "container_command", side_effect=lambda *a, **k: json.dumps([self.value]))

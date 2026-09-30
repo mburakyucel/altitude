@@ -72,16 +72,19 @@ def main():
                 raise RuntimeError('Successful build replaced the shared runtime pause helper')
             record['image'] = image['Id']
             first = container.start(image['Id'],instances[0],'fictional-home','fictional-projects',
-                                    '127.0.0.1','localhost',19443)
+                                    '127.0.0.1','localhost',19443,new_volumes=True)
             before = container.lifecycle(instances[0])
             record['before'] = before
             if not before['ready']:
                 raise RuntimeError('Fresh image is not admitted/ready')
+            container.execute(instances[0],['python3','-c',
+                "from pathlib import Path; p=Path('/home/altitude/private-fixture');"
+                "p.write_text('backup-secret-sentinel-7392');p.chmod(0o600);"])
             addresses = json.loads(subprocess.check_output(['ip','-j','-4','address'],text=True))
             private_ip = next(info['local'] for row in addresses for info in row['addr_info']
                               if info.get('scope')=='global')
             neighbor = container.start(image['Id'],instances[1],'neighbor-home','neighbor-projects',
-                                       private_ip,'neighbor.fixture.invalid',19444)
+                                       private_ip,'neighbor.fixture.invalid',19444,new_volumes=True)
             record['non_localhost_publication'] = {'bind':private_ip,'public_host':'neighbor.fixture.invalid'}
             # Remove the frontend AND its waiting systemd-run client before the
             # build unit. ExecStopPost must work with no Python finally fallback.
@@ -168,7 +171,7 @@ def main():
                 return https(address,{**facts,'host':'wrong.fixture.invalid'})
             with mock.patch.object(platform,'container_https',side_effect=mismatched_tls):
                 try:
-                    container.start(image['Id'],instances[3],'failed-home','failed-projects','127.0.0.1','localhost',19445)
+                    container.start(image['Id'],instances[3],'failed-home','failed-projects','127.0.0.1','localhost',19445,new_volumes=True)
                 except RuntimeError as error:
                     if 'Container startup failed' not in str(error) or 'certificate' not in str(error).lower():
                         raise
@@ -226,6 +229,36 @@ def main():
             record['pause_after_failures'] = pause_state()
             if record['pause_before_build'] != record['pause_after_failures']:
                 raise RuntimeError('Build/application failure replaced the neighboring runtime pause helper')
+            backup_dir=root/'private-backup'
+            record['backup']=container.backup(instances[2],backup_dir)
+            restored=container.restore_backup(backup_dir,'restored-home','restored-projects')
+            restored_name='fixture-restored'
+            instances.append(restored_name)
+            container.start(restored['image'],restored_name,'restored-home','restored-projects','127.0.0.1','localhost',19446)
+            restored_state=container.lifecycle(restored_name)
+            if restored_state['ready'] or restored_state['instance']==held['instance']:
+                raise RuntimeError('Restored copy did not require deliberate new-instance continuation')
+            content=container.execute(restored_name,['cat','/home/altitude/private-fixture'])
+            if content!='backup-secret-sentinel-7392': raise RuntimeError('Private file did not round trip')
+            try:
+                platform.container_launch(instances[2])
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError('Original started while restored copy was active')
+            platform.container_stop(restored_name)
+            platform.container_launch(instances[2])
+            try:
+                platform.container_launch(restored_name)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError('Restored copy started while original was active')
+            journal=subprocess.run(['journalctl','--user','--no-pager'],capture_output=True,timeout=15,check=True).stdout
+            if b'backup-secret-sentinel-7392' in journal:
+                raise RuntimeError('Private archive content reached the user journal')
+            record['backup_restore']={'private_file':True,'paused_new_identity':True,
+                'both_copy_start_orders_refused':True,'journal_sentinel_absent':True}
             record['passed'] = True
         except Exception as error:
             record['error'] = repr(error)

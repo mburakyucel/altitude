@@ -146,7 +146,9 @@ class TestContainerLauncher(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.calls = []
+        self.volumes = {}
         self.patch(platform, "container_runtime", return_value={})
+        self.patch(platform, 'container_user_environment', return_value={'XDG_RUNTIME_DIR':str(self.tmp)})
         self.patch(platform, "container_command", new=self.command)
 
     def command(self, args, **kwargs):
@@ -154,14 +156,16 @@ class TestContainerLauncher(AltitudeCase):
         if args[:2] == ["image", "inspect"]:
             return json.dumps([{"Id": "sha256:fixture", "Labels": {container.LABEL: "1"}}])
         if args[:2] == ["volume", "ls"]:
-            return "[]"
+            return json.dumps([{'Name':v} for v in self.volumes])
+        if args[:2] == ['volume','create']:
+            self.volumes[args[-1]] = dict(args[i+1].split('=',1) for i,a in enumerate(args) if a=='--label')
         if args[:2] == ["volume", "inspect"]:
-            return json.dumps([{"Driver": "local", "Options": {}, "Labels": {container.LABEL: "1"}}])
+            return json.dumps([{"Driver": "local", "Options": {}, "Labels": self.volumes[args[-1]]}])
         return "fixture\n"
 
     def test_launch_has_only_named_volumes_and_the_explicit_approved_exception(self):
         self.patch(platform, "container_launch", side_effect=lambda instance, args: self.command(["create", *args]).strip())
-        self.assertEqual(container.start("image", "fixture", "fixture-home", "fixture-projects", "127.0.0.1", "localhost", 19443), "fixture")
+        self.assertEqual(container.start("image", "fixture", "fixture-home", "fixture-projects", "127.0.0.1", "localhost", 19443,new_volumes=True), "fixture")
         args = self.calls[-1]
         self.assertEqual(args[0], "create")
         self.assertEqual(args[args.index("--hostname") + 1], "fixture")
@@ -189,7 +193,7 @@ class TestContainerLauncher(AltitudeCase):
         with mock.patch.object(platform, "container_command", side_effect=[json.dumps([{"Name": "home"}]),
                              json.dumps([{"Driver": "local", "Options": {"type": "none", "device": "/host", "o": "bind"}}])]):
             with self.assertRaisesRegex(ValueError, "host binds"):
-                container.local_volume("home")
+                container.local_volume("home",lineage='1'*32,pair='2'*32,role='home')
 
     def test_engine_tools_install_in_persistent_home_and_commands_use_image_source(self):
         self.patch(platform, "containerized", return_value=True)
@@ -219,14 +223,16 @@ class TestImageGate(AltitudeCase):
         archive.write_bytes(b"fictional archive; the build is a fixture")
         evidence = self.tmp / "evidence"
         volumes, containers, calls, images = [], [], [], ["fixture-image"]
+        volume_labels = {}
         def command(args, **kwargs):
             calls.append(args)
             if args[:2] == ["volume", "ls"]:
                 return json.dumps([{"Name": name} for name in volumes])
             if args[:2] == ["volume", "create"]:
+                volume_labels[args[-1]]=dict(args[i+1].split('=',1) for i,a in enumerate(args) if a=='--label')
                 volumes.append(args[-1]); return args[-1]
             if args[:2] == ["volume", "inspect"]:
-                return json.dumps([{"Driver": "local", "Options": {}, "Labels": {container.LABEL: "1"}}])
+                return json.dumps([{"Driver": "local", "Options": {}, "Labels": volume_labels[args[-1]]}])
             if args[:2] == ["volume", "rm"]:
                 volumes.remove(args[-1]); return ""
             if args[0] == "create":

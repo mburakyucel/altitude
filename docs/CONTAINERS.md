@@ -81,7 +81,7 @@ not run the native installer or publish an image. From that source checkout on t
 ```sh
 python3 scripts/container.py preflight
 python3 scripts/container.py build --archive /path/to/altitude-release.tar.gz --sha256 '<release SHA-256>' --tag localhost/altitude:preview
-python3 scripts/container.py start --image localhost/altitude:preview
+python3 scripts/container.py start --image localhost/altitude:preview --new-volumes
 python3 scripts/container.py status
 ```
 
@@ -208,8 +208,54 @@ Stop/resume across planned replacement; destruction during a running task or lau
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
-The automated backup/replacement/recovery path is unfinished, not an established operator procedure.
-Do not migrate an existing native installation with these commands.
+The candidate provides the private backup/restore commands below; their native acceptance is still
+in progress. Do not migrate an existing native installation with these commands.
+
+### Private backup and restore
+
+Run these on the **host**, after stopping the selected container. The output directory must not
+exist. Keep it private: it contains unencrypted credentials, TLS keys, executable configuration,
+projects and the exact application image. Use only your own trusted backups. Checksums detect
+damage and truncation; they do not establish authenticity. If it is exposed, rotate credentials
+and re-pair devices. No backup is uploaded or sent to an external service.
+
+```sh
+python3 scripts/container.py stop --name altitude
+python3 scripts/container.py backup --name altitude --output /private/path/altitude-backup
+python3 scripts/container.py restore --backup /private/path/altitude-backup \
+  --name altitude-restored --home-volume altitude-restored-home \
+  --projects-volume altitude-restored-projects
+```
+
+Restore uses two new volumes and the recorded image, starts a new container identity, and leaves
+work paused until the displayed host Continue command is run. The original volumes remain intact.
+Within the launcher's current account and store, either start order refuses another running copy
+from the same backup lineage. It also refuses any other running container mounting either volume,
+including an unlabeled container. This coordinates supported launcher operations; manual bypass,
+another host or another runtime store is outside that guarantee. Experimental unlabeled volumes
+are not adopted. Existing/restored starts omit `--new-volumes`; missing names fail rather than
+creating empty replacements.
+
+Backup holds both mounted directory locks and requires all known controllers stopped. The image
+stops its user manager if the lock owner dies. A dedicated helper has no network, no host binds,
+a read-only image, default seccomp, no new privileges, and only CHOWN/DAC_OVERRIDE/FOWNER within its
+rootless mapping. It has one CPU, 1 GiB and 64 PIDs. Binary payload descriptors bypass text capture,
+container logging and the user journal. A finite delegated transfer service owns the helper even
+if the waiting terminal exits; its exact cleanup removes incomplete payloads or new restore volumes.
+
+The two volumes use separate archive roots. Hidden content under the home volume's Projects
+mountpoint is refused. Ordinary files, directory modes, namespace UID/GID 0 or 1000, timestamps,
+symlinks, same-volume hardlinks, user attributes and POSIX ACLs are preserved. Devices, sockets,
+FIFOs, set-ID modes and other security attributes are refused. The archive has an in-band final
+content digest/count record; the host manifest also hashes both complete files. Restore verifies
+both before writing pair-bound completion markers. It never follows restored links while writing
+files or executes restored startup hooks. Incomplete/mismatched pairs cannot start.
+
+Data transfers are bounded to 64 GiB, the image archive to 8 GiB, and archive entries to one million.
+The service has a 30-minute deadline, with a 25-minute helper limit and separate bounded cleanup.
+The OCI image is exported by immutable identity; mutable tags are refused before import. File and
+filesystem limits can still make an operation fail; an unfinished directory is not a completed
+backup. The launcher reports retained artifacts if cleanup cannot be confirmed.
 
 Resume claims identify their owner by PID, process start time, boot identity and PID namespace through
 the platform seam. A numerically reused PID cannot keep an earlier claim live. Missing identity enters

@@ -301,6 +301,20 @@ def container_bootstrap() -> None:
         if info.st_uid not in (0, 1000):
             raise RuntimeError(f"Volume {directory} must belong to container UID 1000 or be newly created")
     with container_volume_locks(home, projects):
+        from .container_archive import MARKER
+        restored = os.environ.get('ALTITUDE_RESTORE_SHA', '')
+        if restored:
+            lineage, pair = (os.environ.get(key, '') for key in ('ALTITUDE_VOLUME_LINEAGE','ALTITUDE_VOLUME_PAIR'))
+            if not re.fullmatch('[0-9a-f]{64}', restored) or any(not re.fullmatch('[0-9a-f]{32}', v) for v in (lineage,pair)):
+                raise RuntimeError('Invalid immutable restore identity')
+            expected = {'format':1,'archive':restored,'lineage':lineage,'pair':pair}
+            for root in (home, projects):
+                fd = os.open(root / MARKER, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd) as source:
+                    if not stat.S_ISREG(os.fstat(source.fileno()).st_mode) or json.loads(source.read(4096)) != expected:
+                        raise RuntimeError('Restore completion does not match this volume pair')
+        elif any((root / MARKER).exists() for root in (home,projects)):
+            raise RuntimeError('Restored volumes require their recorded restore identity')
         # Only the two mount roots, never recursive data or host paths. Open descriptors retain locks.
         for directory in (home, projects):
             os.chown(directory, 1000, 1000)
@@ -389,7 +403,7 @@ def container_parent(unit: str) -> str:
 
 
 def container_job(unit: str, command: list[str], *, wait: bool = False,
-                  after_stop: list[str] | None = None) -> str:
+                  after_stop: list[str] | None = None, seconds: int = CONTAINER_BUILD_SECONDS) -> str:
     """Own the complete container/build lifetime in one bounded user-manager subtree."""
     environment = container_user_environment()
     selected = {key: value for key, value in environment.items()
@@ -402,7 +416,7 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
                  "--property=MemoryMax=5G", "--property=TasksMax=1536",
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:
-        arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={CONTAINER_BUILD_SECONDS}"]
+        arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={seconds}"]
     if after_stop is not None:
         # ExecStopPost is parsed by systemd, not a shell. Disable environment
         # expansion and escape its specifiers/quoting independently of argv.
@@ -414,12 +428,70 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
     arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
     try:
         result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
-                                capture_output=True, timeout=CONTAINER_BUILD_SECONDS + CONTAINER_STOP_WAIT + 15 if wait else 20)
+                                capture_output=True, timeout=seconds + CONTAINER_STOP_WAIT + 15 if wait else 20)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"Timed out waiting for container user service; {job_logs_hint(unit)}") from exc
     if result.returncode:
         raise RuntimeError(f"Container user service failed: {result.stderr.strip()}; {job_logs_hint(unit)}")
     return result.stdout
+
+
+@contextmanager
+def container_lineage_lock(lineage: str):
+    """Serialize this account/store's supported copy admission and stopped backups."""
+    if not re.fullmatch(r"[0-9a-f]{32}", lineage):
+        raise RuntimeError("Container volume lineage is missing; experimental unlabeled volumes are not adopted")
+    directory = Path(container_user_environment()["XDG_RUNTIME_DIR"]) / "altitude-container-locks"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("Container admission needs its owned private runtime directory")
+    fd = os.open(directory / lineage, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+            raise RuntimeError("Invalid container admission lock")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another operation is using this container lineage; wait for it to finish") from None
+        yield
+    finally:
+        os.close(fd)  # Persistent inode; removing it would let another process bypass an existing lock.
+
+
+def container_copy_available(lineage: str, volumes: list[str], *, except_id: str | None = None) -> None:
+    """Caller holds the lineage lock. Check ALL mount users, including unlabeled ones."""
+    ids = container_command(["ps", "--all", "--quiet"]).split()
+    if not ids:
+        return
+    values = json.loads(container_command(["inspect", *ids]))
+    environment = container_user_environment()
+    for value in values:
+        if value["Id"] == except_id:
+            continue
+        labels = value.get("Config", {}).get("Labels") or {}
+        mounts = {item.get("Name") for item in value.get("Mounts", []) if item.get("Type") == "volume"}
+        if labels.get("io.altitude.lineage") != lineage and not mounts.intersection(volumes):
+            continue
+        unit = labels.get("io.altitude.unit")
+        pending = (unit and re.fullmatch(r"altitude-container-[a-zA-Z0-9_.-]+\.service", unit)
+                   and job_active(unit, environment))
+        if value.get("State", {}).get("Running") or pending:
+            raise RuntimeError("Stop the other active container using this volume pair or backup lineage first")
+
+
+def container_binary(arguments: list[str], *, source=None, target=None, seconds=1500, max_bytes=64*1024**3):
+    """Binary descriptors only; never journal/capture/decode a private archive (issue543/F6)."""
+    import resource
+    def limits():
+        resource.setrlimit(resource.RLIMIT_FSIZE, (max_bytes, max_bytes))
+    result = subprocess.run(container_arguments(arguments), env=container_user_environment(),
+        stdin=source if source is not None else subprocess.DEVNULL,
+        stdout=target if target is not None else subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, timeout=seconds, preexec_fn=limits)
+    if result.returncode:
+        raise RuntimeError("Private container transfer failed; no completed backup/restore is admitted")
 
 
 def container_owned(instance: str, *, timeout: int = 30) -> dict:
@@ -467,6 +539,7 @@ def _container_supervise(instance: str, create: list[str] | None) -> None:
     ident = None
     child = None
     stop_attempted = False
+    admission = ExitStack()
     try:
         if create is not None:
             container_command(["create", "--cgroup-parent", parent,
@@ -476,11 +549,17 @@ def _container_supervise(instance: str, create: list[str] | None) -> None:
         if value["HostConfig"]["CgroupParent"] != parent:
             raise RuntimeError("The stopped instance's delegated parent changed; do not recreate it implicitly")
         ident = value["Id"]
+        labels = value.get("Config", {}).get("Labels") or {}
+        lineage = labels.get("io.altitude.lineage", "")
+        admission.enter_context(container_lineage_lock(lineage))
+        container_copy_available(lineage, [m["Name"] for m in value.get("Mounts", []) if m.get("Type") == "volume"], except_id=ident)
         if not stopping.is_set():
             child = subprocess.Popen(container_arguments(["start", "--attach", ident]),
                                      env=container_user_environment())
             while child.poll() is None and not stopping.wait(.2):
-                pass
+                if admission is not None and container_owned(instance, timeout=3)["State"]["Running"]:
+                    admission.close()
+                    admission = None
         if stopping.is_set():
             stop_attempted = True
             # Start --attach is asynchronous. A stop while the container is
@@ -500,6 +579,8 @@ def _container_supervise(instance: str, create: list[str] | None) -> None:
         if child is not None and child.wait(timeout=8) and not stopping.is_set():
             raise RuntimeError("The attached container exited unsuccessfully")
     finally:
+        if admission is not None:
+            admission.close()
         # A failed launch retains the exact stopped instance for diagnosis/restart.
         # The unit's mixed KillMode supplies the final bounded descendant cleanup.
         if ident and not stop_attempted:
