@@ -265,6 +265,10 @@ def main():
                 options['after_stop']=[sys.executable,'-c','import sys,shutil;from pathlib import Path;'
                     'from scripts.container import cleanup_transfer;p=Path(sys.argv[1]);a=p.parent/"fixture-audit.json";'
                     'shutil.copyfile(a,sys.argv[2]) if a.exists() else None;cleanup_transfer(p)',str(source_record),str(audit_path)]
+                if mode=='retain-for-recovery':
+                    # State-boundary fault: simulate an absent stop-post callback.
+                    # Product cleanup remains installed; this one fixture omits it.
+                    options['after_stop']=None
                 return real_job(unit,observed,**options)
             with mock.patch.object(platform,'container_job',side_effect=audited_job):
                 for mode in ('truncate','disk-limit','crash-worker'):
@@ -277,29 +281,43 @@ def main():
                         raise RuntimeError('Faulted backup was reported complete: '+mode)
                     if any((failed_dir/name).exists() for name in ('manifest.json','data.tar','image.tar','operation.json')):
                         raise RuntimeError('Faulted backup retained a payload or completion record: '+mode)
-                mode='wait-for-client-death'
-                abandoned=root/'abandoned-backup'
-                def lose_client():
-                    os.setsid()
-                    container.backup(instances[2],abandoned)
-                frontend=multiprocessing.get_context('fork').Process(target=lose_client)
-                frontend.start()
-                deadline=time.monotonic()+30
-                while not (abandoned/'fixture-ready').exists():
-                    if time.monotonic()>deadline or not frontend.is_alive():
-                        raise RuntimeError('Transfer did not reach the client-death fixture checkpoint')
-                    time.sleep(.1)
-                operation=json.loads((abandoned/'operation.json').read_text())
-                os.killpg(frontend.pid,signal.SIGKILL)
-                frontend.join(10)
-                if frontend.is_alive(): raise RuntimeError('Backup frontend survived the exact fixture kill')
-                subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',operation['unit']],check=True,timeout=10)
-                deadline=time.monotonic()+55
-                while platform.job_active(operation['unit'],platform.container_user_environment()):
-                    if time.monotonic()>deadline: raise RuntimeError('Abandoned transfer service survived cleanup')
-                    time.sleep(.2)
-                if any((abandoned/name).exists() for name in ('manifest.json','data.tar','image.tar','operation.json')):
-                    raise RuntimeError('Client-independent transfer cleanup did not remove partial payloads')
+                for mode in ('wait-for-client-death','retain-for-recovery'):
+                    abandoned=root/('abandoned-backup-'+mode)
+                    def lose_client():
+                        os.setsid()
+                        container.backup(instances[2],abandoned)
+                    frontend=multiprocessing.get_context('fork').Process(target=lose_client)
+                    frontend.start()
+                    try:
+                        deadline=time.monotonic()+30
+                        while not (abandoned/'fixture-ready').exists():
+                            if time.monotonic()>deadline or not frontend.is_alive():
+                                raise RuntimeError('Transfer did not reach the client-death fixture checkpoint')
+                            time.sleep(.1)
+                        operation=json.loads((abandoned/'fixture-ready').read_text())
+                        os.killpg(frontend.pid,signal.SIGKILL)
+                        frontend.join(10)
+                        if frontend.is_alive(): raise RuntimeError('Backup frontend survived the exact fixture kill')
+                        subprocess.run(['systemctl','--user','kill','--kill-whom=main','--signal=KILL',operation['unit']],check=True,timeout=10)
+                        deadline=time.monotonic()+55
+                        while platform.job_active(operation['unit'],platform.container_user_environment()):
+                            if time.monotonic()>deadline: raise RuntimeError('Abandoned transfer service survived cleanup')
+                            time.sleep(.2)
+                        if mode=='retain-for-recovery':
+                            if not (abandoned/'data.tar').exists() or not Path(operation['record']).exists():
+                                raise RuntimeError('The skipped-cleanup control did not retain its private artifacts')
+                            listed=platform.container_runtime()['transfers']
+                            if operation['id'] not in [item['id'] for item in listed]:
+                                raise RuntimeError('Next preflight did not report the unfinished operation')
+                            container.recover_transfer(operation['id'])
+                            record['skipped_transfer_cleanup_recovery']=True
+                        if any((abandoned/name).exists() for name in ('manifest.json','data.tar','image.tar','operation.json')):
+                            raise RuntimeError('Transfer cleanup did not remove partial payloads')
+                        if Path(operation['record']).exists():
+                            raise RuntimeError('Completed transfer cleanup retained its recovery record')
+                    finally:
+                        if frontend.is_alive():
+                            os.killpg(frontend.pid,signal.SIGKILL); frontend.join(10)
                 mode='observe'
                 record['backup']=container.backup(instances[2],backup_dir)
                 restored=container.restore_backup(backup_dir,'restored-home','restored-projects')

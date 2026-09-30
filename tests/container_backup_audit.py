@@ -37,8 +37,9 @@ def worker(record: Path, mode: str) -> dict:
                 kwargs['target'].truncate(512)  # native helper exited0, transport delivered incomplete bytes
             elif mode=='crash-worker':
                 os.kill(os.getpid(),signal.SIGKILL)
-            elif mode=='wait-for-client-death':
-                (record.parent/'fixture-ready').write_text('helper finished; waiting for the finite fixture kill\n')
+            elif mode in ('wait-for-client-death','retain-for-recovery'):
+                (Path(operation['directory'])/'fixture-ready').write_text(json.dumps({'unit':operation['unit'],
+                    'id':operation['id'],'record':str(record)}))
                 time.sleep(120)  # parent kills only this recorded unit; its deadline remains active
         return result
 

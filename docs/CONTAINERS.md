@@ -268,6 +268,15 @@ sets can therefore fail below the byte limit; the source is retained and complet
 The OCI image is exported by immutable identity; mutable tags are refused before import. File and
 filesystem limits can still make an operation fail; an unfinished directory is not a completed
 backup. The launcher reports retained artifacts if cleanup cannot be confirmed.
+Transfer records live in the host account's private
+`$XDG_DATA_HOME/altitude-container/transfers` (normally `~/.local/share/altitude-container/transfers`),
+outside `/tmp`. Runtime preflight and start/backup/restore report records for their selected store,
+including after a reboot skips service cleanup. Inspect them with
+`python3 scripts/container.py transfers`. Once the recorded service is inactive, clean one exact
+operation with `python3 scripts/container.py recover-transfer --id <recorded-id>`; active operations
+and changed helper/volume ownership refuse recovery. Completed backups and original data volumes
+remain intact; only the operation's incomplete payloads or new restore volumes are removed.
+Keep this private state directory with the runtime store until all operations are resolved.
 Policy refusals name their category without logging private file names: unsupported ownership,
 set-ID modes, special files, extended attributes, ACL identifiers or volume layout. Namespace file
 owners and named POSIX ACL users/groups must use IDs 0 or 1000. Paths have at most 128 components.

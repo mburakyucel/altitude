@@ -16,6 +16,39 @@ class BackupTests(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.patch(platform,'container_user_environment',return_value={'XDG_RUNTIME_DIR':str(self.tmp)})
+        self.enterContext(mock.patch.dict(os.environ,{'XDG_DATA_HOME':str(self.tmp/'data')}))
+
+    def test_unfinished_transfer_is_persistent_discoverable_and_explicitly_recoverable(self):
+        store=str(self.tmp/'store')
+        self.patch(platform,'container_runtime',side_effect=lambda:{'store':{'graphRoot':store},
+            'transfers':platform.container_transfer_records(store)})
+        self.patch(platform,'container_job',side_effect=RuntimeError('original interruption'))
+        self.patch(platform,'job_active',return_value=False)
+        output=self.tmp/'backup'; output.mkdir(mode=0o700)
+        (output/'data.tar').write_bytes(b'private partial')
+        op={'action':'backup','directory':str(output),'identity':{'lineage':'1'*32,'home':'h','projects':'p'}}
+        with mock.patch.object(container,'cleanup_transfer',side_effect=RuntimeError('cleanup unavailable')):
+            with self.assertRaisesRegex(RuntimeError,'original interruption.*cleanup unavailable'):
+                container.transfer_job(op)
+        rows=platform.container_transfer_records(store)
+        self.assertEqual([row['id'] for row in rows],[op['id']])
+        self.assertEqual(platform.container_transfer_records('unrelated store'),[])
+        record=platform.container_transfer_root()/op['id']/'operation.json'
+        self.assertEqual(record.stat().st_mode&0o777,0o600)
+        self.assertEqual(record.parent.stat().st_mode&0o777,0o700)
+        self.patch(platform,'container_command',return_value='')
+        self.assertTrue(container.recover_transfer(op['id'])['record_removed'])
+        self.assertFalse((output/'data.tar').exists())
+        self.assertEqual(platform.container_transfer_records(store),[])
+
+    def test_explicit_transfer_recovery_refuses_an_active_unit(self):
+        self.patch(platform,'container_runtime',return_value={'transfers':[{'id':'a'*32}]})
+        root=platform.container_transfer_root(create=True)/('a'*32); root.mkdir(mode=0o700)
+        (root/'operation.json').write_text(json.dumps({'identity':{'lineage':'b'*32},'unit':'owned.service'}))
+        self.patch(platform,'job_active',return_value=True)
+        cleanup=self.patch(container,'cleanup_transfer')
+        with self.assertRaisesRegex(ValueError,'still active'): container.recover_transfer('a'*32)
+        cleanup.assert_not_called()
 
     def test_same_lineage_lock_is_exclusive_and_unlink_not_used(self):
         with platform.container_lineage_lock('1'*32):

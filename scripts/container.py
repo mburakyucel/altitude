@@ -309,7 +309,7 @@ def cleanup_transfer(record: Path):
         if not (directory/'manifest.json').exists():
             for filename in ('data.tar','image.tar','manifest.tmp'):
                 (directory/filename).unlink(missing_ok=True)
-        record.unlink(missing_ok=True)
+        shutil.rmtree(record.parent)
     elif not (record.parent/'complete').exists():
         for volume in (operation['identity']['home'],operation['identity']['projects']):
             names = call(['volume','ls','--quiet']).split()
@@ -392,7 +392,11 @@ def transfer_worker(record: Path) -> dict:
                          restored=operation['data_sha'],operation=operation['id'])
         with (directory/'data.tar').open('rb') as data:
             transfer_helper(operation,'restore',source=data)
-        (record.parent/'complete').write_text('restored\n')
+        with (record.parent/'complete').open('x') as complete:
+            complete.write('restored\n'); complete.flush(); os.fsync(complete.fileno())
+        fd=os.open(record.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
         return {'image':operation['image'],**identity,'complete':True}
 
 
@@ -408,25 +412,51 @@ def instance_pair_unlocked(value: dict) -> dict:
     return {**identity,'archive':restored[0]}
 
 
-def transfer_job(operation: dict, record: Path) -> dict:
+def transfer_job(operation: dict) -> dict:
     operation.update(id=uuid.uuid4().hex)
+    operation['store']=platform.container_runtime()['store']['graphRoot']
+    root=platform.container_transfer_root(create=True)/operation['id']
+    root.mkdir(mode=0o700)
+    record=root/'operation.json'
     operation['unit']='altitude-container-transfer-'+operation['id']+'.service'
     operation['helper']='altitude-transfer-'+operation['id']
     with record.open('x') as target:
         os.fchmod(target.fileno(),0o600); json.dump(operation,target)
+        target.flush(); os.fsync(target.fileno())
+    for directory in (root,root.parent):
+        fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
     command=[sys.executable,'-c','import sys,json;from pathlib import Path;from scripts.container import transfer_worker;'
              'print(json.dumps(transfer_worker(Path(sys.argv[1]))))',str(record)]
     cleanup=[sys.executable,'-c','import sys;from pathlib import Path;from scripts.container import cleanup_transfer;'
              'cleanup_transfer(Path(sys.argv[1]))',str(record)]
     try:
         return json.loads(platform.container_job(operation['unit'],command,wait=True,after_stop=cleanup,seconds=1800))
-    except Exception:
-        environment=platform.container_user_environment()
-        if platform.job_active(operation['unit'],environment):
-            platform.container_stop_unit(operation['unit'],environment)
-        if record.exists() and not platform.job_active(operation['unit'],environment):
-            cleanup_transfer(record)
+    except Exception as original:
+        try:
+            environment=platform.container_user_environment()
+            if platform.job_active(operation['unit'],environment):
+                platform.container_stop_unit(operation['unit'],environment)
+            if record.exists() and not platform.job_active(operation['unit'],environment):
+                cleanup_transfer(record)
+        except Exception as cleanup:
+            raise RuntimeError(f'Transfer failed ({original}); cleanup also failed ({cleanup}). Retained operation {operation["id"]}; inspect transfers before recovery.') from original
         raise
+
+
+def recover_transfer(identity: str) -> dict:
+    runtime=platform.container_runtime()
+    if not re.fullmatch('[0-9a-f]{32}',identity): raise ValueError('Use the exact retained transfer ID')
+    found=next((v for v in runtime['transfers'] if v['id']==identity),None)
+    if found is None: raise ValueError('No retained operation in this runtime store')
+    record=platform.container_transfer_root()/identity/'operation.json'
+    operation=json.loads(record.read_text())
+    with platform.container_lineage_lock(operation['identity']['lineage']):
+        if platform.job_active(operation['unit'],platform.container_user_environment()):
+            raise ValueError('Transfer service is still active; recovery refuses')
+        cleanup_transfer(record)
+    return {'recovered':identity,'record_removed':not record.exists()}
 
 
 def backup(instance: str, directory: Path) -> dict:
@@ -442,7 +472,7 @@ def backup(instance: str, directory: Path) -> dict:
     directory=directory.absolute()
     directory.mkdir(mode=0o700)  # exclusive: never replace an existing backup
     return transfer_job({'action':'backup','directory':str(directory),'instance':instance,
-        'identity':identity,'image':value['Image'],'image_labels':labels}, directory/'operation.json')
+        'identity':identity,'image':value['Image'],'image_labels':labels})
 
 
 def verify_backup(directory: Path, manifest: dict | None = None) -> dict:
@@ -474,11 +504,10 @@ def restore_backup(directory: Path, home: str, projects: str) -> dict:
     if name(home)==name(projects): raise ValueError('Use separate new restore volumes')
     existing=platform.container_command(['volume','ls','--quiet']).split()
     if home in existing or projects in existing: raise ValueError('Restore requires two new volume names')
-    root=Path(tempfile.mkdtemp(prefix='acr-'))
     identity={'lineage':manifest['lineage'],'pair':uuid.uuid4().hex,'home':home,'projects':projects,
               'archive':manifest['data']['sha256']}
     return transfer_job({'action':'restore','directory':str(directory),'identity':identity,
-        'image':manifest['image'],'manifest':manifest,'data_sha':manifest['data']['sha256']},root/'operation.json')
+        'image':manifest['image'],'manifest':manifest,'data_sha':manifest['data']['sha256']})
 
 
 def recreate(instance: str) -> str:
@@ -524,6 +553,9 @@ def main() -> None:
     restore.add_argument('--public-host',default='localhost')
     restore.add_argument('--port',type=int,default=8890)
     sub.add_parser("preflight", help="check local rootless-runtime prerequisites without starting containers")
+    sub.add_parser('transfers',help='inspect active or unfinished private backup/restore records')
+    recover=sub.add_parser('recover-transfer',help='clean one inactive interrupted transfer, preserving completed backups')
+    recover.add_argument('--id',required=True)
     for action in ("status", "pause", "continue", "stop", "restart", "recreate", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
@@ -537,6 +569,10 @@ def main() -> None:
             print(json.dumps(build(args.archive, args.sha256, args.tag), indent=2))
         elif args.action == "preflight":
             print(json.dumps(platform.container_runtime(), indent=2))
+        elif args.action=='transfers':
+            print(json.dumps(platform.container_runtime()['transfers'],indent=2))
+        elif args.action=='recover-transfer':
+            print(json.dumps(recover_transfer(args.id),indent=2))
         elif args.action == "start":
             print(start(args.image, args.name, args.home_volume, args.projects_volume, args.bind, args.public_host, args.port,new_volumes=args.new_volumes))
         elif args.action=='backup':

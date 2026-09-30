@@ -354,9 +354,41 @@ def container_runtime() -> dict:
             raise RuntimeError("This container deployment requires distribution crun")
         if not shutil.which("slirp4netns"):
             raise RuntimeError("Install slirp4netns for the explicitly selected rootless network")
-        return {"host": host, "version": info["version"], "store": info["store"]}
+        transfers=container_transfer_records(info['store']['graphRoot'])
+        if transfers:
+            print('Active or unfinished private transfers retained: '+', '.join(item['id'] for item in transfers)
+                  +'. Inspect with the host launcher transfers command; recover only after the service stops.',file=sys.stderr)
+        return {"host": host, "version": info["version"], "store": info["store"], 'transfers':transfers}
     except (KeyError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
+
+
+def container_transfer_root(*, create=False) -> Path:
+    """Persistent operator-owned recovery records, outside temporary runtime directories (#543/F3)."""
+    root=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'altitude-container/transfers'
+    for directory in (root.parent,root):
+        if create: directory.mkdir(parents=True,mode=0o700,exist_ok=True)
+        if directory.exists() or directory.is_symlink():
+            info=directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
+                raise RuntimeError('Container transfer records need an owned private directory')
+    return root
+
+
+def container_transfer_records(store: str) -> list[dict]:
+    result=[]
+    for record in sorted(container_transfer_root().glob('*/operation.json')):
+        parent,info=record.parent.lstat(),record.lstat()
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=os.getuid() or parent.st_mode&0o077 or
+                not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>65536):
+            raise RuntimeError('An unsafe transfer record needs local inspection')
+        value=json.loads(record.read_text())
+        if value.get('store')==store:
+            if value.get('id')!=record.parent.name or not re.fullmatch('[0-9a-f]{32}',value['id']):
+                raise RuntimeError('Transfer record identity differs from its private directory')
+            result.append({'id':value['id'],'action':value['action'],'directory':value['directory'],
+                'volumes':[value['identity']['home'],value['identity']['projects']], 'unit':value['unit']})
+    return result
 
 
 def container_user_environment(runtime_dir: Path | None = None) -> dict[str, str]:
