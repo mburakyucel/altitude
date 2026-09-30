@@ -399,7 +399,7 @@ def container_job(unit: str, command: list[str], *, wait: bool = False) -> str:
     arguments = ["systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no",
                  f"--unit={unit}", "--slice=app.slice", "--property=Type=exec", "--property=Delegate=yes",
                  "--property=DelegateSubgroup=supervisor", "--property=KillMode=mixed",
-                 "--property=ExitType=cgroup", "--property=TimeoutStopSec=45", "--property=CPUQuota=200%",
+                 "--property=TimeoutStopSec=45", "--property=CPUQuota=200%",
                  "--property=MemoryMax=5G", "--property=TasksMax=1536",
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:

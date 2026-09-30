@@ -73,7 +73,7 @@ class ContainerSupervisorTests(AltitudeCase):
         self.assertIn("--user", arguments)
         self.assertIn("--property=KillMode=mixed", arguments)
         self.assertIn("--property=TimeoutStopSec=45", arguments)
-        self.assertIn("--property=ExitType=cgroup", arguments)
+        self.assertNotIn("--property=ExitType=cgroup", arguments)  # Main-process death must stop descendants.
         self.assertFalse(any("PROVIDER_SECRET" in value or "Restart=" in value for value in arguments))
         self.assertNotIn("enable", arguments)
 
