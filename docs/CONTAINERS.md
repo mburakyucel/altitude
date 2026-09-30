@@ -216,8 +216,9 @@ Stop/resume across planned replacement; destruction during a running task or lau
 
 Image replacement requires quiescent work and a private, consistent backup of **both** volumes.
 An older image does not reverse schema/state changes: use a compatible image or matching backup.
-The candidate provides the private backup/restore commands below; their native acceptance is still
-in progress. Do not migrate an existing native installation with these commands.
+The private backup/restore lane passes on the recorded Ubuntu amd64 fixture. Complete onboarding,
+Mac and final delivery acceptance remain open. Do not migrate an existing native installation with
+these commands.
 
 ### Private backup and restore
 
@@ -340,8 +341,25 @@ retained broker/loopback access and the coordinator denied direct connections. B
 reported zero effective capabilities, NoNewPrivs=1 and Seccomp=2. This makes no provider-session,
 authentication or other-engine confinement claim.
 
-Results explicitly name uncovered provider-session confinement parity, full task workflow, Stop/restart/
-recreation, concurrent controller locks, updates/backups, published HTTPS/browser onboarding and Mac.
+The Ubuntu 24.04 launcher lane passes private backup/restore, truncated transfer, byte-limit refusal,
+killed transfer worker/client cleanup, interrupted-restore volume cleanup and recovery after the
+source image is removed. A conflicting mutable image tag stays unchanged. The restored private
+file and TLS keys retain ownership, modes, timestamps and user/POSIX ACL metadata. Both copy-start
+orders refuse for the exact lineage-admission reason; restored identity remains paused. Actual
+helper log commands and store paths contain no archive output, and the user journal contains no
+fictional secret sentinel. The byte limit applies to the binary output stream, not Podman's own
+database writes. These are fictional data and small-archive checks, not real-account or maximum-size
+throughput acceptance.
+
+`scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
+external engine/tool observations through its published HTTPS endpoint. Chromium runs in the
+validation container with its own sandbox; a disposable SSH forward connects to the guest and a
+temporary browser trust database contains only the fictional public CA. This lane is under
+validation. It retains named phone/desktop states and explicit failures, and does not intercept
+application API responses. It neither changes host trust nor establishes physical phone or Mac access.
+
+Results explicitly name uncovered provider-session confinement parity, daemon-driven workflow and
+complete onboarding, real-device HTTPS routing/trust, maximum-size backup throughput and Mac.
 Workspace tests cover route refusals, native regressions, lock contention and fictional phone/desktop
 states; they are not container/Mac acceptance. Required PR checks remain required, and optional hosted
 installation checks remain non-blocking.
