@@ -24,6 +24,19 @@ from altitude import platform
 from scripts import container
 
 
+def proc_exposure(command, ident: str, evidence: Path):
+    """Retain the approved exposure inventory; any broader predicate fails release (#543)."""
+    source=Path(__file__).resolve().parents[1]/'tests'
+    for path in (source/'container_proc_probe.py',source/'fixtures/container-proc-policy.json'):
+        command(['cp',str(path),ident+':/tmp/'+path.name])
+    for uid in ('0','1000'):
+        value=json.loads(command(['exec','--user',uid,ident,'python3','/tmp/container_proc_probe.py',
+                                  '/tmp/container-proc-policy.json'],timeout=30))
+        (evidence/('proc-exposure-'+uid+'.json')).write_text(json.dumps(value,indent=2)+'\n')
+        if value['unexpected_exposure']:
+            raise RuntimeError('Unexpected proc exposure; stop for review: '+str(value['unexpected_exposure']))
+
+
 @contextmanager
 def environment(root: Path, *, reuse=False):
     saved = dict(os.environ)
@@ -196,6 +209,8 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             result["container"] = ident
             result["container_inspect"] = json.loads(call(["inspect", ident]))[0]
             call(["start", ident])
+            proc_exposure(call,ident,evidence)
+            result['proc_exposure_within_approved_predicates']=True
             ready = False
             for _ in range(30):
                 try:

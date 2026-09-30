@@ -73,6 +73,8 @@ def main():
             record['image'] = image['Id']
             first = container.start(image['Id'],instances[0],'fictional-home','fictional-projects',
                                     '127.0.0.1','localhost',19443,new_volumes=True)
+            container_acceptance.proc_exposure(command,first,evidence)
+            record['proc_exposure_within_approved_predicates']=True
             before = container.lifecycle(instances[0])
             record['before'] = before
             if not before['ready']:

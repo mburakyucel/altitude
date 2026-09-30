@@ -73,6 +73,23 @@ def run(action, value):
             return container.lifecycle(instance,'continue',expected=container.lifecycle(instance)['instance'])
         if action=='stop':
             platform.container_stop(instance); return {'stopped':True}
+        if action=='backup':
+            platform.container_stop(instance)
+            saved=container.backup(instance,ROOT/('backup-'+instance))
+            restored=instance+'-restored'
+            copy=container.restore_backup(ROOT/('backup-'+instance),restored+'-home',restored+'-projects')
+            container.start(copy['image'],restored,copy['home'],copy['projects'],
+                '127.0.0.1','localhost',19448)
+            state['instances'].append(restored);STATE.write_text(json.dumps(state))
+            receipt=container.lifecycle(restored)
+            if receipt['ready']: raise RuntimeError('Restored registered projects were admitted automatically')
+            observed=json.loads(container.execute(restored,['python3','-c',
+                "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude import config,state as S;"
+                "t=S.load_task('atlas','browser-fixture-task');"
+                "print(json.dumps({'projects':sorted(config.load_projects()),'operator':config.operator_name(),"
+                "'task_session':t['session_id'],'hold':t['hold_merge']}))"]))
+            platform.container_stop(restored)
+            return {'complete':saved['format']==1,'paused':not receipt['ready'],**observed}
         if action=='cleanup':
             for name in state['instances']:
                 platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())

@@ -150,7 +150,11 @@ try {
       await state('20-container-settings-tools',page.getByText('Run on the host to open the container shell:',{exact:false}));
       await page.getByRole('button',{name:'Check again',exact:true}).click();
       if (errors.length) throw Error(errors.join("\n"));
-      result.viewports.push({name,viewport,walked,passed:true});
+      const backup=invoke('backup');
+      if(!backup.complete || !backup.paused || backup.operator!=='Ada Container' ||
+         backup.projects.join(',')!=='atlas,custom,notes' || backup.task_session!==savedTask.session ||
+         backup.hold!==savedTask.hold) throw Error('Registered-project backup/restore lost saved identity');
+      result.viewports.push({name,viewport,walked,backup,passed:true});
     } catch(error) {
       try {writeFileSync(join(evidence,'daemon.json'),JSON.stringify(invoke('diagnostics'),null,2));}catch{}
       if(context) {const p=context.pages().at(-1);await p.screenshot({path:join(evidence,"failure.png"),fullPage:true}).catch(()=>{});writeFileSync(join(evidence,"failure.html"),await p.content());}
