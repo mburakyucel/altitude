@@ -4,11 +4,13 @@
 
 The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
 Disposable fixture runtimes retain private storage/process metadata and link only that same user
-bus into their runtime directory. The host controller and OCI adapter route system-bus fallback to
-a private rejecting endpoint and retain denial evidence, including errors Podman cleanup swallows.
-This is instrumentation of the selected runtime clients, not hostile-process confinement. Native
-proof against host system-manager authorization attempts remains pending in the
-[container evidence](CONTAINERS.md#evidence).
+bus into their runtime directory. The host controller selects cgroupfs and distribution crun;
+its system-bus address names an unavailable fictional endpoint. A delegated user service owns each
+application lifetime. Disposable VM acceptance independently observes service-manager calls and
+their senders, including forced cleanup. It allows systemd's verified same-user delegated process
+attachment, which does not use polkit, and fails on unexpected management attempts. This is
+validation of the selected runtime clients, not hostile-process confinement. The
+[container evidence](CONTAINERS.md#evidence) records the tested boundaries.
 
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
 inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns

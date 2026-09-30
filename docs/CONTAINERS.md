@@ -215,6 +215,22 @@ with the native runtime owner.
 
 ## Evidence
 
+`make container-vm RESULTS=<new-directory>` builds the committed candidate and exercises its actual
+host launcher and image in a disposable Ubuntu 24.04 amd64 KVM VM. Inside an owner task, the target
+uses `alt task validate --kvm` and returns results to the task. It checks image creation, startup,
+graceful Stop, same-container identity/admission, replacement pause, the displayed Continue command,
+supervisor death, an unaffected neighboring container and private-store/VM cleanup. The guest gets
+no host credentials or repositories beyond the committed candidate, and downloads public distribution
+and image prerequisites. This is Linux fixture evidence, not Mac or provider acceptance.
+
+The VM observes system-manager calls independently of the launcher's environment, before their result
+is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management
+calls fail, regardless of the unit's name. The permitted mutating calls are root logind's fictional
+login-session creation and the verified systemd user manager attaching its own processes within its
+delegated unit; the latter has no polkit authorization path in the tested systemd version. Sender
+identity failures do not permit these exceptions. Raw calls and guest-only sender metadata remain
+in the result directory.
+
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
 image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-none payloads,
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
