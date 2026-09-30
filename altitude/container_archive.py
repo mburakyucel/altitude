@@ -165,7 +165,7 @@ def _validate(info: tarfile.TarInfo, seen: dict[str, bytes]):
     parts = PurePosixPath(info.name).parts
     if (not parts or parts[0] not in ("home", "projects") or info.name != "/".join(parts)
             or any(part in (".", "..", "") for part in parts) or "\0" in info.name
-            or len(parts) > 128 or info.name in seen or parts[-1] == MARKER):
+            or len(parts) > 128 or info.name in seen or len(parts)==2 and parts[-1] == MARKER):
         raise ValueError("Invalid, duplicate or reserved backup path")
     if len(parts) > 1 and seen.get("/".join(parts[:-1])) != tarfile.DIRTYPE:
         raise ValueError("Backup parent must be an earlier directory")
@@ -184,7 +184,8 @@ def _validate(info: tarfile.TarInfo, seen: dict[str, bytes]):
     if "\0" in info.linkname or len(info.linkname) > 4096:
         raise ValueError("Invalid link target")
     expected = {"ALTITUDE.mtime_ns", "ALTITUDE.atime_ns", XATTR}
-    if not expected <= info.pax_headers.keys() or info.pax_headers.keys() - expected - {"path", "linkpath", "size", "mtime"}:
+    if (not expected <= info.pax_headers.keys() or info.pax_headers.keys() - expected - {"path", "linkpath", "size", "mtime", "hdrcharset"}
+            or info.pax_headers.get('hdrcharset','BINARY') != 'BINARY'):
         raise ValueError("Unknown or missing backup metadata")
     attrs = json.loads(info.pax_headers[XATTR])
     if not isinstance(attrs, dict):
@@ -210,9 +211,11 @@ def _apply(path: Path, info, attrs, times):
     os.utime(path, ns=times, follow_symlinks=False)
 
 
-def restore(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entries=MAX_ENTRIES) -> dict:
-    """Extract into fresh locked image volumes; never execute restored configuration."""
-    roots = {"home": home, "projects": projects}
+def restore(stream, home: Path | None = None, projects: Path | None = None, *, max_bytes=MAX_BYTES, max_entries=MAX_ENTRIES) -> dict:
+    """Validate completely; with both paths, extract into fresh locked image volumes."""
+    if (home is None)!=(projects is None):
+        raise ValueError('Supply both restore roots or neither for validation')
+    roots = {"home": home, "projects": projects} if home is not None else {}
     for root in roots.values():
         if not stat.S_ISDIR(root.lstat().st_mode) or any(root.iterdir()):
             raise ValueError("Restore requires empty volume directories")
@@ -232,6 +235,12 @@ def restore(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entr
                 continue
             parts, attrs, times = _validate(info, seen)
             contents.member(info)
+            if not roots:
+                if info.isreg():
+                    source = archive.extractfile(info)
+                    while value := source.read(CHUNK):
+                        contents.digest.update(value)
+                continue
             target = roots[parts[0]].joinpath(*parts[1:])
             if info.isdir():
                 if len(parts) > 1:
@@ -298,10 +307,19 @@ def helper(action: str, descriptor: dict):
                 finally: os.close(fd)
 
 
-if __name__ == '__main__':
+def entrypoint(action: str, descriptor: dict):
+    """Content-free, actionable failure categories; no exception text crosses the helper."""
     try:
-        helper(sys.argv[1], json.loads(sys.argv[2]))
+        helper(action, descriptor)
+    except OSError:
+        raise SystemExit(70) from None
+    except (ValueError, tarfile.TarError):
+        raise SystemExit(72) from None
+    except RuntimeError as error:
+        raise SystemExit(71 if str(error).startswith('Another Altitude container owns') else 73) from None
     except Exception:
-        # Never include restored names/content or source exceptions in runtime logs.
-        print('Private backup helper refused or failed; no completed restore is admitted', file=sys.stderr)
-        raise SystemExit(1) from None
+        raise SystemExit(74) from None
+
+
+if __name__ == '__main__':
+    entrypoint(sys.argv[1], json.loads(sys.argv[2]))

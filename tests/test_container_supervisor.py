@@ -230,13 +230,16 @@ class ContainerSupervisorTests(AltitudeCase):
         with self.assertRaisesRegex(RuntimeError,'did not settle'):
             platform._container_after_stop('fixture')
 
-    def test_user_service_stops_runtime_before_killing_its_monitor(self):
+    def test_recreation_requires_inactive_service_and_empty_owned_cgroup(self):
         self.patch(platform,'container_user_environment',return_value={})
-        run=self.patch(platform.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'',''))
-        platform.container_job(self.unit,['fictional'],before_stop=['stop-exact'],after_stop=['cleanup-exact'])
-        args=run.call_args.args[0]
-        self.assertIn('--property=ExecStop=:"stop-exact"',args)
-        self.assertIn('--property=ExecStopPost=:"cleanup-exact"',args)
+        active=self.patch(platform,'job_active',return_value=True)
+        with self.assertRaisesRegex(RuntimeError,'Stop the container'): platform.container_recreatable(self.value)
+        active.return_value=False
+        path=self.groups/self.parent.lstrip('/'); path.mkdir(parents=True)
+        (path/'cgroup.events').write_text('populated 1\nfrozen 0\n')
+        with self.assertRaisesRegex(RuntimeError,'processes survive'): platform.container_recreatable(self.value)
+        (path/'cgroup.events').write_text('populated 0\nfrozen 0\n')
+        platform.container_recreatable(self.value)
 
     def test_stop_post_does_not_adopt_unowned_or_partially_created_instances(self):
         command = self.patch(platform, "container_command", return_value='[{"Names":["unrelated"]}]')

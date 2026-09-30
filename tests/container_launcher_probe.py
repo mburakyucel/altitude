@@ -78,8 +78,21 @@ def main():
             if not before['ready']:
                 raise RuntimeError('Fresh image is not admitted/ready')
             container.execute(instances[0],['python3','-c',
-                "from pathlib import Path; p=Path('/home/altitude/private-fixture');"
-                "p.write_text('backup-secret-sentinel-7392');p.chmod(0o600);"])
+                "from pathlib import Path;import os,struct; p=Path('/home/altitude/private-fixture');"
+                "p.write_text('backup-secret-sentinel-7392');p.chmod(0o600);"
+                "os.setxattr(p,'user.fixture',b'private attribute');"
+                "acl=struct.pack('<I',2)+b''.join(struct.pack('<HHI',*e) for e in "
+                "[(1,6,0xffffffff),(2,4,0),(4,0,0xffffffff),(16,0,0xffffffff),(32,0,0xffffffff)]);"
+                "os.setxattr(p,'system.posix_acl_access',acl)"])
+            def metadata(instance):
+                return json.loads(container.execute(instance,['python3','-c',
+                    "import os,json,base64;from pathlib import Path;r={};"
+                    "paths=['private-fixture','.config/altitude/tls/ca.key','.config/altitude/tls/server.key'];"
+                    "\nfor n in paths:\n p=Path('/home/altitude')/n;s=p.stat();"
+                    "r[n]={'uid':s.st_uid,'gid':s.st_gid,'mode':s.st_mode&0o7777,'mtime':s.st_mtime_ns,"
+                    "'attrs':{k:base64.b64encode(os.getxattr(p,k)).decode() for k in os.listxattr(p)}}"
+                    "\nprint(json.dumps(r))"]))
+            original_metadata=metadata(instances[0])
             addresses = json.loads(subprocess.check_output(['ip','-j','-4','address'],text=True))
             private_ip = next(info['local'] for row in addresses for info in row['addr_info']
                               if info.get('scope')=='global')
@@ -222,8 +235,14 @@ def main():
                     raise RuntimeError('Supervisor death left its unit alive')
                 time.sleep(.5)
             record['supervisor_death'] = container.owned(instances[2])['State']
-            if not platform.container_stopped(container.owned(instances[2])):
-                raise RuntimeError('Supervisor death did not settle the runtime to a no-process stopped state')
+            platform.container_recreatable(container.owned(instances[2]))
+            container.recreate(instances[2])
+            recovered=container.lifecycle(instances[2])
+            if recovered['ready'] or recovered['instance']==held['instance']:
+                raise RuntimeError('Supervisor-death recreation did not require new-instance Continue')
+            record['supervisor_death_recreated_paused']=True
+            container.lifecycle(instances[2],'continue',expected=recovered['instance'])
+            platform.container_stop(instances[2])
             if not container.owned(instances[1])['State']['Running']:
                 raise RuntimeError('Supervisor death affected neighbor')
             record['pause_after_failures'] = pause_state()
@@ -240,19 +259,30 @@ def main():
                 raise RuntimeError('Restored copy did not require deliberate new-instance continuation')
             content=container.execute(restored_name,['cat','/home/altitude/private-fixture'])
             if content!='backup-secret-sentinel-7392': raise RuntimeError('Private file did not round trip')
+            if metadata(restored_name)!=original_metadata:
+                raise RuntimeError('Private/TLS ownership, mode, time or ACL attributes changed on restore')
+            record['restored_private_tls_metadata']=original_metadata
             record['restored_private_file_and_new_paused_identity']=True
             try:
+                refusal_since=time.time()
                 platform.container_launch(instances[2])
             except RuntimeError:
-                pass
+                refused=subprocess.run(['journalctl','--user','-u',platform.container_unit(instances[2]),
+                    '--since',f'@{refusal_since:.6f}','--no-pager'],capture_output=True,text=True,check=True,timeout=10)
+                if 'Stop the other active container using this volume pair or backup lineage first' not in refused.stdout:
+                    raise RuntimeError('Original refusal was not the intended copy-admission check')
             else:
                 raise RuntimeError('Original started while restored copy was active')
             platform.container_stop(restored_name)
             platform.container_launch(instances[2])
             try:
+                refusal_since=time.time()
                 platform.container_launch(restored_name)
             except RuntimeError:
-                pass
+                refused=subprocess.run(['journalctl','--user','-u',platform.container_unit(restored_name),
+                    '--since',f'@{refusal_since:.6f}','--no-pager'],capture_output=True,text=True,check=True,timeout=10)
+                if 'Stop the other active container using this volume pair or backup lineage first' not in refused.stdout:
+                    raise RuntimeError('Restored refusal was not the intended copy-admission check')
             else:
                 raise RuntimeError('Restored copy started while original was active')
             journal=subprocess.run(['journalctl','--user','--no-pager'],capture_output=True,timeout=15,check=True).stdout

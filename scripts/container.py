@@ -281,8 +281,8 @@ def transfer_helper(operation: dict, action: str, source=None, target=None):
         '--user=0:0','--workdir=/opt/altitude', *(['--interactive'] if action=='restore' else []),
         '--volume',identity['home']+':/backup/home:nocopy', '--volume',identity['projects']+':/backup/projects:nocopy',
         '--entrypoint=/usr/bin/python3', operation['image'], '-I','-B','-c',
-        "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude.container_archive import helper;"
-        "helper(sys.argv[1],json.loads(sys.argv[2]))", action,json.dumps(descriptor)], timeout=30)
+        "import sys,json;sys.path.insert(0,'/opt/altitude');from altitude.container_archive import entrypoint;"
+        "entrypoint(sys.argv[1],json.loads(sys.argv[2]))", action,json.dumps(descriptor)], timeout=30)
     inspected=json.loads(platform.container_command(['inspect',operation['helper']]))[0]
     if inspected['HostConfig']['LogConfig']['Type']!='none':
         raise RuntimeError('Private archive helper logging is not disabled')
@@ -346,7 +346,7 @@ def image_archive_identity(path: Path, expected: str):
 
 
 def transfer_worker(record: Path) -> dict:
-    from altitude.container_archive import MAX_BYTES
+    from altitude.container_archive import MAX_BYTES, restore
     operation = json.loads(record.read_text())
     identity = operation['identity']
     directory = Path(operation['directory'])
@@ -360,6 +360,8 @@ def transfer_worker(record: Path) -> dict:
                 os.fchmod(data.fileno(),0o600)
                 transfer_helper(operation,'export',target=data)
                 data.flush(); os.fsync(data.fileno())
+            with (directory/'data.tar').open('rb') as received:
+                restore(received)  # helper exit0/EOF is not proof of complete transport (review F1)
             with (directory/'image.tar').open('xb') as image:
                 os.fchmod(image.fileno(),0o600)
                 # Saving by immutable ID carries no application tag to overwrite on load.
@@ -444,7 +446,7 @@ def backup(instance: str, directory: Path) -> dict:
 
 
 def verify_backup(directory: Path, manifest: dict | None = None) -> dict:
-    from altitude.container_archive import MAX_BYTES
+    from altitude.container_archive import MAX_BYTES, restore
     info=directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
         raise ValueError('Use your own private backup directory (mode0700), not a shared/untrusted archive')
@@ -460,6 +462,8 @@ def verify_backup(directory: Path, manifest: dict | None = None) -> dict:
     if (file_identity(directory/'data.tar',MAX_BYTES+64*1024**2)!=manifest['data'] or
             file_identity(directory/'image.tar',8*1024**3)!=manifest['image_archive']):
         raise ValueError('Backup size or checksum differs from the completed manifest')
+    with (directory/'data.tar').open('rb') as received:
+        restore(received)
     return manifest
 
 
@@ -475,6 +479,21 @@ def restore_backup(directory: Path, home: str, projects: str) -> dict:
               'archive':manifest['data']['sha256']}
     return transfer_job({'action':'restore','directory':str(directory),'identity':identity,
         'image':manifest['image'],'manifest':manifest,'data_sha':manifest['data']['sha256']},root/'operation.json')
+
+
+def recreate(instance: str) -> str:
+    value=owned(instance)
+    identity=instance_pair(value)
+    environment=dict(item.split('=',1) for item in value['Config']['Env'] if '=' in item)
+    bind=value['Config']['Labels']['io.altitude.bind']
+    with platform.container_lineage_lock(identity['lineage']):
+        platform.container_recreatable(value)
+        platform.container_copy_available(identity['lineage'],[identity['home'],identity['projects']],except_id=value['Id'])
+        platform.container_command(['rm','--force',value['Id']],timeout=30)
+    # The new supervisor rechecks admission under the same lineage lock. If another
+    # copy starts meanwhile it refuses; both original data volumes remain intact.
+    return start(value['Image'],instance,identity['home'],identity['projects'],bind,
+                 environment['ALTITUDE_PUBLIC_HOST'],int(environment['ALTITUDE_PORT']))
 
 
 def main() -> None:
@@ -505,7 +524,7 @@ def main() -> None:
     restore.add_argument('--public-host',default='localhost')
     restore.add_argument('--port',type=int,default=8890)
     sub.add_parser("preflight", help="check local rootless-runtime prerequisites without starting containers")
-    for action in ("status", "pause", "continue", "stop", "restart", "remove", "pair", "shell", "certificate"):
+    for action in ("status", "pause", "continue", "stop", "restart", "recreate", "remove", "pair", "shell", "certificate"):
         command = sub.add_parser(action)
         command.add_argument("--name", default="altitude")
         if action == "continue":
@@ -535,6 +554,8 @@ def main() -> None:
         elif args.action == "restart":
             platform.container_stop(args.name)
             print(platform.container_launch(args.name))
+        elif args.action=='recreate':
+            print(recreate(args.name))
         elif args.action in ("stop", "remove"):
             value = owned(args.name)
             if args.action == "remove" and value["State"]["Running"]:
@@ -554,7 +575,7 @@ def main() -> None:
         else:
             print(execute(args.name, ["/bin/bash", "--noprofile", "--norc"] if args.action == "shell" else ["alt", "pair"],
                           interactive=args.action == "shell"))
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, RuntimeError, tarfile.TarError, subprocess.TimeoutExpired) as exc:
         parser.exit(1, f"Container operation refused: {exc}\n")
 
 

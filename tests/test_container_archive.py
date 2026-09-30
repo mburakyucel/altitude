@@ -70,6 +70,24 @@ class ArchiveTest(unittest.TestCase):
         backup.restore(stream, home, projects)
         self.assertFalse((home/backup.MARKER).exists())
 
+    def test_nested_marker_and_non_utf8_names_round_trip(self):
+        (self.projects/'repo'/backup.MARKER).write_text('ordinary project file')
+        odd=self.projects/'repo'/os.fsdecode(b'name-\xff')
+        odd.write_bytes(b'non-UTF8 filename')
+        (self.projects/'repo/nonutf-link').symlink_to(os.fsdecode(b'target-\xfe'))
+        stream,expected=self.archive()
+        self.assertEqual(backup.restore(stream),expected)  # non-writing completion validation
+        stream.seek(0)
+        home,projects=self.output()
+        self.assertEqual(backup.restore(stream,home,projects),expected)
+        self.assertEqual((projects/'repo'/backup.MARKER).read_text(),'ordinary project file')
+        self.assertEqual((projects/'repo'/odd.name).read_bytes(),b'non-UTF8 filename')
+        self.assertEqual(os.fsencode(os.readlink(projects/'repo/nonutf-link')),b'target-\xfe')
+
+    def test_nonwriting_validation_refuses_truncated_transport(self):
+        stream=self.altered(lambda m,d:(None,d) if m.name==backup.END else (m,d))
+        with self.assertRaisesRegex(ValueError,'incomplete'): backup.restore(stream)
+
     def test_hidden_project_data_refused(self):
         (self.home/'Projects/hidden').write_text('must not disappear')
         with self.assertRaisesRegex(ValueError, 'hidden Projects'):

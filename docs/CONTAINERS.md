@@ -175,10 +175,8 @@ accepting the replacement. The lane passed on the recorded image, including inde
 inspection. It does not establish full application task recovery, backup restore or a version upgrade.
 
 The host launcher owns one transient delegated user service per running instance. Its foreground
-supervisor translates service termination into the image's graceful stop signal. The unit's explicit
-stop action runs before descendant termination, including after supervisor death, so the runtime
-monitor can record a settled exit. After the bounded grace, the user manager removes remaining
-descendants in that exact unit. Its stop-post action also
+supervisor translates service termination into the image's graceful stop signal. After the bounded
+grace, the user manager removes remaining descendants in that exact unit. Its stop-post action also
 stops and cleans the exact owned runtime record when the supervisor dies unexpectedly; a unit's
 inactive state alone is not accepted as container cleanup. The service outlives the
 launching terminal but follows the existing user-manager/login lifetime. The launcher does not enable
@@ -190,12 +188,17 @@ This installs no certificate trust and does not prove another device's routing o
 A failed start reports the unit log and retains its stopped container for diagnosis.
 Image user jobs and the daemon have a 15-second stop grace, their user manager has 20 seconds,
 and Podman has 30 seconds before forced termination. The host supervisor has a 45-second stop
-budget, bounded process termination and a stop-post cleanup phase. The client allows 150 seconds
-for all phases and reports
+budget followed by a stop-post cleanup phase. The client allows 105 seconds for both phases and reports
 unconfirmed cleanup with the unit log location if that wait expires. Supervisor death and startup
 interruption can force termination; only an ordinary completed Stop is described as graceful.
 `Running=false` alone is insufficient: a lingering `stopping` record or payload PID refuses Stop
 completion, backup and another copy's admission. Unsettled runtime evidence is retained for recovery.
+After forced supervisor death, Podman can retain this stale state even though the unit killed its
+processes. `python3 scripts/container.py recreate --name altitude` verifies the owned user service is
+inactive and its kernel cgroup is empty, then replaces only that container record/layer with the
+same image and volume pair. The new instance is paused until explicit Continue. It refuses surviving
+processes or another active copy. If startup fails after removal, both volumes remain available to
+the ordinary `start --image … --home-volume … --projects-volume …` command without `--new-volumes`.
 These bounds do not promise graceful completion for a job that ignores termination.
 
 `python3 scripts/container.py restart --name altitude` stops and restarts the same container under
@@ -258,6 +261,9 @@ files or executes restored startup hooks. Incomplete/mismatched pairs cannot sta
 
 Data transfers are bounded to 64 GiB, the image archive to 8 GiB, and archive entries to one million.
 The service has a 30-minute deadline, with a 25-minute helper limit and separate bounded cleanup.
+These are ceilings, not a promise that every archive of that size fits the deadline: source reading,
+streaming, integrity passes and image transfer share the time budget. Slow storage or large metadata
+sets can therefore fail below the byte limit; the source is retained and completion is refused.
 The OCI image is exported by immutable identity; mutable tags are refused before import. File and
 filesystem limits can still make an operation fail; an unfinished directory is not a completed
 backup. The launcher reports retained artifacts if cleanup cannot be confirmed.

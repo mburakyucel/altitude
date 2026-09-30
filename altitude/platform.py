@@ -35,7 +35,7 @@ import time
 
 
 SERVICE = "altitude.service"
-CONTAINER_STOP_WAIT = 150  # explicit stop45 + process termination45 + stop-post45 + margin15
+CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the service on macOS.
 LABEL = "dev.altitude.altd"
@@ -403,8 +403,7 @@ def container_parent(unit: str) -> str:
 
 
 def container_job(unit: str, command: list[str], *, wait: bool = False,
-                  after_stop: list[str] | None = None, before_stop: list[str] | None = None,
-                  seconds: int = CONTAINER_BUILD_SECONDS) -> str:
+                  after_stop: list[str] | None = None, seconds: int = CONTAINER_BUILD_SECONDS) -> str:
     """Own the complete container/build lifetime in one bounded user-manager subtree."""
     environment = container_user_environment()
     selected = {key: value for key, value in environment.items()
@@ -418,16 +417,14 @@ def container_job(unit: str, command: list[str], *, wait: bool = False,
                  f"--working-directory={Path(__file__).resolve().parent.parent}"]
     if wait:
         arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={seconds}"]
-    for property_name, stop_command in (('ExecStop',before_stop), ('ExecStopPost',after_stop)):
-        if stop_command is None:
-            continue
+    if after_stop is not None:
         # ExecStopPost is parsed by systemd, not a shell. Disable environment
         # expansion and escape its specifiers/quoting independently of argv.
-        if any(any(character in value for character in "\n\r\x00") for value in stop_command):
+        if any(any(character in value for character in "\n\r\x00") for value in after_stop):
             raise ValueError("Invalid container cleanup command")
         quoted = ['"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
-                  for value in stop_command]
-        arguments.append('--property='+property_name+'=:' + " ".join(quoted))
+                  for value in after_stop]
+        arguments.append('--property=ExecStopPost=:' + " ".join(quoted))
     arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
     try:
         result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
@@ -468,9 +465,16 @@ def container_copy_available(lineage: str, volumes: list[str], *, except_id: str
     ids = container_command(["ps", "--all", "--quiet"]).split()
     if not ids:
         return
-    values = json.loads(container_command(["inspect", *ids]))
     environment = container_user_environment()
-    for value in values:
+    for ident in ids:
+        try:
+            value = json.loads(container_command(['inspect',ident]))[0]
+        except RuntimeError:
+            # An unrelated operation can finish between inventory and inspection.
+            # Only confirmed disappearance is harmless; every other refusal stays visible.
+            if ident not in container_command(['ps','--all','--quiet']).split():
+                continue
+            raise
         if value["Id"] == except_id:
             continue
         labels = value.get("Config", {}).get("Labels") or {}
@@ -494,7 +498,12 @@ def container_binary(arguments: list[str], *, source=None, target=None, seconds=
         stdout=target if target is not None else subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, timeout=seconds, preexec_fn=limits)
     if result.returncode:
-        raise RuntimeError("Private container transfer failed; no completed backup/restore is admitted")
+        reasons={70:'Cannot read/write private volume data; check permissions and free space',
+                 71:'A controller owns the volumes; stop it before backup or restore',
+                 72:'Unsupported, damaged or incomplete backup data; keep the source volumes',
+                 73:'Backup helper protections or resource limits are unavailable',
+                 74:'Backup helper failed; keep the source volumes and inspect the operation'}
+        raise RuntimeError(reasons.get(result.returncode,'Private container transfer failed; no completed backup/restore is admitted'))
 
 
 def container_archive_environment() -> tuple[Path, Path]:
@@ -538,11 +547,19 @@ def container_stopped(value: dict) -> bool:
             and not state.get('Running') and not state.get('Pid'))
 
 
-def _container_stop_payload(instance: str) -> None:
-    """ExecStop runs before systemd can kill conmon and lose its exit receipt."""
-    value=container_owned(instance,timeout=5)
-    if not container_stopped(value):
-        container_command(['stop','--time=30',value['Id']],timeout=35)
+def container_recreatable(value: dict) -> None:
+    """Explicit forced-record removal needs kernel-empty ownership, not stale PID guesses."""
+    unit=value['Config']['Labels']['io.altitude.unit']
+    if job_active(unit,container_user_environment()):
+        raise RuntimeError('Stop the container service before recreation')
+    parent=CONTAINER_CGROUP_ROOT/value['HostConfig']['CgroupParent'].lstrip('/')
+    try:
+        events=dict(line.split() for line in (parent/'cgroup.events').read_text().splitlines())
+    except FileNotFoundError:
+        if parent.exists(): raise RuntimeError('Cannot prove the owned cgroup is empty')
+    else:
+        if events.get('populated')!='0':
+            raise RuntimeError('Owned container processes survive; recreation refused')
 
 
 def _container_after_stop(instance: str) -> None:
@@ -668,9 +685,7 @@ def container_launch(instance: str, create: list[str] | None = None) -> str:
                "_container_supervise(sys.argv[1],json.loads(sys.argv[2]))", instance, json.dumps(create)]
     cleanup = [sys.executable, "-c", "import sys;from altitude.platform import _container_after_stop;"
                "_container_after_stop(sys.argv[1])", instance]
-    stop = [sys.executable, '-c', 'import sys;from altitude.platform import _container_stop_payload;'
-            '_container_stop_payload(sys.argv[1])',instance]
-    container_job(unit, command, before_stop=stop, after_stop=cleanup)
+    container_job(unit, command, after_stop=cleanup)
     deadline = time.monotonic() + 90
     error = "Container startup did not finish"
     environment = container_user_environment()

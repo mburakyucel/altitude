@@ -6,7 +6,7 @@ from pathlib import Path
 import tarfile
 from unittest import mock
 
-from altitude import platform
+from altitude import platform, container_archive
 from scripts import container
 from tests.support import AltitudeCase
 
@@ -79,8 +79,10 @@ class BackupTests(AltitudeCase):
         directory=self.tmp/'backup'; directory.mkdir(mode=0o700)
         for filename in ('data.tar','image.tar'):
             path=directory/filename; path.write_bytes(b'fixture'); path.chmod(0o600)
+        home,projects=self.tmp/'home',self.tmp/'projects'; home.mkdir(); projects.mkdir()
+        with (directory/'data.tar').open('wb') as target: container_archive.export(target,home,projects)
         manifest={'format':1,'lineage':'1'*32,'image':'2'*64,
-                  'data':container.file_identity(directory/'data.tar',100),
+                  'data':container.file_identity(directory/'data.tar',100000),
                   'image_archive':container.file_identity(directory/'image.tar',100)}
         (directory/'manifest.json').write_text(json.dumps(manifest)); (directory/'manifest.json').chmod(0o600)
         self.assertEqual(container.verify_backup(directory),manifest)
@@ -88,6 +90,34 @@ class BackupTests(AltitudeCase):
         with self.assertRaisesRegex(ValueError,'checksum'): container.verify_backup(directory)
         (directory/'data.tar').chmod(0o644)
         with self.assertRaisesRegex(ValueError,'private regular'): container.verify_backup(directory)
+
+    def test_disappeared_unrelated_container_does_not_refuse_admission(self):
+        self.patch(platform,'container_command',side_effect=['unrelated',RuntimeError('missing'),''])
+        platform.container_copy_available('1'*32,['home','projects'])
+
+    def test_inspection_failure_of_existing_container_still_refuses(self):
+        self.patch(platform,'container_command',side_effect=['unrelated',RuntimeError('unavailable'),'unrelated'])
+        with self.assertRaisesRegex(RuntimeError,'unavailable'):
+            platform.container_copy_available('1'*32,['home','projects'])
+
+    def test_helper_reason_codes_do_not_expose_file_content(self):
+        for error,code in ((OSError('private'),70),(ValueError('private'),72),
+                           (RuntimeError('Another Altitude container owns this volume: private'),71)):
+            with mock.patch.object(container_archive,'helper',side_effect=error):
+                with self.assertRaises(SystemExit) as raised: container_archive.entrypoint('export',{})
+                self.assertEqual(raised.exception.code,code)
+
+    def test_zero_exit_truncated_transport_cannot_publish_manifest(self):
+        directory=self.tmp/'backup'; directory.mkdir(mode=0o700)
+        identity={'lineage':'1'*32,'pair':'2'*32,'home':'h','projects':'p','archive':''}
+        operation={'action':'backup','identity':identity,'directory':str(directory),'instance':'fixture','image':'3'*64}
+        record=directory/'operation.json'; record.write_text(json.dumps(operation))
+        self.patch(platform,'container_copy_available')
+        self.patch(container,'owned',return_value={'State':{'Running':False,'Status':'exited','Pid':0},'Image':'3'*64})
+        self.patch(container,'instance_pair_unlocked',return_value=identity)
+        self.patch(container,'transfer_helper',side_effect=lambda *args,**kw:kw['target'].write(b'truncated'))
+        with self.assertRaises(tarfile.TarError): container.transfer_worker(record)
+        self.assertFalse((directory/'manifest.json').exists())
 
     def test_image_archive_cannot_repoint_existing_tag(self):
         def archive(tag):
