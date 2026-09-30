@@ -304,6 +304,24 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
                     call(["stop", "--time", "10", ident])
                     start_ready()
                     result["volume_lock_races_and_recovery"] = True
+                    call(["exec", "--user", "1000", "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident,
+                          "systemd-run", "--user", "--unit=fixture-lock-owner-worker", "/bin/sleep", "120"])
+                    worker = call(["exec", "--user", "1000", "--env", "XDG_RUNTIME_DIR=/run/user/1000", ident,
+                                   "systemctl", "--user", "show", "fixture-lock-owner-worker.service", "--property=MainPID", "--value"]).strip()
+                    if not worker.isdigit() or int(worker) <= 0:
+                        raise RuntimeError("Lock-owner-death worker did not start")
+                    call(["exec", ident, "systemctl", "kill", "--signal=KILL", "altitude-volumes.service"])
+                    for attempt in range(40):
+                        manager = call(["exec", ident, "systemctl", "show", "user@1000.service", "--property=ActiveState", "--value"]).strip()
+                        if manager in ("inactive", "failed"):
+                            break
+                        if attempt == 39:
+                            raise RuntimeError("Lock-owner death left the user manager active")
+                        time.sleep(.5)
+                    call(["exec", ident, "python3", "-c", "import os,sys;assert not os.path.exists('/proc/'+sys.argv[1])", worker])
+                    result["lock_owner_death_stops_user_work"] = True
+                    call(["stop", "--time", "10", ident])
+                    start_ready()
                     probe("prepare")
                     call(["stop", "--time", "10", ident])
                     start_ready()
