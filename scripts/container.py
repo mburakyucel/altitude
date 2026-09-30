@@ -96,7 +96,7 @@ def start(image: str, instance: str, home: str, projects: str, bind: str, public
     local_volume(projects)
     publish = f"[{address}]" if address.version == 6 else str(address)
     return platform.container_launch(instance, [
-        "--name", instance, "--label", f"{LABEL}=1",
+        "--name", instance, "--hostname", instance, "--label", f"{LABEL}=1",
         "--network=slirp4netns", "--cgroupns=private", "--security-opt=unmask=/proc/*",
         "--memory=4g", "--cpus=2", "--pids-limit=1024", "--stop-timeout=30",
         "--volume", f"{home}:/home/altitude:nocopy", "--volume", f"{projects}:/home/altitude/Projects:nocopy",

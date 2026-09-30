@@ -9,6 +9,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && touch /var/lib/systemd/linger/altitude
 COPY app /opt/altitude
 RUN cp /opt/altitude/container/altitude-volumes.service /etc/systemd/system/ \
+    && mkdir -p /etc/systemd/user.conf.d \
+    && cp /opt/altitude/container/user-defaults.conf /etc/systemd/user.conf.d/altitude.conf \
     && cp /opt/altitude/container/user-manager.conf /etc/systemd/system/user@1000.service.d/altitude.conf \
     && cp /opt/altitude/container/altitude.service /etc/systemd/user/ \
     && mkdir -p /etc/systemd/user/default.target.wants \

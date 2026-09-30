@@ -458,30 +458,35 @@ def _container_supervise(instance: str, create: list[str] | None) -> None:
                 for number in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
     ident = None
     child = None
+    stop_attempted = False
     try:
         if create is not None:
-            ident = container_command(["create", "--cgroup-parent", parent,
+            container_command(["create", "--cgroup-parent", parent,
                 "--label", f"io.altitude.unit={unit}", "--label", f"io.altitude.cgroup-parent={parent}",
-                *create], timeout=45).strip()
+                *create], timeout=45)
         value = container_owned(instance)
-        ident = value["Id"]
         if value["HostConfig"]["CgroupParent"] != parent:
             raise RuntimeError("The stopped instance's delegated parent changed; do not recreate it implicitly")
+        ident = value["Id"]
         if not stopping.is_set():
             child = subprocess.Popen(container_arguments(["start", "--attach", ident]),
                                      env=container_user_environment())
             while child.poll() is None and not stopping.wait(.2):
                 pass
         if stopping.is_set():
+            stop_attempted = True
             container_command(["stop", "--time=30", ident], timeout=35)
         if child is not None and child.wait(timeout=8) and not stopping.is_set():
             raise RuntimeError("The attached container exited unsuccessfully")
     finally:
         # A failed launch retains the exact stopped instance for diagnosis/restart.
         # The unit's mixed KillMode supplies the final bounded descendant cleanup.
-        if ident and child is not None and child.poll() is None:
-            container_command(["stop", "--time=30", ident], timeout=35)
-            child.wait(timeout=8)
+        if ident and not stop_attempted:
+            value = container_owned(instance)
+            if value["Id"] == ident and value["State"]["Running"]:
+                container_command(["stop", "--time=30", ident], timeout=35)
+                if child is not None:
+                    child.wait(timeout=8)
         for number, handler in previous.items():
             signals.signal(number, handler)
 

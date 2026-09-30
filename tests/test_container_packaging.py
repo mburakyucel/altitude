@@ -151,6 +151,7 @@ class TestContainerLauncher(AltitudeCase):
         self.assertEqual(container.start("image", "fixture", "fixture-home", "fixture-projects", "127.0.0.1", "localhost", 19443), "fixture")
         args = self.calls[-1]
         self.assertEqual(args[0], "create")
+        self.assertEqual(args[args.index("--hostname") + 1], "fixture")
         self.assertIn("--network=slirp4netns", args)
         self.assertIn("--security-opt=unmask=/proc/*", args)
         self.assertIn("--cgroupns=private", args)

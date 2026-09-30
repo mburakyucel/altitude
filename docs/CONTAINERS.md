@@ -182,6 +182,9 @@ launching terminal but follows the existing user-manager/login lifetime. The lau
 lingering, host-boot startup or automatic restart. Keep its source location available while it runs.
 Startup verifies the running container identity, effective resource limits and internal HTTPS health.
 A failed start reports the unit log and retains its stopped container for diagnosis.
+Image user jobs and the daemon have a 15-second stop grace, their user manager has 20 seconds,
+and Podman has 30 seconds before forced termination. The host supervisor has a 45-second stop
+budget. These bounds do not promise graceful completion for a job that ignores termination.
 
 `python3 scripts/container.py restart --name altitude` stops and restarts the same container under
 its stable user-unit/cgroup identity. It preserves the instance's admission state. A replacement

@@ -12,6 +12,7 @@ ExecStart=/usr/bin/python3 -B /opt/altitude/bin/alt serve
 Restart=on-failure
 RestartSec=5
 KillMode=control-group
+TimeoutStopSec=15
 NoNewPrivileges=yes
 UMask=0077
 

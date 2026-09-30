@@ -108,6 +108,38 @@ class ContainerSupervisorTests(AltitudeCase):
         command.assert_not_called()
         attach.assert_not_called()
 
+    def test_failed_attach_still_stops_the_exact_running_payload(self):
+        self.patch(platform, "container_parent", return_value=self.parent)
+        self.patch(platform, "container_owned", return_value=self.value)
+        self.patch(platform, "container_user_environment", return_value={})
+        self.patch(platform.signals, "signal")
+        child = mock.Mock()
+        child.poll.return_value = 125
+        child.wait.return_value = 125
+        self.patch(platform.subprocess, "Popen", return_value=child)
+        command = self.patch(platform, "container_command", return_value="")
+        with self.assertRaisesRegex(RuntimeError, "attached container exited"):
+            platform._container_supervise("fixture", None)
+        command.assert_called_once_with(["stop", "--time=30", self.value["Id"]], timeout=35)
+
+    def test_stop_timeout_is_not_retried_inside_the_same_service_grace(self):
+        self.patch(platform, "container_parent", return_value=self.parent)
+        self.patch(platform, "container_owned", return_value=self.value)
+        self.patch(platform, "container_user_environment", return_value={})
+        self.patch(platform.signals, "signal")
+        event = threading.Event()
+        self.patch(platform.threading, "Event", return_value=event)
+        child = mock.Mock()
+        child.poll.return_value = None
+        def attach(*args, **kwargs):
+            event.set()
+            return child
+        self.patch(platform.subprocess, "Popen", side_effect=attach)
+        command = self.patch(platform, "container_command", side_effect=subprocess.TimeoutExpired("stop", 35))
+        with self.assertRaises(subprocess.TimeoutExpired):
+            platform._container_supervise("fixture", None)
+        self.assertEqual(command.call_count, 1)
+
     def test_readiness_failure_stops_exact_unit_and_retains_instance(self):
         self.patch(platform, "container_job")
         self.patch(platform, "container_user_environment", return_value={})
