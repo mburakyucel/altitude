@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Chat accepts images tagged with `cICP` for Display P3 or BT.2020 colors, grayscale
+  profiles and PNG gamma/primaries; it converts them to sRGB. Images whose color information has no
+  conversion, such as HDR, upload with their colors as decoded instead of being refused.
 - The Linux container candidate packages the verified release with rootless Podman, real user
   services and persistent home/project volumes. Image mode refuses browser terminal, host voice
   and native application updates, and labels setup commands and paths by their container context.

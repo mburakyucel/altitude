@@ -39,25 +39,34 @@ def exif(orientation: int) -> bytes:
     return b"II" + struct.pack("<HIH", 42, 8, 1) + struct.pack("<HHIHHI", 274, 3, 1, orientation, 0, 0)
 
 
-def rgb_profile(*, linear=False) -> bytes:
+DISPLAY_P3 = ((0.3127, 0.3290), ((0.680, 0.320), (0.265, 0.690), (0.150, 0.060)))
+
+
+def rgb_profile(*, linear=False, primaries=None, gamma=None, gray=False) -> bytes:
     """Generate a fictional ICC profile using the local color capability, without external assets."""
     lib = C.CDLL(platform.find_library("lcms2"))
-    lib.cmsCreate_sRGBProfile.restype = C.c_void_p
-    if linear:
-        class xyY(C.Structure):
-            _fields_ = [("x", C.c_double), ("y", C.c_double), ("Y", C.c_double)]
 
-        lib.cmsBuildGamma.argtypes = [C.c_void_p, C.c_double]
-        lib.cmsBuildGamma.restype = C.c_void_p
-        lib.cmsCreateRGBProfile.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p]
-        lib.cmsCreateRGBProfile.restype = C.c_void_p
-        curve = lib.cmsBuildGamma(None, 1.0)
+    class xyY(C.Structure):
+        _fields_ = [("x", C.c_double), ("y", C.c_double), ("Y", C.c_double)]
+
+    lib.cmsCreate_sRGBProfile.restype = C.c_void_p
+    lib.cmsBuildGamma.argtypes = [C.c_void_p, C.c_double]
+    lib.cmsBuildGamma.restype = C.c_void_p
+    lib.cmsBuildParametricToneCurve.argtypes = [C.c_void_p, C.c_int, C.POINTER(C.c_double)]
+    lib.cmsBuildParametricToneCurve.restype = C.c_void_p
+    lib.cmsCreateRGBProfile.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p]
+    lib.cmsCreateRGBProfile.restype = C.c_void_p
+    lib.cmsCreateGrayProfile.argtypes = [C.c_void_p, C.c_void_p]
+    lib.cmsCreateGrayProfile.restype = C.c_void_p
+    srgb = (C.c_double * 5)(2.4, 1 / 1.055, 0.055 / 1.055, 1 / 12.92, 0.04045)
+    curve = (lib.cmsBuildGamma(None, 1.0 if linear else gamma) if linear or gamma
+             else lib.cmsBuildParametricToneCurve(None, 4, srgb))
+    white, colors = primaries or ((0.3127, 0.3290), ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)))
+    if gray:
+        profile = lib.cmsCreateGrayProfile(C.byref(xyY(*white, 1)), curve)
+    elif linear or gamma or primaries:
         curves = (C.c_void_p * 3)(curve, curve, curve)
-        white = xyY(0.3127, 0.3290, 1)
-        primaries = (xyY * 3)(xyY(0.64, 0.33, 1), xyY(0.30, 0.60, 1), xyY(0.15, 0.06, 1))
-        profile = lib.cmsCreateRGBProfile(C.byref(white), C.byref(primaries), curves)
-        lib.cmsFreeToneCurve.argtypes = [C.c_void_p]
-        lib.cmsFreeToneCurve(curve)
+        profile = lib.cmsCreateRGBProfile(C.byref(xyY(*white, 1)), C.byref((xyY * 3)(*(xyY(*c, 1) for c in colors))), curves)
     else:
         profile = lib.cmsCreate_sRGBProfile()
     lib.cmsSaveProfileToMem.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(C.c_uint32)]
@@ -68,6 +77,22 @@ def rgb_profile(*, linear=False) -> bytes:
     lib.cmsCloseProfile.argtypes = [C.c_void_p]
     lib.cmsCloseProfile(profile)
     return output.raw
+
+
+def solid(color: bytes, *, extra=b"", gray=False) -> bytes:
+    """A 2x3 PNG of one color, RGB or 8-bit gray."""
+    scanlines = (b"\0" + color * 2) * 3
+    return (images._PNG + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 3, 8, 0 if gray else 2, 0, 0, 0))
+            + extra + chunk(b"IDAT", zlib.compress(scanlines)) + chunk(b"IEND", b""))
+
+
+def iccp(profile: bytes) -> bytes:
+    return chunk(b"iCCP", b"Fictional\0\0" + zlib.compress(profile))
+
+
+def jpeg_icc(jpeg: bytes, profile: bytes) -> bytes:
+    metadata = b"ICC_PROFILE\0\1\1" + profile
+    return jpeg[:2] + b"\xff\xe2" + struct.pack(">H", len(metadata) + 2) + metadata + jpeg[2:]
 
 
 class TestImages(AltitudeCase):
@@ -185,22 +210,102 @@ class TestImages(AltitudeCase):
                 self.assertNotIn(profile, normalized)
                 self.assertEqual(len(self.pixels(normalized)), len(self.pixels(original)))
 
-    def test_profile_capability_and_unsupported_profile_errors_preserve_input_bounds(self):
-        profile = rgb_profile()
-        source = png(extra=chunk(b"iCCP", b"sRGB\0\0" + zlib.compress(profile)))
+    def stored_pixels(self, raw: bytes) -> bytes:
+        ref = self.store(upload(raw))[0]
+        canonical = Path(images.resolve(self.project, [ref], committed=False)[0]["path"]).read_bytes()
+        # Canonical files are untagged sRGB: no source color description survives to mislabel the pixels.
+        for kind in (b"iCCP", b"ICC_PROFILE", b"cICP", b"sRGB", b"gAMA", b"cHRM", b"mDCv", b"cLLi"):
+            self.assertNotIn(kind, canonical)
+        return self.pixels(canonical)
+
+    def test_profile_capability_unavailable_is_explicit(self):
+        source = png(extra=iccp(rgb_profile()))
         with mock.patch.object(platform, "find_library", return_value=None):
             with self.assertRaises(images.ImageError) as unavailable:
                 self.store(upload(source))
             self.assertEqual(unavailable.exception.status, 422)
             self.assertIn("color converter", str(unavailable.exception))
             self.assertTrue(self.store())
-        invalid = [png(extra=chunk(b"gAMA", struct.pack(">I", 100000))),
-                   png(extra=chunk(b"cICP", bytes((9, 16, 0, 1)))),
-                   png(extra=chunk(b"iCCP", b"bad\0\0" + zlib.compress(b"not an ICC profile"))),
-                   png(extra=chunk(b"iCCP", b"large\0\0" + zlib.compress(b"X" * (images.MAX_PROFILE_BYTES + 1))))]
-        for image in invalid:
-            with self.assertRaisesRegex(images.ImageError, "color profile"):
-                self.store(upload(image))
+
+    def test_device_color_descriptions_convert_to_srgb(self):
+        color = bytes((64, 128, 192))
+        linear_srgb = bytes((137, 188, 225)) * 6
+        p3 = self.stored_pixels(solid(color, extra=iccp(rgb_profile(primaries=DISPLAY_P3))))
+        self.assertNotEqual(p3, color * 6)
+        cases = {
+            # PNG precedence: cICP over iCCP over sRGB over gAMA/cHRM.
+            "cICP Display P3 (Apple screenshots)": (solid(color, extra=chunk(b"cICP", bytes((12, 13, 0, 1)))), p3),
+            "cICP Display P3 beside its iCCP": (solid(color, extra=iccp(rgb_profile(primaries=DISPLAY_P3))
+                                                      + chunk(b"cICP", bytes((12, 13, 0, 1)))), p3),
+            "cICP sRGB beside a linear iCCP": (solid(color, extra=iccp(rgb_profile(linear=True))
+                                                     + chunk(b"cICP", bytes((1, 13, 0, 1)))), color * 6),
+            "HDR cICP defers to its iCCP": (solid(color, extra=iccp(rgb_profile(linear=True))
+                                                 + chunk(b"cICP", bytes((9, 16, 0, 1)))), linear_srgb),
+            "cICP linear BT.709": (solid(color, extra=chunk(b"cICP", bytes((1, 8, 0, 1)))), linear_srgb),
+            "gAMA linear": (solid(color, extra=chunk(b"gAMA", struct.pack(">I", 100000))), linear_srgb),
+            "sRGB chunk overrides gAMA": (solid(color, extra=chunk(b"sRGB", b"\0") + chunk(b"gAMA", struct.pack(">I", 100000))),
+                                          color * 6),
+            "iCCP overrides gAMA": (solid(color, extra=iccp(rgb_profile()) + chunk(b"gAMA", struct.pack(">I", 100000))),
+                                    color * 6),
+            "cHRM Display P3 with gAMA 2.2": (
+                solid(color, extra=chunk(b"gAMA", struct.pack(">I", 45455)) + chunk(b"cHRM", struct.pack(
+                    ">8I", *(round(v * 100000) for v in (*DISPLAY_P3[0], *sum(DISPLAY_P3[1], ())))))),
+                self.stored_pixels(solid(color, extra=iccp(rgb_profile(primaries=DISPLAY_P3, gamma=100000 / 45455))))),
+        }
+        for name, (source, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.stored_pixels(source), expected)
+        # Grayscale profiles map to sRGB's neutral axis; a linear gray of 128 is sRGB's 188.
+        for gray in (solid(b"\x80", gray=True, extra=iccp(rgb_profile(gray=True, linear=True))),
+                     jpeg_icc(self.convert_fixture(solid(b"\x80", gray=True), "mjpeg"), rgb_profile(gray=True, linear=True))):
+            with self.subTest(gray=gray[:4]):
+                self.assertTrue(all(abs(value - 188) <= 2 for value in self.stored_pixels(gray)))
+        self.assertEqual(self.stored_pixels(solid(b"\x80", gray=True, extra=iccp(rgb_profile(gray=True)))), b"\x80" * 18)
+
+    def test_unconvertible_color_information_keeps_decoded_pixels(self):
+        cmyk = bytearray(rgb_profile())
+        cmyk[16:20] = b"CMYK"
+        rgb_header_without_tags = rgb_profile()[:128]
+        sources = {"HDR PQ cICP": chunk(b"cICP", bytes((9, 16, 0, 1))),
+                   "HDR mastering display": chunk(b"mDCv", bytes(24)) + chunk(b"cLLi", bytes(8)),
+                   "narrow-range cICP": chunk(b"cICP", bytes((12, 13, 0, 0))),
+                   "not an ICC profile": iccp(b"not an ICC profile"),
+                   "oversized profile": iccp(b"X" * (images.MAX_PROFILE_BYTES + 1)),
+                   "CMYK profile": iccp(bytes(cmyk)),
+                   "RGB profile Little CMS cannot open": iccp(rgb_header_without_tags)}
+        for name, extra in sources.items():
+            with self.subTest(name):
+                self.assertEqual(self.stored_pixels(png(extra=extra)), self.pixels(png()))
+        # Corrupt compressed data is a damaged file, not color information: the strict decoder refuses it as well.
+        with self.assertRaisesRegex(images.ImageError, "could not be read"):
+            self.store(upload(png(extra=chunk(b"iCCP", b"Fictional\0\0" + b"not zlib data"))))
+
+    def test_phone_photo_converts_under_the_real_process_limits(self):
+        source = self.tmp / "phone.jpg"
+        subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                        "gradients=s=4032x3024:seed=1", "-frames:v", "1", "-q:v", "3", str(source)],
+                       check=True, timeout=30)
+        photo = jpeg_icc(source.read_bytes(), rgb_profile(primaries=DISPLAY_P3))
+        limited = []
+        original = platform.limited_command
+
+        def spy(command, **limits):
+            limited.append((command[0], limits))
+            return original(command, **limits)
+
+        with mock.patch.object(platform, "limited_command", side_effect=spy):
+            ref = self.store(upload(photo, name="photo.jpg"))[0]
+        self.assertEqual((ref["mime_type"], ref["width"], ref["height"]), ("image/jpeg", 4032, 3024))
+        self.assertIn((sys.executable, {"memory": 1 << 30, "cpu": 10, "output": 4032 * 3024 * 4 + 1}), limited)
+        self.assertNotIn(b"ICC_PROFILE", Path(images.resolve(self.project, [ref], committed=False)[0]["path"]).read_bytes())
+        # A color conversion stopped by its limits names the limit, not the color information.
+        with mock.patch.object(platform, "limited_command",
+                               side_effect=lambda command, **limits: original(command, **{**limits, "output": 1})
+                               if command[0] == sys.executable else original(command, **limits)):
+            with self.assertRaises(images.ImageError) as stopped:
+                self.store(upload(photo))
+        self.assertEqual(stopped.exception.status, 413)
+        self.assertIn("Choose a smaller image", str(stopped.exception))
 
     def test_rejects_other_animation_truncation_crc_and_dimensions_before_decode(self):
         webp = self.convert_fixture(png(), "libwebp")

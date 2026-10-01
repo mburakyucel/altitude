@@ -454,12 +454,13 @@ behavior in the task report. The native sandbox probe in `test_l3_privilege.py` 
 explicit host-capability check with no model request; it is outside default test applicability.
 
 Image integration fixtures require the detected local `ffmpeg` converter (`ffmpeg` on Debian/Ubuntu).
-RGB ICC tests use the detected system `liblcms2` library (`liblcms2-2` on Debian/Ubuntu) for bounded
+Color tests use the detected system `liblcms2` library (`liblcms2-2` on Debian/Ubuntu) for bounded
 color conversion; production reports unavailable profile conversion explicitly when it is absent.
-Inputs are limited to ordinary static raster images. HDR declarations, non-RGB ICC profiles,
-profiles over 4 MiB and non-sRGB gamma/chromaticity
-without an ICC profile require an exported sRGB copy. Decoder wall/CPU/memory/output bounds,
-orientation, alpha/color parity and intermediate cleanup have real conversion fixtures. The service
+Inputs are limited to ordinary static raster images. Synthetic fixtures cover each color description
+(RGB and gray ICC, `cICP`, `sRGB`, `gAMA`/`cHRM` and their precedence) and the unconvertible ones that
+keep decoded pixels. A 12-megapixel Display P3 photo converts under the real process limits. Decoder
+wall/CPU/memory/output bounds, orientation, alpha/color parity and intermediate cleanup have real
+conversion fixtures. The service
 and Python harnesses replace image capability checks and native execution at the engine seam.
 
 ## Installation lifecycle acceptance
