@@ -1,5 +1,37 @@
 # Altitude architecture
 
+## Container deployment boundary
+
+The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
+Disposable fixture runtimes retain private storage/process metadata and link only that same user
+bus into their runtime directory. The host controller selects cgroupfs and distribution crun;
+its system-bus address names an unavailable fictional endpoint. A delegated user service owns each
+application lifetime. Disposable VM acceptance independently observes service-manager calls and
+their senders, including forced cleanup. It allows systemd's verified same-user delegated process
+attachment, which does not use polkit, and fails on unexpected management attempts. This is
+validation of the selected runtime clients, not hostile-process confinement. The
+[container evidence](CONTAINERS.md#evidence) records the tested boundaries.
+
+The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
+inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
+runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
+refuse every peer in that deployment. Source merges remain ordinary project delivery; application
+activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
+manager. Immutable resources and persistent home/projects have separate lifetimes. The reusable
+Linux image/launcher lanes establish startup, published local HTTPS, elevation-file inventory,
+the native diagnostic permission matrix, restart/replacement/descendant cleanup and private
+backup/restore. [Container evidence](CONTAINERS.md#evidence) names the tested runtime and limits.
+The actual daemon's phone/desktop onboarding and queued task continuation pass with fictional
+external engines. Provider-session confinement parity, real-device access and Mac runtime evidence
+remain pending. Resume-claim ownership
+uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
+Container admission has one persistent receipt and a root-owned container-instance identity.
+The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
+gate every provider launch, with early checks before queue/claim consumption. A replacement waits
+for host-side Continue. Same-container restarts retain admission. Existing task holds, Stop and
+reconciliation remain independent of this global gate. The read-only browser notice uses the
+existing overview poll; it adds no retained browser state or host command route.
+
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
 and receives their questions and reports needing follow-up. Several tasks can proceed in isolated
@@ -996,9 +1028,11 @@ hooks for inbox delivery and telemetry. On macOS that job also runs under Altitu
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
 temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
-runs as altd's child rather than as a job starts under the same profile. Codex keeps its native
-workspace-write sandbox inside the same job boundary (the two Seatbelt profiles cannot nest) and uses the
-same door; private worker records and output identify both engines' sessions
+runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+roots. The session bus and manager runtime directory (including its direct private socket) are denied;
+other runtime-directory paths retain their policy. The generated profile also supplies provider-free
+confinement checks. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+(the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts

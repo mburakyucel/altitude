@@ -1,5 +1,17 @@
 # Roadmap
 
+## Container deployment
+
+Linux-first rootless container support retains the full Linux/Mac/onboarding objective. The actual
+native task/coordinator sandbox, launcher lifecycle/recovery and private backup/restore gates pass
+on the recorded Linux tuple. Actual-daemon phone/desktop onboarding, task Stop/resume and queued
+continuation after replacement pass with fictional engines. Real Mac ARM64 evidence remains open.
+The [candidate build and bootstrap gate](CONTAINERS.md) are under validation. Containerized Linux does
+not establish native macOS, Xcode or iOS build support. No container-security advantage is assumed.
+The candidate implements host-side continuation after replacement, preserving ordinary restart
+admission and task holds. Real provider/authentication, physical-device routing/trust, maximum-size
+backup throughput, final full-scope review and required delivery checks remain explicit gaps.
+
 ## Friends-and-family readiness priorities
 
 The operator's September 14, 2026 direction selects a low-friction private trial on friends'

@@ -10,14 +10,16 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from . import platform
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
 RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
 INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
 INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
-if RELEASE is not None and INSTALL_CONFIG.exists():
+if RELEASE is not None and not platform.containerized() and INSTALL_CONFIG.exists():
     for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
         if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
             raise ValueError(f"invalid installation environment setting: {key}")
@@ -60,11 +62,13 @@ CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 def network(environment) -> dict:
     """Where a server started with this environment listens and which HTTPS identity it serves."""
     return {"host": environment.get("ALTITUDE_HOST", "127.0.0.1"), "port": int(environment.get("ALTITUDE_PORT", "8890")),
+            "public_host": environment.get("ALTITUDE_PUBLIC_HOST", "localhost"),
             "tls_dir": Path(environment.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser(),
             "tls": environment.get("ALTITUDE_TLS", "1") != "0"}
 
 
 HOST, PORT, TLS_DIR, TLS = map(network(os.environ).get, ("host", "port", "tls_dir", "tls"))
+PUBLIC_HOST = network(os.environ)["public_host"]
 # The projects folder's initial value; `alt machine set --projects-folder` replaces it (project_roots()).
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
 
@@ -221,6 +225,10 @@ def machine_settings() -> dict:
 def project_roots() -> list[Path]:
     """The folders First run lists the immediate subfolders of: the chosen projects folder, else ALTITUDE_ROOTS."""
     folder = machine_settings().get("projects_folder")
+    if platform.containerized():
+        root = Path(folder) if folder else platform.CONTAINER_PROJECTS
+        platform.require_container_project(root, folder=True)
+        return [root]
     return [Path(folder)] if folder else PROJECT_ROOTS
 
 
@@ -275,6 +283,7 @@ def validate_projects_folder(value) -> None:
         return
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("the projects folder must be an absolute path")
+    platform.require_container_project(Path(value), folder=True)
     if not Path(value).is_dir():
         raise ValueError(f"{value} is not a directory")
     if not os.access(value, os.R_OK | os.X_OK):
@@ -392,7 +401,41 @@ def restart_lock(*, exclusive: bool = False):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+_provider_admitted = ContextVar("provider_admitted", default=None)
+
+
+class AdmissionPaused(RuntimeError):
+    """No provider was invoked; caller state must remain eligible for deliberate continuation."""
+
+
+@contextmanager
+def provider_admission():
+    if _provider_admitted.get() == os.getpid():
+        yield None
+        return
+    with platform.container_admission() as why:
+        token = _provider_admitted.set(os.getpid() if not why else None)
+        try:
+            yield why
+        finally:
+            _provider_admitted.reset(token)
+
+
+def admitted_provider(function):
+    """Last common gate, including callers outside the daemon's ordinary work queues."""
+    @functools.wraps(function)
+    def admitted(*args, **kwargs):
+        with provider_admission() as why:
+            if why:
+                raise AdmissionPaused(why)
+            return function(*args, **kwargs)
+    return admitted
+
+
 def restart_in_progress() -> bool:
+    from . import platform
+    if platform.containerized():
+        return False  # Image replacement owns activation; stale native receipts cannot fence admission.
     if RELEASE is not None:
         return (INSTALL_PREFIX / "pending.json").exists()
     from . import state as S
@@ -462,6 +505,7 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
     path = Path(path or (project_roots()[0] / name)).expanduser()
+    platform.require_container_project(path)
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
     entry = {"path": str(path), "approval": approval,

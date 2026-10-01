@@ -322,9 +322,21 @@ class Processes(DarwinCase):
             del self.table[pid]
 
     def test_identity_liveness_and_name(self):
+        # PID 1 is intentionally absent/unreadable to this ordinary account.
+        boot = "83297b09-775d-427b-8f7c-bda8d0a8c5dd"
+        query = self.patch(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, boot + '\n'))
         self.add(40, start=7, name=b"zsh")
         self.assertEqual(platform.process_start(40), "7000000")
         self.assertTrue(platform.process_running(40, "7000000"))
+        identity = platform.process_identity(40)
+        self.assertEqual(identity['boot'], 'darwin:' + boot)
+        query.assert_called_with(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'],
+                                 capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(identity['namespace'], 'darwin')
+        self.assertTrue(platform.process_identity_live(identity))
+        self.assertFalse(platform.process_identity_live({**identity, 'start': '8000000'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'boot': 'darwin:old-boot'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'namespace': 'pid:[linux]'}))
         self.assertFalse(platform.process_running(40, "8000000"))  # the pid was reused
         self.assertIsNone(platform.process_running(40, "unknown"))
         self.add(41, zombie=True)
@@ -333,6 +345,16 @@ class Processes(DarwinCase):
         self.assertIsNone(platform.process_name(99))
         with self.assertRaises(FileNotFoundError):
             platform.process_start(99)
+
+    def test_boot_identity_never_invents_a_value_when_kernel_query_fails(self):
+        for outcome in ('not-a-uuid', subprocess.CalledProcessError(1, 'sysctl')):
+            with self.subTest(outcome=outcome), mock.patch.object(platform.subprocess, 'run') as query:
+                if isinstance(outcome, Exception):
+                    query.side_effect = outcome
+                else:
+                    query.return_value = subprocess.CompletedProcess([], 0, outcome)
+                with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                    platform._process_boot()
 
     def test_stop_signals_every_member_checked_again_and_escalates_after_the_grace(self):
         self.add(1)  # launchd: another coalition

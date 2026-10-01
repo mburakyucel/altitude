@@ -418,6 +418,14 @@ class ServiceCase(unittest.TestCase):
 
 
 class TestServiceDiscovery(ServiceCase):
+    def test_container_advertised_identity_comes_from_service_record_not_shell(self):
+        self.running({"host": "0.0.0.0", "port": 19443, "public_host": "container.invalid"})
+        with mock.patch.object(platform, "containerized", return_value=True), \
+             mock.patch.object(config, "PUBLIC_HOST", "wrong-shell.invalid"):
+            found = tls.service()
+        self.assertEqual(found["url"], "https://container.invalid:19443")
+        self.assertEqual(found["host"], "0.0.0.0")
+
     def test_a_shell_finds_the_address_port_and_certificates_the_running_service_recorded(self):
         with mock.patch.dict(os.environ, {"ALTITUDE_HOST": "10.9.9.9", "ALTITUDE_PORT": "8890",
                                           "ALTITUDE_TLS_DIR": str(self.root / "other")}):

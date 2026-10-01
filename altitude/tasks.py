@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import config, github_intake, images as image_store, state as S, usage
+from . import config, github_intake, images as image_store, platform, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -781,7 +781,7 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
             _append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", reason)
             request["message_id"] = reason["id"]
             rows.append(reason)
-        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
+        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_process": platform.process_identity(os.getpid()), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
         task.update({"resume_claim": claim, "dispatching": claim["at"]})

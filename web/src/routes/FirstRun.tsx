@@ -58,6 +58,7 @@ function Folders({
   const rows = unmanagedFolders(overview.data).sort((a, b) => a.name.localeCompare(b.name));
   const roots = overview.data?.roots ?? [];
   const root = roots.join(" and ") || "the projects folder";
+  const inContainer = overview.data?.deployment === "container";
 
   const start = (name: string, folder: string) => {
     add.mutate({ name, path: folder });
@@ -182,9 +183,9 @@ function Folders({
       />
     ) : onboarding ? (
       <p className="text-meta text-muted">
-        A project can live anywhere:{" "}
+        {inContainer ? "Choose another folder in the container projects volume:" : "A project can live anywhere:"}{" "}
         <button type="button" className="link" disabled={busy} onClick={() => setBrowsing(true)}>Choose a folder elsewhere…</button>{" "}
-        lets you browse or type any absolute path.
+        {inContainer ? "lets you browse or type its container path." : "lets you browse or type any absolute path."}
       </p>
     ) : (
       <button type="button" className="btn self-start" disabled={busy} onClick={() => setBrowsing(true)}>

@@ -1,5 +1,12 @@
 # Engine and session lifecycle
 
+Durable resume claims record their owner's PID, start time, boot identity and PID namespace through
+`platform.py`. Reused process numbers after restart or container recreation do not keep an old claim
+live. Existing claim reconciliation retains the reserved messages and worker identity; missing process
+identity is stale. Boot/start mismatches establish a stale owner before reading its protected
+namespace link; a permission error when the lifetime still matches remains unavailable evidence. Linux is
+implemented; native macOS process-identity evidence remains part of that platform's open runtime gap.
+
 ## Conversation-audit pilot
 
 The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable
@@ -1292,7 +1299,29 @@ worker records travel with it. Task state changes and stop/resume records are th
 parser error or incomplete final JSONL record is displayed as viewer evidence and retried on the next poll; it
 never changes task or worker state.
 
+## Container continuation
+
+The [image lifecycle](CONTAINERS.md#lifecycle-and-recovery) pauses new provider work after container
+replacement until the operator runs the host launcher's Continue. Restarting the same container
+preserves its prior admission. Fresh empty home and project volumes initialize once before the
+application starts; imported, restored or incomplete state never silently becomes fresh.
+
+Task dispatch/resume, coordinator chat/report turns, independent reviews, setup connection and
+conversation audit enter the same admission lease before taking their work. Engine primitives
+check that lease too. A later Pause permits an already admitted call to finish but rejects new
+ones. Queued messages, review requests and resume generations remain unconsumed on refusal;
+report refusals do not consume failure backoff. Stop and report bookkeeping do not need admission.
+Old resume claims still reconcile while paused: known workers can be adopted, prelaunch claims
+released, and genuinely uncertain launches reported through existing recovery. Global Continue
+does not clear a task Stop, question, usage limit or merge/review hold. Native behavior is unchanged;
+Mac container lifecycle evidence remains pending.
+
 ## Operator terminal
+
+The container deployment explicitly refuses terminal routes and owner transcript reads for every
+connection. Its user interface offers the host-side container shell command instead. Container
+application activation uses image replacement, not source restart receipts; native worker lifecycle
+and the full final-image acceptance still follow the [container validation boundary](CONTAINERS.md).
 
 The operator's terminal sits beside a task's sessions without joining them. When the operator opens
 it, altd starts a shell in the task's worktree. No agent session starts, and the worker's

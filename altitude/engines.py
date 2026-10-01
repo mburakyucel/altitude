@@ -159,6 +159,11 @@ def installation(engine: str) -> dict:
 #: The command that installs each engine CLI, shown by First run while it is missing.
 INSTALL = {"claude": "npm install -g @anthropic-ai/claude-code", "codex": "npm install -g @openai/codex"}
 
+
+def install_command(engine: str) -> str:
+    command = INSTALL[engine]
+    return command.replace("npm install -g", "npm install --prefix ~/.local -g") if platform.containerized() else command
+
 #: The engine CLI's local sign-in status and the command the operator runs in their own terminal to sign in.
 SIGN_IN = {"claude": (("auth", "status"), "claude auth login"), "codex": (("login", "status"), "codex login")}
 
@@ -178,6 +183,7 @@ def session_timeout(engine: str) -> int:
     return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
 
 
+@config.admitted_provider
 def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
     """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
 
@@ -523,7 +529,7 @@ def clean_env() -> dict:
     env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
-                if config.RELEASE is not None else config.SOURCE / "bin")
+                if config.RELEASE is not None and not platform.containerized() else config.SOURCE / "bin")
     env["PATH"] = str(commands) + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     if config.RELEASE is not None:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -575,6 +581,7 @@ def claude_settings() -> Path:
     return p
 
 
+@config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
@@ -1532,17 +1539,22 @@ def _worktree_git_dirs(cwd: Path) -> list[Path]:
 
 
 def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
-    """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
+    """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
 
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
-    reports. Everything else is readable. Network stays on for `git push`, `gh`, and the repository's own tests.
+    reports. The workspace base retains protected configuration paths and temporary directories.
+    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets stay denied.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
     """
-    roots = [Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()]
-    return ['sandbox_mode="workspace-write"',
-            "sandbox_workspace_write.writable_roots=" + json.dumps([str(root) for root in roots]),
-            "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
+    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
+    profile = "altitude-task"
+    workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
+    denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in platform.job_control_paths())
+    return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
+            f"permissions.{profile}.workspace_roots={workspace_roots}",
+            f'permissions.{profile}.filesystem={{":root"="read",{denied}}}',
+            f"permissions.{profile}.network.enabled=true", 'approval_policy="never"']
 
 
 def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
@@ -1553,11 +1565,11 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     use authenticated GitHub directly, connect to the user bus, or write a checkout.
     """
     profile = "altitude-l3"
-    bus = f"/run/user/{os.getuid()}/bus"
     from .l3 import verb_socket_path
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read", bus: "deny"}
+             str(config.project_path(project).resolve()): "read",
+             **{str(path): "deny" for path in platform.job_control_paths()}}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
@@ -1697,6 +1709,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
                          persona=persona, model=model, extra_env=extra_env, start_timeout=start_timeout)
 
 
+@config.admitted_provider
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None,
@@ -1943,6 +1956,7 @@ def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
     return bool(row and row.get("state") == "working")
 
 
+@config.admitted_provider
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
                sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
@@ -2243,6 +2257,7 @@ def _review_object(text: str) -> dict:
     raise ValueError("The review answer holds no JSON object.")
 
 
+@config.admitted_provider
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
            on_start=None, on_wait=None) -> dict:
     """One focused review without a duration cutoff; callbacks retain owner/caller cancellation."""

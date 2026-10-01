@@ -193,12 +193,12 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
 function MachineSwitches({ machine }: { machine: Machine | undefined }) {
   const client = useQueryClient();
   return <>
-    <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
+    {machine?.terminal_unavailable ? <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{machine.terminal_unavailable}</small></span></div> : <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
       detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
       save={async (on) => {
         client.setQueryData(["machine"], await saveTerminalAccess(on));
         await client.invalidateQueries({ queryKey: ["terminal"] });
-      }} />
+      }} />}
     <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
       unavailable={machine?.validation_unavailable}
       detail="Agents test installs, containers and browsers in throwaway containers on this computer, and each run is recorded on its task. Turning this off stops a running one."
@@ -403,10 +403,13 @@ function VersionRows({ update }: { update: Update }) {
     }
   };
   const available = update.available;
+  if (update.managed === "image") return <div className="settings-row settings-version">
+    <span><strong>Version</strong>{" "}<small>{update.current} · {update.reason}</small></span>
+  </div>;
   return <>
     <div className="settings-row settings-version">
       <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : update.check && update.checked ? " · Up to date" : ""}</small></span>
-      {available ? <Command text={update.command} /> : null}
+      {available && update.command ? <Command text={update.command} /> : null}
     </div>
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-check-switch">
@@ -427,6 +430,7 @@ const titles = {
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
 function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-reports" }) {
+  const inContainer = useMachine().data?.deployment === "container";
   const [saved, setSaved] = useState(false);
   const status = saved ? <p role="status" className="text-meta text-muted">Saved.</p> : null;
   const submitRow = (submit: ReactNode) => <div className="onboarding-nav">{submit}{status}</div>;
@@ -439,7 +443,7 @@ function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-repo
     <IncidentReportsForm save="Save" onSaved={() => setSaved(true)} actions={submitRow} />
   </>;
   return <>
-    <p className="text-meta text-muted">What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again. Altitude never asks for a password or token in the browser.</p>
+    <p className="text-meta text-muted">{inContainer ? "These checks run inside the container. Open its shell from a host terminal and run the commands below there, then check again. Host tools and sign-ins do not count." : "What the agents need on the computer running Altitude. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p>
     <PrerequisiteList actions={(check) => <div className="onboarding-nav">{check}</div>} />
   </>;
 }

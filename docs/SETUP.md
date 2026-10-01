@@ -1,5 +1,13 @@
 # Set up Altitude
 
+The [container candidate](CONTAINERS.md) uses container-local tools, sign-ins and project volumes.
+Native installation commands below do not install into that image. Linux container onboarding
+passes with fictional engines on phone/desktop; actual Mac and account sign-in compatibility remain
+unverified.
+After container replacement, the browser explains that new AI work is paused and shows the host
+Continue command. It retains messages and setup requests until that action; an ordinary restart
+of the same container retains its previous admission. See [container recovery](CONTAINERS.md#lifecycle-and-recovery).
+
 Altitude targets one operator on a Linux x86_64 machine with a systemd user manager, or on a Mac with
 Apple silicon running macOS 15 or newer. The release archive includes the CLI, daemon and built UI;
 Ubuntu 24.04 is the initial validation target. The macOS runtime is implemented and its native

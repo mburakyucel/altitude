@@ -330,9 +330,38 @@ blocks automating it.
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
-| Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
+| Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
+
+The container gate removes its verified private containers, volumes and images before asking Podman
+to retire that store's pause process with `system migrate`. It never applies this operation to a
+shared store. Cleanup failure retains the runtime directory and fails the gate; the helper does not
+identify pause processes by executable name, which differs between Podman installations.
+
+Container admission regressions run with
+`python3 -m unittest tests.test_container_admission tests.test_installed_runtime tests.test_resume_priority`.
+They cover receipt/instance recovery, pause/launch races, lease release after process exit, caller
+refusals and retained task Stop/holds using real storage/Git and fixture engines. `container.pw.ts`
+walks the read-only recovery notice through admitted, replacement-paused, continued and unavailable
+identity states using fictional API/storage. Neither suite establishes native image or deployment
+browser acceptance; rerun the image gate on the exact candidate under authorized runtime access.
+Its `--lifecycle` option adds finite native job/descendant, daemon restart, same-container restart
+and retained-volume replacement checks. It uses fictional data and never invokes an engine.
+The `--workflow` lane uses a deterministic CLI at the engine seam and real platform jobs,
+project registration, coordinator conversation, Git guards/worktrees and task records. It checks
+Stop, queued steering, replacement admission and continuation of the same saved session and draft.
+Its synchronous application driver owns a separate fictional state directory inside the persistent
+home; the image daemon serves readiness with its default fresh state. This lane does not establish
+daemon scheduling, browser onboarding, interrupted-launch recovery or real provider compatibility.
+Run `python3 -m unittest tests.test_container_workflow` before the authorized image gate: it runs
+the same workflow and CLI with a local-process platform adapter, without host services. Workspace
+results do not establish native systemd or image support; those require the gate's retained results.
+The `--recovery` lane injects resume claims through the real claim API, exits their owning process,
+then replaces the container. A prelaunch claim restores its message before explicit continuation;
+an uncertain launch records a recovery fault without replay. Workspace tests simulate the lost
+process lifetime; the native lane reads actual lifetime evidence. Neither simulates a real provider
+having acted before the interruption, nor establishes automatic recovery of a running task.
 
 ## Device evidence
 

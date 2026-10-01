@@ -236,9 +236,9 @@ def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> 
 
 def activate_source() -> None:
     """Pin service launch inputs to committed source outside every worker's writable roots."""
-    from . import config
+    from . import config, platform
 
-    if config.RELEASE is not None:
+    if platform.containerized() or config.RELEASE is not None:
         # Versioned installs already pin code and resources outside project worktrees.
         return
     repo = config.REPO
@@ -354,7 +354,10 @@ def _resolve_hooks_path(repo: Path, raw: str) -> Path:
 
 
 def _active_hooks() -> Path:
-    from . import config
+    from . import config, platform
+    image = platform.container_git_guards()
+    if image is not None:
+        return image[0]
     if config.INSTALL_PREFIX is not None:
         return config.INSTALL_PREFIX / "hooks"
     current = config.REPO / ".altitude-source/current/hooks"
@@ -372,7 +375,10 @@ def _verify_hook_files(desired: Path) -> None:
 
 def _owned_hooks(path: Path) -> bool:
     """Recognize only this installation's guard namespace."""
-    from . import config
+    from . import config, platform
+    image = platform.container_git_guards()
+    if image is not None:
+        return path == image[0].resolve()
     if config.INSTALL_PREFIX is not None:
         return path == (config.INSTALL_PREFIX / "hooks").resolve()
     if path == (config.REPO / "hooks").resolve():
@@ -396,8 +402,11 @@ def _common_git_dir(repo: Path) -> Path:
 
 
 def _composition_path(repo: Path) -> Path:
-    from . import config
+    from . import config, platform
     identity = hashlib.sha256(str(_common_git_dir(repo)).encode()).hexdigest()
+    image = platform.container_git_guards()
+    if image is not None:
+        return image[1] / identity
     # #348 review: workers can write .git and runtime state, but cannot grant integration consent.
     # The wrapper generation and its original-selection receipt share the trusted installation boundary.
     root = config.INSTALL_PREFIX if config.INSTALL_PREFIX is not None else config.REPO / ".altitude-source"
@@ -422,7 +431,13 @@ def _integration_support(path: Path, contents: list[list[str]], selection: str |
 
 
 def _composed_hook(name: str, original: Path, guards: Path, contents: list[list[str]]) -> str:
-    from . import config
+    from . import config, platform
+    image = platform.container_git_guards()
+    if image is not None:
+        code = (f"import sys; sys.path.insert(0, {str(image[0].parent)!r}); "
+                "from altitude.git_policy import combined_hook; "
+                f"raise SystemExit(combined_hook({name!r}, {str(original)!r}, {str(guards)!r}, {dict(contents).get(name)!r}))")
+        return "#!/bin/sh\nexec " + shlex.join([image[2], "-B", "-c", code]) + ' "$@"\n'
     if config.INSTALL_PREFIX is not None:
         python = json.loads(config.INSTALL_CONFIG.read_text())["python"]
         code = (f"import sys; sys.path.insert(0, {str(config.INSTALL_PREFIX / 'current')!r}); "

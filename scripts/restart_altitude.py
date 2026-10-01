@@ -242,6 +242,7 @@ def record_failure(attempt: str | None, error: str) -> None:
 
 
 def main() -> int:
+    platform.require_native_application()
     staging: Path | None = None
     attempt = requested_at()
     try:

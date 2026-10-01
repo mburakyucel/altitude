@@ -343,13 +343,23 @@ export const UpdateSchema = z.object({
   current: z.string(),
   available: z.object({ version: z.string(), notes: z.string() }).nullish(),
   check: z.boolean(),
-  command: z.string(),
+  command: z.string().nullable(),
+  managed: z.literal("image").optional(),
+  reason: z.string().optional(),
   checked: z.string().nullish(),
   attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
 });
 
+const ContainerLifecycleSchema = z.object({
+  ready: z.boolean(), reason: z.string().nullable(), instance: z.string().nullable(),
+  continue_command: z.string().optional(), admitted_calls_active: z.boolean().optional(),
+});
+export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
+
 export const OverviewSchema = z
   .object({
+    deployment: z.enum(["native", "container"]).optional(),
+    lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
     wip: WipSchema,
@@ -717,6 +727,7 @@ export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettin
 
 const FoldersSchema = z.object({
   path: z.string(), parts: z.array(z.string()), readable: z.boolean(),
+  location: z.enum(["native", "container"]).optional(),
   folders: z.array(z.object({ name: z.string(), path: z.string(), project: z.string().nullish(), git: z.boolean() })),
 });
 export type Folders = z.infer<typeof FoldersSchema>;
@@ -738,8 +749,11 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 }
 
 const MachineSchema = z.object({
+  lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true),
+  terminal_unavailable: z.string().nullish(), deployment: z.enum(["native", "container"]).optional(),
+  container_shell: z.string().nullish(),
   validation: z.boolean().default(true), validation_unavailable: z.string().nullish(),
 });
 export type Machine = z.infer<typeof MachineSchema>;

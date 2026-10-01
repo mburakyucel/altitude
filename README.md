@@ -64,6 +64,10 @@ on macOS 15 or newer runs Altitude from a source checkout while its native accep
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
+[Linux container support](docs/CONTAINERS.md) is under validation. Its rootless Podman candidate uses
+dedicated project volumes and an explicit security exception. Linux lifecycle, backup and browser
+onboarding pass with fictional engines; Mac and real-account compatibility remain unverified.
+
 1. Install the current release candidate as the account that will use Altitude:
 
    ```sh

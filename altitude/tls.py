@@ -59,7 +59,8 @@ def _openssl(*args: str, allow_failure: bool = False) -> subprocess.CompletedPro
 
 
 def _host(host: str | None) -> tuple[str, str]:
-    value = host or config.HOST
+    from . import platform
+    value = host or (config.PUBLIC_HOST if platform.containerized() else config.HOST)
     if value in ("0.0.0.0", "::"):
         # A wildcard bind is not a name a device can use; devices reach it through localhost.
         return "DNS", "localhost"
@@ -307,6 +308,7 @@ def describe_scope(scope: dict | None) -> str:
 
 def info(host: str | None = None) -> dict:
     """Return public identity evidence; local certificate validity does not prove device trust."""
+    from . import platform
     directory = config.TLS_DIR
     check(host, renew=False)
     ca = directory / "ca.crt"
@@ -318,7 +320,11 @@ def info(host: str | None = None) -> dict:
             "ca_sha256": f"sha256 Fingerprint={authority['sha256']}" if authority else None,
             "ca_name": authority and authority["name"], "ca_expires": authority and authority["expires"],
             "ca_scope": authority and describe_scope(authority["scope"]),
-            "trust": "unknown", "trust_steps": list(TRUST_STEPS)}
+            "trust": "unknown", "trust_steps": ([
+                "Export only ca.crt with the host container command's certificate action. Before trusting it, "
+                "check that the file holds only this certificate (ca_name) and that its SHA-256 matches ca_sha256; "
+                "otherwise delete it. Never transfer ca.key or server.key.", *TRUST_STEPS[1:]]
+                if platform.containerized() else list(TRUST_STEPS))}
 
 
 SHARE_MINUTES = 10
@@ -339,7 +345,8 @@ def publish(found: dict) -> None:
 
     from . import state
     state.atomic_write(record(), json.dumps({"pid": os.getpid(), "host": found["host"], "port": found["port"],
-                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"])}) + "\n")
+                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"]),
+                                             "public_host": found.get("public_host", found["host"])}) + "\n")
 
 
 def service() -> dict:
@@ -347,12 +354,14 @@ def service() -> dict:
     itself recorded when it started, so every shell and agent reaches the same service whatever its own
     environment says."""
     import json
+    from . import platform
 
     path = record()
     try:
         saved = json.loads(path.read_text())
         found = {"host": str(saved["host"]), "port": int(saved["port"]), "tls": saved["tls"] is True,
-                 "tls_dir": Path(saved["tls_dir"]), "pid": int(saved["pid"])}
+                 "tls_dir": Path(saved["tls_dir"]), "pid": int(saved["pid"]),
+                 "public_host": str(saved["public_host"] if platform.containerized() else saved["host"])}
     except FileNotFoundError as exc:
         raise TLSFailure(f"The Altitude service has not recorded where it listens ({path}). Start the service, "
                          "then retry.") from exc
@@ -363,7 +372,8 @@ def service() -> dict:
 
 def located(found: dict) -> dict:
     """Service network settings with the name a device opens and the service's URL."""
-    kind, name = _host(found["host"])
+    from . import platform
+    kind, name = _host(found.get("public_host", config.PUBLIC_HOST) if platform.containerized() else found["host"])
     address = f"[{name}]" if kind == "IP" and ":" in name else name
     return {**found, "kind": kind, "name": name,
             "url": f"{'https' if found['tls'] else 'http'}://{address}:{found['port']}"}
@@ -585,7 +595,10 @@ class Share:
 def share(minutes: float = SHARE_MINUTES, out=print) -> None:
     """`alt tls-share`: open a share window for the running service's proven CA certificate and print its
     QR code and the checks, until it closes on time or on Ctrl-C."""
-    from . import qr
+    from . import platform, qr
+    if platform.containerized():
+        raise TLSFailure("Export the public CA with the host container command's certificate action; "
+                         "this container does not publish a second certificate-sharing port.")
 
     found = service()
     phone_address(found)

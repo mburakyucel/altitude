@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, images as image_store, route, state as S, transcript
+from . import config, engines, images as image_store, platform, route, state as S, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
@@ -40,7 +40,7 @@ def _write_executable(path: Path, text: str) -> None:
 def verb_socket_path(project: str) -> Path:
     """One capability socket per project; the pathname, not model-supplied JSON, binds its authority."""
     name = hashlib.sha256(project.encode()).hexdigest()[:20]
-    return config.ROOT / "l3-verbs" / f"{name}.sock"
+    return platform.coordinator_socket_directory() / f"{name}.sock"
 
 
 def _remove_runtime(runtime: Path) -> None:
@@ -466,8 +466,8 @@ def chat_state(project: str, limit: int = 60) -> dict:
 
 @contextmanager
 def _active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
-    with config.project_activity(project) as attached, config.restart_lock() as ready:
-        if not attached or not config.is_managed(project) or not ready or config.restart_in_progress():
+    with config.provider_admission() as held, config.project_activity(project) as attached, config.restart_lock() as ready:
+        if held or not attached or not config.is_managed(project) or not ready or config.restart_in_progress():
             yield None
             return
         with _publish_active_turn(project, trigger, claim, slug) as turn:
@@ -968,9 +968,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         if active_turn is None:
             if not config.is_managed(project):
                 return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
+            lifecycle = platform.container_lifecycle()
+            why = lifecycle["reason"] if lifecycle and not lifecycle["ready"] else "Altitude is restarting"
+            if lifecycle and not lifecycle["ready"] and trigger == "report-landed":
+                return {"completed": False, "held": True, "error": why}
             row = queue_message(project, prompt, trigger=trigger, role=config.OPERATOR_ACTOR if trigger == "chat" else "server",
                                 slug=slug)
-            return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
+            return {"queued": row, "error": why + "; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
         claimed = getattr(_turn_local, "claimed", None)
         claimed = claimed if claimed and claimed["turn"] is active_turn else None

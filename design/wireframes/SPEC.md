@@ -1,5 +1,14 @@
 # Altitude UI specification
 
+Container deployment retains the existing First run and Settings layouts. It labels folder paths
+as container-volume paths and distinguishes host shell commands from tools/sign-ins inside the
+container. Terminal and image-managed version rows explain unavailability without enable/update
+switches; the host-voice choice is unavailable with its reason. Browser and external-service voice
+remain available. Empty folders, outside-volume refusal, retry and reload use the existing form
+states. Actual-daemon Linux phone/desktop onboarding passes with fictional external engines;
+Mac and real-device acceptance remain open. Walkthroughs live in `web/e2e/container.pw.ts`,
+`scripts/container_browser.mjs` and ignored runner artifacts.
+
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
@@ -70,6 +79,14 @@ Apply these expectations with the specified component states (§3) and existing 
 requirements, including accessible control names, minimum targets, and contrast (§6).
 
 ## 2. Information architecture
+
+The container recovery notice uses the shell's existing status-banner treatment on phone and
+desktop. While globally paused it says new AI work is paused, messages/task requests stay queued,
+and Stop remains available. It labels the displayed Continue command as a host action and offers
+no browser mutation button. An unavailable instance shows repair guidance instead of a command.
+The notice is absent while loading, in native mode, and after the overview reports admitted work;
+no dismissal or additional browser storage is introduced. Container deployment walkthroughs remain
+distinct from the fictional local UI harness.
 
 ### 2.1 Routes
 

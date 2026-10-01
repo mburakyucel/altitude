@@ -96,7 +96,7 @@ _lock = threading.Lock()
 
 
 def enabled() -> bool:
-    return config.machine_settings().get("terminal") is True
+    return not platform.containerized() and config.machine_settings().get("terminal") is True
 
 
 def shell_command() -> list[str]:

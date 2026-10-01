@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
+from contextlib import ExitStack, contextmanager
 import ipaddress
 import json
 import os
@@ -21,15 +22,21 @@ import select
 import shlex
 import shutil
 import signal as signals
+import socket
 import stat
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
+import uuid
 import termios
 import time
 
 
 SERVICE = "altitude.service"
+CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
+CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the service on macOS.
 LABEL = "dev.altitude.altd"
 #: What First run shows for a missing command-line tool, run in the operator's own terminal.
@@ -39,6 +46,833 @@ INSTALL = ({"gh": "brew install gh", "git": "xcode-select --install"} if sys.pla
 
 def _darwin() -> bool:
     return sys.platform == "darwin"
+
+# Image-owned identity, outside every persistent/writable application volume. Neither an environment
+# variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
+CONTAINER_MARKER = Path("/etc/altitude/container")
+CONTAINER_INSTANCE = Path("/etc/altitude/instance")
+CONTAINER_PROJECTS = Path("/home/altitude/Projects")
+CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
+CONTAINER_CGROUP_ROOT = Path("/sys/fs/cgroup")
+IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
+def containerized() -> bool:
+    """Recognize the image contract; an invalid existing marker fails closed, never as native mode."""
+    try:
+        info = CONTAINER_MARKER.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise RuntimeError("Container identity must be a root-owned, non-writable regular file")
+    for parent in CONTAINER_MARKER.parents:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError("Container identity must have root-owned, non-writable parent directories")
+    with CONTAINER_MARKER.open("rb") as source:
+        if source.read(64) != b"altitude-container-v1\n":
+            raise RuntimeError("Unsupported container identity; use a matching Altitude image")
+    return True
+
+
+def container_unavailable(subject: str) -> str | None:
+    if not containerized():
+        return None
+    if subject == "Terminal":
+        return "Browser terminal is unavailable in this container. Use podman exec from a host terminal."
+    if subject == "Voice":
+        return "Host voice is unavailable in this container. Use browser recognition where supported"
+    if subject == "Add a phone":
+        return "Export the public CA with the host container command's certificate action; this image publishes no certificate-sharing port."
+    if subject == "Validation":
+        return validation_unavailable()
+    return IMAGE_MANAGED
+
+
+def coordinator_socket_directory() -> Path:
+    """Runtime sockets must not become persistent backup data (#543)."""
+    from . import config
+    return Path('/run/user/1000/altitude-l3') if containerized() else config.ROOT / 'l3-verbs'
+
+
+def require_native_application() -> None:
+    if containerized():
+        raise RuntimeError(IMAGE_MANAGED)
+
+
+def container_setting_error(setting: str, value) -> str | None:
+    if setting == "terminal":
+        return container_unavailable("Terminal")
+    if setting == "update_check":
+        return container_unavailable("Update")
+    if setting == "voice" and value == "host":
+        return container_unavailable("Voice")
+    return None
+
+
+def container_shell_command() -> str | None:
+    if not containerized():
+        return None
+    return ("podman exec -it --user 1000 --env HOME=/home/altitude "
+            f"--env PATH={CONTAINER_USER_PATH} "
+            "--env XDG_RUNTIME_DIR=/run/user/1000 --workdir /home/altitude "
+            f"{shlex.quote(socket.gethostname())} bash --noprofile --norc")
+
+
+def container_git_guards() -> tuple[Path, Path, str] | None:
+    """Image hooks and persistent consent receipts outside task-writable project/state roots."""
+    if not containerized():
+        return None
+    from . import config
+    return config.SOURCE / "hooks", config.HOME / ".config/altitude/git-guards", "/usr/bin/python3"
+
+
+def require_container_project(path: Path, *, folder: bool = False) -> None:
+    if containerized():
+        root = CONTAINER_PROJECTS.resolve()
+        target = path.resolve()
+        if not target.is_relative_to(root) or not folder and target == root:
+            raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
+
+
+def _container_instance() -> str:
+    info = CONTAINER_INSTANCE.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError("Container instance identity is not root-owned and immutable to the application")
+    value = CONTAINER_INSTANCE.read_text().strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", value):
+        raise ValueError("Container instance identity is invalid")
+    return value
+
+
+def _lifecycle_directory() -> Path:
+    from . import config
+    return config.HOME / ".config/altitude"
+
+
+@contextmanager
+def _lifecycle_lock(name: str, operation: int):
+    directory = _lifecycle_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(directory / name, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("Container lifecycle lock must be a regular file")
+        fcntl.flock(fd, operation)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _lifecycle_write(instance: str, paused: bool) -> None:
+    from . import state as S
+    S.write_json(_lifecycle_directory() / "lifecycle.json", {"instance": instance, "paused": paused})
+
+
+def _lifecycle_state() -> dict:
+    # #543: missing/invalid state must not let replacement or restore replay provider work.
+    instance = None
+    reason = "Container recovery is paused. Run the host launcher Continue after checking saved work."
+    try:
+        instance = _container_instance()
+        record = json.loads((_lifecycle_directory() / "lifecycle.json").read_text())
+        if not isinstance(record, dict) or type(record.get("paused")) is not bool:
+            raise ValueError("Invalid lifecycle receipt")
+        if record.get("instance") == instance:
+            if not record["paused"]:
+                return {"instance": instance, "ready": True, "reason": None}
+            reason = "New AI work is paused. Run the host launcher Continue to release queued work."
+    except (OSError, ValueError):
+        pass
+    if instance is None:
+        reason = "Container identity is unavailable. Repair image startup before continuing."
+    return {"instance": instance, "ready": False, "reason": reason}
+
+
+def container_lifecycle() -> dict | None:
+    if not containerized():
+        return None
+    try:
+        with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+            state = _lifecycle_state()
+            if state["instance"]:
+                state["continue_command"] = ("python3 scripts/container.py continue --name " +
+                    shlex.quote(socket.gethostname()) + " --instance " + state["instance"])
+            try:
+                with _lifecycle_lock("lifecycle-launches.lock", fcntl.LOCK_EX | fcntl.LOCK_NB):
+                    state["admitted_calls_active"] = False
+            except BlockingIOError:
+                state["admitted_calls_active"] = True
+            # Detached workers outlive admission calls; this is never a backup/drained certificate.
+            state["work_notice"] = "Previously started workers may still run. Stop the container before a consistent backup."
+            return state
+    except (OSError, ValueError) as exc:
+        return {"instance": None, "ready": False, "reason": f"Container lifecycle state is unavailable: {exc}"}
+
+
+@contextmanager
+def container_admission():
+    """A lease covers pre-claim work through launch; pause rejects only later admissions.
+
+    Receipt locking serializes the check with pause. The shared lease is held independently until
+    the admitted call returns, including synchronous provider turns, and is released on process exit.
+    """
+    if not containerized():
+        yield None
+        return
+    with ExitStack() as active:
+        try:
+            with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+                why = _lifecycle_state()["reason"]
+                if not why:
+                    active.enter_context(_lifecycle_lock("lifecycle-launches.lock", fcntl.LOCK_SH))
+        except (OSError, ValueError) as exc:
+            why = f"Container lifecycle state is unavailable: {exc}"
+        yield why
+
+
+def change_container_lifecycle(action: str, expected: str) -> dict:
+    """Host-exec administration only: no CLI agent verb or HTTP mutation route."""
+    from . import config
+    actor = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
+    if actor != config.OPERATOR_ACTOR or any(os.environ.get(key) for key in
+            ("ALTITUDE_TASK", "ALTITUDE_SESSION_KEY", "ALTITUDE_L3_TOKEN")):
+        raise PermissionError("Container continuation requires the operator's host terminal")
+    if not containerized() or action not in ("pause", "continue"):
+        raise ValueError("Select pause or continue for an Altitude container")
+    if action == "continue":
+        container_ready()
+    with _lifecycle_lock("lifecycle.lock", fcntl.LOCK_EX):
+        instance = _container_instance()
+        if expected != instance:
+            raise ValueError("The container changed; inspect its status before continuing")
+        _lifecycle_write(instance, action == "pause")
+    return container_lifecycle()
+
+
+def container_ready() -> None:
+    """A running unit alone does not establish readiness (#543); prove its local HTTPS process."""
+    from . import tls
+    found = tls.service()
+    if not found["tls"]:
+        raise RuntimeError("The container application must serve HTTPS before continuing")
+    # Published DNS may resolve only on the host. The image certificate also covers localhost.
+    tls._proven({**found, "url": f"https://localhost:{found['port']}"})
+
+
+def _initialize_container_lifecycle(home: Path, projects: Path) -> None:
+    """Before the user manager: keep identity in this container layer, outside persistent volumes."""
+    if not CONTAINER_INSTANCE.exists():
+        temporary = CONTAINER_INSTANCE.with_name("instance-" + uuid.uuid4().hex)
+        temporary.write_text(uuid.uuid4().hex + "\n")
+        temporary.chmod(0o444)
+        os.replace(temporary, CONTAINER_INSTANCE)
+    instance = _container_instance()
+    fresh = set(p.name for p in home.iterdir()) <= {"Projects"} and not any(projects.iterdir())
+    if fresh:
+        # Do not traverse an application-owned home as root. No user shell, hooks or mutable code.
+        subprocess.run([sys.executable, "-B", "-c",
+            "from altitude.platform import _lifecycle_write; "
+            f"_lifecycle_write({instance!r}, False)"], check=True, timeout=10,
+            cwd=Path(__file__).resolve().parent.parent, user=1000, group=1000, extra_groups=(),
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"})
+
+
+@contextmanager
+def container_volume_locks(home: Path, projects: Path):
+    """Hold both controller-volume locks, including across user-manager/daemon restarts.
+
+    Issue #543: lock the mounted directory inodes so restoring entries cannot replace a
+    lock file. These coordinate supported controllers/helpers, not hostile same-account software.
+    """
+    with ExitStack() as stack:
+        for directory in (home, projects):
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            stack.callback(os.close, fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError(f"Another Altitude container owns this volume: {directory}") from None
+        yield
+
+
+def container_bootstrap() -> None:
+    """The image's root bootstrap unit, ordered before the application user manager."""
+    if not containerized() or os.getuid() != 0:
+        raise RuntimeError("Container bootstrap requires its image and container-root account")
+    home, projects = CONTAINER_PROJECTS.parent, CONTAINER_PROJECTS
+    # Named volumes can share a backing device: stat-based is_mount misses their nested bind mounts.
+    # These two fixed image paths contain no mountinfo escape characters.
+    mounts = {line.split()[4] for line in (PROC / "self/mountinfo").read_text().splitlines()}
+    for directory in (home, projects):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or str(directory) not in mounts:
+            raise RuntimeError(f"Mount a dedicated local Podman volume at {directory}")
+        if info.st_uid not in (0, 1000):
+            raise RuntimeError(f"Volume {directory} must belong to container UID 1000 or be newly created")
+    with container_volume_locks(home, projects):
+        from .container_archive import MARKER
+        restored = os.environ.get('ALTITUDE_RESTORE_SHA', '')
+        if restored:
+            lineage, pair = (os.environ.get(key, '') for key in ('ALTITUDE_VOLUME_LINEAGE','ALTITUDE_VOLUME_PAIR'))
+            if not re.fullmatch('[0-9a-f]{64}', restored) or any(not re.fullmatch('[0-9a-f]{32}', v) for v in (lineage,pair)):
+                raise RuntimeError('Invalid immutable restore identity')
+            expected = {'format':1,'archive':restored,'lineage':lineage,'pair':pair}
+            for root in (home, projects):
+                fd = os.open(root / MARKER, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd) as source:
+                    if not stat.S_ISREG(os.fstat(source.fileno()).st_mode) or json.loads(source.read(4096)) != expected:
+                        raise RuntimeError('Restore completion does not match this volume pair')
+        elif any((root / MARKER).exists() for root in (home,projects)):
+            raise RuntimeError('Restored volumes require their recorded restore identity')
+        # Only the two mount roots, never recursive data or host paths. Open descriptors retain locks.
+        for directory in (home, projects):
+            os.chown(directory, 1000, 1000)
+            directory.chmod(0o700)
+        _initialize_container_lifecycle(home, projects)
+        notify = os.environ.get("NOTIFY_SOCKET")
+        if not notify:
+            raise RuntimeError("Container bootstrap must run as its notification service")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+            channel.connect("\0" + notify[1:] if notify.startswith("@") else notify)
+            channel.sendall(b"READY=1")
+        def stop(_signal, _frame):
+            raise SystemExit(0)
+        signals.signal(signals.SIGTERM, stop)
+        signals.signal(signals.SIGINT, stop)
+        while True:
+            signals.pause()
+
+
+def container_runtime() -> dict:
+    """Actionable prerequisites for the tested Linux rootless-runtime family; no daemon installation."""
+    require_supported()
+    if _darwin():
+        raise RuntimeError("The container launcher is validated on Linux first; Mac VM/ARM64 acceptance remains pending")
+    if os.getuid() == 0:
+        raise RuntimeError("Run container commands as your ordinary Linux account, not root")
+    if not shutil.which("podman"):
+        raise RuntimeError("Install Podman and crun using your Linux distribution, then retry")
+    try:
+        info = json.loads(container_command(["info", "--format", "json"]))
+        host = info["host"]
+        if not host["security"]["rootless"] or not host["security"]["seccompEnabled"]:
+            raise RuntimeError("Rootless Podman with default seccomp is required")
+        if host["cgroupVersion"] != "v2" or host["cgroupManager"] != "cgroupfs":
+            raise RuntimeError("Rootless Podman needs delegated cgroup v2 and the cgroupfs manager")
+        if host["ociRuntime"]["path"] != "/usr/bin/crun":
+            raise RuntimeError("This container deployment requires distribution crun")
+        if not shutil.which("slirp4netns"):
+            raise RuntimeError("Install slirp4netns for the explicitly selected rootless network")
+        transfers=container_transfer_records(info['store']['graphRoot'])
+        if transfers:
+            print('Active or unfinished private transfers retained: '+', '.join(item['id'] for item in transfers)
+                  +'. Inspect with the host launcher transfers command; recover only after the service stops.',file=sys.stderr)
+        return {"host": host, "version": info["version"], "store": info["store"], 'transfers':transfers}
+    except (KeyError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Cannot establish rootless container prerequisites: {exc}") from exc
+
+
+def container_transfer_root(*, create=False) -> Path:
+    """Persistent operator-owned recovery records, outside temporary runtime directories (#543/F3)."""
+    root=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'altitude-container/transfers'
+    for directory in (root.parent,root):
+        if create: directory.mkdir(parents=True,mode=0o700,exist_ok=True)
+        if directory.exists() or directory.is_symlink():
+            info=directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
+                raise RuntimeError('Container transfer records need an owned private directory')
+    return root
+
+
+def container_transfer_records(store: str) -> list[dict]:
+    result=[]
+    for record in sorted(container_transfer_root().glob('*/operation.json')):
+        parent,info=record.parent.lstat(),record.lstat()
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=os.getuid() or parent.st_mode&0o077 or
+                not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>65536):
+            raise RuntimeError('An unsafe transfer record needs local inspection')
+        value=json.loads(record.read_text())
+        if value.get('store')==store:
+            if value.get('id')!=record.parent.name or not re.fullmatch('[0-9a-f]{32}',value['id']):
+                raise RuntimeError('Transfer record identity differs from its private directory')
+            result.append({'id':value['id'],'action':value['action'],'directory':value['directory'],
+                'volumes':[value['identity']['home'],value['identity']['projects']], 'unit':value['unit']})
+    return result
+
+
+def container_user_environment(runtime_dir: Path | None = None) -> dict[str, str]:
+    """Keep Podman and its environment-stripped OCI children on the same user bus (#543)."""
+    if _darwin():
+        raise RuntimeError("The Linux container launcher cannot yet manage a Mac container VM")
+    environment = dict(os.environ)
+    canonical = Path(f"/run/user/{os.getuid()}/bus")
+    runtime = runtime_dir or Path(environment.get("XDG_RUNTIME_DIR", str(canonical.parent)))
+    address = f"unix:path={canonical}"
+    if not runtime.is_absolute() or environment.get("DBUS_SESSION_BUS_ADDRESS", address) != address:
+        raise RuntimeError("Podman requires the local user runtime bus, not a redirected bus address")
+    try:
+        if (runtime / "bus").resolve(strict=True) != canonical:
+            raise RuntimeError("Podman runtime bus must resolve to the local user bus")
+        directory, bus = runtime.lstat(), canonical.lstat()
+    except OSError as exc:
+        raise RuntimeError("Local user bus is unavailable; restore the login session before using containers") from exc
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or \
+            directory.st_mode & 0o022 or not stat.S_ISSOCK(bus.st_mode) or bus.st_uid != os.getuid():
+        raise RuntimeError("Local user bus ownership/type is invalid; refuse container operations")
+    environment.update(XDG_RUNTIME_DIR=str(runtime), DBUS_SESSION_BUS_ADDRESS=address,
+                       DBUS_SYSTEM_BUS_ADDRESS="unix:path=/dev/null/altitude-system-bus-unavailable")
+    return environment
+
+
+def container_unit(instance: str) -> str:
+    """A stable host user unit preserves the stopped container's immutable cgroup parent."""
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", instance):
+        raise ValueError("Invalid container instance name")
+    return f"altitude-container-{instance}.service"
+
+
+def container_parent(unit: str) -> str:
+    """Only the delegated supervisor may create resource-owning children (#543)."""
+    membership = [line[3:] for line in (PROC / "self/cgroup").read_text().splitlines() if line.startswith("0::")]
+    if len(membership) != 1 or not membership[0].endswith("/" + unit + "/supervisor"):
+        raise RuntimeError("Container creation requires its delegated user service")
+    parent = membership[0].removesuffix("/supervisor")
+    available = (CONTAINER_CGROUP_ROOT / parent.lstrip("/") / "cgroup.controllers").read_text().split()
+    if not {"cpu", "memory", "pids"} <= set(available):
+        raise RuntimeError("The user manager has not delegated CPU, memory and PID controllers")
+    return parent
+
+
+def container_job(unit: str, command: list[str], *, wait: bool = False,
+                  after_stop: list[str] | None = None, seconds: int = CONTAINER_BUILD_SECONDS) -> str:
+    """Own the complete container/build lifetime in one bounded user-manager subtree."""
+    environment = container_user_environment()
+    selected = {key: value for key, value in environment.items()
+                if key in {"HOME", "PATH", "LANG", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                           "XDG_CACHE_HOME", "DBUS_SESSION_BUS_ADDRESS", "CONTAINERS_CONF"}}
+    arguments = ["systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no",
+                 f"--unit={unit}", "--slice=app.slice", "--property=Type=exec", "--property=Delegate=yes",
+                 "--property=DelegateSubgroup=supervisor", "--property=KillMode=mixed",
+                 "--property=TimeoutStopSec=45", "--property=CPUQuota=200%",
+                 "--property=MemoryMax=5G", "--property=TasksMax=1536",
+                 f"--working-directory={Path(__file__).resolve().parent.parent}"]
+    if wait:
+        arguments += ["--wait", "--pipe", f"--property=RuntimeMaxSec={seconds}"]
+    if after_stop is not None:
+        # ExecStopPost is parsed by systemd, not a shell. Disable environment
+        # expansion and escape its specifiers/quoting independently of argv.
+        if any(any(character in value for character in "\n\r\x00") for value in after_stop):
+            raise ValueError("Invalid container cleanup command")
+        quoted = ['"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+                  for value in after_stop]
+        arguments.append('--property=ExecStopPost=:' + " ".join(quoted))
+    arguments += [f"--setenv={key}={value}" for key, value in selected.items()]
+    try:
+        result = subprocess.run([*arguments, "--", *command], env=environment, text=True,
+                                capture_output=True, timeout=seconds + CONTAINER_STOP_WAIT + 15 if wait else 20)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Timed out waiting for container user service; {job_logs_hint(unit)}") from exc
+    if result.returncode:
+        raise RuntimeError(f"Container user service failed: {result.stderr.strip()}; {job_logs_hint(unit)}")
+    return result.stdout
+
+
+@contextmanager
+def container_lineage_lock(lineage: str):
+    """Serialize this account/store's supported copy admission and stopped backups."""
+    if not re.fullmatch(r"[0-9a-f]{32}", lineage):
+        raise RuntimeError("Container volume lineage is missing; experimental unlabeled volumes are not adopted")
+    directory = Path(container_user_environment()["XDG_RUNTIME_DIR"]) / "altitude-container-locks"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("Container admission needs its owned private runtime directory")
+    fd = os.open(directory / lineage, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+            raise RuntimeError("Invalid container admission lock")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another operation is using this container lineage; wait for it to finish") from None
+        yield
+    finally:
+        os.close(fd)  # Persistent inode; removing it would let another process bypass an existing lock.
+
+
+def container_copy_available(lineage: str, volumes: list[str], *, except_id: str | None = None) -> None:
+    """Caller holds the lineage lock. Check ALL mount users, including unlabeled ones."""
+    ids = container_command(["ps", "--all", "--quiet"]).split()
+    if not ids:
+        return
+    environment = container_user_environment()
+    for ident in ids:
+        try:
+            value = json.loads(container_command(['inspect',ident]))[0]
+        except RuntimeError:
+            # An unrelated operation can finish between inventory and inspection.
+            # Only confirmed disappearance is harmless; every other refusal stays visible.
+            if ident not in container_command(['ps','--all','--quiet']).split():
+                continue
+            raise
+        if value["Id"] == except_id:
+            continue
+        labels = value.get("Config", {}).get("Labels") or {}
+        mounts = {item.get("Name") for item in value.get("Mounts", []) if item.get("Type") == "volume"}
+        if labels.get("io.altitude.lineage") != lineage and not mounts.intersection(volumes):
+            continue
+        unit = labels.get("io.altitude.unit")
+        pending = (unit and re.fullmatch(r"altitude-container-[a-zA-Z0-9_.-]+\.service", unit)
+                   and job_active(unit, environment))
+        if not container_stopped(value) or pending:
+            raise RuntimeError("Stop the other active container using this volume pair or backup lineage first")
+
+
+def container_binary(arguments: list[str], *, source=None, target=None, seconds=1500, max_bytes=64*1024**3):
+    """Binary descriptors only; never journal/capture/decode a private archive (issue543/F6)."""
+    inputs=source if source is not None else subprocess.DEVNULL
+    if target is None:
+        code=subprocess.run(container_arguments(arguments),env=container_user_environment(),stdin=inputs,
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=seconds).returncode
+    else:
+        # Bound only this output, not every file Podman writes in its store. A low
+        # process-wide RLIMIT_FSIZE would also interrupt its database/metadata writes.
+        child=subprocess.Popen(container_arguments(arguments),env=container_user_environment(),stdin=inputs,
+            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        deadline=time.monotonic()+seconds
+        total=0
+        try:
+            while True:
+                remaining=deadline-time.monotonic()
+                if remaining<=0: raise RuntimeError('Private transfer exceeded its time limit')
+                if not select.select([child.stdout],[],[],min(remaining,1))[0]: continue
+                value=os.read(child.stdout.fileno(),1024*1024)
+                if not value: break
+                total+=len(value)
+                if total>max_bytes: raise RuntimeError('Private archive exceeds its byte limit; source volumes retained')
+                target.write(value)
+            code=child.wait(timeout=max(.1,deadline-time.monotonic()))
+        finally:
+            child.stdout.close()
+            if child.poll() is None:
+                child.terminate()
+                try: child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.kill(); child.wait(timeout=5)
+    if code:
+        reasons={70:'Cannot read/write private volume data; check permissions and free space',
+                 71:'A controller owns the volumes; stop it before backup or restore',
+                 72:'Unsupported, damaged or incomplete backup data; keep the source volumes',
+                 73:'Backup helper protections or resource limits are unavailable',
+                 74:'Backup helper failed; keep the source volumes and inspect the operation',
+                 80:'Unsupported volume ownership: files must use container UID/GID 0 or 1000',
+                 81:'Set-ID files/directories are unsupported; inspect shared Git directory permissions',
+                 82:'Sockets, devices and FIFOs are unsupported; remove stale socket files only after stopping their owner',
+                 83:'Unsupported extended attributes: security/SELinux labels cannot be backed up by this image',
+                 84:'Unsupported POSIX ACL: named users/groups must use container IDs 0 or 1000',
+                 85:'Unsupported volume layout: paths need at most 128 components and home/Projects must be empty'}
+        raise RuntimeError(reasons.get(code,'Private container transfer failed; no completed backup/restore is admitted'))
+
+
+def container_archive_environment() -> tuple[Path, Path]:
+    """Assert the Linux image helper's actual protections before reading private volumes."""
+    if os.getuid()!=0 or not containerized():
+        raise ValueError('Backup helper requires the explicit container-root image entrypoint')
+    home, projects = Path('/backup/home'), Path('/backup/projects')
+    status = dict(line.split(':',1) for line in (PROC/'self/status').read_text().splitlines() if ':' in line)
+    group = CONTAINER_CGROUP_ROOT
+    quota, period = (group/'cpu.max').read_text().split()
+    if (status.get('NoNewPrivs','').strip()!='1' or status.get('Seccomp','').strip()!='2'
+            or int(status['CapEff'].strip(),16) & ~0xb
+            or (group/'memory.max').read_text().strip()!=str(1024**3)
+            or (group/'pids.max').read_text().strip()!='64'
+            or not quota.isdigit() or int(quota)!=int(period)
+            or not os.statvfs('/').f_flag & os.ST_RDONLY):
+        raise RuntimeError('Backup helper protections or effective limits are unavailable')
+    mounts = {line.split()[4] for line in (PROC/'self/mountinfo').read_text().splitlines()}
+    if not {str(home), str(projects)} <= mounts:
+        raise ValueError('Mount the two separate named volumes for the backup helper')
+    return home, projects
+
+
+def container_owned(instance: str, *, timeout: int = 30) -> dict:
+    unit = container_unit(instance)
+    value = json.loads(container_command(["inspect", instance], timeout=timeout))[0]
+    labels = value.get("Config", {}).get("Labels") or {}
+    host = value.get("HostConfig") or {}
+    parent = labels.get("io.altitude.cgroup-parent", "")
+    if (labels.get("io.altitude.container") != "1" or labels.get("io.altitude.unit") != unit
+            or host.get("CgroupManager") != "cgroupfs" or host.get("CgroupParent") != parent
+            or not parent.endswith("/app.slice/" + unit)):
+        raise RuntimeError("This instance does not belong to the delegated cgroupfs launcher; it is not adopted")
+    return value
+
+
+def container_stopped(value: dict) -> bool:
+    """Running=false also describes Stopping; require a settled no-process state (#543)."""
+    state=value.get('State',{})
+    return (state.get('Status') in ('configured','created','exited','stopped')
+            and not state.get('Running') and not state.get('Pid'))
+
+
+def container_recreatable(value: dict) -> None:
+    """Explicit forced-record removal needs kernel-empty ownership, not stale PID guesses."""
+    unit=value['Config']['Labels']['io.altitude.unit']
+    if job_active(unit,container_user_environment()):
+        raise RuntimeError('Stop the container service before recreation')
+    parent=CONTAINER_CGROUP_ROOT/value['HostConfig']['CgroupParent'].lstrip('/')
+    try:
+        events=dict(line.split() for line in (parent/'cgroup.events').read_text().splitlines())
+    except FileNotFoundError:
+        if parent.exists(): raise RuntimeError('Cannot prove the owned cgroup is empty')
+    else:
+        if events.get('populated')!='0':
+            raise RuntimeError('Owned container processes survive; recreation refused')
+
+
+def _container_after_stop(instance: str) -> None:
+    """Reap through the runtime even if the supervisor died before Stop (#543).
+
+    A failed create has no container. Existing records must match the exact unit,
+    manager and parent before cleanup; there is no shared-store or name-pattern removal.
+    """
+    container_unit(instance)
+    deadline = time.monotonic() + 40  # less than ExecStopPost's45-second bound
+    def call(arguments, timeout=30):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Container stop cleanup exhausted its budget; retain the instance for recovery")
+        return container_command(arguments, timeout=min(timeout, remaining))
+    rows = json.loads(call(["ps", "--all", "--format", "json"], timeout=5))
+    if not any(instance in row.get("Names", []) for row in rows):
+        return
+    value = container_owned(instance, timeout=5)
+    if not container_stopped(value):
+        call(["stop", "--time=30", value["Id"]], timeout=35)
+    call(["container", "cleanup", value["Id"]], timeout=8)
+    if not container_stopped(container_owned(instance,timeout=3)):
+        raise RuntimeError('Runtime did not settle after forced stop; retain evidence and recreate from the stopped volume pair')
+
+
+def _container_supervise(instance: str, create: list[str] | None) -> None:
+    """Translate user-service termination to the image's stop signal before forced unit cleanup."""
+    unit = container_unit(instance)
+    parent = container_parent(unit)
+    stopping = threading.Event()
+    previous = {number: signals.signal(number, lambda *_: stopping.set())
+                for number in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
+    ident = None
+    child = None
+    stop_attempted = False
+    admission = ExitStack()
+    try:
+        if create is not None:
+            container_command(["create", "--cgroup-parent", parent,
+                "--label", f"io.altitude.unit={unit}", "--label", f"io.altitude.cgroup-parent={parent}",
+                *create], timeout=45)
+        value = container_owned(instance)
+        if value["HostConfig"]["CgroupParent"] != parent:
+            raise RuntimeError("The stopped instance's delegated parent changed; do not recreate it implicitly")
+        ident = value["Id"]
+        labels = value.get("Config", {}).get("Labels") or {}
+        lineage = labels.get("io.altitude.lineage", "")
+        admission.enter_context(container_lineage_lock(lineage))
+        container_copy_available(lineage, [m["Name"] for m in value.get("Mounts", []) if m.get("Type") == "volume"], except_id=ident)
+        if not stopping.is_set():
+            child = subprocess.Popen(container_arguments(["start", "--attach", ident]),
+                                     env=container_user_environment())
+            while child.poll() is None and not stopping.wait(.2):
+                if admission is not None and container_owned(instance, timeout=3)["State"]["Running"]:
+                    admission.close()
+                    admission = None
+        if stopping.is_set():
+            stop_attempted = True
+            # Start --attach is asynchronous. A stop while the container is
+            # still Created would be a no-op followed by an unobserved launch.
+            deadline = time.monotonic() + 3
+            while child is not None and child.poll() is None:
+                value = container_owned(instance, timeout=3)
+                if value["State"]["Running"]:
+                    break
+                if time.monotonic() >= deadline:
+                    child.terminate()
+                    raise RuntimeError("Stop interrupted container startup; forced unit cleanup required")
+                time.sleep(.1)
+            value = container_owned(instance, timeout=3)
+            if value["State"]["Running"]:
+                container_command(["stop", "--time=30", ident], timeout=35)
+        if child is not None and child.wait(timeout=8) and not stopping.is_set():
+            raise RuntimeError("The attached container exited unsuccessfully")
+    finally:
+        if admission is not None:
+            admission.close()
+        # A failed launch retains the exact stopped instance for diagnosis/restart.
+        # The unit's mixed KillMode supplies the final bounded descendant cleanup.
+        if ident and not stop_attempted:
+            value = container_owned(instance)
+            if value["Id"] == ident and value["State"]["Running"]:
+                container_command(["stop", "--time=30", ident], timeout=35)
+                if child is not None:
+                    child.wait(timeout=8)
+        for number, handler in previous.items():
+            signals.signal(number, handler)
+
+
+def container_limits(value: dict) -> None:
+    """A requested quota is not an enforced quota: inspect the actual running cgroup (#543)."""
+    pid = int(value.get("State", {}).get("Pid") or 0)
+    if pid <= 0:
+        raise RuntimeError("Container PID is unavailable")
+    membership = next(line[3:] for line in (PROC / str(pid) / "cgroup").read_text().splitlines()
+                      if line.startswith("0::"))
+    parent = value["HostConfig"]["CgroupParent"]
+    container_group = parent + "/libpod-" + value["Id"]
+    if membership != container_group and not membership.startswith(container_group + "/"):
+        raise RuntimeError("The container is outside its owned delegated subtree")
+    conmon = int(Path(value["ConmonPidFile"]).read_text().strip())
+    conmon_group = next(line[3:] for line in (PROC / str(conmon) / "cgroup").read_text().splitlines()
+                        if line.startswith("0::"))
+    if not conmon_group.startswith(parent + "/"):
+        raise RuntimeError("The container monitor is outside its owned delegated subtree")
+    directory = CONTAINER_CGROUP_ROOT / container_group.lstrip("/")
+    memory = (directory / "memory.max").read_text().strip()
+    pids = (directory / "pids.max").read_text().strip()
+    quota, period = (directory / "cpu.max").read_text().split()
+    if memory != str(4 * 1024**3) or pids != "1024" or not quota.isdigit() or int(quota) != 2 * int(period):
+        raise RuntimeError("The deployment CPU, memory or PID limit is not enforced")
+
+
+def container_launch(instance: str, create: list[str] | None = None) -> str:
+    """Prove identity, limits, inner HTTPS and the published host endpoint (#543)."""
+    unit = container_unit(instance)
+    if create is None:
+        value = container_owned(instance)
+        if value["State"]["Running"]:
+            raise RuntimeError("The container is already running")
+    command = [sys.executable, "-c", "import json,sys; from altitude.platform import _container_supervise; "
+               "_container_supervise(sys.argv[1],json.loads(sys.argv[2]))", instance, json.dumps(create)]
+    cleanup = [sys.executable, "-c", "import sys;from altitude.platform import _container_after_stop;"
+               "_container_after_stop(sys.argv[1])", instance]
+    container_job(unit, command, after_stop=cleanup)
+    deadline = time.monotonic() + 90
+    error = "Container startup did not finish"
+    environment = container_user_environment()
+    try:
+        while time.monotonic() < deadline:
+            if not job_active(unit, environment):
+                raise RuntimeError("The container supervisor exited before readiness")
+            try:
+                value = container_owned(instance)
+                if value["State"]["Running"]:
+                    container_limits(value)
+                    facts = json.loads(container_command(["exec", "--user", "1000:1000", "--env", "HOME=/home/altitude",
+                        "--env", "XDG_RUNTIME_DIR=/run/user/1000", value["Id"], "python3", "-c",
+                        "import sys;sys.path.insert(0,'/opt/altitude');"
+                        "from altitude.platform import container_ready;container_ready();"
+                        "from altitude import tls;import json;f=tls.service();"
+                        "print(json.dumps({'pid':f['pid'],'port':f['port'],'host':f['public_host'],"
+                        "'ca':(f['tls_dir']/'ca.crt').read_text()}))"], timeout=5))
+                    bindings = value["HostConfig"].get("PortBindings") or {}
+                    addresses = bindings.get(f"{facts['port']}/tcp", [])
+                    if len(addresses) != 1 or int(addresses[0]["HostPort"]) != facts["port"]:
+                        raise RuntimeError("The HTTPS service does not match its single published port")
+                    expected = dict(item.split("=",1) for item in value["Config"].get("Env",[]) if "=" in item)
+                    if (facts["host"] != expected.get("ALTITUDE_PUBLIC_HOST")
+                            or str(facts["port"]) != expected.get("ALTITUDE_PORT")
+                            or addresses[0]["HostIp"] != value["Config"]["Labels"].get("io.altitude.bind")):
+                        raise RuntimeError("Published HTTPS differs from the requested host identity or bind address")
+                    container_https(addresses[0]["HostIp"], facts)
+                    return value["Id"]
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                error = str(exc)
+            time.sleep(.25)
+        raise RuntimeError(error)
+    except Exception as exc:
+        try:
+            container_stop_unit(unit, environment)
+            suffix = ""
+        except RuntimeError as cleanup:
+            suffix = f"; cleanup not confirmed: {cleanup}"
+        raise RuntimeError(f"Container startup failed: {exc}; {job_logs_hint(unit)}{suffix}") from exc
+
+
+def container_https(address: str, facts: dict) -> None:
+    """Verify publication using this instance's public CA, advertised SNI and recorded PID.
+
+    Connect directly to the chosen host address: no proxy, DNS substitution, new
+    trust-store entry or private-key export is involved. Device routing/trust is
+    separate acceptance; this proves only the local published endpoint.
+    """
+    import http.client
+    import ssl
+
+    target = ipaddress.ip_address(address)
+    if target.is_unspecified or target.is_multicast:
+        raise RuntimeError("The container needs one concrete published host address")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_verify_locations(cadata=facts["ca"])
+    with socket.create_connection((str(target), facts["port"]), timeout=5) as raw:
+        with context.wrap_socket(raw, server_hostname=facts["host"]) as connection:
+            host = facts["host"]
+            authority = f"[{host}]" if ":" in host else host
+            connection.sendall((f"GET /api/health HTTP/1.1\r\nHost: {authority}:{facts['port']}\r\n"
+                                "Connection: close\r\n\r\n").encode("ascii"))
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            body = response.read(65537)
+            if response.status != 200 or len(body) > 65536:
+                raise RuntimeError("Published HTTPS did not return a bounded successful health response")
+            health = json.loads(body)
+            if not isinstance(health, dict) or health.get("pid") != facts["pid"]:
+                raise RuntimeError("Published HTTPS answers from another process")
+
+
+def container_stop_unit(unit: str, environment: dict) -> None:
+    if not job_active(unit, environment):
+        return
+    try:
+        response = subprocess.run(["systemctl", "--user", "stop", unit], env=environment,
+                                  text=True, capture_output=True, timeout=CONTAINER_STOP_WAIT)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Container stop timed out; cleanup unconfirmed; {job_logs_hint(unit)}") from exc
+    if response.returncode and job_active(unit, environment):
+        raise RuntimeError(f"Container stop failed: {response.stderr.strip()}; {job_logs_hint(unit)}")
+
+
+def container_stop(instance: str) -> None:
+    value = container_owned(instance)
+    unit = container_unit(instance)
+    environment = container_user_environment()
+    if job_active(unit, environment):
+        container_stop_unit(unit, environment)
+    elif not container_stopped(value):
+        raise RuntimeError("Container has no active supervisor; retain it for recovery, do not report stopped")
+    if not container_stopped(container_owned(instance)) or job_active(unit, environment):
+        raise RuntimeError("Container or supervisor remains active after Stop")
+
+
+def container_arguments(arguments: list[str]) -> list[str]:
+    return ["podman", "--remote=false", "--cgroup-manager=cgroupfs", "--runtime=/usr/bin/crun", *arguments]
+
+
+def container_command(arguments: list[str], *, timeout: int = 30, interactive: bool = False,
+                      runtime_dir: Path | None = None, storage_conf: Path | None = None) -> str:
+    """Only the local rootless controller; callers select exact task/image/volume resources."""
+    if os.getuid() == 0:
+        raise RuntimeError("Run Podman as your ordinary Linux account")
+    if os.environ.get("CONTAINER_HOST") or os.environ.get("CONTAINER_CONNECTION"):
+        raise RuntimeError("Remote Podman endpoints are not supported by this Linux launcher")
+    environment = container_user_environment(runtime_dir) if runtime_dir else container_user_environment()
+    if storage_conf is not None:
+        environment['CONTAINERS_STORAGE_CONF'] = str(storage_conf)
+    result = subprocess.run(container_arguments(arguments), text=True,
+                            capture_output=not interactive, timeout=timeout, env=environment)
+    if result.returncode:
+        error = RuntimeError(f"Podman {arguments[0]} failed ({result.returncode}): "
+                             f"{(result.stderr or '').strip()[-2000:]}")
+        error.result = result
+        raise error
+    return result.stdout or ""
 
 
 def require_supported() -> None:
@@ -196,6 +1030,16 @@ def job_env(env: dict) -> dict:
     env.pop("XDG_RUNTIME_DIR", None)
     env.pop("DBUS_SESSION_BUS_ADDRESS", None)
     return env
+
+
+def job_control_paths() -> tuple[Path, ...]:
+    """Deny the session bus and manager runtime, including its direct private socket.
+
+    Issue #543: native file masks reuse a descriptor consumed by the first bind-data operation.
+    Masking the manager directory uses a directory mount and keeps both control sockets denied.
+    """
+    runtime = Path(f"/run/user/{os.getuid()}")
+    return runtime / "bus", runtime / "systemd"
 
 
 def _scrub(env: dict[str, str]) -> list[str]:
@@ -427,6 +1271,44 @@ def process_start(pid: int) -> str:
     if _darwin():
         return _started(_bsd(pid))
     return _stat(pid)[19]
+
+
+def _process_boot() -> str:
+    if _darwin():
+        # Public read-only kernel identity; reading root-owned launchd via libproc
+        # can require privileges the ordinary application account does not have.
+        value = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"],
+                               capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+        return "darwin:" + str(uuid.UUID(value))
+    return (PROC / "sys/kernel/random/boot_id").read_text().strip()
+
+
+def process_identity(pid: int) -> dict:
+    """A process lifetime within its boot and PID namespace, including container recreation."""
+    start = process_start(pid)
+    identity = {"pid": pid, "start": start,
+                "boot": _process_boot(),
+                "namespace": "darwin" if _darwin() else os.readlink(PROC / str(pid) / "ns/pid")}
+    if process_start(pid) != start:
+        raise ProcessLookupError("Process changed while recording its identity")
+    return identity
+
+
+def process_identity_live(identity: object) -> bool:
+    """Unidentified/ended owners are stale; inaccessible process evidence remains an error."""
+    if not isinstance(identity, dict) or type(identity.get("pid")) is not int or identity["pid"] <= 0:
+        return False
+    if any(not isinstance(identity.get(key), str) or not identity[key] for key in ("start", "boot", "namespace")):
+        return False
+    try:
+        # Issue #543: a recycled PID can belong to another UID whose namespace is unreadable.
+        # Disprove ownership from public lifetime facts before asking for that protected evidence.
+        if (_process_boot() != identity["boot"]
+                or process_start(identity["pid"]) != identity["start"]):
+            return False
+        return process_identity(identity["pid"]) == identity and process_running(identity["pid"], identity["start"]) is True
+    except (FileNotFoundError, ProcessLookupError):
+        return False
 
 
 def process_running(pid: int, start: str) -> bool | None:
@@ -1256,6 +2138,8 @@ KVM = Path("/dev/kvm")
 def validation_unavailable() -> str | None:
     """Why this host cannot run the validation runner's rootless Podman containers, or None when it can. macOS
     runs Podman inside a virtual machine of its own and has no KVM, so the runner is not implemented there."""
+    if containerized():
+        return "validation runs are unavailable inside this container image"
     if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
         return "validation runs need Linux x86_64 for now"
     missing = [tool for tool in ("podman", "slirp4netns") if not shutil.which(tool)]
@@ -1270,8 +2154,10 @@ def validation_runroot() -> str:
 # --- Host speech -------------------------------------------------------------------------------------------------
 
 def speech_runtime() -> tuple[str | None, str]:
-    """The pinned speech runtime this host and interpreter can run (`linux-x86_64-cp312`), or None and why not.
-    The runtime's wheels need glibc 2.28. macOS is not verified (issue #225)."""
+    """The pinned speech runtime, or an explicit deployment/platform limitation."""
+    unavailable = container_unavailable("Voice")
+    if unavailable:
+        return None, unavailable
     if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
         return None, "voice runs on Linux x86_64 only for now"
     libc = (os.confstr("CS_GNU_LIBC_VERSION") or "") if hasattr(os, "confstr") else ""

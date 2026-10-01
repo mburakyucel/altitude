@@ -536,7 +536,9 @@ def main(argv=None) -> None:
             except tls.TLSFailure as exc:
                 sys.exit(f"alt {c}: altd unavailable: {exc}")
             ca = found["tls_dir"] / "ca.crt"
-            request = urllib.request.Request(f"{found['url']}/api/{endpoint}",
+            from altitude import platform
+            service_url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
+            request = urllib.request.Request(f"{service_url}/api/{endpoint}",
                                              data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                              headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
