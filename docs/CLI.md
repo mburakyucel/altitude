@@ -1700,10 +1700,10 @@ alt task run <slug> <command>
 
 The owner asks the operator once per purpose, in a plain question naming the purpose and its bounds
 (what may run and what may not, limits, cleanup, verification and when the purpose ends), and
-resolves the operator's answer with `alt task resolve`. L3 or the operator then records the grant
-citing that same message after judging that the answer is a yes, and L3 resumes the owner; the owner
-cannot record its own. L3's resume reason can settle the owner's L3-audience wait for the grant. The rest is
-mechanical: the cited message must be the operator's own and must have answered the current
+resolves the operator's answer with `alt task resolve`. Whoever records the grant cites that same
+message after judging that the answer is a yes: the running owner for its own current attempt from a
+task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
+project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
 attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
 answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals

@@ -2642,7 +2642,7 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             grant = task.get("machine_access")
             if not grant:
                 raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for "
-                                      "a concrete purpose, resolve their answer, then have L3 record it with "
+                                      "a concrete purpose, resolve their answer, then record it with "
                                       "alt task machine --grant")
             if grant.get("attempt") != task.get("attempt"):
                 raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
