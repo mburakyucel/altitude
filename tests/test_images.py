@@ -239,6 +239,8 @@ class TestImages(AltitudeCase):
                                                       + chunk(b"cICP", bytes((12, 13, 0, 1)))), p3),
             "cICP sRGB beside a linear iCCP": (solid(color, extra=iccp(rgb_profile(linear=True))
                                                      + chunk(b"cICP", bytes((1, 13, 0, 1)))), color * 6),
+            "HDR cICP defers to its iCCP": (solid(color, extra=iccp(rgb_profile(linear=True))
+                                                 + chunk(b"cICP", bytes((9, 16, 0, 1)))), linear_srgb),
             "cICP linear BT.709": (solid(color, extra=chunk(b"cICP", bytes((1, 8, 0, 1)))), linear_srgb),
             "gAMA linear": (solid(color, extra=chunk(b"gAMA", struct.pack(">I", 100000))), linear_srgb),
             "sRGB chunk overrides gAMA": (solid(color, extra=chunk(b"sRGB", b"\0") + chunk(b"gAMA", struct.pack(">I", 100000))),
@@ -274,6 +276,9 @@ class TestImages(AltitudeCase):
         for name, extra in sources.items():
             with self.subTest(name):
                 self.assertEqual(self.stored_pixels(png(extra=extra)), self.pixels(png()))
+        # Corrupt compressed data is a damaged file, not color information: the strict decoder refuses it as well.
+        with self.assertRaisesRegex(images.ImageError, "could not be read"):
+            self.store(upload(png(extra=chunk(b"iCCP", b"Fictional\0\0" + b"not zlib data"))))
 
     def test_phone_photo_converts_under_the_real_process_limits(self):
         source = self.tmp / "phone.jpg"

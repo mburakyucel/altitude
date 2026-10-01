@@ -139,8 +139,9 @@ def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes | dict | None]:
                     if len(profile) > MAX_PROFILE_BYTES or not decoder.eof or decoder.unused_data:
                         profile = b"\0"  # Present but unusable: kept from overriding later chunks, then ignored.
                 except zlib.error as exc:
-                    raise _invalid() from exc
-            # PNG precedence: cICP, then iCCP, then sRGB, then gAMA/cHRM; mDCv and cLLi describe a mastering display.
+                    raise _invalid() from exc  # The converter's strict decoder refuses corrupt compressed data too.
+            # PNG precedence: cICP, then iCCP, then sRGB, then gAMA/cHRM. A cICP without an SDR conversion defers to
+            # the rest, as for a decoder that does not read it; mDCv and cLLi describe a mastering display.
             if kind == b"cICP" and len(data) == 4 and data[2:] == b"\0\1" and data[0] in _PRIMARIES and data[1] in _TRANSFERS:
                 signalled = _rgb(_PRIMARIES[data[0]], _TRANSFERS[data[1]]) or b""
             srgb = srgb or kind == b"sRGB"

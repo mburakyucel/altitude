@@ -1435,7 +1435,8 @@ and static WebP, bounds encoded bytes and decoded dimensions, and normalizes ori
 into metadata-free PNG/JPEG using the optional local converter. Color conversion to sRGB detects
 the local color library and runs in the same bounded child process. It reads RGB and grayscale ICC
 profiles, PNG `cICP` tags for sRGB, Display P3 and BT.2020 colors with SDR transfers, and PNG gamma and
-primaries, following PNG's precedence (`cICP`, `iCCP`, `sRGB`, then `gAMA`/`cHRM`). Color information
+primaries, following PNG's precedence (`cICP`, `iCCP`, `sRGB`, then `gAMA`/`cHRM`); a `cICP` without an SDR
+conversion defers to the next description, as for a decoder that does not read it. Color information
 without an SDR conversion (HDR transfers, CMYK or Lab profiles, unreadable or oversized profiles) is
 ignored: the image keeps its decoded pixels, whose colors may be approximate. A conversion stopped by
 its memory, CPU or output bounds asks for a smaller image. Every canonical file is re-encoded from
