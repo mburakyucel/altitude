@@ -364,7 +364,7 @@ def main(argv=None) -> None:
     hm.add_argument("--source", choices=("task", "project"), default="task")
     hm.add_argument("--question"); hm.add_argument("--revision", type=int)
     hm.add_argument("--pr-number", dest="pr", type=int); hm.add_argument("--head"); hm.add_argument("--reason")
-    mc = ts.add_parser("machine", help="record the operator's machine grant for a task (L3 or operator), or revoke it (owner, L3 or operator)")
+    mc = ts.add_parser("machine", help="record the operator's machine grant for a task, or revoke it (owner, L3 or operator)")
     mc.add_argument("slug"); mode = mc.add_mutually_exclusive_group(required=True)
     mode.add_argument("--grant", action="store_true"); mode.add_argument("--revoke", action="store_true")
     mc.add_argument("--approval", help="the operator message that answered the purpose question")
@@ -774,13 +774,15 @@ def main(argv=None) -> None:
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "machine":
             attempt = os.environ.get("ALTITUDE_ATTEMPT")
-            if ACTOR == "l2" and (args.grant or args.slug != os.environ.get("ALTITUDE_TASK") or not attempt):
-                sys.exit("alt task machine: an L2 only revokes the grant on its own task; L3 or the operator records one")
+            if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK")
+                                  or p != os.environ.get("ALTITUDE_PROJECT") or not attempt):
+                sys.exit("alt task machine: an L2 records or revokes the grant only on its own task")
             if args.grant:
                 if not (args.approval and args.question and args.revision):
                     sys.exit("alt task machine --grant: --approval <message-id> --question <id> --revision <n> --reason <why>")
                 out(T.grant_machine_access(p, args.slug, args.approval, question=args.question, revision=args.revision,
-                                           reason=args.reason, actor=ACTOR, source=args.source))
+                                           reason=args.reason, actor=ACTOR, source=args.source,
+                                           expected_attempt=int(attempt) if ACTOR == "l2" else None))
             else:
                 out(T.revoke_machine_access(p, args.slug, args.reason, actor=ACTOR,
                                             expected_attempt=int(attempt) if ACTOR == "l2" else None))

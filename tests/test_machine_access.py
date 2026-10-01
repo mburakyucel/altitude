@@ -149,10 +149,13 @@ class TestMachineAccess(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
             T.grant_machine_access(self.project, self.slug, other["id"], question=question["id"],
                                    revision=question["revision"], reason="r", actor="l3")
-        with self.assertRaisesRegex(T.TransitionError, "coordinator or the operator"):
+        with self.assertRaisesRegex(T.TransitionError, "owner, the coordinator or the operator"):
+            T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
+                                   revision=question["revision"], reason="r", actor="altd")
+        with self.assertRaisesRegex(T.TransitionError, "current attempt"):  # the owner's fence
             T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
                                    revision=question["revision"], reason="r", actor="l2")
-        self.assertEqual(len(self.events("machine-grant-refused")), 2)
+        self.assertEqual(len(self.events("machine-grant-refused")), 3)
         self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
         grant = T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
                                        revision=question["revision"], reason="Purpose matches.", actor="l3")
@@ -162,6 +165,23 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual(len(self.events("machine-grant")), 1)
         brief = self.alt("task", "status", self.slug, "--brief", env={"ALTITUDE_PROJECT": self.project})
         self.assertIn(f"machine access: {question['detail']}", brief.stdout)
+
+    def test_the_owner_records_its_grant_from_the_operators_task_chat_answer(self):
+        question = self.ask()
+        row = self.answer(question)
+        grant = dict(question=question["id"], revision=question["revision"], reason="Burak said yes to this purpose.")
+        with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
+            T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
+        self.resolve(question, row)
+        for attempt, source in ((2, "task"), (1, "project")):
+            with self.assertRaisesRegex(T.TransitionError, "current attempt, from the operator's task-chat answer"):
+                T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=attempt,
+                                       source=source, **grant)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+        recorded = T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
+        self.assertEqual((recorded["purpose"], recorded["approval"], recorded["actor"], recorded["attempt"]),
+                         (question["detail"], row["id"], "l2", 1))
+        self.assertEqual(self.run_command("echo granted")["exit"], 0)
 
     def test_grant_binds_the_purpose_the_operator_read_not_a_later_revision(self):
         question = self.ask("May I install ffmpeg under my user?")
@@ -328,16 +348,20 @@ class TestMachineAccess(AltitudeCase):
         result = self.alt("task", "machine", self.slug, "--revoke", "--reason", "Purpose complete.", env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIsNone(json.loads(result.stdout)["machine_access"])
-        result = self.alt("task", "machine", self.slug, "--grant", "--approval", row["id"], "--question",
-                          question["id"], "--revision", str(question["revision"]), "--reason", "Same answer.",
-                          env=owner)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("L3 or the operator records one", result.stderr)
-        result = self.alt("task", "machine", self.slug, "--grant", "--approval", row["id"], "--question",
-                          question["id"], "--revision", str(question["revision"]), "--reason", "Same answer.",
-                          env={**base, "ALTITUDE_ACTOR": "l3"})
+        grant_args = ("--grant", "--approval", row["id"], "--question", question["id"],
+                      "--revision", str(question["revision"]), "--reason", "Same answer.")
+        for elsewhere in (("task", "machine", "other-task"), ("--project", "other", "task", "machine", self.slug)):
+            result = self.alt(*elsewhere, *grant_args, env=owner)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("only on its own task", result.stderr)
+        result = self.alt("task", "machine", self.slug, *grant_args, env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["purpose"], question["detail"])
+        self.assertEqual((json.loads(result.stdout)["purpose"], json.loads(result.stdout)["actor"]),
+                         (question["detail"], "l2"))
+        self.alt("task", "machine", self.slug, "--revoke", "--reason", "Done.", env=owner)
+        result = self.alt("task", "machine", self.slug, *grant_args, env={**base, "ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["actor"], "l3")
 
     def test_transient_unit_keeps_the_bus_the_limit_the_owner_identity_and_its_own_record(self):
         env = engines.codex_env(dispatch.l2_env(self.project, self.slug, 1), retain_user_bus=True)

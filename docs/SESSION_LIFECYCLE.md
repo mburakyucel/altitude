@@ -1035,8 +1035,8 @@ Claude's confinement, while Codex retains its native filesystem sandbox.
 
 Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and a
 Codex L2 cannot write outside its writable roots. A task that needs such a change asks the operator for
-machine access for one purpose; the owner resolves the answer, and L3 or the operator records the grant
-(`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
+machine access for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
+or L3 or the operator records it (`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision. `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
 carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
