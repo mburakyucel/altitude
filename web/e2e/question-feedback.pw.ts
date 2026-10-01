@@ -16,12 +16,16 @@ test("mixed custom, preset and plain answers hand the turn back and remain conve
   const card = page.getByRole("article", { name: "Choose rollout settings", exact: true });
   const own = card.locator(`[data-question-id="${recipient.id}"]`);
   const footer = card.locator(".question-batch");
+  // Both edges come from one layout after the web fonts swap in. A fallback font wraps the
+  // questions onto another line, and two separate reads compared a pre-swap question with a
+  // post-swap footer (main CI run 36933583053).
   const expectFooterAfterQuestions = async () => {
-    const last = await own.boundingBox();
-    const send = await footer.boundingBox();
-    expect(last).not.toBeNull();
-    expect(send).not.toBeNull();
-    expect(send!.y).toBeGreaterThanOrEqual(last!.y + last!.height);
+    const [last, send] = await card.evaluate(async (node, id) => {
+      await document.fonts.ready;
+      return [node.querySelector(`[data-question-id="${id}"]`)!.getBoundingClientRect().bottom,
+        node.querySelector(".question-batch")!.getBoundingClientRect().top];
+    }, recipient.id);
+    expect(send).toBeGreaterThanOrEqual(last);
   };
   await expectFooterAfterQuestions();
   await walk.state("01-plain-question-and-preset-choices", {
