@@ -1432,9 +1432,14 @@ deterministic fixtures establish application behavior only.
 
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
-into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the
-local color library and runs in the same bounded child process. Unsupported color encodings fail
-with an exported-sRGB recovery instruction. The shared limits are four images, 10 MiB each,
+into metadata-free PNG/JPEG using the optional local converter. Color conversion to sRGB detects
+the local color library and runs in the same bounded child process. It reads RGB and grayscale ICC
+profiles, PNG `cICP` tags for sRGB, Display P3 and BT.2020 colors with SDR transfers, and PNG gamma and
+primaries, following PNG's precedence (`cICP`, `iCCP`, `sRGB`, then `gAMA`/`cHRM`). Color information
+without an SDR conversion (HDR transfers, CMYK or Lab profiles, unreadable or oversized profiles) is
+ignored: the image keeps its decoded pixels, whose colors may be approximate. A conversion stopped by
+its memory, CPU or output bounds asks for a smaller image. Every canonical file is re-encoded from
+raw pixels, so it carries no metadata or color tag and reads as sRGB. The shared limits are four images, 10 MiB each,
 20 MiB total, 25 megapixels, 8192 pixels per side and a 28 MiB JSON request envelope.
 Completed codec checks are cached by converter path and modification time. Probe timeouts, OS errors
 and nonzero exits report unavailable for that attempt without caching the failure; later operations
