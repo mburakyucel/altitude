@@ -55,6 +55,8 @@ class RemoteValidationTests(AltitudeCase):
         self.launches = []
         self.requests = []
         self.execute = True
+        self.patch(remote, "POLL_SECONDS", .01)
+        self.patch(remote, "POLL_MAX_SECONDS", .04)
 
         def launch(worker, ident, area):
             self.alive.add(ident)
@@ -117,6 +119,16 @@ class RemoteValidationTests(AltitudeCase):
         self.assertEqual((result["exit"], result["ended"]), (7, "exit"))
         self.assertIn("test failure", result["output"])
 
+    def test_invalid_artifacts_keep_protected_log_and_receipt_without_claiming_pass(self):
+        result = self.validate("import os,pathlib; print('useful test log'); "
+                               "pathlib.Path(os.environ['RESULTS'],'invalid-link').symlink_to('/unrelated')")
+        self.assertIsNone(result["exit"])
+        self.assertIn("artifacts are incomplete or invalid", result["error"])
+        self.assertIn("useful test log", result["output"])
+        self.assertTrue((Path(result["results"]) / "receipt.json").is_file())
+        self.assertFalse((Path(result["results"]) / "artifacts").exists())
+        self.assertTrue(result["cleanup"])
+
     def test_missing_relay_records_explicit_unavailable_without_reserving_a_run(self):
         self.transport.side_effect = lambda request: {"status": "unavailable", "accepted": False}
         result = self.validate()
@@ -128,7 +140,9 @@ class RemoteValidationTests(AltitudeCase):
 
     def test_uncertain_submission_is_cancelled_and_recovered_without_duplicate_submission(self):
         def lost_reply(request):
-            self.broker.dispatch(request)
+            if request["operation"] == "submit":
+                self.broker.dispatch(request)
+                remote.stop_all()
             return {"status": "unavailable"}
 
         self.transport.side_effect = lost_reply
@@ -264,7 +278,48 @@ class RemoteValidationTests(AltitudeCase):
         candidate = remote.payload.export(self.repo)
         return self.broker.dispatch({"operation": "submit", "run_id": "a" * 32,
                                     "argv": [sys.executable, "-c", "print('observed')"],
-                                    "payload": candidate, "expires": int(time.time()) + 3600})
+                                    "payload": candidate, "duration": 3600})
+
+    def test_transient_status_and_result_failures_recover_the_same_run(self):
+        lost = {"status", "result"}
+        def transient(request):
+            if request["operation"] in lost:
+                lost.remove(request["operation"])
+                # Refusal of this poll proves nothing about the original submission.
+                return {"status": "unavailable", "accepted": False}
+            return self.forward(request)
+        self.transport.side_effect = transient
+        result = self.validate()
+        self.assertEqual(result["exit"], 0, result)
+        self.assertEqual(len(self.launches), 1)
+        self.assertFalse(remote._pending().exists())
+        self.assertFalse(lost)
+
+    def test_absent_cancel_tombstone_refuses_a_delayed_submission(self):
+        cancelled = self.broker.dispatch({"operation": "cancel", "run_id": "a" * 32})
+        self.assertEqual(cancelled, {"run_id": "a" * 32, "status": "cancelled", "accepted": False})
+        self.assertEqual(self.admitted(), cancelled)
+        self.assertFalse(self.launches)
+        self.assertFalse((self.broker.home / "active.json").exists())
+
+    def test_executor_duration_uses_its_own_clock(self):
+        self.patch(remote.time, "time", return_value=1000)
+        record = self.admitted()
+        self.assertEqual(record["expires"], 4600)
+        self.assertEqual(record["status"], "running")
+
+    def test_cleanup_budget_stays_inside_the_one_hour_supervisor_limit(self):
+        self.admitted()
+        area = self.broker._area("a" * 32)
+        record = remote.read_json(area / "record.json")
+        record["expires"] = time.time() + remote.CLEANUP_SECONDS - 1
+        remote.write_json(area / "record.json", record)
+        prepare = self.patch(platform, "validation_vm_prepare")
+        self.broker.work("a" * 32)
+        prepare.assert_not_called()
+        result = self.broker.dispatch({"operation": "status", "run_id": "a" * 32})
+        self.assertEqual(result["ended"], "timeout")
+        self.assertTrue(result["cleanup"])
 
     def test_cancellation_before_boot_does_not_launch_a_vm(self):
         self.admitted()

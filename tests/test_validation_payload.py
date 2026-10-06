@@ -3,6 +3,7 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import random
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from unittest import mock
 import zlib
 
 from altitude import validation_payload as payload
+from altitude import platform
 
 
 class ValidationPayloadTests(unittest.TestCase):
@@ -243,13 +245,13 @@ class ValidationPayloadTests(unittest.TestCase):
         for index, entries in enumerate(cases):
             destination = self.root / f"bad-{index}"
             with self.assertRaises(ValueError):
-                payload.restore_results(payload._pack({"entries": entries}), destination)
+                payload.restore_results({"entries": entries, "digest": payload._results_digest(entries)}, destination)
             self.assertFalse(destination.exists())
 
     def test_result_file_total_entry_limits_and_existing_destination(self):
         source = self.results()
         original = payload.collect_results(source)
-        for constant, value in [("FILE_LIMIT", 2), ("EXPANDED_LIMIT", 20), ("ENTRY_LIMIT", 1)]:
+        for constant, value in [("FILE_LIMIT", 2), ("RESULT_LIMIT", 20), ("ENTRY_LIMIT", 1)]:
             with mock.patch.object(payload, constant, value):
                 with self.assertRaises(ValueError):
                     payload.collect_results(source)
@@ -261,6 +263,91 @@ class ValidationPayloadTests(unittest.TestCase):
         link.symlink_to(self.root / "missing")
         with self.assertRaises(ValueError):
             payload.restore_results(original, link)
+
+    def test_result_raw_budget_does_not_include_base64_or_source_limits(self):
+        source = self.root / "results"
+        source.mkdir()
+        raw = random.Random(7).randbytes(1024)
+        (source / "binary").write_bytes(raw)
+        with mock.patch.object(payload, "RESULT_LIMIT", len(raw)), \
+                mock.patch.object(payload, "COMPRESSED_LIMIT", 32), \
+                mock.patch.object(payload, "EXPANDED_LIMIT", 64):
+            result = payload.collect_results(source)
+            destination = self.root / "restored"
+            payload.restore_results(result, destination)
+            self.assertEqual((destination / "binary").read_bytes(), raw)
+            (source / "one-too-many").write_bytes(b"x")
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                payload.collect_results(source)
+            entries = {**result["entries"], "one-too-many": ["file", payload._b64(b"x")]}
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                payload.restore_results({"entries": entries, "digest": payload._results_digest(entries)},
+                                        self.root / "overflow")
+
+    def test_large_incompressible_result_and_frame_round_trip(self):
+        source = self.root / "results"
+        source.mkdir()
+        block = random.Random(42).randbytes(1 << 20)
+        path = source / "trace.zip"
+        with path.open("wb") as stream:
+            for _ in range(70):
+                stream.write(block)
+        result = payload.collect_results(source)
+        self.assertGreater(path.stat().st_size, payload.COMPRESSED_LIMIT)
+        # Exercise the actual framed JSON representation, with no compression assumption.
+        import io
+        framed = platform.validation_frame_encode({"status": "finished", "evidence": result})
+        decoded = platform.validation_frame_read(io.BytesIO(framed))["evidence"]
+        self.assertLess(len(framed), platform.VALIDATION_FRAME_LIMIT)
+        del framed, result
+        destination = self.root / "restored"
+        payload.restore_results(decoded, destination)
+        with path.open("rb") as original, (destination / "trace.zip").open("rb") as restored:
+            self.assertEqual(hashlib.file_digest(original, "sha256").digest(),
+                             hashlib.file_digest(restored, "sha256").digest())
+
+    def test_maximum_result_budget_has_proven_frame_headroom(self):
+        # Separate base64 encodings add at most four padding bytes per file; all path
+        # characters are single-byte JSON-safe ASCII, with under 40 bytes of entry syntax.
+        worst_inventory = 4 * ((payload.RESULT_LIMIT + 2) // 3) + payload.ENTRY_LIMIT * (payload.PATH_LIMIT + 40) + 1024
+        self.assertLess(worst_inventory, payload.RESULT_JSON_LIMIT)
+        self.assertLess(payload.RESULT_JSON_LIMIT + (1 << 20), platform.VALIDATION_FRAME_LIMIT)
+
+    def test_result_digest_and_json_budget_are_checked_before_writes(self):
+        source = self.results()
+        result = payload.collect_results(source)
+        result["entries"]["stdout.log"][1] = payload._b64(b"altered log")
+        with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            payload.restore_results(result, self.root / "bad")
+        self.assertFalse((self.root / "bad").exists())
+        with mock.patch.object(payload, "RESULT_JSON_LIMIT", 1):
+            with self.assertRaisesRegex(ValueError, "JSON size limit"):
+                payload.collect_results(source)
+            with self.assertRaisesRegex(ValueError, "JSON size limit"):
+                payload.restore_results(result, self.root / "bad")
+
+    def test_protected_summaries_survive_invalid_artifacts_with_strict_selection(self):
+        source = self.root / "results"
+        source.mkdir()
+        (source / "output.log").write_text("observed output\n")
+        (source / "receipt.json").write_text('{"exit":null,"ended":"unavailable"}')
+        (source / "artifacts").symlink_to(self.root)
+        with self.assertRaises(ValueError):
+            payload.collect_results(source)
+        result = payload.collect_results(source, names=("output.log", "receipt.json"))
+        self.assertEqual(set(result["entries"]), {"output.log", "receipt.json"})
+        destination = self.root / "restored"
+        payload.restore_results(result, destination)
+        self.assertIn("observed output", (destination / "output.log").read_text())
+        for names in [("output.log",), ("output.log", "../escape"), ("output.log", "artifacts")]:
+            with self.assertRaises(ValueError):
+                payload.collect_results(source, names=names)
+        (source / "receipt.json").unlink()
+        with self.assertRaises(ValueError):
+            payload.collect_results(source, names=("output.log", "receipt.json"))
+        (source / "receipt.json").write_bytes(b"x" * 65537)
+        with self.assertRaises(ValueError):
+            payload.collect_results(source, names=("output.log", "receipt.json"))
 
 
 if __name__ == "__main__":

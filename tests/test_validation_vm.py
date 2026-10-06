@@ -185,12 +185,30 @@ class ValidationVMTests(unittest.TestCase):
         input_path, results_path = self.root / "guest-input", self.root / "guest-results"
         with (mock.patch.object(platform, "_darwin", return_value=True),
               mock.patch.object(platform.os, "geteuid", return_value=0),
-              mock.patch.object(Path, "stat", return_value=mock.Mock(st_uid=0, st_mode=0o40755)),
+              mock.patch.object(Path, "stat", return_value=mock.Mock(st_uid=0, st_gid=0, st_mode=0o40755)),
               mock.patch.object(platform.subprocess, "run") as native):
             platform.validation_guest_mounts(input_path, results_path)
         commands = [call.args[0] for call in native.call_args_list]
         self.assertEqual(commands[0], ["/sbin/mount_virtiofs", "-r", "-u", "0", "-g", "0", "altitude-input", str(input_path)])
         self.assertEqual(commands[1], ["/sbin/mount_virtiofs", "-u", "0", "-g", "0", "altitude-results", str(results_path)])
+
+    def test_successful_mount_with_unmapped_ownership_refuses_before_second_share(self):
+        mapped = False
+
+        def metadata(path, **kwargs):
+            return mock.Mock(st_uid=501 if mapped else 0, st_gid=20 if mapped else 0, st_mode=0o40755)
+
+        def mount(*args, **kwargs):
+            nonlocal mapped
+            mapped = True
+
+        with (mock.patch.object(platform, "_darwin", return_value=True),
+              mock.patch.object(platform.os, "geteuid", return_value=0),
+              mock.patch.object(Path, "stat", autospec=True, side_effect=metadata),
+              mock.patch.object(platform.subprocess, "run", side_effect=mount) as native,
+              self.assertRaisesRegex(RuntimeError, "ownership mapping")):
+            platform.validation_guest_mounts(self.root / "guest-input", self.root / "guest-results")
+        native.assert_called_once()
 
 
 if __name__ == "__main__":

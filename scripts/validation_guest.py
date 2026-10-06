@@ -20,14 +20,14 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from altitude import platform
+from altitude import platform, validation_payload as payload
 
 INPUT = Path("/Volumes/AltitudeInput")
 RESULTS = Path("/Volumes/AltitudeResults")
 WORK = Path("/private/var/altitude-validation")
 CONFIG = Path("/Library/Application Support/AltitudeValidation/guest.json")
 LOG_LIMIT = 32 * 1024**2
-EVIDENCE_LIMIT = 256 * 1024**2
+EVIDENCE_LIMIT = payload.RESULT_LIMIT
 
 
 def timestamp() -> str:
@@ -48,23 +48,32 @@ def _owned_tree(path: Path, uid: int, gid: int) -> None:
 def export_artifacts(source: Path, destination: Path, budget: int) -> None:
     """Copy bounded regular evidence using directory descriptors; never follow candidate links."""
     count = 0
+    names = set()
 
-    def copy(directory: int, target: Path, depth: int) -> None:
+    def copy(directory: int, target: Path, depth: int, prefix: str = "artifacts/") -> None:
         nonlocal budget, count
         if depth > 32:
             raise RuntimeError("validation artifacts exceed the directory depth limit")
         with os.scandir(directory) as entries:
             for entry in entries:
                 count += 1
-                if count > 10000:
+                # Reserve entries for the artifact root, protected log and receipt.
+                if count > payload.ENTRY_LIMIT - 3:
                     raise RuntimeError("validation artifacts exceed the file count limit")
+                try:
+                    relative = payload._path(prefix + entry.name)
+                except ValueError:
+                    raise RuntimeError("validation artifacts contain an unsafe transfer path") from None
+                if relative.lower() in names:
+                    raise RuntimeError("validation artifacts contain conflicting transfer paths")
+                names.add(relative.lower())
                 info = entry.stat(follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode):
                     child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
                     try:
                         folder = target / entry.name
                         folder.mkdir(mode=0o755)
-                        copy(child, folder, depth + 1)
+                        copy(child, folder, depth + 1, relative + "/")
                     finally:
                         os.close(child)
                 elif stat.S_ISREG(info.st_mode):
@@ -88,9 +97,16 @@ def export_artifacts(source: Path, destination: Path, budget: int) -> None:
                     raise RuntimeError("validation artifacts contain a link or special file")
 
     directory = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    created = False
     try:
         destination.mkdir(mode=0o755)
+        created = True
         copy(directory, destination, 0)
+    except (OSError, ValueError, RuntimeError):
+        # An incomplete inventory must not prevent the host collecting its log/receipt.
+        if created:
+            shutil.rmtree(destination)
+        raise
     finally:
         os.close(directory)
 

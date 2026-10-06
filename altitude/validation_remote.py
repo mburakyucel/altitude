@@ -21,6 +21,9 @@ import uuid
 from . import platform, validation_payload as payload
 
 TIMEOUT = 3600
+CLEANUP_SECONDS = 120
+POLL_SECONDS = 5
+POLL_MAX_SECONDS = 30
 ID = re.compile(r"[0-9a-f]{32}\Z")
 _lock = threading.Lock()
 _cancel = threading.Event()
@@ -121,7 +124,7 @@ class Broker:
         operation = request.get("operation")
         allowed = {"operation", "run_id"}
         if operation == "submit":
-            allowed |= {"argv", "payload", "expires"}
+            allowed |= {"argv", "payload", "duration"}
         elif operation == "result":
             allowed |= {"received"}
         elif operation not in {"status", "cancel"}:
@@ -135,14 +138,19 @@ class Broker:
             if operation == "submit":
                 argv = command(request.get("argv"))
                 candidate = request.get("payload")
+                if record["status"] == "cancelled":
+                    return record
                 if record["status"] != "absent":
                     if (not isinstance(candidate, dict) or candidate.get("digest") != record.get("payload_digest")
                             or argv != record.get("argv")):
                         raise ValueError("Run identity already belongs to a different request")
                     return record
-                expires = request.get("expires")
-                if type(expires) is not int or not time.time() < expires <= time.time() + TIMEOUT:
-                    raise ValueError("Validation deadline is absent, expired or exceeds one hour")
+                duration = request.get("duration")
+                if type(duration) is not int or not CLEANUP_SECONDS < duration <= TIMEOUT:
+                    raise ValueError("Validation duration must reserve cleanup time and not exceed one hour")
+                # The executor owns its clock. Cross-host wall-clock skew cannot extend
+                # or reject a bounded run; the submitter also keeps its own deadline.
+                expires = time.time() + duration
                 if (self.home / "active.json").exists():
                     return {"run_id": ident, "status": "unavailable", "accepted": False,
                             "error": "Another Mac validation run needs completion or cleanup"}
@@ -176,9 +184,15 @@ class Broker:
                     record.update(error="Mac supervisor launch needs reconciliation")
                     write_json(area / "record.json", record)
                 return record
-            if operation == "cancel" and record["status"] == "running":
-                (area / "cancel").touch()
-                return {**record, "cancellation_requested": True}
+            if operation == "cancel":
+                if record["status"] == "absent":
+                    # A delayed submit must never start after cancellation was confirmed.
+                    area.mkdir(mode=0o700, parents=True)
+                    record = {"run_id": ident, "status": "cancelled", "accepted": False}
+                    write_json(area / "record.json", record)
+                elif record["status"] == "running":
+                    (area / "cancel").touch()
+                    return {**record, "cancellation_requested": True}
             if operation == "result" and record["status"] == "finished":
                 evidence_path = area / "evidence.json"
                 if "received" in request:
@@ -201,18 +215,19 @@ class Broker:
                 return
             process = None
             start = platform.validation_deadline_clock()
-            remaining = max(0, record["expires"] - time.time())
+            execution_expires = record["expires"] - CLEANUP_SECONDS
+            remaining = max(0, execution_expires - time.time())
             evidence = None
             try:
                 if (area / "cancel").exists():
                     raise InterruptedError
-                if time.time() >= record["expires"]:
+                if time.time() >= execution_expires:
                     raise TimeoutError
                 prepared = platform.validation_vm_prepare(self.template, area)
                 record.update(host=prepared["host"], template=prepared["template"])
                 if (area / "cancel").exists():
                     raise InterruptedError
-                if time.time() >= record["expires"]:
+                if time.time() >= execution_expires:
                     raise TimeoutError
                 process = subprocess.Popen(prepared["argv"], stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -221,7 +236,7 @@ class Broker:
                     if (area / "cancel").exists():
                         record.update(ended="cancelled", error="Mac validation cancelled")
                         break
-                    if time.time() >= record["expires"] or platform.validation_deadline_clock() - start >= remaining:
+                    if time.time() >= execution_expires or platform.validation_deadline_clock() - start >= remaining:
                         record.update(ended="timeout", error="Mac validation exceeded its deadline")
                         break
                     if (area / "results" / "receipt.json").is_file():
@@ -243,7 +258,12 @@ class Broker:
                                    ("exit", "ended", "error", "guest", "started", "finished")})
                     if record["exit"] == 0 and record["ended"] != "exit":
                         raise ValueError("Guest receipt has no successful command exit")
-                evidence = payload.collect_results(area / "results")
+                try:
+                    evidence = payload.collect_results(area / "results")
+                except (OSError, ValueError):
+                    record.update(exit=None, ended="unavailable",
+                                  error="Mac validation artifacts are incomplete or invalid; protected log and receipt retained")
+                    evidence = payload.collect_results(area / "results", names=("output.log", "receipt.json"))
                 write_json(area / "evidence.json", evidence)
                 record["evidence_digest"] = evidence["digest"]
             except InterruptedError:
@@ -336,7 +356,7 @@ def _reconcile() -> bool:
         **pending["row"], "exit": None, "ended": "interrupted", "finished": S.now(),
         "error": "Mac validation interrupted; remote cancellation and evidence need reconciliation"})
     response = _call("cancel", pending["run_id"])
-    if response.get("status") == "absent":
+    if response.get("status") == "cancelled" and response.get("accepted") is False and response.get("run_id") == pending["run_id"]:
         path.unlink()
         return True
     if response.get("status") != "finished" or not response.get("cleanup") or not _matches(response, pending):
@@ -397,19 +417,31 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
                    "commit": candidate["commit"], "tree": candidate["tree"], "payload_digest": candidate["digest"]}
         _pending().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_json(_pending(), pending)
-        response = _call("submit", ident, argv=argv, payload=candidate, expires=int(time.time()) + TIMEOUT)
-        deadline = time.monotonic() + TIMEOUT + 30
-        while response.get("status") == "running":
-            if not _matches(response, pending):
+        deadline = time.monotonic() + TIMEOUT
+        response = _call("submit", ident, argv=argv, payload=candidate, duration=TIMEOUT)
+        not_admitted = response.get("accepted") is False
+        pause = POLL_SECONDS
+        while response.get("status") != "finished" and not not_admitted:
+            if response.get("status") == "running" and not _matches(response, pending):
                 raise ValueError("Mac validation identity mismatch")
-            if _cancel.is_set() or not validation.enabled() or time.monotonic() >= deadline:
-                _call("cancel", ident)
-                response = {"status": "unavailable", "error": "Mac validation cancellation is unconfirmed"}
+            if (response.get("status") == "absent" or _cancel.is_set()
+                    or not validation.enabled() or time.monotonic() >= deadline):
+                response = _call("cancel", ident)
+                not_admitted = (response.get("status") == "cancelled" and response.get("accepted") is False
+                                and response.get("run_id") == ident)
                 break
-            time.sleep(.5)
+            _cancel.wait(min(pause, max(0, deadline - time.monotonic())))
+            if _cancel.is_set():
+                continue
+            pause = min(pause * 2, POLL_MAX_SECONDS) if response.get("status") == "unavailable" else POLL_SECONDS
             response = _call("status", ident)
         if response.get("status") == "finished" and _matches(response, pending):
             response = _call("result", ident)
+            pause = POLL_SECONDS
+            while response.get("status") == "unavailable" and time.monotonic() < deadline and not _cancel.is_set():
+                _cancel.wait(min(pause, max(0, deadline - time.monotonic())))
+                pause = min(pause * 2, POLL_MAX_SECONDS)
+                response = _call("result", ident)
             if not _matches(response, pending):
                 raise ValueError("Mac validation result identity mismatch")
             result.update({key: response.get(key) for key in ("exit", "error", "host", "guest", "template", "cleanup")})
@@ -431,13 +463,18 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
             result["ended"] = response.get("ended", "unavailable")
         else:
             result.update(error="Mac unavailable; no passing result", ended="unavailable")
-            if response.get("accepted") is False:
+            if not_admitted:
                 _pending().unlink()
             else:
                 result["error"] += "; cancellation must be reconciled"
     except (OSError, ValueError, RuntimeError) as exc:
         if row is None:
             raise
+        if pending is not None:
+            try:
+                _call("cancel", pending["run_id"])
+            except (OSError, ValueError, RuntimeError):
+                pass  # Retain pending identity; refusal is never proof of remote termination.
         result.update(exit=None, ended="unavailable", error="Mac validation failed; no passing result")
     finally:
         try:

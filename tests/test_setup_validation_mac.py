@@ -233,6 +233,132 @@ class MacSetupTests(unittest.TestCase):
         self.assertFalse(self.base.exists())
         self.assertEqual(self.ssh.read_bytes(), original)
 
+    def install_for_rotation(self):
+        self.apply(setup.build_plan(self.value))
+        self.replacement = self.root / "replacement-public"
+        blob = struct.pack("!I", 11) + b"ssh-ed25519" + struct.pack("!I", 32) + b"b" * 32
+        self.replacement.write_text("ssh-ed25519 " + base64.b64encode(blob).decode() + "\n")
+        return {"version": 1, "mode": "host-key", "action": "stage", "public_key": str(self.replacement)}
+
+    def test_key_stage_retains_old_then_exact_retirement_preserves_replacement(self):
+        stage = self.install_for_rotation()
+        path, off = self.base / "authorized_keys", self.base / "state/off"
+        original, ssh, marker = path.read_bytes(), self.ssh.read_bytes(), off.read_bytes()
+        plan = setup.build_plan(stage)
+        self.assertEqual(path.read_bytes(), original)  # dry run
+        self.apply(plan)
+        self.assertTrue(path.read_bytes().startswith(original))
+        self.assertEqual(len(path.read_text().splitlines()), 2)
+        retire = stage | {"action": "retire", "public_key": str(self.key),
+                          "replacement_public_key": str(self.replacement)}
+        self.apply(setup.build_plan(retire))
+        self.assertEqual(path.read_text(), 'from="192.168.99.2/32",restrict ' + setup.public_key(self.replacement) + "\n")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.ssh.read_bytes(), ssh)
+        self.assertEqual(off.read_bytes(), marker)
+        self.assertFalse((self.base / ".authorized_keys.new").exists())
+
+    def test_key_stage_failure_keeps_old_key_and_preserves_existing_staging_file(self):
+        stage = self.install_for_rotation()
+        path = self.base / "authorized_keys"
+        original = path.read_bytes()
+        plan = setup.build_plan(stage)
+        with mock.patch.object(Path, "replace", side_effect=OSError("fictional replacement failure")):
+            with self.assertRaises(OSError):
+                self.apply(plan)
+        self.assertEqual(path.read_bytes(), original)
+        temporary = self.base / ".authorized_keys.new"
+        self.assertFalse(temporary.exists())
+        temporary.write_text("unrelated in-progress transaction")
+        with self.assertRaises(FileExistsError):
+            self.apply(plan)
+        self.assertEqual(temporary.read_text(), "unrelated in-progress transaction")
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_rotation_requires_closed_admission_and_reconciled_active_run(self):
+        stage = self.install_for_rotation()
+        original = (self.base / "authorized_keys").read_bytes()
+        off, active = self.base / "state/off", self.base / "state/active.json"
+        off.unlink()
+        with self.assertRaises(FileNotFoundError):
+            setup.build_plan(stage)
+        off.symlink_to(self.key)
+        with self.assertRaises(ValueError):
+            setup.build_plan(stage)
+        off.unlink()
+        off.write_text("disabled")
+        off.chmod(0o600)
+        active.write_text('{}')
+        with self.assertRaisesRegex(ValueError, "Reconcile"):
+            setup.build_plan(stage)
+        active.unlink()
+        active.symlink_to(self.root / "missing")
+        with self.assertRaisesRegex(ValueError, "Reconcile"):
+            setup.build_plan(stage)
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), original)
+
+    def test_rotation_rechecks_off_before_atomic_swap(self):
+        stage = self.install_for_rotation()
+        plan = setup.build_plan(stage)
+        original = (self.base / "authorized_keys").read_bytes()
+        write = setup._write
+
+        def removed_off(*args):
+            write(*args)
+            (self.base / "state/off").unlink()
+
+        with mock.patch.object(setup, "_write", side_effect=removed_off), self.assertRaises(FileNotFoundError):
+            self.apply(plan)
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), original)
+        self.assertFalse((self.base / ".authorized_keys.new").exists())
+
+    def test_key_rotation_rejects_unrelated_rows_sources_or_accounts(self):
+        stage = self.install_for_rotation()
+        path = self.base / "authorized_keys"
+        original = path.read_bytes()
+        second = f'from="192.168.99.3/32",restrict {setup.public_key(self.replacement)}\n'.encode()
+        for altered in (original + b"# unrelated\n", original + second,
+                        original.replace(b",restrict ", b" "), original + original):
+            path.write_bytes(altered)
+            with self.subTest(altered=altered), self.assertRaises(ValueError):
+                setup.build_plan(stage)
+            self.assertEqual(path.read_bytes(), altered)
+        path.write_bytes(original)
+        rules = self.base / "sshd.conf"
+        rules.write_text(rules.read_text().replace("Match User validationfixture", "Match User validationfixture,another"))
+        with self.assertRaisesRegex(ValueError, "account restriction"):
+            setup.build_plan(stage)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_retirement_requires_exact_distinct_staged_public_keys(self):
+        stage = self.install_for_rotation()
+        retire = stage | {"action": "retire", "public_key": str(self.key),
+                          "replacement_public_key": str(self.replacement)}
+        with self.assertRaisesRegex(ValueError, "exact old"):
+            setup.build_plan(retire)
+        self.apply(setup.build_plan(stage))
+        original = (self.base / "authorized_keys").read_bytes()
+        with self.assertRaisesRegex(ValueError, "exact old"):
+            setup.build_plan(retire | {"replacement_public_key": str(self.key)})
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), original)
+
+    def test_revoke_refuses_retained_evidence_and_only_empties_own_key_file(self):
+        self.install_for_rotation()
+        revoke = {"version": 1, "mode": "host-key", "action": "revoke"}
+        evidence = self.base / "state/runs/fictional/evidence.json"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text('{}')
+        with self.assertRaisesRegex(ValueError, "acknowledge"):
+            setup.build_plan(revoke)
+        evidence.unlink()
+        ssh, off = self.ssh.read_bytes(), (self.base / "state/off").read_bytes()
+        self.apply(setup.build_plan(revoke))
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), b"")
+        self.assertEqual((self.base / "state/off").read_bytes(), off)
+        self.assertEqual(self.ssh.read_bytes(), ssh)
+        self.assertTrue((self.base / "broker.json").exists())
+        self.assertTrue((self.base / "template/disk.img").exists())
+
 
 class MacSetupNativeSeamTests(unittest.TestCase):
     def test_ssh_configuration_is_validated_on_stdin_without_service_actions(self):

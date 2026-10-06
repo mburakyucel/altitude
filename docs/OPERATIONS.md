@@ -336,6 +336,30 @@ executor is a disposable offline macOS guest on the operator's Apple-silicon Mac
 and native acceptance remain pending. The command needs no new per-run grant once scoped setup
 and isolation verification are complete. It does not authorize a live-provider test.
 
+Mac host setup makes its dedicated account restrictions effective on fresh SSH connections
+immediately. The endpoint can answer status/result/cancel while submissions remain disabled by
+`/Library/Application Support/AltitudeValidation/state/off`. Under the scoped setup grant, the
+Mac owner verifies [native preflight](SETUP.md#remote-macos-validation), reserves the first-run
+window with L3, and removes that marker as the configured runner. Populate the following local
+variables privately from the installed configuration; never paste their values into evidence:
+
+```sh
+sudo -u "$VALIDATION_RUNNER" "$VALIDATION_PYTHON" -I -B -c 'from pathlib import Path; Path("/Library/Application Support/AltitudeValidation/state/off").unlink()'
+```
+
+For a bounded preflight window, restore the marker immediately after the selected run is admitted,
+including on failure; the admitted run's status, results and cancellation remain available:
+
+```sh
+sudo -u "$VALIDATION_RUNNER" "$VALIDATION_PYTHON" -I -B -c 'import os; fd = os.open("/Library/Application Support/AltitudeValidation/state/off", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600); os.close(fd)'
+```
+
+The Mac owner runs these effects in a recorded finite command with a `finally` cleanup. After
+successful native acceptance, routine enablement uses the same removal under the recorded setup
+authority. This marker is a runner-owned admission switch, not a single-use command permit or a
+security boundary against the trusted runner or administrator. Existing task authorization still
+governs every submitted command; a reserved preflight window does not expand that scope.
+
 Settings → **Validation runs** also refuses new Mac submissions and requests cancellation of a
 running Mac job. Cancellation is confirmed only after the remote supervisor and VM stop and their
 scratch mounts/clones are removed. Loss of the route, sleep, missing login or an unavailable SSH
@@ -360,11 +384,32 @@ trusted, shut it down, replace the protected template and recompute manifest/dep
 A candidate with different manifests or missing offline packages receives `template refresh needed`;
 do not enable guest networking or update a template from candidate code.
 
-Rotate the dedicated SSH identity by provisioning replacement private key material and the matching
-source-restricted Mac authorized key, updating the Linux relay's private configuration, and verifying
-the new identity and worker refusal before removing the old key. Pin and verify a changed Mac host
-key independently; never disable host-key checking. Rotation/removal is scoped machine work, not a
-validation command. Retire the installed relay/verifier socket units and Mac-only validation SSH
+Credential rotation is scoped machine work on both hosts. First close Mac admission with the
+off marker above, then use existing validation controls to cancel or finish any active run and
+retrieve/acknowledge its evidence. Keep admission off through the entire rotation; status probes
+remain available. The setup tools assume the trusted runner/admin preserves this marker.
+
+1. Prepare a replacement dedicated identity privately. On the Mac, check and apply a
+   [host-key `stage` plan](SETUP.md#remote-macos-validation) with
+   `python3 scripts/setup_validation_mac.py --plan PRIVATE_JSON --apply` under the scoped grant.
+   This adds only the public key and retains the old key and exact source restriction.
+2. On Linux, use `python3 scripts/setup_validation_relay.py --rotate --config PRIVATE_JSON`
+   with the replacement identity and unchanged endpoint/account/host pin. It authenticates a
+   fixed status probe before switching configuration, verifies again after switching and retains
+   the previous identity for rollback. It never changes the Mac key file.
+3. Verify and record a status roundtrip through the actual Altitude daemon and relay, plus worker
+   refusal. A direct administrator SSH probe alone does not establish daemon admission. If this
+   fails, retain both Mac public keys, keep admission off, and recover using the previous identity.
+4. Only after that observed verification, apply the Mac host-key `retire` plan naming the exact
+   old and staged replacement public keys; then run the Linux installer's `--retire-old` action.
+   The Mac installer verifies the two local rows, not the cross-host observation. Reopen admission
+   only within the remaining scoped authority.
+
+To revoke remote access, close admission and reconcile active runs and retained evidence first,
+then apply the Mac host-key `revoke` plan. It empties only this installation's key file, preserves
+the off marker and leaves SSH configuration/services alone. Revocation does not terminate an
+existing SSH session; reconciliation precedes removal. Pin and verify a changed Mac host key
+independently; never disable host-key checking. Retire the installed relay/verifier socket units and Mac-only validation SSH
 rule, installed code, state and copied template only after admission is disabled and remote termination,
 cleanup and evidence retrieval are confirmed. Preserve preexisting accounts, templates, unrelated SSH rules and Altitude
 services. Addresses, keys and private configuration stay off task chat, PRs, logs and reports.

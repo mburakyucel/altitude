@@ -140,7 +140,7 @@ class TestNativeAttestationTransport(unittest.TestCase):
         left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         with left, right, platform.validation_socket_peer(left, os.getuid()) as descriptor, \
                 mock.patch.object(platform, 'validation_attester_relay', return_value=True), \
-                mock.patch.object(platform, 'validation_attester_query', return_value=True) as query:
+                mock.patch.object(platform, 'validation_attest_daemon', return_value=True) as query:
             for request, allowed in (({'nonce': 'a' * 32}, True), ({'nonce': 'b' * 32, 'unit': 'other'}, False)):
                 platform.validation_attestation_send(left, request, descriptor)
                 attester.handle(right, {'relay_uid': os.getuid()})
@@ -300,7 +300,8 @@ class TestAttesterHardening(unittest.TestCase):
         @contextmanager
         def peer(connection, uid):
             yield 40
-        with mock.patch.object(platform, 'validation_socket_peer', side_effect=peer), \
+        with mock.patch.object(platform.sys, 'platform', 'linux'), \
+                mock.patch.object(platform, 'validation_socket_peer', side_effect=peer), \
                 mock.patch.object(platform, 'validation_root_socket'), \
                 mock.patch.object(platform.socket, 'socket'), \
                 mock.patch.object(Path, 'read_text', return_value='1'), \
@@ -317,21 +318,11 @@ class TestAttesterHardening(unittest.TestCase):
     def test_unsupported_kernel_has_no_numeric_pid_fallback(self):
         connection = mock.Mock()
         connection.getsockopt.side_effect = [struct.pack('3i', 500, 1001, 1001), OSError('unsupported')]
-        with mock.patch.object(platform.os, 'pidfd_open') as fallback, self.assertRaises(OSError):
+        with mock.patch.object(platform.os, 'pidfd_open', create=True) as fallback, \
+                mock.patch.object(platform.socket, 'SO_PEERCRED', 17, create=True), self.assertRaises(OSError):
             with platform.validation_socket_peer(connection, 1001):
                 self.fail('unsupported peer admitted')
         fallback.assert_not_called()
-
-    def test_fixed_query_process_has_whole_operation_timeout_and_sanitized_environment(self):
-        with mock.patch.object(platform.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=b'allowed\n')) as run:
-            self.assertTrue(platform.validation_attester_query(40))
-        args, kwargs = run.call_args
-        self.assertEqual(args[0][-2:], ['--prove', '40'])
-        self.assertEqual(kwargs['env'], {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
-        self.assertEqual(kwargs['timeout'], 18)
-        self.assertEqual(kwargs['pass_fds'], (40,))
-        with mock.patch.object(platform.subprocess, 'run', side_effect=subprocess.TimeoutExpired('private', 18)):
-            self.assertFalse(platform.validation_attester_query(40))
 
     def test_unverified_user_manager_never_reaches_native_bus(self):
         @contextmanager

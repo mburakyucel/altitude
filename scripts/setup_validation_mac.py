@@ -3,6 +3,8 @@
 
 No default action writes files. --apply is a separate administrator action under a scoped grant.
 Accounts, a private SSH route, Apple OS setup and the pinned offline template already exist.
+Host apply makes the account restrictions effective for fresh SSH connections; its off marker
+refuses submissions until explicit scoped enablement, while status/result/cancel remain reachable.
 """
 from __future__ import annotations
 
@@ -82,7 +84,11 @@ def public_key(path: Path) -> str:
         data = source.read(4097)
     if len(data) > 4096:
         raise ValueError("Public key exceeds setup limit")
-    words = data.decode("ascii").strip().split()
+    return parse_public_key(data.decode("ascii").strip())
+
+
+def parse_public_key(value: str) -> str:
+    words = value.split()
     if len(words) < 2 or words[0] != "ssh-ed25519":
         raise ValueError("Supply the dedicated Ed25519 public key only")
     raw = base64.b64decode(words[1], validate=True)
@@ -90,6 +96,118 @@ def public_key(path: Path) -> str:
     if len(raw) != len(expected) + 32 or not raw.startswith(expected):
         raise ValueError("Invalid Ed25519 public key")
     return "ssh-ed25519 " + words[1]
+
+
+def private_source(value: str):
+    network = ipaddress.ip_network(value, strict=True)
+    shared = network.version == 4 and network.subnet_of(ipaddress.ip_network("100.64.0.0/10"))
+    if (network.num_addresses != 1 or not (network.is_private or shared)
+            or network.is_loopback or network.is_multicast or network.is_unspecified):
+        raise ValueError("Use only the existing private route's single source address")
+    return network
+
+
+def key_admission_closed(uid: int) -> None:
+    state = canonical(str(BASE / "state"))
+    info = state.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError("Validation state ownership changed")
+    off = state / "off"
+    info = off.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077:
+        raise ValueError("Key changes require the existing private admission-off marker")
+    active = state / "active.json"
+    if active.exists() or active.is_symlink():
+        raise ValueError("Reconcile the active validation run before changing keys")
+
+
+def build_key_plan(value: dict) -> dict:
+    action = value.get("action")
+    fields = {"version", "mode", "action"}
+    if action in {"stage", "retire"}:
+        fields.add("public_key")
+    if action == "retire":
+        fields.add("replacement_public_key")
+    if (action not in {"stage", "retire", "revoke"} or set(value) != fields
+            or type(value["version"]) is not int or value["version"] != 1):
+        raise ValueError("Invalid public-key lifecycle plan")
+    for path in (BASE / "broker.json", BASE / "sshd.conf", BASE / "authorized_keys", SSHD_CONFIG):
+        protected(path)
+    config = json.loads((BASE / "broker.json").read_text())
+    if (set(config) != {"version", "runner_uid", "state", "template", "python"}
+            or type(config["version"]) is not int or config["version"] != 1
+            or type(config["runner_uid"]) is not int or config["runner_uid"] < 500
+            or config["state"] != str(BASE / "state") or config["template"] != str(BASE / "template")):
+        raise ValueError("Installed validation configuration changed")
+    python = canonical(config["python"])
+    protected(python)
+    key_admission_closed(config["runner_uid"])
+    rules = (BASE / "sshd.conf").read_text()
+    match = re.match(r"Match User ([a-z_][a-z0-9_-]{0,31})\n", rules)
+    if not match:
+        raise ValueError("Installed validation account restriction changed")
+    command = shlex.join([str(python), "-I", "-B", str(BASE / "code/scripts/validation_remote.py"), "serve"])
+    expected_rules, expected = account_rules(match[1], command)
+    if rules != expected_rules:
+        raise ValueError("Installed validation account restriction changed")
+    original = (BASE / "authorized_keys").read_bytes()
+    if len(original) > 4096:
+        raise ValueError("Installed public-key file exceeds its limit")
+    rows = original.decode("ascii").splitlines(keepends=True)
+    if not 1 <= len(rows) <= 2:
+        raise ValueError("Expected only the current key and optional staged replacement")
+    keys, source = [], None
+    for row in rows:
+        item = re.fullmatch(r'from="([^"]+)",restrict (ssh-ed25519 [A-Za-z0-9+/=]+)\n', row)
+        if not item:
+            raise ValueError("Public-key file contains unrelated or changed restrictions")
+        network = private_source(item[1])
+        if str(network) != item[1] or (source is not None and source != item[1]):
+            raise ValueError("Public-key source restrictions differ")
+        source = item[1]
+        key = parse_public_key(item[2])
+        if key in keys:
+            raise ValueError("Duplicate installed public key")
+        keys.append(key)
+    check_rules(SSHD_CONFIG.read_text(), match[1], str(private_source(source).network_address), expected)
+    if action == "stage":
+        key = public_key(canonical(value["public_key"]))
+        if key in keys or len(keys) != 1:
+            raise ValueError("Stage requires one current key and a distinct replacement")
+        keys.append(key)
+    elif action == "retire":
+        old = public_key(canonical(value["public_key"]))
+        replacement = public_key(canonical(value["replacement_public_key"]))
+        if old == replacement or set(keys) != {old, replacement}:
+            raise ValueError("Retirement requires the exact old key and its staged replacement")
+        keys.remove(old)
+    else:
+        # A revoked identity cannot retrieve retained evidence; reconcile through the
+        # existing protocol before applying this one-way removal.
+        if any((BASE / "state/runs").glob("*/evidence.json")):
+            raise ValueError("Retrieve and acknowledge retained evidence before revocation")
+        keys = []
+    updated = "".join(f'from="{source}",restrict {key}\n' for key in keys).encode()
+    return {"mode": "host-key", "value": value, "original": original, "updated": updated,
+            "runner_uid": config["runner_uid"]}
+
+
+def apply_key_plan(plan: dict) -> None:
+    path, temporary = BASE / "authorized_keys", BASE / ".authorized_keys.new"
+    created = False
+    try:
+        _write(temporary, plan["updated"], 0o644)
+        created = True
+        # The trusted runner keeps admission closed through this administrator action.
+        # Recheck immediately before replacing only this installation's key file.
+        key_admission_closed(plan["runner_uid"])
+        protected(path)
+        if path.read_bytes() != plan["original"]:
+            raise ValueError("Installed public keys changed during the transaction")
+        temporary.replace(path)
+    finally:
+        if created:
+            temporary.unlink(missing_ok=True)
 
 
 def account_rules(account: str, command: str) -> tuple[str, dict]:
@@ -115,6 +233,8 @@ def check_rules(configuration: str, account: str, address: str, expected: dict) 
 
 def build_plan(value: dict) -> dict:
     mode = value.get("mode") if isinstance(value, dict) else None
+    if mode == "host-key":
+        return build_key_plan(value)
     fields = COMMON | (HOST if mode == "host" else GUEST if mode == "guest" else set())
     if mode not in {"host", "guest"} or set(value) != fields or type(value["version"]) is not int or value["version"] != 1:
         raise ValueError("Invalid Mac setup plan")
@@ -144,11 +264,7 @@ def build_plan(value: dict) -> dict:
             raise ValueError("Insufficient storage for the validation template and scratch budget")
         for name in ("vm.json", "disk.img", "aux.img", "manifest.json"):
             plan["copies"].append((template / name, BASE / "template" / name))
-        network = ipaddress.ip_network(value["source_network"], strict=True)
-        shared = network.version == 4 and network.subnet_of(ipaddress.ip_network("100.64.0.0/10"))
-        if (network.num_addresses != 1 or not (network.is_private or shared)
-                or network.is_loopback or network.is_multicast or network.is_unspecified):
-            raise ValueError("Use only the existing private route's single source address")
+        network = private_source(value["source_network"])
         address = str(network.network_address)
         command = shlex.join([str(python), "-I", "-B", str(BASE / "code/scripts/validation_remote.py"), "serve"])
         key = public_key(canonical(value["public_key"]))
@@ -236,6 +352,9 @@ def apply_plan(plan: dict) -> None:
     fresh = build_plan(plan["value"])
     if fresh != plan:
         raise ValueError("Setup inputs changed after validation")
+    if plan["mode"] == "host-key":
+        apply_key_plan(plan)
+        return
     created_job = False
     created_base = False
     changed_ssh = False
@@ -306,7 +425,12 @@ def main(argv=None) -> int:
         plan = build_plan(json.loads(raw))
         if args.apply:
             apply_plan(plan)
-            print("Validation setup installed; admission and native acceptance remain pending. No services were started or restarted.")
+            if plan["mode"] == "host-key":
+                print("Validation public-key action completed; admission remains disabled.")
+            elif plan["mode"] == "host":
+                print("Validation setup installed. Account restrictions apply to fresh SSH connections; submissions remain disabled until scoped native preflight and explicit enablement.")
+            else:
+                print("Guest supervisor installed for the next guest boot; native acceptance remains pending.")
         else:
             print("Validation setup plan checked. No files or services changed; --apply requires scoped administrator authorization.")
         return 0

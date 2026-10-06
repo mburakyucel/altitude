@@ -97,6 +97,40 @@ class ValidationGuestTests(unittest.TestCase):
         self.assertIn("link or special file", receipt["error"])
         self.assertFalse((self.results / "artifacts" / "escape").exists())
 
+    def test_invalid_artifact_names_preserve_collectable_log_and_receipt(self):
+        receipt = self.run_guest("import os,pathlib; print('output before artifact failure'); "
+                                 "root=pathlib.Path(os.environ['RESULTS']); "
+                                 "(root/'good').write_text('partial'); (root/'.git').write_text('unsafe')")
+        self.assertIsNone(receipt["exit"])
+        self.assertIn("unsafe transfer path", receipt["error"])
+        self.assertFalse((self.results / "artifacts").exists())
+        result = guest.payload.collect_results(self.results)
+        destination = self.root / "returned"
+        guest.payload.restore_results(result, destination)
+        self.assertIn("output before artifact failure", (destination / "output.log").read_text())
+        self.assertEqual(json.loads((destination / "receipt.json").read_text()), receipt)
+
+    def test_artifact_overflow_preserves_log_and_explicit_failure(self):
+        with mock.patch.object(guest, "EVIDENCE_LIMIT", 65536 + 1024):
+            receipt = self.run_guest("import os,pathlib; print('diagnostic before overflow'); "
+                                     "root=pathlib.Path(os.environ['RESULTS']); "
+                                     "(root/'good').write_text('partial'); (root/'huge').write_bytes(b'x'*2048)")
+        self.assertIsNone(receipt["exit"])
+        self.assertIn("evidence budget", receipt["error"])
+        self.assertFalse((self.results / "artifacts").exists())
+        result = guest.payload.collect_results(self.results)
+        self.assertEqual(set(result["entries"]), {"output.log", "receipt.json"})
+        self.assertIn("diagnostic before overflow", (self.results / "output.log").read_text())
+
+    def test_artifact_count_reserves_log_receipt_and_directory_entries(self):
+        with mock.patch.object(guest.payload, "ENTRY_LIMIT", 4):
+            receipt = self.run_guest("import os,pathlib; root=pathlib.Path(os.environ['RESULTS']); "
+                                     "(root/'one').touch(); (root/'two').touch()")
+            self.assertIsNone(receipt["exit"])
+            self.assertIn("file count limit", receipt["error"])
+            self.assertEqual(set(guest.payload.collect_results(self.results)["entries"]),
+                             {"output.log", "receipt.json"})
+
     def test_log_flood_stops_with_no_success_receipt(self):
         with mock.patch.object(guest, "LOG_LIMIT", 1024):
             receipt = self.run_guest("import os; os.write(1,b'x'*10000)")

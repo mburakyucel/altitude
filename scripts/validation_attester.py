@@ -53,7 +53,7 @@ def handle(connection, config: dict) -> None:
         nonce = request.get('nonce', '')
         if set(request) != {'nonce'} or not isinstance(nonce, str) or not re.fullmatch('[a-f0-9]{32}', nonce):
             raise ValueError('Invalid validation verifier request')
-        allowed = platform.validation_attester_query(descriptor)
+        allowed = platform.validation_attest_daemon(descriptor, config)
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         allowed = False
     finally:
@@ -73,27 +73,15 @@ def main() -> int:
         config = load_config()
         if os.getuid() != config['daemon_uid'] or os.getuid() == 0:
             raise ValueError('Validation verifier requires the configured unprivileged identity')
-        if len(sys.argv) == 3 and sys.argv[1] == '--prove':
-            descriptor = int(sys.argv[2])
-            if descriptor < 3:
-                raise ValueError('Invalid validation verifier descriptor')
-            allowed = platform.validation_attest_daemon(descriptor, config)
-            print('allowed' if allowed else 'denied')
-            return 0
         if len(sys.argv) != 1:
             raise ValueError('Unsupported validation verifier invocation')
         if os.environ.get('LISTEN_PID') != str(os.getpid()) or os.environ.get('LISTEN_FDS') != '1':
             raise ValueError('Validation verifier requires its administrator-owned socket')
-        with socket.socket(fileno=3) as listener:
-            if listener.type != socket.SOCK_SEQPACKET:
+        with socket.socket(fileno=3) as connection:
+            if connection.type != socket.SOCK_SEQPACKET or connection.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN):
                 raise ValueError('Invalid validation verifier socket type')
-            while True:
-                connection, _ = listener.accept()
-                with connection:
-                    try:
-                        handle(connection, config)
-                    except OSError:
-                        pass
+            handle(connection, config)
+        return 0
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         print('Validation verifier identity or configuration is unavailable', file=sys.stderr)
         return 1

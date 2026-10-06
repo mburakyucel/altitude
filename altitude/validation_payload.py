@@ -1,8 +1,10 @@
 """Bounded validation inputs and evidence; no repository configuration crosses the boundary.
 
-The wire envelope is SHA-256 plus base64(zlib(JSON)). Git objects retain their exact
+Candidate inputs use SHA-256 plus base64(zlib(JSON)). Git objects retain their exact
 bytes, so attributes and checkout filters cannot change the candidate. Only the
 selected commit and its ordinary-file tree are carried; its parents are shallow.
+Results use one base64 layer in a digest-bound JSON inventory, so incompressible
+artifacts retain their full raw-byte budget without depending on compression ratios.
 """
 from __future__ import annotations
 
@@ -26,6 +28,11 @@ ENTRY_LIMIT = 10000
 PATH_LIMIT = 1024
 DEPTH_LIMIT = 64
 EXPORT_TIMEOUT = 60
+RESULT_LIMIT = 256 << 20
+RESULT_JSON_LIMIT = 368 << 20
+# 256 MiB raw needs at most 342 MiB base64, including per-file padding. The 10,000
+# paths (at most 1,024 ASCII bytes each) and entry syntax add less than 11 MiB.
+# 368 MiB leaves room for the broker record inside its existing 384 MiB frame.
 _OID = re.compile(r"[0-9a-f]{40}\Z")
 _NAME = re.compile(r"[A-Za-z0-9_. @+,-]+\Z")
 
@@ -299,19 +306,33 @@ def restore(payload: dict, destination: Path) -> None:
         raise ValueError("Cannot restore validation candidate") from None
 
 
-def collect_results(directory: Path | int) -> dict:
-    """Capture regular evidence through no-follow descriptors, or fail as incomplete."""
+def collect_results(directory: Path | int, *, names: tuple[str, ...] | None = None) -> dict:
+    """Capture evidence; a broker's explicit failure may retain only its protected summaries."""
+    if names is not None and (type(names) is not tuple or len(names) != 2
+                              or set(names) != {"output.log", "receipt.json"}):
+        raise ValueError("Only protected validation summaries may be selected")
     entries: dict[str, list] = {}
     total = 0
+    seen: set[str] = set()
 
     def walk(fd: int, prefix: str = "") -> None:
         nonlocal total
         before_directory = os.fstat(fd)
-        for name in sorted(os.listdir(fd)):
+        children = list(names) if names is not None else []
+        if names is None:
+            with os.scandir(fd) as listing:
+                for child in listing:
+                    if len(children) >= ENTRY_LIMIT:
+                        raise ValueError("Validation evidence exceeds its entry limit")
+                    children.append(child.name)
+        for name in sorted(children):
             path = _path(prefix + name)
-            if len(entries) >= ENTRY_LIMIT:
-                raise ValueError("Validation evidence exceeds its entry limit")
+            if len(entries) >= ENTRY_LIMIT or path.lower() in seen:
+                raise ValueError("Duplicate or excessive validation evidence entries")
+            seen.add(path.lower())
             info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if names is not None and not stat.S_ISREG(info.st_mode):
+                raise ValueError("Protected validation summary is not a regular file")
             if stat.S_ISDIR(info.st_mode):
                 entries[path] = ["dir"]
                 child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -325,9 +346,12 @@ def collect_results(directory: Path | int) -> dict:
                     before = os.fstat(stream.fileno())
                     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
                         raise ValueError("Unsafe validation evidence file")
-                    if before.st_size > FILE_LIMIT or total + before.st_size > EXPANDED_LIMIT:
+                    limit = min(FILE_LIMIT, RESULT_LIMIT - total)
+                    if names is not None:
+                        limit = min(limit, 32 << 20 if name == "output.log" else 65536)
+                    if before.st_size > limit:
                         raise ValueError("Validation evidence exceeds its size limit")
-                    raw = stream.read(min(FILE_LIMIT, EXPANDED_LIMIT - total) + 1)
+                    raw = stream.read(limit + 1)
                     after = os.fstat(stream.fileno())
                     if (len(raw) != before.st_size or before.st_mtime_ns != after.st_mtime_ns
                             or before.st_ctime_ns != after.st_ctime_ns):
@@ -349,14 +373,28 @@ def collect_results(directory: Path | int) -> dict:
             os.close(fd)
     except OSError:
         raise ValueError("Cannot collect complete validation evidence") from None
-    return _pack({"entries": entries})
+    return {"entries": entries, "digest": _results_digest(entries)}
+
+
+def _results_digest(entries: dict) -> str:
+    """Hash canonical result JSON without another whole-inventory encoded copy."""
+    digest = hashlib.sha256()
+    size = 0
+    for chunk in json.JSONEncoder(separators=(",", ":"), sort_keys=True).iterencode({"entries": entries}):
+        raw = chunk.encode("ascii")
+        size += len(raw)
+        if size > RESULT_JSON_LIMIT:
+            raise ValueError("Validation evidence exceeds its JSON size limit")
+        digest.update(raw)
+    return digest.hexdigest()
 
 
 def restore_results(payload: dict, destination: Path) -> None:
     """Validate the entire inventory before restoring it to a private empty directory."""
-    document = _unpack(payload)
-    entries = document.get("entries")
-    if set(document) != {"entries"} or not isinstance(entries, dict) or len(entries) > ENTRY_LIMIT:
+    if not isinstance(payload, dict) or set(payload) != {"entries", "digest"}:
+        raise ValueError("Invalid validation evidence envelope")
+    entries = payload["entries"]
+    if not isinstance(entries, dict) or len(entries) > ENTRY_LIMIT:
         raise ValueError("Invalid validation evidence inventory")
     files = {}
     names = set()
@@ -370,16 +408,16 @@ def restore_results(payload: dict, destination: Path) -> None:
             continue
         if len(value) != 2 or value[0] != "file":
             raise ValueError("Invalid validation evidence file")
-        raw = _decode(value[1], FILE_LIMIT)
+        raw = _decode(value[1], min(FILE_LIMIT, RESULT_LIMIT - total))
         total += len(raw)
-        if total > EXPANDED_LIMIT:
-            raise ValueError("Validation evidence exceeds its size limit")
         files[name] = raw
     for name in entries:
         parts = name.split("/")
         for end in range(1, len(parts)):
             if entries.get("/".join(parts[:end])) != ["dir"]:
                 raise ValueError("Incomplete validation evidence directory inventory")
+    if _results_digest(entries) != payload["digest"]:
+        raise ValueError("Validation evidence digest mismatch")
     try:
         _destination(destination)
         for name in sorted(entries, key=lambda name: (name.count("/"), name)):

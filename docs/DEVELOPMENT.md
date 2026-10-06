@@ -339,16 +339,22 @@ preflight and a real Linux-to-Mac run remain unverified. Fixture success is not 
 Only the committed candidate's exact tree and shallow commit cross the connection. Other refs,
 history, dirty files, hooks and repository configuration stay local. The receiver verifies the
 payload and Git objects before execution; links, submodules, unsafe paths and oversized inputs
-are refused. Each payload is bounded to 64 MiB compressed and 256 MiB expanded. The guest receives
+are refused. Each source payload is bounded to 64 MiB compressed and 256 MiB expanded. The guest receives
 read-only input and a root-owned results share; candidate code runs as a fictional standard user
 without sudo, credentials, host directories, clipboard or a network adapter. `RESULTS` and
 `ALTITUDE_VALIDATION_RESULTS` name its local writable artifact directory. The root guest supervisor
 captures output separately and exports regular files with a protected result receipt.
 
 The Mac admits one run at a time, for at most one hour, with at most four vCPUs and 8 GiB RAM.
+That hour includes preparation and a two-minute teardown reserve: candidate execution stops before
+the outer supervisor limit. The Mac derives expiry from the bounded duration on its own clock;
+the Linux submitter also keeps a deadline, without assuming synchronized machine clocks.
 The guest disk is at most 64 GiB, and the results scratch image is 512 MiB. Free host storage must
-cover the guest's full logical disk plus 2 GiB. Returned evidence is limited to 256 MiB, including
-a 32 MiB command log. These configured limits require native measurement during setup. A missing,
+cover the guest's full logical disk plus 2 GiB. Returned evidence is limited to 256 MiB of raw files,
+including a 32 MiB command log. Its digest-bound JSON inventory uses one base64 layer and a separate
+368 MiB encoded limit inside the 384 MiB transport frame; incompressible traces/videos retain the
+same raw-byte budget. Invalid or oversized artifacts produce an explicit failure while the protected
+log and receipt remain retrievable. These configured limits require native measurement during setup. A missing,
 asleep or inaccessible Mac, missing GUI login, unavailable relay or dependency mismatch produces
 an explicit unavailable/uncertain result, never a pass. A locked screen alone is not a failure
 when the runner remains logged in and reachable; waking or unlocking the laptop is not automated.
@@ -359,6 +365,8 @@ missing offline packages require an authorized template refresh. Candidate code 
 trusted provisioning. `ALTITUDE_VALIDATION=1` keeps Chromium's own sandbox enabled in the test harness.
 `--kvm` and `--publish` are local-container options and are refused for this target.
 
+Status/result retries keep the same identity through transient connection failures, with polling
+backoff. Cancellation of an unknown identity leaves a receipt that refuses any delayed submission.
 Cancellation requests termination; a lost connection does not confirm it. The daemon keeps the same
 run identity through restart/reconciliation and does not submit a replacement while cancellation,
 result acknowledgement or cleanup is unresolved. Later recovered evidence is recorded separately

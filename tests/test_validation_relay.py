@@ -21,7 +21,7 @@ CONFIG = {'daemon_uid': 1001, 'daemon_cgroup': '/user.slice/daemon.service',
           'known_hosts': '/etc/fixture/known_hosts'}
 REQUEST = {'operation': 'submit', 'run_id': 'a' * 32, 'argv': ['make', 'check'],
            'payload': {'commit': 'b' * 40, 'tree': 'c' * 40, 'digest': 'd' * 64, 'data': ''},
-           'expires': 2000000000}
+           'duration': 3600}
 
 
 class TestValidationRelay(unittest.TestCase):
@@ -42,7 +42,7 @@ class TestValidationRelay(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 relay.validate_request({**REQUEST, field: 'arbitrary'})
         for change in ({'operation': 'shell'}, {'run_id': '../escape'}, {'argv': ['echo\x00bad']},
-                       {'payload': 'not an envelope'}, {'expires': True}):
+                       {'payload': 'not an envelope'}, {'duration': True}, {'duration': 120}, {'duration': 3601}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 relay.validate_request({**REQUEST, **change})
         for operation in ('status', 'cancel', 'result'):

@@ -2504,19 +2504,6 @@ def validation_attest_daemon(descriptor: int, config: dict) -> bool:
         return False
 
 
-def validation_attester_query(descriptor: int) -> bool:
-    """Bound the entire native proof, including authentication, in a fixed keyless child."""
-    try:
-        result = subprocess.run(['/usr/bin/python3', '-I', '-B',
-                '/usr/local/lib/altitude-validation-relay/scripts/validation_attester.py', '--prove', str(descriptor)],
-                pass_fds=(descriptor,), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, timeout=VALIDATION_ATTEST_SECONDS - 2, check=False,
-                env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
-        return result.returncode == 0 and result.stdout == b'allowed\n'
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
 def validation_attester_relay(connection, uid: int) -> bool:
     try:
         with validation_socket_peer(connection, uid) as descriptor:
@@ -2759,6 +2746,9 @@ def validation_guest_mounts(input_path: Path, results_path: Path) -> None:
         options = ["-r"] if path == input_path else []
         subprocess.run(["/sbin/mount_virtiofs", *options, "-u", "0", "-g", "0", tag, str(path)],
                        check=True, timeout=15)
+        mapped = path.stat()
+        if mapped.st_uid != 0 or mapped.st_gid != 0:
+            raise RuntimeError("validation guest share ownership mapping is unavailable")
 
 
 def validation_guest_launch(argv: list[str], *, cwd: Path, env: dict, account: dict, output):

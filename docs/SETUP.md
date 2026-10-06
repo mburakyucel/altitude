@@ -530,8 +530,14 @@ reviewed code/configuration into administrator-owned locations, creates the dist
 and installs the relay plus keyless identity-verifier socket/service units. The verifier runs as
 altd's UID without capabilities, remote networking or a key. Admission requires kernel peer-process
 handles and authenticated manager evidence; unavailable evidence refuses the request. The setup
-trusts administrator-maintained OS Python and its system packages. Reinstallation refreshes only
-the relay/verifier services after active transfers finish; it does not restart Altitude.
+trusts administrator-maintained OS Python and its system packages. Initial installation refuses
+an existing account or installation and rolls back only its own changes on failure. Provision the
+input configuration, dedicated private key and host-pin file as root-owned mode-0600 files beneath
+administrator-owned directories, outside worker-readable provisioning locations. Successful setup
+consumes the source private key, leaving its relay-only installed copy; failed setup retains the
+input for recovery. It does not restart Altitude. Rotation uses the separate verified
+`--rotate --config PRIVATE_JSON` and `--retire-old` actions described in
+[operations](OPERATIONS.md#remote-macos-validation); rerunning initial setup is not rotation.
 [Architecture](ARCHITECTURE.md) states the daemon/admin trust boundary.
 
 Prepare the Mac and its guest with `scripts/setup_validation_mac.py`. Its read-only entry points are:
@@ -550,13 +556,29 @@ and trusted tool `path`. Fingerprints include at least `web/package.json` and `w
 plus every other manifest governing provisioned dependencies. Keep all plan values local.
 
 Adding `--apply` to the checked plan is the separately authorized administrator action. The installer
-accepts a fresh destination only: it neither refreshes nor replaces an existing installation. It
+accepts a fresh destination for host/guest installation: it neither refreshes nor replaces one. It
 copies reviewed code and the pinned host template, or installs the guest LaunchDaemon. Host setup
 adds an account-specific SSH include and verifies its effective restrictions while preserving
-existing configuration. It does not create accounts, enable/reload SSH, establish networking or
-start/restart services. Host admission starts disabled until scoped native preflight succeeds;
-the guest LaunchDaemon becomes eligible at the next guest boot. Refresh/removal needs its own
-reviewed scoped procedure, with no implicit overwrite or automatic activation.
+existing configuration. With macOS Remote Login already running, the account restrictions apply
+to fresh SSH connections immediately; no reload is needed. Apple's
+[SSH wrapper](https://github.com/apple-oss-distributions/OpenSSH/blob/f386b2e948280f6ecac875329c0b56020821d558/sshd-keygen-wrapper/SSHDWrapper.swift#L115)
+launches a per-connection daemon. The fixed endpoint's status, result
+and cancel operations are then reachable. Its `state/off` marker refuses submissions until
+scoped native preflight and [explicit admission enablement](OPERATIONS.md#remote-macos-validation).
+The installer creates no account or route and starts/restarts no service. The guest LaunchDaemon
+becomes eligible at the next guest boot. Refresh/removal needs its own reviewed scoped procedure.
+
+The same installer accepts narrowly scoped public-key lifecycle plans for an installed host.
+These private mode-0600 JSON files contain `version: 1`, `mode: "host-key"` and `action`:
+`stage` adds `public_key` naming the replacement public-key file; `retire` names the exact old
+`public_key` and already-staged `replacement_public_key`; `revoke` has no additional fields.
+Run `--plan PRIVATE_JSON` to check, then add `--apply` only under the setup/rotation grant.
+Every action requires the existing admission-off marker and no active run, preserves that marker,
+and changes only the installation's protected `authorized_keys`. Staging retains the current key
+and its exact source restriction. Retirement requires both keys to match; revocation empties the
+key file only after retained evidence is acknowledged. Unrelated key rows or account restrictions
+are refused. These local checks cannot establish that Linux has adopted a replacement: follow the
+[verification order](OPERATIONS.md#remote-macos-validation) before retiring either old identity.
 
 The protected Mac configuration is
 `/Library/Application Support/AltitudeValidation/broker.json`: version, dedicated runner UID,
@@ -565,6 +587,8 @@ private state/template paths and the canonical installed Python. The state direc
 VM executable are administrator-owned and not group/other writable. The SSH entrypoint accepts only
 `altitude-validation-v1`; it never takes a caller-selected configuration, template or executable.
 The template manifest records exact file and VM-executable SHA-256 identities.
+The runner is trusted host code: it owns its private state directory and can remove `state/off`.
+That marker coordinates admission; it does not constrain a compromised runner or administrator.
 
 Inside the guest, `/Library/Application Support/AltitudeValidation/guest.json` records the fictional
 user, trusted tool PATH, dependency fingerprints and offline store/browser paths. An installed root
@@ -572,11 +596,39 @@ LaunchDaemon invokes the protected guest supervisor with isolated Python. The su
 the two input/results shares with root UID/GID mapping, drops candidate execution to the fictional
 user's GUI context and keeps its receipt/log separate from candidate-writable artifacts.
 
-Before enabling real submissions, record native preflight for daemon admission and worker/child
-refusal, manager/socket spoofing and identity drift refusal, SSH restrictions, offline guest network
-and filesystem boundaries, root-only receipt/log shares, Chromium's own sandbox, effective resource
-limits, interruption/expiry cleanup and result acknowledgement. Then record one exact-revision
-Linux-to-Mac command and an unavailable-Mac attempt. Neither run nor preflight is recorded yet.
+The adapter's CLI/configuration was checked against
+[macosvm 0.2-2 source](https://github.com/s-u/macosvm/tree/91a2da195b1a2a7bec52877bfb985170e8b1248c).
+That source accepts `--no-gui --no-audio --no-serial`, preserves explicit `networks: []`, and maps
+each share's `volume` to its virtiofs tag. Apple's
+[directory-sharing API](https://developer.apple.com/documentation/virtualization/vzvirtiofilesystemdeviceconfiguration)
+supports manual tag-based mounts; its
+[permission contract](https://developer.apple.com/documentation/virtualization/vzvirtiofilesystemdevice)
+uses the host process's effective UID and ignores guest ownership changes. These are source and
+API checks, not evidence that the installed binary or guest enforces the requested isolation.
+
+Native preflight records each of these before routine admission:
+
+- The installed, digest-pinned `macosvm` build accepts the exact generated flags/configuration,
+  launches headlessly as the standard runner, exposes exactly the two named shares and no network
+  adapter, and provides no host device/clipboard passthrough. Record its version and binary digest.
+- A fresh forced-command SSH session reaches the runner's existing GUI job domain and completes a
+  supervised job. Reject another source, password/interactive authentication, a different command,
+  TTY, forwarding and caller-selected configuration; status works while submissions remain off.
+- Inside the guest, both custom tags mount with the local `mount_virtiofs -u 0 -g 0` options,
+  input additionally read-only. Observe root ownership and permissions: the candidate cannot
+  traverse/write the results share, rewrite receipt/log, modify input or access other host paths.
+  Prove these effects under the candidate UID, rather than relying on a successful mount alone.
+- `launchctl asuser` plus the root supervisor's privilege drop reaches the fictional guest's GUI
+  bootstrap, runs as the standard UID/GID with no sudo privileges, and supports fixture LaunchAgent
+  tests. Confirm usable GUI login and repeat after disposable guest boot.
+- Daemon admission accepts the authenticated daemon and rejects workers/children, spoofed manager
+  sockets and identity drift. Offline dependencies match; Chromium keeps its own sandbox.
+- Resource limits, command timeout, supervisor crash, cancellation, scratch detachment, clone cleanup
+  and result acknowledgement leave matching receipts and no surviving guest job. Include a run
+  near the deadline and observe the cleanup reserve without exceeding the approved one-hour total.
+
+Then record one exact-revision Linux-to-Mac command and an unavailable-Mac attempt. Neither run nor
+native preflight is recorded yet.
 The physical laptop and ARM64 container gaps remain explicit in the
 [validation matrix](DEVELOPMENT.md#validation-environments). Dependency refresh, credential rotation
 and removal follow [operations](OPERATIONS.md#remote-macos-validation) under their scoped authority.

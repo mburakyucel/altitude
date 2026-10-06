@@ -76,11 +76,12 @@ def validate_request(value: dict) -> None:
     operation = value.get('operation')
     keys = {'operation', 'run_id'}
     if operation == 'submit':
-        keys |= {'argv', 'payload', 'expires'}
+        keys |= {'argv', 'payload', 'duration'}
         argv = value.get('argv')
         if (not isinstance(argv, list) or not 1 <= len(argv) <= 256 or
                 any(not isinstance(arg, str) or '\x00' in arg or len(arg) > 65536 for arg in argv) or
-                not isinstance(value.get('payload'), dict) or type(value.get('expires')) is not int):
+                not isinstance(value.get('payload'), dict) or type(value.get('duration')) is not int or
+                not 120 < value['duration'] <= 3600):
             raise ValueError('Invalid validation submission')
     elif operation == 'result':
         if 'received' in value:
