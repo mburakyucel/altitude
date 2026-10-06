@@ -517,7 +517,8 @@ Prepare these inputs before installation:
   at most 64 GiB; it has at most four vCPUs/8 GiB RAM and no network/audio/serial/host shares.
   Setup Assistant or licensing steps may require the operator; neither runtime bypasses them.
 - Inside that template, a fictional standard guest user with GUI login and no sudo privileges,
-  reviewed Python/Git/Node/pnpm/browser tools and writable disposable caches. Provision exact
+  reviewed Python/Git/Node/pnpm/browser tools, the suite's image converter/color libraries
+  (`ffmpeg`, `lcms2`, `webp` on macOS), and writable disposable caches. Provision exact
   offline packages/browser binaries and record dependency fingerprints from reviewed main. No
   coding credentials, personal data or operator account state belong in the template.
 
@@ -529,7 +530,9 @@ reviewed code/configuration into administrator-owned locations, creates the dist
 and installs the relay plus keyless identity-verifier socket/service units. The verifier runs as
 altd's UID without capabilities, remote networking or a key. Admission requires kernel peer-process
 handles and authenticated manager evidence; unavailable evidence refuses the request. The setup
-does not restart Altitude. [Architecture](ARCHITECTURE.md) states the daemon/admin trust boundary.
+trusts administrator-maintained OS Python and its system packages. Reinstallation refreshes only
+the relay/verifier services after active transfers finish; it does not restart Altitude.
+[Architecture](ARCHITECTURE.md) states the daemon/admin trust boundary.
 
 Prepare the Mac and its guest with `scripts/setup_validation_mac.py`. Its read-only entry points are:
 
@@ -540,7 +543,8 @@ python3 scripts/setup_validation_mac.py --plan PRIVATE_JSON
 
 The private, mode-0600 plan uses `version: 1`, `mode` (`host` or `guest`), `account`, canonical
 `python` and the reviewed code-set `source_sha256`. A host plan also names `template`, its manifest
-`template_sha256`, the dedicated Ed25519 `public_key` file and restricted private `source_network`.
+`template_sha256`, the dedicated Ed25519 `public_key` file and restricted private `source_network`
+(exactly one source address, with a /32 or /128 prefix).
 A guest plan adds `candidate` (the reviewed dependency checkout), `fingerprints`, `store`, `browsers`
 and trusted tool `path`. Fingerprints include at least `web/package.json` and `web/pnpm-lock.yaml`,
 plus every other manifest governing provisioned dependencies. Keep all plan values local.
