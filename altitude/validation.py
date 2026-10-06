@@ -349,10 +349,11 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             raise ValueError("alt task validate: Altitude is restarting; retry when it is ready")
-        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, owner=owner)
+        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, target=target, owner=owner)
 
 
-def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object, owner) -> dict:
+def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object,
+         target: object, owner) -> dict:
     S.require_task_slug(slug)
     if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
             or sum(len(a) + 1 for a in argv) > COMMAND_LIMIT):
