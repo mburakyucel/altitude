@@ -997,6 +997,36 @@ The [recovery procedure](CLI.md#dirty-checkout-recovery) leaves resumption expli
 task with a saved `main-unpushed` fault can requeue on explicit resume independently of deployment
 recovery; its fresh dispatch still requires a fetched current base and a valid isolated worktree.
 
+Release publication uses one task-bound grant and one fixed `alt task publish` operation. The grant
+retains the original operator message, repository/version/full commit, validated asset paths and
+hashes, committed notes, attempt and optional deadline. Upload captures unchanged bytes at run time;
+the grant stores no asset bytes. Direct approval names version/commit; a
+contextual answer retains its exact historical question revision. L2 records its own task-chat
+answer; L3 records project-chat approval. The recorder judges consent and later corrections;
+the daemon checks provenance and scope. Revoked or consumed approval cannot mint another grant.
+
+Publishing admits only a connection from the current owner's worker job, with matching
+project/task/attempt/state. The fixed daemon operation checks the approved commit's main ancestry,
+exact-SHA push `check` job, dated notes and unchanged validated assets. It creates the task's draft,
+uploads and verifies assets, then publishes and reads back the tag and files. It creates no tag
+before the draft is ready, adopts no foreign draft and permits no tag movement/deletion, asset
+replacement or immutable-setting change. Durable phase records and a global repository/version
+ledger under Altitude's `releases` directory retain task ownership across restart; retries reconcile
+remote state first. Only a definite create refusal without a remote side effect clears ownership.
+Each write checks revocation/deadline, and every attempt has task audit evidence. Revocation cannot
+recall a request already sent. Completion consumes the grant; task completion or a new attempt
+expires it. Resume preserves it. A replacement grant under still-valid approval may recover only
+that task's recorded draft with the same target/files, preserving the original approval's historical
+identity and deadline.
+
+The engine seam generates exact publish/check allowances at launch/resume. A mid-turn grant needs
+an ordinary same-attempt resume to load them. Stale native permission cannot override daemon
+revocation; inherited policy is unchanged. This controls Altitude's supported command, not every raw
+GitHub call made with the operator's account. Recorded hashes prove asset integrity, not independent
+build provenance; publication appends a fixed disclosure of that limit to the dated notes.
+[Release publication](RELEASING.md#publish-a-release) records native first-use and
+macOS evidence gaps; [the CLI](CLI.md#release-publication) defines the grant and recovery interface.
+
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
 project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
@@ -1581,7 +1611,9 @@ Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
 published private-preview version and release notes. Pushing the approved tag runs the release
 workflow, which checks that commit's main `check` run, builds and attests the archive, `install.py`
 and the generated `install.sh`, and publishes them as the GitHub release that the one-command install
-fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
+fetches. An approved task owner can instead publish captured manual-build assets through the
+task's release grant, without hosted build attestation. Publication does not gate automatic
+activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
 
 ### Web delivery

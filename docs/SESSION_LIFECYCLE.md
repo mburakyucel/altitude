@@ -414,6 +414,29 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
+### Release permission on resume
+
+A recorded [release grant](CLI.md#release-publication) supplies exact native allow rules for that
+task's `alt task publish <slug>` and `alt task publish <slug> --check` forms through the engine seam.
+The grant result shows the exact commands with the literal slug; shell-variable or quoted forms
+are not promised to match the native rule.
+Launch/resume regenerates task settings; recording a grant does not reload a running engine.
+After a mid-turn grant the owner checkpoints and parks for L3 to resume the same attempt. Project-chat
+approval is recorded by L3 before that resume. Neither operation grants merge approval or changes
+inherited engine policy or user settings.
+
+The resumed owner first runs `--check` without GitHub writes, then publishes through the same
+daemon authority contract on either engine. Check acceptance does not prove the distinct publish
+invocation is admitted. A native refusal is reported without bypassing it. Live publish acceptance
+and GitHub ordering remain first-use evidence, as recorded in the [release guide](RELEASING.md#publish-a-release).
+
+Normal resume retains the grant. A new attempt expires it; a still-valid, unrevoked original
+approval may support a replacement grant for the same target/files, preserving its historical
+identity and original deadline. Revocation, task completion,
+deadline or consumed publication blocks further writes even if a running engine retains an allow
+rule. An interrupted publication keeps its task-owned draft and phase evidence for read-back
+reconciliation; it never automatically repeats an uncertain write or deletes remote state.
+
 ### Image delivery and recovery
 
 Project and task messages may contain managed `images` references with an opaque ID, display name,
