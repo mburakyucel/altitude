@@ -1191,13 +1191,16 @@ consumption, steering, resume and explicit exits; they do not establish live-pro
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
-marker or resume claim, L3 turn, adversarial review, or report verification in flight. Running and blocked workers do not
+marker or resume claim, L3 turn, adversarial review, validation run, or report verification in flight.
+Validation holds through bounded execution, evidence recording and cleanup. Running and blocked workers themselves do not
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
 fault releases a window whose unit died silently. altd runs the guarded build-and-restart
-script itself.
+script itself. Validation also refuses new runs during that window. Unexpected daemon exit or host
+reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
+delivery keeps the original run area for recovery.
 The web update notice is dismissible per browser for the pending update and failure identity.
 Ordinary polling, navigation, refresh and quiet-point changes preserve dismissal; a new update
 or new activation failure can notify again. Monitor retains the overview's update status and

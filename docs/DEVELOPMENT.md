@@ -278,12 +278,17 @@ and `make browser-sandbox` call it automatically inside a task.
 - **Results.** Regular files that the command writes to `/results` are copied to the task folder's
   `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches that
   folder from Altitude's home without following links. Links and oversized files are skipped and
-  listed. The run's container, clone and area are removed afterwards, including after a timeout, a stop
-  or an altd restart.
+  listed. The run's container, clone and area are removed afterwards, including after a timeout or a stop.
+  Activation waits through execution, evidence recording and cleanup; validation admission shares
+  the restart fence and refuses runs once restart is requested.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#machine-access), with
   purpose `validation`, the command, commit, image, exit and how it ended. A run that altd did not
-  see end is recorded as interrupted at the next start. The runner admits no run until that start has
-  removed everything earlier runs left, and stays closed, with the reason in altd's log, if it cannot.
+  see end, including an expired run left by a host reboot or unexpected daemon exit, is stopped and
+  recorded as interrupted at the next start. Its log and results are copied before scratch files are
+  removed. A completed evidence copy is reused if ledger recording was interrupted. If evidence cannot
+  be copied, the record names its original paths and the run area is retained for recovery. The runner
+  admits no run until earlier areas are removed, and stays closed, with the reason in altd's log, if
+  evidence recording or cleanup cannot finish.
 - **Switch.** Settings → **Validation runs** is on after install. Turning it off stops a running
   run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
   runner's storage, where a worker cannot turn it back on.

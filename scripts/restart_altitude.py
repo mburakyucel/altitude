@@ -85,7 +85,7 @@ def require_deployed_checkout() -> None:
 
 
 def require_idle() -> None:
-    # 2026-09-07 queue starvation: detached workers survive; only launch/bind, L3 and report windows hold.
+    # Detached workers survive; validation holds through its bounded execution and evidence recording (#649).
     # Ask the live daemon too: its L3 turns and verification are process-local, unlike task markers.
     if unit_properties().get("ActiveState") == "active":
         try:
@@ -98,7 +98,7 @@ def require_idle() -> None:
         active = [f"{p}/{t['slug']}" for p in config.load_projects() for t in S.list_tasks(p)
                   if t.get("dispatching") or t.get("resume_claim")]
         if not quiet or active:
-            raise RestartError("restart refused while dispatch, L3 or report verification is active: " + ", ".join(active))
+            raise RestartError("restart refused while dispatch, L3, validation or report verification is active: " + ", ".join(active))
         # The operator command also closes entry until the replacement daemon answers.
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pending = S.read_json(flag, {}) or {}

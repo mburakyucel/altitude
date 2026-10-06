@@ -247,8 +247,10 @@ Other self-deploy refusals fault immediately. A self-deploy fast-forward marks a
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
-Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn, or report
-verification is in flight, `altd` runs the guarded restart script below as a transient user unit.
+Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn,
+adversarial review, validation run, or report verification is in flight, `altd` runs the guarded
+restart script below as a transient user unit. Validation holds the quiet point through its
+one-hour execution limit, evidence recording and cleanup. New validation runs wait once restart is requested.
 A failing restart unit files a system fault naming its reason for L3 immediately. While its
 request is still pending it also records the reason as `error` in `monitor/restart-pending.json`
 and marks it `failed`, and the hold lifts. A restart that has not happened
@@ -261,7 +263,7 @@ An explicitly authorized operator can restart sooner by pressing Restart on the 
 (shown only at the narrow quiet point, including while workers run) or running `make restart`
 from the deployed primary checkout. The command refuses another clone/worktree, a non-exact or
 dirty `main`, and an in-flight dispatch,
-L3 turn, or report verification. Both engines run L2 workers in independent transient user units,
+L3 turn, adversarial review, validation run, or report verification. Both engines run L2 workers in independent transient user units,
 so workers survive and are adopted after restart. Dispatch and
 L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
@@ -319,8 +321,12 @@ Task owners run installation VMs, containers and sandboxed-browser checks throug
 time, started by altd as the operator's account. Its image, image layers and the cached Ubuntu cloud
 image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 GiB free there, and its own area is removed
 when it ends; the first run builds the image, which takes several minutes. Settings → **Validation
-runs** turns the runner off: a running run stops and its container and files are removed. Each run
-appears on its task as a machine run with purpose `validation`.
+runs** turns the runner off: a running run stops and its container and scratch files are removed
+after its log and results are retained. Each run appears on its task as a machine run with purpose
+`validation`. Activation waits for admitted validation to finish recording evidence. After an
+unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
+and records them as interrupted. If copying evidence fails, the ledger names the original paths
+in the runner area; that area stays intact and new runs stay refused pending recovery.
 
 ## Voice input
 

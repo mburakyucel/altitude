@@ -383,10 +383,10 @@ def pinned_option(role: str, project: dict, *, engine: str | None = None,
 
 @contextmanager
 def restart_lock(*, exclusive: bool = False):
-    """Fence the short activation windows (2026-09-07: running workers starved activation).
+    """Fence activation against daemon work and bounded validation, never detached workers.
 
-    Shared holders are dispatch, review admission, L3 and report handling, never detached workers. The exclusive
-    requester checks quiet and records requested_at before another holder can enter, across processes.
+    Shared holders are dispatch, review admission, L3, validation and report handling. The exclusive requester
+    checks quiet and records requested_at before another holder can enter, across processes.
     """
     MONITOR_DIR.mkdir(parents=True, exist_ok=True)
     with (MONITOR_DIR / "restart.lock").open("a") as handle:
