@@ -767,7 +767,7 @@ def send_now_unavailable(project: str) -> str | None:
         return lifecycle["reason"]
     choice = _select(project)
     if not choice.get("engine"):
-        return f"No engine is available: {choice['why']}"
+        return "No engine is available. The message stays queued."
     turn = _active.get(project)
     if turn and turn["trigger"] == "chat" and not turn.get("provider_started"):
         return "The current turn is starting. Retry Send now shortly."

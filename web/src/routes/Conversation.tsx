@@ -400,7 +400,7 @@ export default function Conversation({
             <ul className="queued" aria-label="Queued messages">
               {queued.map((row, index) => (
                 <li key={row.id} className="queued-row">
-                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? `Sending now · ${row.send_now_reason || "runs next"}` : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
+                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
                     <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
