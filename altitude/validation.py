@@ -331,6 +331,8 @@ def stop_all() -> None:
     """Stop the admitted run, if any. Called after the setting is saved off, so a request admitted later is refused.
     The marker covers a unit not created yet: its script checks the marker first, and the marker exists before the
     stop, so the unit either already exists and is stopped or starts, finds the marker and exits."""
+    from . import validation_remote
+    validation_remote.stop_all()
     with _state:
         if not _active:
             return
@@ -341,7 +343,7 @@ def stop_all() -> None:
 
 
 def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object = False, publish: object = None,
-        owner=lambda task: False) -> dict:
+        target: object = "local", owner=lambda task: False) -> dict:
     """One validation run for the running owner's current attempt; returns the command's exit status and output.
     `owner(task)` says whether the request comes from that task's own worker."""
     with config.restart_lock() as ready:
@@ -357,6 +359,18 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         raise ValueError(f"alt task validate: supply a command of at most {COMMAND_LIMIT} characters after --")
     if not isinstance(kvm, bool) or publish is not None and (type(publish) is not int or not 1 <= publish <= 65535):
         raise ValueError("alt task validate: --kvm is on or off and --publish names one container port")
+    if target not in ("local", "macos"):
+        raise ValueError("alt task validate: choose local or macos")
+    if target == "macos":
+        if kvm or publish is not None:
+            raise ValueError("alt task validate: the offline Mac guest offers no KVM or published host ports")
+        task = S.load_task(project, slug)
+        if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("worktree"):
+            raise PermissionError("alt task validate: only the running owner's current attempt may run validation")
+        if not owner(task):
+            raise PermissionError("alt task validate: only this task's owner may run its validation")
+        from . import validation_remote
+        return validation_remote.run(project, slug, task, argv)
     unavailable = platform.validation_unavailable()
     if unavailable:
         raise ValueError(f"alt task validate: {unavailable}")

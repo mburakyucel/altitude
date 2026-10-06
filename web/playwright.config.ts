@@ -19,7 +19,7 @@ export default defineConfig({
     // pnpm ui sets a shared, writable browser cache under the Altitude home before runner startup.
     channel: "chromium",
     launchOptions: {
-      chromiumSandbox: false,
+      chromiumSandbox: process.env.ALTITUDE_VALIDATION === "1",
       // Capture stays inside Chromium; walkthroughs never request a physical microphone.
       args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
       // Crashpad also needs a writable directory even with Playwright's temporary browser profile.

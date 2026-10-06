@@ -1822,7 +1822,7 @@ def _supervise(job: Path) -> int:
             child = None
         for stream in streams:
             os.close(stream)
-        if child is not None and not terminal:
+        if child is not None and not terminal and not spec.get("allow_idle_sleep"):
             # Idle sleep waits for the job (a closed lid still sleeps); the assertion ends with this supervisor.
             try:
                 subprocess.Popen([CAFFEINATE, "-i", "-w", str(own)], stdin=subprocess.DEVNULL,
@@ -2151,6 +2151,100 @@ def validation_runroot() -> str:
     return f"/run/user/{os.getuid()}/altitude-validation"
 
 
+# --- Remote validation transport ---------------------------------------------------------------------------------
+
+VALIDATION_RELAY_SOCKET = '/run/altitude-validation-relay/control.sock'
+VALIDATION_FRAME_LIMIT = 384 * 1024 * 1024
+
+
+def validation_frame_encode(value: dict) -> bytes:
+    """The relay and remote forced command share one bounded JSON wire format."""
+    data = json.dumps(value, separators=(',', ':'), allow_nan=False).encode('utf-8')
+    if len(data) > VALIDATION_FRAME_LIMIT:
+        raise ValueError('Validation message exceeds the transfer limit')
+    return struct.pack('!Q', len(data)) + data
+
+
+def validation_frame_read(stream) -> dict:
+    def exact(size):
+        parts = bytearray()
+        while len(parts) < size:
+            chunk = stream.read(min(size - len(parts), 1024 * 1024))
+            if not chunk:
+                raise ValueError('Incomplete validation message')
+            parts.extend(chunk)
+        return bytes(parts)
+
+    size = struct.unpack('!Q', exact(8))[0]
+    if not 0 < size <= VALIDATION_FRAME_LIMIT:
+        raise ValueError('Validation message exceeds the transfer limit')
+    value = json.loads(exact(size))
+    if not isinstance(value, dict):
+        raise ValueError('Validation message must be an object')
+    return value
+
+
+def validation_remote_request(request: dict) -> dict:
+    """Only altd can use this fixed credential relay; workers receive an explicit refusal."""
+    if not sys.platform.startswith('linux'):
+        return {'status': 'unavailable', 'accepted': False,
+                'error': 'The remote validation submitter requires Linux'}
+    connected = False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(125)
+            connection.connect(VALIDATION_RELAY_SOCKET)
+            connected = True
+            connection.sendall(validation_frame_encode(request))
+            with connection.makefile('rb') as stream:
+                return validation_frame_read(stream)
+    except (OSError, ValueError, TypeError):
+        response = {'status': 'unavailable', 'error': 'The remote validation relay is unavailable'}
+        if not connected:
+            response['accepted'] = False
+        return response
+
+
+def validation_relay_peer(connection, config: dict) -> bool:
+    """Authenticate the daemon, never another process merely sharing its Unix user.
+
+    A pidfd pins lifetime while cgroup, executable and process start time are inspected.
+    Unreadable identity evidence refuses access. The administrator and daemon are trusted.
+    """
+    if not sys.platform.startswith('linux'):
+        return False
+    descriptor = None
+    try:
+        if int(Path('/proc/sys/kernel/yama/ptrace_scope').read_text().strip()) < 1:
+            return False
+        pid, uid, _gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid != config['daemon_uid'] or pid <= 0:
+            return False
+        descriptor = os.pidfd_open(pid)
+        process = Path('/proc') / str(pid)
+        # comm is parenthesized and can contain whitespace and closing parentheses.
+        before = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+        if (process / 'cgroup').read_text().splitlines() != ['0::' + config['daemon_cgroup']]:
+            return False
+        actual = (process / 'exe').stat()
+        expected = Path(config['daemon_executable']).stat()
+        if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+            return False
+        after = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+        return before == after and not select.select([descriptor], [], [], 0)[0]
+    except (OSError, ValueError, IndexError, KeyError, AttributeError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def validation_relay_transfer_limits() -> None:
+    """The single relay child cannot fill its scratch filesystem with remote output."""
+    import resource
+    resource.setrlimit(resource.RLIMIT_FSIZE, (VALIDATION_FRAME_LIMIT + 8, VALIDATION_FRAME_LIMIT + 8))
+
+
 # --- Host speech -------------------------------------------------------------------------------------------------
 
 def speech_runtime() -> tuple[str | None, str]:
@@ -2176,3 +2270,253 @@ def available_memory() -> int | None:
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+# --- Offline native validation guests ---------------------------------------------------------------------------
+
+def validation_trusted_file(path: Path) -> None:
+    """A setup-owned input cannot be substituted by the standard runner or a guest."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise RuntimeError("validation setup paths must be absolute")
+    for entry in (path, *path.parents):
+        info = entry.lstat()
+        expected = stat.S_ISREG if entry == path else stat.S_ISDIR
+        if not expected(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError("validation setup must be root-owned and not writable by other accounts")
+
+
+def validation_host_identity() -> dict:
+    """OS evidence deliberately excludes the machine name, account and network addresses."""
+    if not _darwin():
+        return {"os": "linux", "version": host_platform.release(),
+                "architecture": host_platform.machine(), "chip": "unavailable"}
+
+    def read(argv):
+        return subprocess.check_output(argv, text=True, timeout=10).strip()
+
+    return {"os": "macos", "version": read(["/usr/bin/sw_vers", "-productVersion"]),
+            "build": read(["/usr/bin/sw_vers", "-buildVersion"]),
+            "architecture": host_platform.machine(),
+            "chip": read(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"])}
+
+
+def validation_deadline_clock() -> float:
+    """Continuous elapsed seconds include laptop sleep; callers also persist wall-clock expiry."""
+    if not _darwin():
+        return time.monotonic()
+
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    library.mach_continuous_time.restype = ctypes.c_uint64
+    base = Timebase()
+    if library.mach_timebase_info(ctypes.byref(base)) or not base.denom:
+        raise RuntimeError("continuous validation deadline clock is unavailable")
+    return library.mach_continuous_time() * base.numer / base.denom / 1_000_000_000
+
+
+def _validation_digest(path: Path) -> str:
+    import hashlib
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def _validation_standard_account(username: str | None = None):
+    import grp
+    import pwd
+    account = pwd.getpwnam(username) if username else pwd.getpwuid(os.getuid())
+    if account.pw_uid < 500 or grp.getgrnam("admin").gr_gid in os.getgrouplist(account.pw_name, account.pw_gid):
+        raise RuntimeError("validation requires a standard, non-admin account")
+    return account
+
+
+def _validation_template(template: Path) -> tuple[dict, dict, str]:
+    manifest_path = template / "manifest.json"
+    validation_trusted_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text())
+    if set(manifest) != {"version", "files", "executable", "executable_sha256"} or manifest["version"] != 1:
+        raise RuntimeError("unsupported validation template manifest")
+    if set(manifest["files"]) != {"vm.json", "disk.img", "aux.img"}:
+        raise RuntimeError("validation template must contain one disk and one auxiliary image")
+    for name, digest in manifest["files"].items():
+        path = template / name
+        validation_trusted_file(path)
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise RuntimeError("invalid validation template fingerprint")
+        if _validation_digest(path) != digest:
+            raise RuntimeError("validation template fingerprint mismatch")
+    executable = Path(manifest["executable"])
+    validation_trusted_file(executable)
+    if _validation_digest(executable) != manifest["executable_sha256"]:
+        raise RuntimeError("validation VM executable fingerprint mismatch")
+    vm = json.loads((template / "vm.json").read_text())
+    required = {"version", "hardwareModel", "machineId", "storage", "ram", "cpus", "displays", "networks", "audio"}
+    if not required <= set(vm) or set(vm) - required - {"os", "serial", "shares"}:
+        raise RuntimeError("unexpected validation VM configuration")
+    if (vm["version"] != 1 or vm.get("os", "macos") != "macos" or vm["networks"] != []
+            or vm["audio"] is not False or vm.get("shares", []) != [] or vm.get("serial", False) is not False):
+        raise RuntimeError("validation VM must have no network, audio, serial or template shares")
+    if (type(vm["cpus"]) is not int or not 1 <= vm["cpus"] <= 4
+            or type(vm["ram"]) is not int or not 0 < vm["ram"] <= 8 * 1024**3):
+        raise RuntimeError("validation VM exceeds CPU or memory limits")
+    if vm["storage"] != [{"type": "disk", "file": "disk.img", "readOnly": False},
+                          {"type": "aux", "file": "aux.img", "readOnly": False}]:
+        raise RuntimeError("validation VM permits only its disposable disk and auxiliary image")
+    if (not 0 < (template / "disk.img").stat().st_size <= 64 * 1024**3
+            or not 0 < (template / "aux.img").stat().st_size <= 64 * 1024**2):
+        raise RuntimeError("validation template exceeds disk limits")
+    displays = vm["displays"]
+    if (not isinstance(displays, list) or len(displays) != 1 or set(displays[0]) != {"dpi", "width", "height"}
+            or any(type(value) is not int or not 1 <= value <= 4096 for value in displays[0].values())):
+        raise RuntimeError("validation VM requires one bounded virtual display")
+    return manifest, vm, _validation_digest(manifest_path)
+
+
+def validation_vm_prepare(template: Path, area: Path) -> dict:
+    """Prepare an offline, disposable macOS VM. The caller owns admission, deadline and cleanup.
+
+    ``area/results`` is a 512 MiB filesystem: copy evidence before calling cleanup. Native
+    preflight must verify the guest's virtiofs permissions and root-supervisor installation.
+    """
+    if not _darwin() or host_platform.machine() != "arm64":
+        raise RuntimeError("native validation executor needs an Apple-silicon Mac")
+    if os.geteuid() == 0:
+        raise RuntimeError("native validation executor must use a standard account")
+    _validation_standard_account()
+    template, area = Path(template), Path(area)
+    if not area.is_absolute() or area.resolve() != area or area.stat().st_uid != os.getuid():
+        raise RuntimeError("validation area must be an owned directory without links")
+    manifest, vm, digest = _validation_template(template)
+    if shutil.disk_usage(area).free < (template / "disk.img").stat().st_size + 2 * 1024**3:
+        raise RuntimeError("insufficient capacity for the complete validation disk and result budget")
+    if not (area / "input").is_dir() or (area / "input").is_symlink():
+        raise RuntimeError("validation input directory is unavailable")
+    clone = area / "vm"
+    clone.mkdir(mode=0o700)
+    for name in ("disk.img", "aux.img"):
+        subprocess.run(["/bin/cp", "-c", str(template / name), str(clone / name)], check=True, timeout=60)
+        (clone / name).chmod(0o600)
+    for disk in vm["storage"]:
+        disk["file"] = str(clone / disk["file"])
+    results = area / "results"
+    results.mkdir(mode=0o700, exist_ok=True)
+    if results.is_symlink() or any(results.iterdir()):
+        raise RuntimeError("validation results mountpoint must be an empty directory")
+    scratch = area / "results.sparseimage"
+    subprocess.run(["/usr/bin/hdiutil", "create", "-size", "512m", "-fs", "APFS", "-type", "SPARSE",
+                    "-volname", "AltitudeValidation", str(scratch)], check=True, timeout=60,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["/usr/bin/hdiutil", "attach", "-nobrowse", "-owners", "on", "-mountpoint", str(results),
+                    str(scratch)], check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    vm.update(networks=[], audio=False, serial=False, shares=[
+        {"path": str(area / "input"), "volume": "altitude-input", "readOnly": True},
+        {"path": str(results), "volume": "altitude-results", "readOnly": False}])
+    config = clone / "vm.json"
+    config.write_text(json.dumps(vm))
+    return {"argv": [manifest["executable"], "--no-gui", "--no-audio", "--no-serial", str(config)],
+            "host": validation_host_identity(), "template": digest,
+            "executable": manifest["executable_sha256"]}
+
+
+def validation_vm_cleanup(area: Path) -> None:
+    """Detach only this run's image, then discard its writable VM. Fail closed on detach failure."""
+    area = Path(area)
+    if not area.is_absolute() or area.resolve() != area:
+        raise RuntimeError("invalid validation cleanup area")
+    scratch = area / "results.sparseimage"
+    if scratch.exists():
+        if not _darwin():
+            raise RuntimeError("native validation image cleanup needs macOS")
+        data = plistlib.loads(subprocess.check_output(["/usr/bin/hdiutil", "info", "-plist"], timeout=15))
+        for image in data.get("images", []):
+            if image.get("image-path") != str(scratch):
+                continue
+            devices = [entry.get("dev-entry", "") for entry in image.get("system-entities", [])]
+            device = next((entry for entry in devices if re.fullmatch(r"/dev/disk[0-9]+", entry)), None)
+            if device is None:
+                raise RuntimeError("cannot identify validation scratch device for cleanup")
+            subprocess.run(["/usr/bin/hdiutil", "detach", device], check=True, timeout=30,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        scratch.unlink()
+    clone = area / "vm"
+    if clone.exists():
+        if clone.is_symlink():
+            raise RuntimeError("validation clone was replaced by a link")
+        shutil.rmtree(clone)
+
+
+def validation_guest_account(username: str) -> dict:
+    """Require the prepared fictional standard account and its already active GUI session."""
+    if not _darwin() or os.geteuid() != 0:
+        raise RuntimeError("validation guest supervisor requires root inside its macOS guest")
+    account = _validation_standard_account(username)
+    privileges = subprocess.run(["/usr/bin/sudo", "-n", "-l", "-U", username], timeout=10,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if privileges.returncode != 1:
+        raise RuntimeError("validation guest account must have no sudo privileges")
+    subprocess.run(["/bin/launchctl", "print", f"gui/{account.pw_uid}"], check=True, timeout=10,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"name": username, "uid": account.pw_uid, "gid": account.pw_gid, "home": account.pw_dir}
+
+
+def validation_guest_mounts(input_path: Path, results_path: Path) -> None:
+    if not _darwin() or os.geteuid() != 0:
+        raise RuntimeError("validation guest shares require its root supervisor")
+    for tag, path in (("altitude-input", input_path), ("altitude-results", results_path)):
+        path.mkdir(mode=0o755, exist_ok=True)
+        if path.is_symlink() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
+            raise RuntimeError("validation guest mountpoints must be root-owned protected directories")
+        options = ["-r"] if path == input_path else []
+        subprocess.run(["/sbin/mount_virtiofs", *options, "-u", "0", "-g", "0", tag, str(path)],
+                       check=True, timeout=15)
+
+
+def validation_guest_launch(argv: list[str], *, cwd: Path, env: dict, account: dict, output):
+    """Root joins the fictional GUI bootstrap, then drops privileges before candidate execution.
+
+    The prepared account has no sudo grant. sudo here is invoked by the root supervisor, not
+    by candidate code; an empty environment is supplied after sudo's policy processing.
+    """
+    command = ["/bin/launchctl", "asuser", str(account["uid"]), "/usr/bin/sudo", "-n", "-H",
+               "-u", f"#{account['uid']}", "-g", f"#{account['gid']}", "--", "/usr/bin/env", "-i"]
+    command.extend(f"{name}={value}" for name, value in env.items())
+    command.extend(argv)
+    return subprocess.Popen(command, cwd=cwd, env={"PATH": "/usr/bin:/bin"}, stdin=subprocess.DEVNULL,
+                            stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def _validation_broker_job(ident: str) -> str:
+    if not re.fullmatch(r"[a-f0-9]{32}", ident):
+        raise ValueError("invalid validation run identity")
+    if not _darwin():
+        raise RuntimeError("native validation broker requires macOS")
+    return f"altitude-validation-mac-{ident}.service"
+
+
+def validation_broker_launch(worker: list[str], ident: str, area: Path) -> None:
+    """A bounded detached job owns the broker worker and every VM descendant.
+
+    The existing native supervisor retires the entire coalition when its command dies, including
+    descendants that create another session. This job permits ordinary laptop idle sleep.
+    """
+    name = _validation_broker_job(ident)
+    env = {**_login_env(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    spec = _detached_spec(name, [*worker, ident], env)
+    spec.update(runtime_max=3600, allow_idle_sleep=True, log=os.devnull)
+    subprocess.run(_entry("launch", json.dumps(spec)), cwd=area, env=env, check=True, timeout=60,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def validation_broker_active(ident: str) -> bool:
+    return job_active(_validation_broker_job(ident), {})
+
+
+def validation_broker_stop(ident: str) -> None:
+    name = _validation_broker_job(ident)
+    # Inspection failure is not evidence of termination and must not release admission.
+    if job_active(name, {}):
+        job_stop(name, timeout=30)
+    if job_active(name, {}):
+        raise RuntimeError("validation broker termination is unconfirmed")

@@ -2059,14 +2059,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "target"}:
                         raise ValueError("alt task validate: unsupported fields")
                     peer, local = self.client_address, self.connection.getsockname()
 
                     def owner(task: dict) -> bool:
                         return task_owner_connection(o["project"], o["slug"], task, peer, local)
                     return self._json(validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                     kvm=o.get("kvm", False), publish=o.get("publish"), owner=owner))
+                                                     kvm=o.get("kvm", False), publish=o.get("publish"),
+                                                     target=o.get("target", "local"), owner=owner))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
@@ -3041,6 +3042,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
         threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
+        from . import validation_remote
+        threading.Thread(target=validation_remote.reconcile, name="remote-validation-reconcile", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")
