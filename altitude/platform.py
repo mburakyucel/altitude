@@ -2205,38 +2205,326 @@ def validation_remote_request(request: dict) -> dict:
         return response
 
 
-def validation_relay_peer(connection, config: dict) -> bool:
-    """Authenticate the daemon, never another process merely sharing its Unix user.
+VALIDATION_ATTESTER_SOCKET = '/run/altitude-validation-attester/control.sock'
+VALIDATION_SYSTEM_BUS = '/run/dbus/system_bus_socket'
+VALIDATION_ATTEST_SECONDS = 20
 
-    A pidfd pins lifetime while cgroup, executable and process start time are inspected.
-    Unreadable identity evidence refuses access. The administrator and daemon are trusted.
-    """
+
+def validation_user_manager_socket(uid: int) -> str:
+    return f'/run/user/{uid}/systemd/private'
+
+
+def validation_attester_confine() -> None:
+    """Do not expose the keyless verifier's private mount namespace through same-user procfs."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    libc.prctl.restype = ctypes.c_int
+    if libc.prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE, without modifying the daemon's dumpability.
+        raise OSError('Validation verifier process confinement is unavailable')
+
+
+def validation_root_socket(path: str, *, group: int | None = None) -> None:
+    """Socket activation is trusted through administrator-owned routing, not service peer credentials."""
+    target = Path(path)
+    for item in (target, *target.parents):
+        info = item.lstat()
+        if info.st_uid != 0 or (item != target and (info.st_mode & 0o022 or not stat.S_ISDIR(info.st_mode))):
+            raise ValueError('Validation socket routing is not administrator-owned')
+        if item == target and (not stat.S_ISSOCK(info.st_mode) or
+                               (group is not None and (info.st_gid != group or stat.S_IMODE(info.st_mode) != 0o660))):
+            raise ValueError('Invalid validation socket ownership or permissions')
+
+
+def validation_system_bus_identity() -> int:
+    """Administrator setup pins the root-routed system bus's dedicated Unix user."""
+    validation_root_socket(VALIDATION_SYSTEM_BUS)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(2)
+        connection.connect(VALIDATION_SYSTEM_BUS)
+        _pid, uid, _gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        with validation_socket_peer(connection, uid):
+            return uid
+
+
+def validation_pidfd_pid(descriptor: int) -> int:
+    """Read our descriptor, never a caller-selected proc path; only a live process counts."""
+    if select.select([descriptor], [], [], 0)[0]:
+        raise ValueError('Validation identity has exited')
+    for line in Path(f'/proc/self/fdinfo/{descriptor}').read_text().splitlines():
+        if line.startswith('Pid:'):
+            pid = int(line.split(':', 1)[1])
+            if pid > 0:
+                return pid
+    raise ValueError('Validation identity is not a live process handle')
+
+
+@contextmanager
+def validation_socket_peer(connection, uid: int):
+    """SO_PEERPIDFD binds the actual connecting process, with no numeric-PID lookup race."""
+    pid, actual_uid, _gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    if actual_uid != uid or pid <= 0:
+        raise ValueError('Unexpected validation peer')
+    descriptor = connection.getsockopt(socket.SOL_SOCKET, getattr(socket, 'SO_PEERPIDFD', 77))
+    try:
+        os.set_inheritable(descriptor, False)
+        if validation_pidfd_pid(descriptor) != pid:
+            raise ValueError('Validation peer lifetime changed')
+        yield descriptor
+        if validation_pidfd_pid(descriptor) != pid:
+            raise ValueError('Validation peer lifetime changed')
+    finally:
+        os.close(descriptor)
+
+
+def validation_attestation_send(connection, value: dict, descriptor: int | None = None) -> None:
+    data = json.dumps(value, separators=(',', ':'), allow_nan=False).encode()
+    if len(data) > 512:
+        raise ValueError('Invalid validation attestation size')
+    ancillary = [] if descriptor is None else [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack('i', descriptor))]
+    if connection.sendmsg([data], ancillary) != len(data):
+        raise ValueError('Incomplete validation attestation')
+
+
+def validation_attestation_read(connection, *, with_descriptor: bool = False) -> tuple[dict, int | None]:
+    data, ancillary, flags, _address = connection.recvmsg(512, socket.CMSG_SPACE(16), socket.MSG_CMSG_CLOEXEC)
+    descriptors = []
+    try:
+        for level, kind, content in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                descriptors.extend(struct.unpack(f'{len(content) // 4}i', content))
+            else:
+                raise ValueError('Unexpected attestation control message')
+        if flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC) or len(descriptors) != int(with_descriptor):
+            raise ValueError('Invalid validation attestation descriptors')
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise ValueError('Invalid validation attestation')
+        descriptor = descriptors.pop() if descriptors else None
+        return value, descriptor
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+def validation_relay_peer(connection, config: dict) -> bool:
+    """A keyless verifier authenticates the actual socket peer as the manager's current altd."""
     if not sys.platform.startswith('linux'):
         return False
-    descriptor = None
     try:
         if int(Path('/proc/sys/kernel/yama/ptrace_scope').read_text().strip()) < 1:
             return False
-        pid, uid, _gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-        if uid != config['daemon_uid'] or pid <= 0:
-            return False
-        descriptor = os.pidfd_open(pid)
-        process = Path('/proc') / str(pid)
-        # comm is parenthesized and can contain whitespace and closing parentheses.
-        before = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
-        if (process / 'cgroup').read_text().splitlines() != ['0::' + config['daemon_cgroup']]:
-            return False
-        actual = (process / 'exe').stat()
-        expected = Path(config['daemon_executable']).stat()
-        if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
-            return False
-        after = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
-        return before == after and not select.select([descriptor], [], [], 0)[0]
-    except (OSError, ValueError, IndexError, KeyError, AttributeError):
+        with validation_socket_peer(connection, config['daemon_uid']) as descriptor:
+            validation_root_socket(VALIDATION_ATTESTER_SOCKET, group=os.getgid())
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as verifier:
+                verifier.settimeout(VALIDATION_ATTEST_SECONDS)
+                verifier.connect(VALIDATION_ATTESTER_SOCKET)
+                # This is the root socket creator, not the User= service consuming the listener.
+                with validation_socket_peer(verifier, 0):
+                    nonce = uuid.uuid4().hex
+                    validation_attestation_send(verifier, {'nonce': nonce}, descriptor)
+                    result, _unused = validation_attestation_read(verifier)
+                    if result != {'nonce': nonce, 'allowed': True}:
+                        return False
+        return True
+    except (OSError, ValueError, TypeError, IndexError, KeyError, AttributeError):
         return False
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
+
+
+class _ValidationBus:
+    """Tiny typed sd-bus binding on an already connected and authenticated descriptor.
+
+    Never set an address or use a default bus: that would reconnect after peer verification.
+    Only scalar replies are consumed. The attester's outer deadline bounds the whole proof.
+    """
+    def __init__(self, connection, *, client: bool):
+        self.client = client
+        self.lib = ctypes.CDLL('libsystemd.so.0')
+        pointer = ctypes.c_void_p
+        string = ctypes.c_char_p
+        signatures = {
+            'sd_bus_new': ([ctypes.POINTER(pointer)], ctypes.c_int),
+            'sd_bus_set_fd': ([pointer, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            'sd_bus_set_bus_client': ([pointer, ctypes.c_int], ctypes.c_int),
+            'sd_bus_set_method_call_timeout': ([pointer, ctypes.c_uint64], ctypes.c_int),
+            'sd_bus_start': ([pointer], ctypes.c_int),
+            'sd_bus_close_unref': ([pointer], pointer),
+            'sd_bus_message_unref': ([pointer], pointer),
+            'sd_bus_message_read_basic': ([pointer, ctypes.c_char, pointer], ctypes.c_int),
+            'sd_bus_message_at_end': ([pointer, ctypes.c_int], ctypes.c_int),
+            'sd_bus_message_exit_container': ([pointer], ctypes.c_int),
+            'sd_bus_message_get_sender': ([pointer], string),
+            'sd_bus_get_property': ([pointer, string, string, string, string, pointer,
+                                     ctypes.POINTER(pointer), string], ctypes.c_int),
+            'sd_bus_call_method': ([pointer, string, string, string, string, pointer,
+                                    ctypes.POINTER(pointer), string], ctypes.c_int),
+        }
+        for name, (arguments, result) in signatures.items():
+            function = getattr(self.lib, name)
+            function.argtypes, function.restype = arguments, result
+        self.bus = pointer()
+        self._check(self.lib.sd_bus_new(ctypes.byref(self.bus)))
+        descriptor = os.dup(connection.fileno())
+        try:
+            self._check(self.lib.sd_bus_set_fd(self.bus, descriptor, descriptor))
+            descriptor = None  # sd-bus now owns this duplicate of the same socket.
+            self._check(self.lib.sd_bus_set_bus_client(self.bus, int(client)))
+            self._check(self.lib.sd_bus_set_method_call_timeout(self.bus, 2_000_000))
+            self._check(self.lib.sd_bus_start(self.bus))
+        except BaseException:
+            if descriptor is not None:
+                os.close(descriptor)
+            self.close()
+            raise
+
+    @staticmethod
+    def _check(result: int) -> int:
+        if result < 0:
+            raise ValueError('Validation manager query is unavailable')
+        return result
+
+    def close(self):
+        if self.bus:
+            self.lib.sd_bus_close_unref(self.bus)
+            self.bus = ctypes.c_void_p()
+
+    def _scalar(self, message, kind: str):
+        value = ctypes.c_uint32() if kind == 'u' else ctypes.c_char_p()
+        if self.lib.sd_bus_message_read_basic(message, kind.encode(), ctypes.byref(value)) <= 0:
+            raise ValueError('Invalid validation manager scalar')
+        if self.lib.sd_bus_message_at_end(message, 0) <= 0:
+            raise ValueError('Unexpected validation manager reply fields')
+        result = value.value if kind == 'u' else (value.value or b'').decode('utf-8')
+        if isinstance(result, str) and (not result or len(result) > 512):
+            raise ValueError('Invalid validation manager string')
+        return result
+
+    def _sender(self, message, destination: str) -> None:
+        if self.client and self.lib.sd_bus_message_get_sender(message) != destination.encode():
+            raise ValueError('Validation manager reply has an unexpected sender')
+
+    def call(self, destination: str, path: str, interface: str, member: str, argument: str, kind: str):
+        message = ctypes.c_void_p()
+        try:
+            self._check(self.lib.sd_bus_call_method(self.bus, destination.encode(), path.encode(),
+                        interface.encode(), member.encode(), None, ctypes.byref(message), b's',
+                        ctypes.c_char_p(argument.encode())))
+            self._sender(message, destination)
+            return self._scalar(message, kind)
+        finally:
+            self.lib.sd_bus_message_unref(message)
+
+    def property(self, destination: str, path: str, interface: str, member: str, kind: str):
+        message = ctypes.c_void_p()
+        try:
+            self._check(self.lib.sd_bus_get_property(self.bus, destination.encode(), path.encode(),
+                        interface.encode(), member.encode(), None, ctypes.byref(message), kind.encode()))
+            self._sender(message, destination)
+            value = self._scalar(message, kind)
+            self._check(self.lib.sd_bus_message_exit_container(message))
+            if self.lib.sd_bus_message_at_end(message, 1) <= 0:
+                raise ValueError('Unexpected validation manager property fields')
+            return value
+        finally:
+            self.lib.sd_bus_message_unref(message)
+
+
+@contextmanager
+def _validation_manager_connection(path: str, uid: int, *, client: bool, pid: int | None = None,
+                                   cgroup: str | None = None):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(2)
+        connection.connect(path)
+        with validation_socket_peer(connection, uid) as descriptor:
+            if pid is not None and validation_pidfd_pid(descriptor) != pid:
+                raise ValueError('Validation manager endpoint is impersonated')
+            if cgroup is not None and Path(f'/proc/{pid}/cgroup').read_text().splitlines() != ['0::' + cgroup]:
+                raise ValueError('Unexpected validation manager service')
+            bus = _ValidationBus(connection, client=client)
+            try:
+                yield bus, descriptor
+            finally:
+                bus.close()
+
+
+def _validation_unit(bus, destination: str, unit: str) -> tuple[int, str]:
+    path = bus.call(destination, '/org/freedesktop/systemd1', 'org.freedesktop.systemd1.Manager',
+                    'GetUnit', unit, 'o')
+    if not re.fullmatch(r'/org/freedesktop/systemd1/unit/[A-Za-z0-9_]+', path):
+        raise ValueError('Invalid validation manager unit object')
+    active = bus.property(destination, path, 'org.freedesktop.systemd1.Unit', 'ActiveState', 's')
+    pid = bus.property(destination, path, 'org.freedesktop.systemd1.Service', 'MainPID', 'u')
+    cgroup = bus.property(destination, path, 'org.freedesktop.systemd1.Service', 'ControlGroup', 's')
+    if active != 'active' or type(pid) is not int or pid <= 0:
+        raise ValueError('Validation manager unit is not active')
+    return pid, cgroup
+
+
+def validation_attest_daemon(descriptor: int, config: dict) -> bool:
+    """Root manager -> pinned user manager -> current daemon; every query uses its verified connection."""
+    try:
+        uid = config['daemon_uid']
+        if os.getuid() != uid or int(Path('/proc/sys/kernel/yama/ptrace_scope').read_text().strip()) < 1:
+            return False
+        peer_pid = validation_pidfd_pid(descriptor)
+        validation_root_socket(VALIDATION_SYSTEM_BUS)
+        with _validation_manager_connection(VALIDATION_SYSTEM_BUS, config['system_bus_uid'], client=True) as (root_bus, root_fd):
+            driver, driver_path = 'org.freedesktop.DBus', '/org/freedesktop/DBus'
+            owner = root_bus.call(driver, driver_path, driver, 'GetNameOwner', 'org.freedesktop.systemd1', 's')
+            if not re.fullmatch(r':[0-9]+\.[0-9]+', owner):
+                return False
+            owner_uid = root_bus.call(driver, driver_path, driver, 'GetConnectionUnixUser', owner, 'u')
+            owner_pid = root_bus.call(driver, driver_path, driver, 'GetConnectionUnixProcessID', owner, 'u')
+            if owner_uid != 0 or owner_pid != 1:
+                return False
+            manager = _validation_unit(root_bus, owner, f'user@{uid}.service')
+            manager_group = f'/user.slice/user-{uid}.slice/user@{uid}.service'
+            if manager[1] != manager_group:
+                return False
+            with _validation_manager_connection(validation_user_manager_socket(uid), uid, client=False,
+                                                pid=manager[0], cgroup=manager_group + '/init.scope') as (user_bus, manager_fd):
+                process = Path('/proc') / str(peer_pid)
+                start = (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+                if _validation_unit(user_bus, 'org.freedesktop.systemd1', SERVICE) != (peer_pid, config['daemon_cgroup']):
+                    return False
+                if (process / 'cgroup').read_text().splitlines() != ['0::' + config['daemon_cgroup']]:
+                    return False
+                actual, expected = (process / 'exe').stat(), Path(config['daemon_executable']).stat()
+                if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                    return False
+                if _validation_unit(user_bus, 'org.freedesktop.systemd1', SERVICE) != (peer_pid, config['daemon_cgroup']):
+                    return False
+                if _validation_unit(root_bus, owner, f'user@{uid}.service') != manager:
+                    return False
+                if start != (process / 'stat').read_text().rsplit(')', 1)[1].split()[19]:
+                    return False
+                for handle in (descriptor, root_fd, manager_fd):
+                    validation_pidfd_pid(handle)
+        return True
+    except (OSError, ValueError, TypeError, IndexError, KeyError, AttributeError):
+        return False
+
+
+def validation_attester_query(descriptor: int) -> bool:
+    """Bound the entire native proof, including authentication, in a fixed keyless child."""
+    try:
+        result = subprocess.run(['/usr/bin/python3', '-I', '-B',
+                '/usr/local/lib/altitude-validation-relay/scripts/validation_attester.py', '--prove', str(descriptor)],
+                pass_fds=(descriptor,), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=VALIDATION_ATTEST_SECONDS - 2, check=False,
+                env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
+        return result.returncode == 0 and result.stdout == b'allowed\n'
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def validation_attester_relay(connection, uid: int) -> bool:
+    try:
+        with validation_socket_peer(connection, uid) as descriptor:
+            pid = validation_pidfd_pid(descriptor)
+            return Path(f'/proc/{pid}/cgroup').read_text().splitlines() == [
+                '0::/system.slice/altitude-validation-relay.service']
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def validation_relay_transfer_limits() -> None:
@@ -2520,3 +2808,41 @@ def validation_broker_stop(ident: str) -> None:
         job_stop(name, timeout=30)
     if job_active(name, {}):
         raise RuntimeError("validation broker termination is unconfirmed")
+
+
+def validation_setup_account(username: str, *, guest: bool = False) -> dict:
+    """Read-only setup prerequisites; account creation and login remain separate actions."""
+    if not _darwin() or host_platform.machine() != "arm64":
+        raise RuntimeError("validation setup needs an Apple-silicon Mac")
+    if guest:
+        return validation_guest_account(username)
+    account = _validation_standard_account(username)
+    subprocess.run(["/bin/launchctl", "print", f"gui/{account.pw_uid}"], check=True, timeout=10,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"name": username, "uid": account.pw_uid, "gid": account.pw_gid, "home": account.pw_dir}
+
+
+def validation_setup_sshd(configuration: str, username: str, address: str) -> dict:
+    """Check syntax and actual per-account rules without editing or reloading SSH."""
+    if not _darwin():
+        raise RuntimeError("Mac validation SSH setup needs macOS")
+    base = ["/usr/sbin/sshd", "-f", "/dev/stdin"]
+    subprocess.run([*base, "-t"], input=configuration, text=True, check=True, timeout=15,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run([*base, "-T", "-C", f"user={username},host=localhost,addr={address}"],
+                            input=configuration, text=True, check=True, timeout=15,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return dict(line.split(" ", 1) for line in result.stdout.splitlines() if " " in line)
+
+
+def validation_setup_clone(source: Path, destination: Path) -> None:
+    """Clone a pinned template inside administrator setup; never start it."""
+    if not _darwin():
+        raise RuntimeError("Mac validation template copying needs macOS")
+    subprocess.run(["/bin/cp", "-c", str(source), str(destination)], check=True, timeout=120,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def validation_setup_python(executable: Path) -> None:
+    subprocess.run([str(executable), "-I", "-B", "-c", "import sys; assert sys.version_info >= (3, 12)"],
+                   check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

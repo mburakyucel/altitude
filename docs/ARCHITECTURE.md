@@ -1033,6 +1033,31 @@ and removes their scratch files. Failed evidence delivery retains the original a
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
 evidence recording and cleanup, and refuses admission once restart is requested. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
+The same endpoint accepts `target=macos` from the Linux daemon for an exact committed candidate in a
+disposable offline macOS guest. `validation_remote.py` owns single-run admission, persisted identity,
+result acknowledgement and interruption/cleanup reconciliation; `validation_payload.py` verifies
+bounded shallow Git objects and regular-file evidence. Host transport, process identity, VM setup,
+deadline and termination operations stay in `platform.py`. It uses the existing task validation
+ledger and artifacts; it does not schedule tasks on another installation.
+
+An administrator-installed relay under a distinct nonroot UID holds the dedicated restricted SSH
+credential. A keyless identity verifier runs under altd's UID in a separate root-owned system service.
+It binds the socket peer's kernel process handle to the current daemon reported by authenticated
+system/user-manager connections, then verifies lifetime, service membership and executable identity.
+Missing identity evidence refuses access; mutable command lines and cgroup membership alone grant
+nothing. The relay has no user-manager access, and the verifier has no SSH key or network authority.
+This boundary trusts the administrator and altd, including its installed code; it is not protection
+against a compromised daemon or a universal hostile same-user isolation claim.
+
+On the Mac a forced SSH command invokes only protected installed code. The dedicated standard
+runner boots a cloned administrator-owned template without networking, with input/results shares
+alone. A root guest supervisor executes candidate code as a fictional standard guest account,
+keeps logs/receipts separate from candidate artifacts, and returns revision-bound evidence.
+Uncertain cancellation or cleanup keeps Mac admission closed while Linux validation continues.
+These mechanisms have deterministic fixtures; native setup, isolation and end-to-end evidence
+remain pending. [Setup](SETUP.md#remote-macos-validation) and
+[operations](OPERATIONS.md#remote-macos-validation) define their boundaries.
+
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,

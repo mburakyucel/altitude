@@ -155,34 +155,5 @@ class TestValidationRelay(unittest.TestCase):
         self.assertNotIn('CAP_SYS_PTRACE', setup.SERVICE)
 
 
-class TestRelayDaemonIdentity(unittest.TestCase):
-    def test_uid_cgroup_executable_and_process_lifetime_all_match(self):
-        connection = mock.Mock()
-        connection.getsockopt.return_value = struct.pack('3i', 1234, 1001, 1001)
-        texts = {'/proc/sys/kernel/yama/ptrace_scope': '1',
-                 '/proc/1234/stat': '1234 (fake process) ' + ' '.join(['S'] + ['0'] * 18 + ['100']),
-                 '/proc/1234/cgroup': '0::' + CONFIG['daemon_cgroup'] + '\n'}
-        executable = SimpleNamespace(st_dev=1, st_ino=2)
-        with mock.patch.object(platform.sys, 'platform', 'linux'), \
-                mock.patch.object(Path, 'read_text', autospec=True, side_effect=lambda path: texts[str(path)]), \
-                mock.patch.object(Path, 'stat', return_value=executable), \
-                mock.patch.object(platform.os, 'pidfd_open', return_value=90), \
-                mock.patch.object(platform.os, 'close') as close, \
-                mock.patch.object(platform.select, 'select', return_value=([], [], [])) as poll:
-            self.assertTrue(platform.validation_relay_peer(connection, CONFIG))
-            for field, value in [('daemon_uid', 1002), ('daemon_cgroup', '/worker.service')]:
-                self.assertFalse(platform.validation_relay_peer(connection, {**CONFIG, field: value}))
-            with mock.patch.object(Path, 'stat', side_effect=PermissionError):
-                self.assertFalse(platform.validation_relay_peer(connection, CONFIG))
-            with mock.patch.object(Path, 'stat', side_effect=[executable, SimpleNamespace(st_dev=1, st_ino=3)]):
-                self.assertFalse(platform.validation_relay_peer(connection, CONFIG))
-            poll.return_value = ([90], [], [])
-            self.assertFalse(platform.validation_relay_peer(connection, CONFIG))
-            poll.return_value = ([], [], [])
-            texts['/proc/sys/kernel/yama/ptrace_scope'] = '0'
-            self.assertFalse(platform.validation_relay_peer(connection, CONFIG))
-            close.assert_called_with(90)
-
-
 if __name__ == '__main__':
     unittest.main()

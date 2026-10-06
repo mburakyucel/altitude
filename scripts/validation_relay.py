@@ -15,7 +15,16 @@ import stat
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+SOURCE = Path(__file__).absolute().parent.parent
+if __name__ == '__main__':
+    # Check before package imports, including any existing bytecode and package initializers.
+    if SOURCE != Path('/usr/local/lib/altitude-validation-relay') or not sys.flags.isolated:
+        raise SystemExit('Validation relay requires its isolated administrator-installed source')
+    for entry in (SOURCE, *SOURCE.parents, *SOURCE.rglob('*')):
+        info = entry.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022 or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+            raise SystemExit('Validation relay source is not immutable')
+sys.path.insert(0, str(SOURCE))
 from altitude import platform
 
 CONFIG = Path('/etc/altitude-validation-relay/config.json')
@@ -134,6 +143,8 @@ def handle(connection, config: dict) -> None:
 
 def main() -> int:
     try:
+        if not sys.flags.isolated:
+            raise ValueError('Relay requires isolated Python')
         if os.getuid() == 0:
             raise ValueError('Relay requires its dedicated nonroot service identity')
         config = load_config()

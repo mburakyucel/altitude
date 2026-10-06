@@ -495,6 +495,88 @@ The overview shows the saved backend; the Voice input page holds its two choices
 (with **Set up voice** and its progress) and **Browser recognition**, each saved immediately.
 Installation itself downloads no models and makes no paid provider calls. User conversations and tasks use the account's normal allowance/charges.
 
+## Remote macOS validation
+
+The [remote validation target](DEVELOPMENT.md#remote-macos-validation) is an opt-in Linux submitter
+and Apple-silicon Mac executor. Its code and deterministic fixtures do not establish installed or
+native-verified service. Installation requires its own scoped machine authority; proposal or merge
+approval does not grant it. No paid runner, general remote shell or live-provider test is included.
+The Mac's existing Altitude can own preparation and verification, so the operator handles only
+administrator authentication and unavoidable physical/guest setup interactions.
+
+Prepare these inputs before installation:
+
+- A private route between the machines, verified Mac host key, and a dedicated SSH key used only
+  by this relay. Restrict its Mac authorization to the Linux source and the fixed forced command;
+  password/interactive authentication, forwarding, PTY and arbitrary commands are unavailable.
+- A dedicated **standard** Mac runner account with an active GUI login, separate from everyday
+  data. Existing Remote Login/private routing must be authorized separately if absent. FileVault
+  unlock after reboot and first host/guest GUI login may need the operator at the laptop.
+- Administrator-owned canonical Python and pinned `macosvm` executables, enough storage for the
+  guest's full logical disk plus 2 GiB, and a shut-down offline macOS template. Its single disk is
+  at most 64 GiB; it has at most four vCPUs/8 GiB RAM and no network/audio/serial/host shares.
+  Setup Assistant or licensing steps may require the operator; neither runtime bypasses them.
+- Inside that template, a fictional standard guest user with GUI login and no sudo privileges,
+  reviewed Python/Git/Node/pnpm/browser tools and writable disposable caches. Provision exact
+  offline packages/browser binaries and record dependency fingerprints from reviewed main. No
+  coding credentials, personal data or operator account state belong in the template.
+
+The Linux installer is `python3 scripts/setup_validation_relay.py --install --config PRIVATE_JSON`,
+executed only as the separately authorized administrator action. Without `--install` it makes no
+changes. Its private JSON contains `daemon_uid`, `daemon_cgroup`, `daemon_executable`, `endpoint`,
+`account`, `identity_file` and `known_hosts`; never paste their values into task evidence. It copies
+reviewed code/configuration into administrator-owned locations, creates the distinct relay identity,
+and installs the relay plus keyless identity-verifier socket/service units. The verifier runs as
+altd's UID without capabilities, remote networking or a key. Admission requires kernel peer-process
+handles and authenticated manager evidence; unavailable evidence refuses the request. The setup
+does not restart Altitude. [Architecture](ARCHITECTURE.md) states the daemon/admin trust boundary.
+
+Prepare the Mac and its guest with `scripts/setup_validation_mac.py`. Its read-only entry points are:
+
+```sh
+python3 scripts/setup_validation_mac.py --source-digest
+python3 scripts/setup_validation_mac.py --plan PRIVATE_JSON
+```
+
+The private, mode-0600 plan uses `version: 1`, `mode` (`host` or `guest`), `account`, canonical
+`python` and the reviewed code-set `source_sha256`. A host plan also names `template`, its manifest
+`template_sha256`, the dedicated Ed25519 `public_key` file and restricted private `source_network`.
+A guest plan adds `candidate` (the reviewed dependency checkout), `fingerprints`, `store`, `browsers`
+and trusted tool `path`. Fingerprints include at least `web/package.json` and `web/pnpm-lock.yaml`,
+plus every other manifest governing provisioned dependencies. Keep all plan values local.
+
+Adding `--apply` to the checked plan is the separately authorized administrator action. The installer
+accepts a fresh destination only: it neither refreshes nor replaces an existing installation. It
+copies reviewed code and the pinned host template, or installs the guest LaunchDaemon. Host setup
+adds an account-specific SSH include and verifies its effective restrictions while preserving
+existing configuration. It does not create accounts, enable/reload SSH, establish networking or
+start/restart services. Host admission starts disabled until scoped native preflight succeeds;
+the guest LaunchDaemon becomes eligible at the next guest boot. Refresh/removal needs its own
+reviewed scoped procedure, with no implicit overwrite or automatic activation.
+
+The protected Mac configuration is
+`/Library/Application Support/AltitudeValidation/broker.json`: version, dedicated runner UID,
+private state/template paths and the canonical installed Python. The state directory is runner-owned
+0700 beneath administrator-owned parents. Configuration, imported code, interpreter, template and
+VM executable are administrator-owned and not group/other writable. The SSH entrypoint accepts only
+`altitude-validation-v1`; it never takes a caller-selected configuration, template or executable.
+The template manifest records exact file and VM-executable SHA-256 identities.
+
+Inside the guest, `/Library/Application Support/AltitudeValidation/guest.json` records the fictional
+user, trusted tool PATH, dependency fingerprints and offline store/browser paths. An installed root
+LaunchDaemon invokes the protected guest supervisor with isolated Python. The supervisor mounts
+the two input/results shares with root UID/GID mapping, drops candidate execution to the fictional
+user's GUI context and keeps its receipt/log separate from candidate-writable artifacts.
+
+Before enabling real submissions, record native preflight for daemon admission and worker/child
+refusal, manager/socket spoofing and identity drift refusal, SSH restrictions, offline guest network
+and filesystem boundaries, root-only receipt/log shares, Chromium's own sandbox, effective resource
+limits, interruption/expiry cleanup and result acknowledgement. Then record one exact-revision
+Linux-to-Mac command and an unavailable-Mac attempt. Neither run nor preflight is recorded yet.
+The physical laptop and ARM64 container gaps remain explicit in the
+[validation matrix](DEVELOPMENT.md#validation-environments). Dependency refresh, credential rotation
+and removal follow [operations](OPERATIONS.md#remote-macos-validation) under their scoped authority.
+
 ## When something does not work
 
 - **The page does not load:** inspect `alt service status` and `alt service logs`, the printed HTTPS

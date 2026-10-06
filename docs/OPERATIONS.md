@@ -328,6 +328,47 @@ unexpected daemon exit or host reboot, startup stops abandoned runs, retains the
 and records them as interrupted. If copying evidence fails, the ledger names the original paths
 in the runner area; that area stays intact and new runs stay refused pending recovery.
 
+### Remote macOS validation
+
+`alt task validate --target macos -- COMMAND` uses the same task ledger after the separate
+[Linux relay and Mac guest setup](SETUP.md#remote-macos-validation). The submitter is Linux; the
+executor is a disposable offline macOS guest on the operator's Apple-silicon Mac. Machine setup
+and native acceptance remain pending. The command needs no new per-run grant once scoped setup
+and isolation verification are complete. It does not authorize a live-provider test.
+
+Settings → **Validation runs** also refuses new Mac submissions and requests cancellation of a
+running Mac job. Cancellation is confirmed only after the remote supervisor and VM stop and their
+scratch mounts/clones are removed. Loss of the route, sleep, missing login or an unavailable SSH
+service cannot confirm cancellation. The pending run identity blocks further Mac submissions;
+Linux validation remains usable. After a daemon restart or a subsequent Mac request, reconciliation
+asks about that same run, retrieves matching results and acknowledges their digest. It never starts
+a replacement run to resolve uncertainty. An interrupted task row stays interrupted; later evidence
+appears separately in its validation artifacts and reconciliation event.
+
+Keep the laptop reachable and its dedicated runner logged in for native jobs; a locked screen may
+remain locked. The runner neither wakes the laptop nor bypasses FileVault/login. If native job
+termination, scratch detachment or result acknowledgement cannot be established, L3 owns a scoped
+recovery task. Do not erase admission records or manually claim success to make another run start.
+Inspect only the recorded run's job, private state and mount identity under the applicable grant;
+leave everyday services and unrelated mounts alone. Native recovery still needs observed evidence.
+
+Successful acknowledgement removes retained remote evidence. Unacknowledged evidence has an
+admission storage budget; exhausting it reports unavailable until reconciliation. Task artifacts
+follow normal task retention. Template disks and offline dependencies stay installed until an
+authorized refresh/removal. Refresh only from reviewed dependencies: provision the guest while
+trusted, shut it down, replace the protected template and recompute manifest/dependency fingerprints.
+A candidate with different manifests or missing offline packages receives `template refresh needed`;
+do not enable guest networking or update a template from candidate code.
+
+Rotate the dedicated SSH identity by provisioning replacement private key material and the matching
+source-restricted Mac authorized key, updating the Linux relay's private configuration, and verifying
+the new identity and worker refusal before removing the old key. Pin and verify a changed Mac host
+key independently; never disable host-key checking. Rotation/removal is scoped machine work, not a
+validation command. Retire the installed relay/verifier socket units and Mac-only validation SSH
+rule, installed code, state and copied template only after admission is disabled and remote termination,
+cleanup and evidence retrieval are confirmed. Preserve preexisting accounts, templates, unrelated SSH rules and Altitude
+services. Addresses, keys and private configuration stay off task chat, PRs, logs and reports.
+
 ## Voice input
 
 Dictation turns speech into draft text in every conversation. One machine setting selects how; typing

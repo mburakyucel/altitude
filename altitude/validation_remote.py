@@ -109,8 +109,10 @@ class Broker:
                           error="Mac validation cleanup needs recovery")
             write_json(area / "record.json", record)
             return
-        record.update(status="finished", exit=None, ended="interrupted", cleanup=True,
-                      error="Mac validation supervisor stopped without a confirmed result")
+        expired = time.time() >= record["expires"]
+        record.update(status="finished", exit=None, ended="timeout" if expired else "interrupted", cleanup=True,
+                      error="Mac validation deadline expired" if expired else
+                      "Mac validation supervisor stopped without a confirmed result")
         write_json(area / "record.json", record)
         active.unlink()
 
@@ -202,9 +204,15 @@ class Broker:
             remaining = max(0, record["expires"] - time.time())
             evidence = None
             try:
+                if (area / "cancel").exists():
+                    raise InterruptedError
+                if time.time() >= record["expires"]:
+                    raise TimeoutError
                 prepared = platform.validation_vm_prepare(self.template, area)
                 record.update(host=prepared["host"], template=prepared["template"])
-                if time.time() >= record["expires"] or (area / "cancel").exists():
+                if (area / "cancel").exists():
+                    raise InterruptedError
+                if time.time() >= record["expires"]:
                     raise TimeoutError
                 process = subprocess.Popen(prepared["argv"], stdin=subprocess.DEVNULL,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -238,6 +246,8 @@ class Broker:
                 evidence = payload.collect_results(area / "results")
                 write_json(area / "evidence.json", evidence)
                 record["evidence_digest"] = evidence["digest"]
+            except InterruptedError:
+                record.update(exit=None, ended="cancelled", error="Mac validation cancelled before execution")
             except TimeoutError:
                 record.update(exit=None, ended="timeout", error="Mac validation expired before execution")
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -269,7 +279,7 @@ def _call(operation: str, ident: str, **fields) -> dict:
 
 
 def _matches(response: dict, pending: dict) -> bool:
-    return all(response.get(key) == pending[key] for key in ("run_id", "commit", "tree", "payload_digest"))
+    return all(response.get(key) == pending[key] for key in ("run_id", "commit", "tree", "payload_digest", "argv"))
 
 
 def _deliver(response: dict, pending: dict, *, recovered: bool = False) -> dict:
@@ -280,17 +290,31 @@ def _deliver(response: dict, pending: dict, *, recovered: bool = False) -> dict:
     payload.restore_results(response["evidence"], area)
     fd = validation._task_dir_fd(pending["project"], pending["slug"])
     name = str(pending["n"]) + ("-recovered" if recovered else "")
+    temporary = "." + name + "-" + uuid.uuid4().hex
     try:
-        skipped = validation.copy_results(area, fd, name)
+        try:
+            existing = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            skipped = validation.copy_results(area, fd, temporary)
+            if skipped:
+                raise ValueError("Remote evidence was incomplete")
+            # A crash leaves only an unpublished temporary directory. The final
+            # result directory is always a complete copy and can be verified on retry.
+            os.rename(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+        else:
+            try:
+                if payload.collect_results(existing) != response["evidence"]:
+                    raise ValueError("Previously delivered remote evidence changed")
+            finally:
+                os.close(existing)
         log = area / "output.log"
         if log.is_file():
-            validation._copy_file(str(log), fd, name + ".log")
+            validation._copy_file(str(log), fd, temporary + ".log")
+            os.replace(temporary + ".log", name + ".log", src_dir_fd=fd, dst_dir_fd=fd)
         else:
             raise ValueError("Remote command log is missing")
     finally:
         os.close(fd)
-    if skipped:
-        raise ValueError("Remote evidence was incomplete")
     with log.open("rb") as stream:
         output = stream.read(65536).decode("utf-8", errors="replace")
     truncated = log.stat().st_size > 65536
@@ -320,11 +344,15 @@ def _reconcile() -> bool:
     response = _call("result", pending["run_id"])
     if not _matches(response, pending):
         return False
-    evidence = _deliver(response, pending, recovered=True) if "evidence" in response else {}
-    S.append_event(pending["project"], pending["slug"], "validation-reconciled", run_id=pending["run_id"],
-                   exit=response.get("exit"), cleanup=True, **evidence)
+    evidence = _deliver(response, pending, recovered=not pending.get("delivered")) if "evidence" in response else {}
+    if not any(event.get("kind") == "validation-reconciled" and event.get("run_id") == pending["run_id"]
+               for event in S.read_events(pending["project"], pending["slug"])):
+        S.append_event(pending["project"], pending["slug"], "validation-reconciled", run_id=pending["run_id"],
+                       exit=response.get("exit"), cleanup=True, **evidence)
     if "evidence" in response:
-        _call("result", pending["run_id"], received=response["evidence"]["digest"])
+        acknowledgement = _call("result", pending["run_id"], received=response["evidence"]["digest"])
+        if not _matches(acknowledgement, pending):
+            return False
     path.unlink()
     return True
 
@@ -365,7 +393,7 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
             "purpose": "validation", "target": "macos", "command": shlex.join(argv), "unit": unit,
             "commit": candidate["commit"], "tree": candidate["tree"], "payload_digest": candidate["digest"],
             "run_id": ident, "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
-        pending = {"project": project, "slug": slug, "n": row["n"], "run_id": ident, "row": row,
+        pending = {"project": project, "slug": slug, "n": row["n"], "run_id": ident, "row": row, "argv": argv,
                    "commit": candidate["commit"], "tree": candidate["tree"], "payload_digest": candidate["digest"]}
         _pending().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_json(_pending(), pending)
@@ -388,12 +416,17 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
             result["timed_out"] = response.get("ended") == "timeout"
             if "evidence" in response:
                 result.update(_deliver(response, pending))
-                _call("result", ident, received=response["evidence"]["digest"])
+                pending["delivered"] = True
+                write_json(_pending(), pending)
+                acknowledgement = _call("result", ident, received=response["evidence"]["digest"])
+                acknowledged = _matches(acknowledgement, pending)
             elif result["exit"] == 0:
                 raise ValueError("Successful Mac validation has no evidence")
-            if response.get("cleanup"):
-                _pending().unlink()
             else:
+                acknowledged = True
+            if response.get("cleanup") and acknowledged:
+                _pending().unlink()
+            elif not response.get("cleanup"):
                 result.update(exit=None, error="Mac validation cleanup remains unconfirmed")
             result["ended"] = response.get("ended", "unavailable")
         else:

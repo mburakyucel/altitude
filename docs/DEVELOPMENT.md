@@ -29,7 +29,7 @@ logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
-isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output, written
+isolated browser phases. The standard-library `scripts/time_command.py` reports wall/user/system timing on Linux and macOS, written
 as one block so the parallel branches never interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
@@ -294,9 +294,10 @@ and `make browser-sandbox` call it automatically inside a task.
   runner's storage, where a worker cannot turn it back on.
 
 The runner is available on Linux x86_64 with `podman` and `slirp4netns`. KVM needs the operator's
-account to hold `/dev/kvm`, as it does during a desktop login. The runner is not implemented on
+account to hold `/dev/kvm`, as it does during a desktop login. This local container target is not implemented on
 macOS, where Podman runs inside a virtual machine of its own and there is no KVM; there
-`alt task validate` reports it unavailable and the Settings switch says why. Options the fixed container does not offer still need a
+`alt task validate --target local` reports it unavailable. The separate remote Mac target below has a Linux submitter.
+Options the fixed container does not offer still need a
 [machine grant](CLI.md#machine-access).
 
 ### Browser verification
@@ -320,6 +321,57 @@ unavailable, or the browser refuses its sandbox inside it, checkpoint the eviden
 `--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
 Altitude's local fictional harness exception grants no authority for another project's verification.
 
+### Remote macOS validation
+
+```sh
+alt task validate --target macos -- make check
+alt task validate --target macos -- python3 scripts/platform_probe.py --service
+```
+
+After [separately authorized setup](SETUP.md#remote-macos-validation), the Linux daemon submits one
+command to a dedicated standard account on the operator's Apple-silicon Mac. The Mac starts a
+disposable offline macOS guest from an administrator-owned template. The same task admission,
+`machine.jsonl` validation rows and `validation/<n>/` artifacts apply. The record binds the command
+and result to the submitted commit, tree and payload digest, template digest, host and guest
+OS/build/architecture/chip facts. These entry points are implemented; native setup, isolation
+preflight and a real Linux-to-Mac run remain unverified. Fixture success is not Mac acceptance.
+
+Only the committed candidate's exact tree and shallow commit cross the connection. Other refs,
+history, dirty files, hooks and repository configuration stay local. The receiver verifies the
+payload and Git objects before execution; links, submodules, unsafe paths and oversized inputs
+are refused. Each payload is bounded to 64 MiB compressed and 256 MiB expanded. The guest receives
+read-only input and a root-owned results share; candidate code runs as a fictional standard user
+without sudo, credentials, host directories, clipboard or a network adapter. `RESULTS` and
+`ALTITUDE_VALIDATION_RESULTS` name its local writable artifact directory. The root guest supervisor
+captures output separately and exports regular files with a protected result receipt.
+
+The Mac admits one run at a time, for at most one hour, with at most four vCPUs and 8 GiB RAM.
+The guest disk is at most 64 GiB, and the results scratch image is 512 MiB. Free host storage must
+cover the guest's full logical disk plus 2 GiB. Returned evidence is limited to 256 MiB, including
+a 32 MiB command log. These configured limits require native measurement during setup. A missing,
+asleep or inaccessible Mac, missing GUI login, unavailable relay or dependency mismatch produces
+an explicit unavailable/uncertain result, never a pass. A locked screen alone is not a failure
+when the runner remains logged in and reachable; waking or unlocking the laptop is not automated.
+
+Dependency templates contain reviewed-main toolchains, frozen package stores and browser binaries.
+Candidate dependency manifests must match their recorded fingerprints; changed dependencies or
+missing offline packages require an authorized template refresh. Candidate code never runs during
+trusted provisioning. `ALTITUDE_VALIDATION=1` keeps Chromium's own sandbox enabled in the test harness.
+`--kvm` and `--publish` are local-container options and are refused for this target.
+
+Cancellation requests termination; a lost connection does not confirm it. The daemon keeps the same
+run identity through restart/reconciliation and does not submit a replacement while cancellation,
+result acknowledgement or cleanup is unresolved. Later recovered evidence is recorded separately
+from an interrupted result. The Mac retires the VM and scratch mounts before releasing admission;
+unconfirmed cleanup keeps Mac admission closed. Linux validation remains independent. See
+[operations](OPERATIONS.md#remote-macos-validation) for recovery and retention.
+
+`make check` establishes only journeys that actually run in the guest. The platform probe exercises
+disposable guest jobs/services, not the operator's installed Altitude. Physical laptop logout/login,
+reboot, FileVault, sleep/wake, host worker confinement, native Safari and physical iPhone acceptance
+remain separate evidence. The ARM64 Altitude container/runtime/launcher port is outside this lane
+and remains unavailable pending #643; remote transport does not establish container parity.
+
 ## Validation environments
 
 Each environment establishes one kind of evidence; running more of them does not widen what any one
@@ -336,7 +388,8 @@ blocks automating it.
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
-| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
+| Remote macOS guest | `alt task validate --target macos -- COMMAND` ([remote validation](#remote-macos-validation)); initial commands above | Exact committed candidate's Python/web suites and disposable guest job/service probes, with OS/chip/template identity and returned evidence | Physical laptop lifecycle, host worker confinement, native Safari/iOS, live providers, ARM64 Altitude container parity | Linux submitter/macOS executor implemented; scoped setup and native end-to-end/isolation evidence pending |
+| Native macOS host | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | Observed host service lifecycle, confinement, installation and Safari | Other macOS versions or architectures; unexecuted journeys | Native acceptance remains pending; guest results do not close host rows |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
 
 The container gate removes its verified private containers, volumes and images before asking Podman

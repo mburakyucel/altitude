@@ -106,9 +106,16 @@ deadline, and the #551 install and update evidence. Two operator decisions of
 September 28, 2026 shape it: machine-grant commands run unsandboxed, as on Linux, because launchd
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
-started. Native validation runs on the operator's Apple silicon Mac, as tasks on its Altitude
-instance; that evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
-authorized. Native probes make no provider calls or model downloads.
+started. The [remote validation entry point](DEVELOPMENT.md#remote-macos-validation),
+`alt task validate --target macos -- COMMAND`, submits from Linux to disposable offline macOS guests
+on the operator's Apple-silicon Mac. Its bounded transport and task evidence path are implemented;
+scoped machine setup, isolation preflight, a real exact-revision run and unavailable-Mac evidence
+remain pending. This work does not claim full #556 completion. Python/web suites and disposable
+guest service probes do not establish physical laptop lifecycle, host confinement, native Safari or
+iPhone acceptance; those remain owned native rows under #225/#551. The ARM64 Altitude container port
+and observed Mac container parity remain separate under #643. The Mac's own Altitude can own the
+scoped setup and native acceptance tasks. Evidence is recorded before README, setup or this roadmap
+call macOS supported. No paid runner is authorized. Native probes make no provider calls or model downloads.
 
 ## Early-user onboarding and public release
 

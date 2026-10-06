@@ -299,7 +299,7 @@ def restore(payload: dict, destination: Path) -> None:
         raise ValueError("Cannot restore validation candidate") from None
 
 
-def collect_results(directory: Path) -> dict:
+def collect_results(directory: Path | int) -> dict:
     """Capture regular evidence through no-follow descriptors, or fail as incomplete."""
     entries: dict[str, list] = {}
     total = 0
@@ -342,7 +342,7 @@ def collect_results(directory: Path) -> dict:
             raise ValueError("Validation evidence directory changed during collection")
 
     try:
-        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.dup(directory) if type(directory) is int else os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             walk(fd)
         finally:

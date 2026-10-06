@@ -208,3 +208,105 @@ class RemoteValidationTests(AltitudeCase):
         self.transport.side_effect = twice
         self.validate()
         self.assertEqual(len(self.launches), 1)
+
+    def test_lost_acknowledgement_retries_evidence_without_duplicate_command_or_event(self):
+        def lost_ack(request):
+            if "received" in request:
+                return {"status": "unavailable"}
+            return self.forward(request)
+
+        self.transport.side_effect = lost_ack
+        result = self.validate()
+        self.assertEqual(result["exit"], 0)
+        self.assertTrue(remote._pending().exists())
+        remote.reconcile()  # Re-read and verify the already published complete artifact tree.
+        self.assertTrue(remote._pending().exists())
+        self.transport.side_effect = self.forward
+        remote.reconcile()
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(len(self.launches), 1)
+        self.assertEqual(self.rows()[0]["exit"], 0)
+        self.assertEqual(len([e for e in S.read_events(self.project, self.slug)
+                              if e["kind"] == "validation-reconciled"]), 1)
+
+    def test_recovery_retries_after_log_publication_failure(self):
+        original = remote.os.replace
+        failed = []
+
+        def interrupt(source, destination, **kwargs):
+            if str(destination).endswith('.log') and not failed:
+                failed.append(True)
+                raise OSError('fixture interruption between artifact and log publication')
+            return original(source, destination, **kwargs)
+
+        self.patch(remote.os, "replace", side_effect=interrupt)
+        result = self.validate()
+        self.assertIsNone(result["exit"])
+        self.assertTrue(remote._pending().exists())
+        remote.reconcile()
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(len(self.launches), 1)
+        self.assertIsNone(self.rows()[0]["exit"])
+
+    def test_changed_published_evidence_refuses_reconciliation(self):
+        def lost_ack(request):
+            return {"status": "unavailable"} if "received" in request else self.forward(request)
+
+        self.transport.side_effect = lost_ack
+        result = self.validate()
+        (Path(result["results"]) / "output.log").write_text("changed after delivery")
+        self.transport.side_effect = self.forward
+        remote.reconcile()
+        self.assertTrue(remote._pending().exists())
+        self.assertEqual(len(self.launches), 1)
+
+    def admitted(self):
+        candidate = remote.payload.export(self.repo)
+        return self.broker.dispatch({"operation": "submit", "run_id": "a" * 32,
+                                    "argv": [sys.executable, "-c", "print('observed')"],
+                                    "payload": candidate, "expires": int(time.time()) + 3600})
+
+    def test_cancellation_before_boot_does_not_launch_a_vm(self):
+        self.admitted()
+        self.broker.dispatch({"operation": "cancel", "run_id": "a" * 32})
+        prepare = self.patch(platform, "validation_vm_prepare")
+        self.broker.work("a" * 32)
+        prepare.assert_not_called()
+        result = self.broker.dispatch({"operation": "status", "run_id": "a" * 32})
+        self.assertEqual(result["ended"], "cancelled")
+        self.assertTrue(result["cleanup"])
+
+    def test_active_vm_cancellation_records_output_and_confirmed_cleanup(self):
+        self.admitted()
+        area = self.broker._area("a" * 32)
+        command = [sys.executable, "-c", "import pathlib,sys,time; p=pathlib.Path(sys.argv[1]); "
+                   "p.mkdir(); (p/'output.log').write_text('guest is active'); time.sleep(5)", str(area / "results")]
+        self.patch(platform, "validation_vm_prepare", return_value={"argv": command, "host": {}, "template": "fixture"})
+        worker = threading.Thread(target=self.broker.work, args=("a" * 32,))
+        worker.start()
+        try:
+            deadline = time.monotonic() + 3
+            while not (area / "results/output.log").exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue((area / "results/output.log").is_file())
+            self.broker.dispatch({"operation": "cancel", "run_id": "a" * 32})
+        finally:
+            worker.join(timeout=7)
+        self.assertFalse(worker.is_alive())
+        result = self.broker.dispatch({"operation": "result", "run_id": "a" * 32})
+        self.assertEqual(result["ended"], "cancelled")
+        self.assertTrue(result["cleanup"])
+        self.assertIn("evidence", result)
+
+    def test_expired_or_dead_job_is_stopped_before_cleanup_and_never_relaunched(self):
+        self.admitted()
+        area = self.broker._area("a" * 32)
+        record = remote.read_json(area / "record.json")
+        record["expires"] = int(time.time()) - 1
+        remote.write_json(area / "record.json", record)
+        result = self.broker.dispatch({"operation": "status", "run_id": "a" * 32})
+        self.assertEqual(result["ended"], "timeout")
+        self.assertTrue(result["cleanup"])
+        self.assertFalse(self.alive)
+        self.assertFalse((area / "input").exists())
+        self.assertEqual(len(self.launches), 1)

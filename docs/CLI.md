@@ -1771,7 +1771,7 @@ not which local process calls; the grant record and its per-command log are the 
 ### Validation runs
 
 ```text
-alt task validate [--kvm] [--publish PORT] -- <command>
+alt task validate [--target local|macos] [--kvm] [--publish PORT] -- <command>
 ```
 
 The current owner runs one command against its task's committed `HEAD` in a disposable rootless
@@ -1785,6 +1785,15 @@ status (124 on timeout). altd accepts the request only from a process in the tas
 job. A non-running task, a stale attempt, another caller, a turned-off switch, missing KVM, low disk
 or a run already in progress refuses with the reason. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the container, its limits and cleanup.
+
+`--target macos` selects the [remote offline Mac guest](DEVELOPMENT.md#remote-macos-validation)
+from a Linux daemon after separately authorized setup. It keeps the same owner admission and task
+validation records; the candidate is its exact shallow committed tree, and the record includes
+template and host/guest identities. For example, `alt task validate --target macos -- make check`.
+Write artifacts to the guest's `RESULTS` environment variable. `--kvm` and `--publish` are refused.
+Missing transport or executor prerequisites report unavailable. A lost connection after submission
+retains the run identity for cancellation/result reconciliation and never means success or permission
+to submit a duplicate. Setup and native acceptance are still pending; see the linked coverage limits.
 
 ### Reading the task terminal
 
