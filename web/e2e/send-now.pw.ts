@@ -30,7 +30,7 @@ test.describe("L2 Send now", () => {
     await send("Check this immediately.");
     const selected = row("Check this immediately.");
     const button = selected.getByRole("button", { name: "Send now", exact: true });
-    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true }), selected.getByText("Interrupts current work like Stop, including attached reviews.")], hidden: [] });
+    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true }), selected.getByText("Stops work and reviews to deliver now.")], hidden: [] });
     if (info.project.name === "phone") expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await control("hold-stop");
     try {

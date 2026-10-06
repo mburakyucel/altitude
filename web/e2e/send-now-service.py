@@ -22,7 +22,9 @@ def main():
     S.regen_state_md(project)
 
     def answer(_prompt, **options):
-        text = l3.chat_history(project, 1)[0]["text"]
+        turn_id = l3.active(project)["id"]
+        text = next(row["text"] for row in l3.chat_history(project, None)
+                    if row.get("turn_id") == turn_id and row["role"] == "user")
         calls.append({"text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)

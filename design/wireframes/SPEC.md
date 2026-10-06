@@ -957,7 +957,7 @@ blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
 evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Interrupts current work like Stop, including attached reviews.** It requests the
+Send now explains **Stops work and reviews to deliver now.** It requests the
 existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success replaces only that bubble's text with **Message removed** and **Removed · not
