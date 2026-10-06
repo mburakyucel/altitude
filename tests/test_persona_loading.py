@@ -46,7 +46,9 @@ class _ProviderProcess:
     @property
     def prompt(self):
         text = self.stdin.getvalue()
-        return text if isinstance(text, str) else text.decode()
+        text = text if isinstance(text, str) else text.decode()
+        # A worker job reads its GitHub token from the first input line before the engine starts.
+        return text.split("\n", 1)[1] if engines.GITHUB_INPUT in self.command else text
 
     def communicate(self, text, timeout=None):
         self.stdin.write(text)

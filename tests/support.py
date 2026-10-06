@@ -288,6 +288,17 @@ elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
 elif cmd == ("run", "view"):
     print(read("run.json", '{"status": "completed", "conclusion": "success"}'))
+elif cmd == ("auth", "token"):
+    # The keyring answers only where the session bus is reachable.
+    if read("token.txt") is None or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        fail("no oauth token found for github.com")
+    print(read("token.txt"))
+elif cmd == ("api", "user"):
+    # Signed in through the keyring on the session bus or an exported token; otherwise unauthenticated.
+    token = (read("token.txt") or "").strip()
+    if not token or not (os.environ.get("DBUS_SESSION_BUS_ADDRESS") or os.environ.get("GH_TOKEN") == token):
+        fail("HTTP 401: Requires authentication (https://api.github.com/graphql)")
+    print('{"login": "fixture-operator"}')
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''
@@ -334,10 +345,12 @@ def add_worktree(repo: Path, slug: str) -> Path:
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
-    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`. A worker
+    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture."""
 
     gated = False
     host: str | None = None
+    github = False
 
     def setUp(self) -> None:
         super().setUp()
@@ -346,6 +359,8 @@ class AltitudeCase(unittest.TestCase):
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
+        if not self.github:
+            self.patch(engines, "github_token", return_value="")
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = self.tmp / "repo"
