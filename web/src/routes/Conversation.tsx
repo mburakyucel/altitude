@@ -405,9 +405,9 @@ export default function Conversation({
                     <div className="queued-actions">
                     <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
                       disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
-                      reason={row.send_now ? row.send_now_reason : view?.send_now_reason}
+                      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
                       error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
-                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || row.send_now} onClick={() => dequeue.mutate(row.id)}>
+                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
                     </button>
                     </div>

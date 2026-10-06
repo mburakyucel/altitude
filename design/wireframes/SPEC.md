@@ -1474,8 +1474,10 @@ inside the message area until they run, with bordered **Send now** beside **Remo
 Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
 selected message next. System work finishes before the selected message runs. Pending rows say
 **Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
-appropriate; Send now and Remove are disabled. An unavailable engine or operator wait disables
-Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
+available after acceptance until claim, even when an engine becomes unavailable. Removal does not
+undo an interruption already requested. An unavailable engine, active chat still starting or operator
+wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
 only when the server admits it; claimed, delivered or removed rows have no queued actions.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.

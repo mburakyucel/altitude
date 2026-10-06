@@ -399,9 +399,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-def send_now_unavailable(project: str, task: dict, *, own_request: str | None = None,
-                         check_launch: bool = True) -> str | None:
-    """The daemon and the queued-row projection use the same interruption eligibility."""
+def send_now_unavailable(project: str, task: dict, *, own_request: str | None = None) -> str | None:
+    """Project saved eligibility without acquiring transient launch or admission locks."""
     request = task.get("daemon_request") or {}
     if task.get("fault"):
         return "The owner is faulted; verified recovery must resume it first."
@@ -416,13 +415,18 @@ def send_now_unavailable(project: str, task: dict, *, own_request: str | None = 
     if task.get("resume_claim") or task.get("dispatching") or (request.get("status") in ("pending", "executing")
                                                               and request.get("id") != own_request):
         return "Another owner action is in progress."
-    with config.provider_admission() as held:
-        if held:
-            return held
     if config.restart_in_progress():
         return "Altitude is restarting; retry shortly."
     if hold := resume_engine_hold(task) or wip_hold(project, task):
         return hold
+    return None
+
+
+def _send_now_launch_hold(project: str, *, check_launch: bool = True) -> str | None:
+    """Check transient admission only when requesting or executing an interruption."""
+    with config.provider_admission() as held:
+        if held:
+            return held
     with project_setup.operation_lock(project) as ready:
         if not ready:
             return "Project setup is in progress; retry shortly."
@@ -459,7 +463,7 @@ def _send_now_admission(project: str, slug: str, task: dict, message_id: str) ->
         return {"queued": False, "idempotent": True}
     if message_id not in T.removable_messages(project, slug, task):
         raise T.TransitionError("This message is already owned by a decision or delivery.")
-    if reason := send_now_unavailable(project, task):
+    if reason := send_now_unavailable(project, task) or _send_now_launch_hold(project):
         raise T.TransitionError(reason)
     return None
 
@@ -477,7 +481,8 @@ def _run_send_now(project: str, slug: str, *, admission_held: str | None = None)
             reason = "The owner changed before delivery; refresh its status." if changed else None
             if not reason and task.get("state") == "running":
                 reason = (admission_held or ("Altitude is restarting; retry shortly." if not ready else None)
-                          or send_now_unavailable(project, task, own_request=identity, check_launch=False))
+                          or send_now_unavailable(project, task, own_request=identity)
+                          or _send_now_launch_hold(project, check_launch=False))
             elif not reason and (task.get("state") != "blocked" or task.get("send_now") != request["send_now"]):
                 reason = "A newer owner wait superseded this delivery request."
             if reason:
@@ -502,16 +507,17 @@ def _run_send_now(project: str, slug: str, *, admission_held: str | None = None)
                     raise T.TransitionError("A newer owner wait superseded this delivery request.")
                 task.update(resume_after=S.now(), resume_request=request["send_now"])
                 _finish_task_operation_locked(project, task, identity, "done", "Stopped for selected message delivery")
-            if admission_held or not ready or config.restart_in_progress():
-                hold = admission_held or "Altitude is restarting; delivery continues after restart."
-                T.mark_resume_held(project, slug, hold, expected_block_id=stop_block)
-                return {"held": hold}
-            return _resume(project, slug)
         except (T.TransitionError, git_policy.GitPolicyError) as exc:
             return _finish_task_operation(project, slug, identity, "refused", str(exc))
         except Exception as exc:
             _finish_task_operation(project, slug, identity, "failed", str(exc))
             raise
+        # Stop is complete. Resume owns its claim, failures and selected input from this point.
+        if admission_held or not ready or config.restart_in_progress():
+            hold = admission_held or "Altitude is restarting; delivery continues after restart."
+            T.mark_resume_held(project, slug, hold, expected_block_id=stop_block)
+            return {"held": hold}
+        return _resume(project, slug)
 
 
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check")

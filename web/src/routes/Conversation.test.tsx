@@ -107,6 +107,20 @@ const conversation = () => screen.findByRole("region", { name: "Conversation" })
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
+  it("keeps accepted priority removable when the engine becomes unavailable before claim", async () => {
+    let view: ChatView = { ...chatView, send_now_reason: "No engine is available", queued: [{ id: "q-now", text: "Remove before claim", trigger: "chat", send_now: true, send_now_reason: "Runs next after system work" }] };
+    const fetchMock = mockFetch({ chatFn: () => jsonResponse(view) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    expect(await screen.findByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByText("No engine is available")).toBeVisible();
+    const remove = screen.getByRole("button", { name: "Remove" });
+    expect(remove).toBeEnabled();
+    view = { ...view, queued: [] };
+    await user.click(remove);
+    await waitFor(() => expect(screen.queryByText("Remove before claim")).toBeNull());
+    expect(posted(fetchMock, "/api/chat/remove")).toEqual({ project: "altitude", id: "q-now" });
+  });
+
   it("waits for the canonical receipt and prevents removal or repeated requests while sending", async () => {
     let release!: (response: Response) => void;
     let view: ChatView = { ...chatView, queued: [{ id: "q-now", text: "Do this first", trigger: "chat" }] };

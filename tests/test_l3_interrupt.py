@@ -40,7 +40,7 @@ class TestChatInterruption(AltitudeCase):
             children_alive.set()
         if unknown:
             unavailable.set()
-        processes, result, failures, unit = [], {}, [], []
+        processes, result, failures, unit, identities = [], {}, [], [], []
         real_popen = subprocess.Popen
 
         def command(name, cmd, env, **kwargs):
@@ -76,7 +76,8 @@ class TestChatInterruption(AltitudeCase):
         def run():
             try:
                 result.update(execute("hello", cwd=self.repo, resume="earlier-session", timeout=10,
-                                      interrupt=interrupt, on_interrupt_error=on_interrupt_error))
+                                      interrupt=interrupt, on_interrupt_error=on_interrupt_error,
+                                      on_start=lambda pid: identities.append(platform.process_identity(pid))))
             except BaseException as exc:
                 failures.append(exc)
             finally:
@@ -100,7 +101,8 @@ class TestChatInterruption(AltitudeCase):
                 yield dict(interrupt=interrupt, done=done, absent=absent, stopped=stopped, ready=ready,
                            release=release, start=start, children_alive=children_alive, unavailable=unavailable,
                            status_failed=status_failed, result=result, stop_call=stop_call,
-                           error_notified=error_notified, error_notifications=error_notifications)
+                           error_notified=error_notified, error_notifications=error_notifications,
+                           identities=identities, processes=processes)
             finally:
                 start.touch()
                 release.touch()
@@ -222,7 +224,68 @@ class TestChatInterruption(AltitudeCase):
         for engine in ("claude_print", "codex_exec"):
             with self.subTest(engine=engine), self.turn(engine) as turn:
                 self.wait_ready(turn)
+                self.assertEqual(len(turn["identities"]), 1)
+                identity = turn["identities"][0]
+                self.assertEqual(identity["pid"], turn["processes"][0].pid)
+                self.assertTrue(platform.process_identity_live(identity))
+                # A reloaded record still identifies the in-flight launcher until the turn ends.
+                self.assertTrue(platform.process_identity_live(json.loads(json.dumps(identity))))
                 turn["release"].touch()
                 self.assertTrue(turn["done"].wait(5))
+                self.assertFalse(platform.process_identity_live(identity))
                 self.assertNotIn("interrupted", turn["result"])
                 turn["stop_call"].assert_not_called()
+
+    def test_ordinary_chat_job_keeps_confinement_environment_and_durable_timeout(self):
+        for darwin in (False, True):
+            for engine in ("claude_print", "codex_exec"):
+                with self.subTest(darwin=darwin, engine=engine), \
+                     mock.patch.object(platform, "_darwin", return_value=darwin), \
+                     mock.patch.object(platform, "_user_temp", return_value=str(self.tmp)), \
+                     mock.patch.object(engines.subprocess, "Popen", side_effect=RuntimeError("capture launch")) as launch:
+                    execute = getattr(engines, engine)
+                    extra_env = {"ALTITUDE_PROJECT": "fixture", "DBUS_SESSION_BUS_ADDRESS": "fixture-bus",
+                                 "XDG_RUNTIME_DIR": str(self.tmp / "manager")}
+                    # The direct integration's existing profile defines the writable surface.
+                    direct_writable = None
+                    direct_command = None
+                    if engine == "claude_print":
+                        with mock.patch.object(platform, "confined", wraps=platform.confined) as confined:
+                            with self.assertRaisesRegex(RuntimeError, "capture launch"):
+                                execute("hello", cwd=self.repo, extra_env=extra_env)
+                            direct_writable = confined.call_args.args[1]
+                            direct_command = launch.call_args.args[0]
+                    with self.assertRaisesRegex(RuntimeError, "capture launch"):
+                        execute("hello", cwd=self.repo, extra_env=extra_env, timeout=37,
+                                interrupt=threading.Event())
+                    command = launch.call_args.args[0]
+                    launcher_env = launch.call_args.kwargs["env"]
+                    self.assertEqual(launch.call_args.kwargs["cwd"], str(self.repo))
+                    if darwin:
+                        spec = json.loads(command[-1])
+                        self.assertEqual(spec["mode"], "pipe")
+                        self.assertEqual(spec["runtime_max"], 37)
+                        child_env, child_command = spec["env"], spec["command"]
+                        if direct_writable:
+                            self.assertEqual(spec["writable"], [str(root) for root in direct_writable])
+                            self.assertEqual(platform.seatbelt_profile(spec["writable"]),
+                                             platform.confined(child_command, direct_writable)[2])
+                    else:
+                        for option in ("--wait", "--pipe", "--property=RuntimeMaxSec=37",
+                                       "--property=TimeoutStopSec=5", "--property=KillMode=control-group",
+                                       "--property=SendSIGKILL=yes"):
+                            self.assertIn(option, command)
+                        child = command[command.index("--") + 1:]
+                        self.assertEqual(child[:2], [platform.ENV_BIN, "-i"])
+                        index = child.index(getattr(engines.config, "CLAUDE_BIN" if engine == "claude_print" else "CODEX_BIN"))
+                        child_env = dict(item.split("=", 1) for item in child[2:index])
+                        child_command = child[index:]
+                        self.assertEqual(launcher_env["DBUS_SESSION_BUS_ADDRESS"], "fixture-bus")
+                    self.assertEqual(child_env["ALTITUDE_PROJECT"], "fixture")
+                    self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
+                    self.assertNotIn("XDG_RUNTIME_DIR", child_env)
+                    if direct_command:
+                        self.assertEqual(child_command, direct_command[3:] if darwin else direct_command)
+                    else:
+                        for setting in engines.codex_sandbox(self.repo):
+                            self.assertIn(setting, child_command)

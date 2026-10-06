@@ -747,7 +747,7 @@ def drop_queued(project: str, message_id: str) -> bool:
         rows = _queue_rows(path)
         rest = [row for row in rows
                 if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != config.OPERATOR_ACTOR
-                or row.get("image_turn_id") or row.get("send_now")]
+                or row.get("image_turn_id")]
         if len(rest) == len(rows):
             return False
         removed = next(row for row in rows if row not in rest)
@@ -768,6 +768,9 @@ def send_now_unavailable(project: str) -> str | None:
     choice = _select(project)
     if not choice.get("engine"):
         return f"No engine is available: {choice['why']}"
+    turn = _active.get(project)
+    if turn and turn["trigger"] == "chat" and not turn.get("provider_started"):
+        return "The current turn is starting. Retry Send now shortly."
     return None
 
 
@@ -1051,11 +1054,17 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                      turn_id=turn_id, **_slug_meta(slug), **({key: image_message[key]
                      for key in ("images", "request_id", "request_digest") if key in image_message} if image_message else {}))
         tried = []
+        def provider_started(pid):
+            with _lifecycle_guard(project):
+                active_turn["provider_started"] = True
+            if on_start:
+                on_start(pid)
+
         while choice.get("engine"):
             try:
                 with S.project_lock(project):
                     resolved = image_store.resolve(project, image_message["images"]) if image_message else []
-                res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug,
+                res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, provider_started, slug,
                                    **({"images": resolved} if resolved else {}))
             except (image_store.ImageError, engines.ImageInputError) as exc:
                 chat_log(project, "error", str(exc), trigger=trigger, turn_id=turn_id, **_slug_meta(slug))

@@ -1821,14 +1821,15 @@ image-bearing and server-triggered messages keep their own turn, and nothing run
 
 **Send now** promotes only the selected operator row and gives it its own next turn. Other queued
 rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
-writer lock; retries reuse the selected row or its history receipt. An accepted Send now owns its
-row until claim, so Remove is unavailable while it is being delivered. The daemon requests interruption
+writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
+removable until claim, including when no engine is available after admission. Removal does not undo
+an interruption already requested. The daemon requests interruption
 of the captured active chat turn through the engine seam, retains partial output and session identity,
 and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
 its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
 CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
-cannot be promoted or removed. No available engine or a launch pause explains why delivery cannot
-start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
+cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
+explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
 restart. The browser requests this action by message ID; it never interrupts an engine itself.
 
 In the task chat, the same control uses the existing durable Stop and resume operation, fences hook

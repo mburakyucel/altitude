@@ -1121,8 +1121,8 @@ L3 runs headless, so its only checkpoint is the turn boundary: a message the ope
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
-and other conversations separate. Each waiting chat row remains individually removable until claim
-or an accepted Send now;
+and other conversations separate. Each waiting chat row remains individually removable until claim,
+including after an accepted Send now;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
 while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
@@ -1134,7 +1134,9 @@ choosing another configured model on that provider retains its conversation.
 
 An operator queue row's **Send now** promotes it ahead of other rows and runs it alone as the next
 turn; the remaining rows retain their relative order and normal folding. The accepted priority stays
-in the queue file until claim. Remove is unavailable during this handoff. The daemon sets only the
+in the queue file until claim, and Remove remains available while the queue owns the row. Removal
+cannot undo an interruption already requested. An active chat still starting explains why Send now
+is unavailable until the engine reports its launch. The daemon sets only the
 captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
 confirms its termination before the L3 lock is released. Partial output and session identity remain,
 and the turn says **Interrupted for a queued message**. That turn is never replayed. Active system

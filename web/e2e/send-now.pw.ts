@@ -70,6 +70,29 @@ test.describe("L2 Send now", () => {
 test.describe("L3 Send now", () => {
   test.use({ serviceScript: "send-now-service.py" });
 
+  test("removes accepted priority while system work continues and engines become unavailable", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    expect((await request.post("/fixture/system")).ok()).toBe(true);
+    await expect.poll(async () => (await status()).calls.length).toBe(1);
+    await walk.open("/projects/atlas");
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    await page.getByRole("textbox", { name: "Message L3 about atlas" }).fill("Remove accepted priority");
+    await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await convo.getByRole("button", { name: "Send now", exact: true }).click();
+    const row = convo.locator(".queued-row").filter({ hasText: "Remove accepted priority" });
+    await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
+    expect((await request.post("/fixture/unavailable")).ok()).toBe(true);
+    await page.reload();
+    await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
+    await walk.state("l3-10-accepted-priority-removable", { visible: [row.getByRole("button", { name: "Sending now…" }), row.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
+    await row.getByRole("button", { name: "Remove", exact: true }).click();
+    await walk.state("l3-11-priority-removed-before-claim", { visible: [page.getByRole("textbox", { name: "Message L3 about atlas" })], hidden: [row] });
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+    await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
+    expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Fixture system work"]);
+  });
+
   test("shows Runs next after system work without interrupting the system turn", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const status = async () => (await (await request.get("/fixture/status")).json());
@@ -139,7 +162,7 @@ test.describe("L3 Send now", () => {
     await row("Deliver this next").getByRole("button", { name: "Send now", exact: true }).click();
     await expect.poll(async () => (await status()).stopped).toBe(true);
     await walk.state("l3-03-sending-now", { visible: [row("Deliver this next").getByRole("button", { name: "Sending now…" })], hidden: [] });
-    await expect(row("Deliver this next").getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
+    await expect(row("Deliver this next").getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
     expect((await request.post("/fixture/release")).ok()).toBe(true);
     await walk.state("l3-04-delivered", { visible: [convo.getByText("Deliver this next answered.", { exact: true })], hidden: [row("Deliver this next")] });
     await expect.poll(async () => (await status()).calls.length).toBe(3);

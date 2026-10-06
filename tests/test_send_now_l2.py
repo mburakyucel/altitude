@@ -123,6 +123,42 @@ class TestSendNowL2(AltitudeCase):
                 self.assertNotIn("stop_id", S.load_task(self.project, task["slug"]))
         self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
 
+    def test_delivery_projection_never_acquires_transient_admission_or_launch_locks(self):
+        task = self.launch(config.ENGINES[0])
+        message = self.send(task, "Keep the row stable during unrelated launches")
+        with mock.patch.object(config, "provider_admission", side_effect=AssertionError("view acquired admission")), \
+                mock.patch.object(project_setup, "operation_lock", side_effect=AssertionError("view acquired setup")), \
+                mock.patch.object(dispatch, "launch_lock", side_effect=AssertionError("view acquired launch")):
+            self.assertTrue(self.delivery(task, message)["send_now"])
+        with project_setup.operation_lock(self.project), dispatch.launch_lock():
+            self.assertTrue(self.delivery(task, message)["send_now"])
+            with self.assertRaises(T.TransitionError):
+                self.request(task, message)
+
+    def test_post_stop_preclaim_error_preserves_completed_stop_and_selected_priority(self):
+        for engine in config.ENGINES:
+            for error in (RuntimeError("Resume preflight unavailable"), T.TransitionError("Resume preflight changed")):
+                with self.subTest(engine=engine, error=type(error).__name__):
+                    task = self.launch(engine)
+                    sibling, selected = [self.send(task, text) for text in ("earlier sibling", "selected")]
+                    self.request(task, selected)
+                    # Stop admission passes; the ordinary resume preflight then fails before claiming input.
+                    with mock.patch.object(dispatch, "resume_engine_hold", side_effect=[None, error]):
+                        with self.assertRaisesRegex(type(error), "Resume preflight"):
+                            self.execute(task)
+                    current = S.load_task(self.project, task["slug"])
+                    self.assertEqual(current["daemon_request"]["status"], "done")
+                    self.assertEqual(current["send_now"], selected["id"])
+                    self.assertEqual(current["resume_request"], selected["id"])
+                    self.assertTrue(current["resume_after"])
+                    self.assertEqual(T.pending(self.project, task["slug"]), [sibling, selected])
+                    self.assertTrue(self.delivery(task, selected)["send_now_pending"])
+                    with mock.patch.object(engines, "stop_l2_worker", wraps=self.worker.stop_l2_worker) as stop:
+                        dispatch.resume(self.project, task["slug"])
+                        stop.assert_not_called()
+                    self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
+                    self.assertEqual(T.pending(self.project, task["slug"]), [sibling])
+
     def test_engine_hold_arriving_before_execution_releases_interruption_request(self):
         task = self.launch(config.ENGINES[0])
         message = self.send(task, "Deliver when possible")

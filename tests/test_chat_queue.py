@@ -1178,6 +1178,7 @@ class TestChatQueue(AltitudeCase):
 
                 def provider(prompt, **kwargs):
                     prompts.append(prompt)
+                    kwargs["on_start"](None)
                     events.append(kwargs.get("interrupt"))
                     result = {**self.claude_result("Saved partial output"), "reported_session_id": "s1"}
                     if len(prompts) == 1:
@@ -1207,7 +1208,6 @@ class TestChatQueue(AltitudeCase):
                         self.assertEqual([row["id"] for row in self.queue_rows()],
                                          [selected["id"], older["id"], later["id"]])
                         self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Waiting for current turn to stop")
-                        self.assertFalse(l3.drop_queued(self.project, selected["id"]))
                         self.assertIsNone(l3.deliver_queued(self.project), "no second turn before termination")
                     finally:
                         release.set()
@@ -1276,6 +1276,7 @@ class TestChatQueue(AltitudeCase):
     def test_send_now_exposes_stop_uncertainty_only_on_its_captured_turn(self):
         with self.deliverable(), l3.lock(self.project):
             with l3._active_turn(self.project, "chat") as first:
+                first["provider_started"] = True
                 options = l3._interrupt_options(self.project, first["id"])
                 selected = l3.queue_message(self.project, "Next input", trigger="chat", role=config.OPERATOR_ACTOR)
                 l3.send_now(self.project, selected["id"])
@@ -1285,6 +1286,30 @@ class TestChatQueue(AltitudeCase):
                 options["on_interrupt_error"]("Late status from previous turn")
                 self.assertNotIn("interrupt_error", l3.active(self.project))
                 self.assertFalse(l3._interrupts[second["id"]].is_set())
+
+    def test_send_now_refuses_before_claimed_provider_starts_without_consuming_input(self):
+        first = l3.queue_message(self.project, "First selected", trigger="chat", role=config.OPERATOR_ACTOR)
+        second = l3.queue_message(self.project, "Next selected", trigger="chat", role=config.OPERATOR_ACTOR)
+        def provider(prompt, **options):
+            with self.assertRaisesRegex(ValueError, "starting"):
+                l3.send_now(self.project, second["id"])
+            self.assertFalse(options["interrupt"].is_set())
+            self.assertTrue(prompt.endswith(first["text"]))
+            options["on_start"](None)
+            return self.claude_result()
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider):
+            l3.send_now(self.project, first["id"])
+            l3.deliver_queued(self.project)
+        self.assertEqual([row["id"] for row in self.queue_rows()], [second["id"]])
+
+    def test_send_now_remains_removable_before_claim_when_engine_becomes_unavailable(self):
+        row = l3.queue_message(self.project, "Withdraw priority", trigger="chat", role=config.OPERATOR_ACTOR)
+        with self.deliverable():
+            l3.send_now(self.project, row["id"])
+        with mock.patch.object(l3, "_select", return_value={"engine": None, "why": "Unavailable"}):
+            self.assertIsNone(l3.deliver_queued(self.project))
+            self.assertTrue(l3.drop_queued(self.project, row["id"]))
+        self.assertEqual(self.queue_rows(), [])
 
     def test_direct_turn_waiting_at_boundary_cannot_overtake_selected_message(self):
         selected = l3.queue_message(self.project, "Selected input", trigger="chat", role=config.OPERATOR_ACTOR)
@@ -1483,7 +1508,7 @@ class TestChatQueue(AltitudeCase):
         self.assertEqual(status, 200)
         lines = [json.loads(line) for line in payload.decode().splitlines() if line.startswith("{")]  # chunk sizes between
         self.assertEqual([next(iter(line)) for line in lines], ["turn", "t", "done"])
-        self.assertEqual(set(lines[0]["turn"]), {"id", "started_at", "trigger"})
+        self.assertEqual(set(lines[0]["turn"]), {"id", "started_at", "trigger", "provider_started"})
         self.assertEqual(lines[0]["turn"]["trigger"], "chat")
         self.assertEqual(lines[2]["done"]["turn_id"], lines[0]["turn"]["id"])
         rows = self.chat_view()["history"]
