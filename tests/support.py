@@ -288,6 +288,11 @@ elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
 elif cmd == ("run", "view"):
     print(read("run.json", '{"status": "completed", "conclusion": "success"}'))
+elif cmd == ("auth", "token"):
+    # The keyring answers only where the session bus is reachable.
+    if read("token.txt") is None or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        fail("no oauth token found for github.com")
+    print(read("token.txt"))
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''

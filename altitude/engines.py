@@ -536,6 +536,23 @@ def clean_env() -> dict:
     return env
 
 
+#: Job settings appear on the job's command line, so a worker's GitHub token travels on its first input line instead.
+GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
+GITHUB_INPUT = 'IFS= read -r GH_TOKEN && [ -n "$GH_TOKEN" ] && export GH_TOKEN || unset GH_TOKEN; exec "$@"'
+
+
+def github_token(env: dict) -> str:
+    """The GitHub CLI's current sign-in, read by the launcher for a task worker. On Linux the CLI keeps it in the
+    desktop keyring, which answers on the session bus a job is denied, so a worker's own lookup sends unauthenticated
+    requests (I-20261006-183126). The worker receives this one token, not the keyring; empty when there is none."""
+    try:
+        p = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    token = p.stdout.strip()
+    return token if p.returncode == 0 and token.isprintable() and " " not in token else ""
+
+
 def service_status(unit: str = "altitude.service") -> dict:
     """Read the user service's state once; inspection failure stays in the record."""
     return platform.service_status(unit, codex_env(retain_user_bus=True))
@@ -1545,7 +1562,8 @@ def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
     reports. The workspace base retains protected configuration paths and temporary directories.
     Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets stay denied.
-    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
+    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
+    GitHub token (`github_token`) reaches `gh` unchanged.
     """
     roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
     profile = "altitude-task"
@@ -1767,15 +1785,17 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     worker_env = codex_env(extra_env, retain_user_bus=True)
     if engine == "claude" and effort is not None:
         worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    job_env = {key: value for key, value in codex_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
             writable = _claude_writable(Path(cwd), *_worktree_git_dirs(cwd), config.ROOT) if engine == "claude" else None
-            proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(worker_env), writable=writable), cwd=str(cwd),
+            proc = subprocess.Popen(platform.job_command(unit, ["/bin/sh", "-c", GITHUB_INPUT, "altitude-worker", *cmd],
+                                                         job_env, writable=writable), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
         try:
-            data = text.encode("utf-8")
+            data = (github_token(worker_env) + "\n" + text).encode("utf-8")
             written = proc.stdin.write(data)
             proc.stdin.close()
             input_written = written == len(data)

@@ -89,18 +89,23 @@ class TestCodexAdapter(AltitudeCase):
             self.assertFalse(any((runtime / "unrelated").is_relative_to(root) for root in denied))
 
     def _launch(self, *, thread="thr-1", actual_settings=False, **kw):
-        procs = []
+        procs, real_popen = [], subprocess.Popen
 
         def popen(cmd, **pkw):
+            if cmd[0] == "gh":  # the launcher's own sign-in lookup
+                return real_popen(cmd, **pkw)
             procs.append(FakeProcess(cmd, stdout=pkw["stdout"], thread=thread))
             return procs[-1]
+
+        def job_command(unit, command, env, **kw):
+            self.job_env = env
+            return ["svc", unit, *command]
 
         settings = engines.codex_sandbox(self.worktree, extra_roots=[self.repo / ".git"]) if actual_settings else ["s1", "s2"]
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
              mock.patch.object(engines, "codex_sandbox", return_value=settings), \
              mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
-             mock.patch.object(platform, "job_command",
-                               side_effect=lambda unit, command, env, **kw: ["svc", unit, *command]), \
+             mock.patch.object(platform, "job_command", side_effect=job_command), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,
                                    extra_env={"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "1"}, **kw)
@@ -110,7 +115,7 @@ class TestCodexAdapter(AltitudeCase):
         for resume in (None, "thr-1"):
             with self.subTest(resume=resume):
                 _, procs = self._launch(actual_settings=True, resume=resume)
-                command = procs[0].cmd
+                command = procs[0].cmd[procs[0].cmd.index(config.CODEX_BIN):]
                 settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c"]
                 parsed = tomllib.loads("\n".join(settings))
                 self.assertEqual(parsed["default_permissions"], "altitude-task")
@@ -118,16 +123,42 @@ class TestCodexAdapter(AltitudeCase):
                 self.assertNotIn("--sandbox", command)
                 self.assertNotIn("--ignore-user-config", command, "retain native user customization")
 
+    def test_i_20261006_183126_a_worker_denied_the_session_bus_still_reaches_github_signed_in(self):
+        # The GitHub CLI keeps its sign-in in the keyring on the session bus the worker profile denies, so the
+        # launcher reads the token and hands it over on the job's first input line, never as a job setting.
+        state = self.fake_gh()
+        (state / "token.txt").write_text("fixture-token\n")
+        self.setenv("GH_TOKEN", "ambient-fixture-token")
+        _, procs = self._launch(actual_settings=True)
+        command, sent = procs[0].cmd, procs[0].stdin.getvalue()
+        self.assertEqual(self.gh_log(), [["auth", "token"]])
+        self.assertFalse(any("fixture-token" in arg for arg in command), "job settings appear on its command line")
+        self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "DBUS_SESSION_BUS_ADDRESS"} & set(self.job_env))
+        self.assertTrue(sent.startswith(b"fixture-token\n"))
+        settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c" and i > command.index(config.CODEX_BIN)]
+        rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
+        self.assertEqual({path for path, access in rules.items() if access == "deny"},
+                         {str(path) for path in platform.job_control_paths()})
+        # The job's reader exports the token alone and hands the engine the rest of its input unchanged.
+        wrapper = command[command.index("/bin/sh"):command.index(config.CODEX_BIN)]
+        engine = [sys.executable, "-c", "import os, sys; print(os.environ.get('GH_TOKEN')); print(sys.stdin.read())"]
+        for line, expected in ((b"fixture-token\n", "fixture-token"), (b"\n", "None")):
+            seen = subprocess.run([*wrapper, *engine], input=line + b"prompt\nbody", capture_output=True,
+                                  env={"PATH": os.environ["PATH"], "GH_TOKEN": "ambient-fixture-token"})
+            self.assertEqual(seen.stdout.decode().split("\n", 1), [expected, "prompt\nbody\n"])
+
     def test_fresh_turn_runs_codex_exec_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"
         persona.write_text("PERSONA")
         res, procs = self._launch(persona=persona, model="gpt-x")
         self.assertEqual(res["returncode"], 0)
         row = res["agent"]
-        self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), config.CODEX_BIN, "exec", "--json",
+        self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), "/bin/sh", "-c", engines.GITHUB_INPUT,
+                                        "altitude-worker", config.CODEX_BIN, "exec", "--json",
                                         "--strict-config", "--skip-git-repo-check", "-C", str(self.worktree),
                                         "-m", "gpt-x", "-c", "s1", "-c", "s2", "-"])
-        sent = procs[0].stdin.getvalue().decode()
+        token, sent = procs[0].stdin.getvalue().decode().split("\n", 1)
+        self.assertEqual(token, "")
         self.assertTrue(sent.startswith("PERSONA\n\n"))
         self.assertIn(engines.CODEX_PATCH_NOTE, sent)
         self.assertTrue(sent.endswith("\n\nbrief"))
@@ -137,7 +168,7 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_resume_continues_the_same_thread_and_refuses_another(self):
         res, procs = self._launch(resume="thr-1")
-        self.assertEqual(procs[0].cmd[2:5], [config.CODEX_BIN, "exec", "resume"])
+        self.assertEqual(procs[0].cmd[6:9], [config.CODEX_BIN, "exec", "resume"])
         self.assertNotIn("-C", procs[0].cmd)
         self.assertEqual(procs[0].cmd[-2:], ["thr-1", "-"])
         prompt = procs[0].stdin.getvalue().decode()

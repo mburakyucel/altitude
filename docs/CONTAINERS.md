@@ -41,7 +41,9 @@ Two local named volumes hold `/home/altitude` and `/home/altitude/Projects`. No 
 directory, device, runtime socket or source checkout is mounted. Clone/import projects inside the
 project volume. Provider/Git credentials, machine credentials and TLS private keys remain accessible
 to same-UID software where the engine's confinement permits; the image does not isolate mutually
-hostile tasks or engines. Existing engine differences remain. Deliberate container-root exec is
+hostile tasks or engines. Each task worker receives the container's GitHub CLI token from its
+launcher on its input, as on a native host, while its user-manager sockets stay denied
+([isolation](ARCHITECTURE.md#isolation-and-landing)). Existing engine differences remain. Deliberate container-root exec is
 trusted host administration. Networking uses explicitly selected slirp4netns, without a destination
 allowlist or a claim that containerization prevents exfiltration.
 

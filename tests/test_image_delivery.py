@@ -126,6 +126,7 @@ class TestNativeImages(ImageDeliveryCase):
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
                      mock.patch.object(platform, "job_active", return_value=True), \
                      mock.patch.object(engines, "_git_dirs", return_value=[]), \
+                     mock.patch.object(engines, "github_token", return_value=""), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
                     common = dict(cwd=self.repo, persona=persona, model="original-model", settings=self.tmp / "settings.json",
                                   extra_env={"ALTITUDE_TASK": "owner"}, job_root=self.tmp / "jobs", images=[self.image],
@@ -139,7 +140,9 @@ class TestNativeImages(ImageDeliveryCase):
                 if engine == "codex":
                     self.assertIn('model_reasoning_effort="xhigh"', command)
                 self.assertIn("ALTITUDE_TASK=owner", command)
-                self.assert_input(engine, command, processes[-1].stdin.getvalue(), resume=resume)
+                token, payload = processes[-1].stdin.getvalue().decode().split("\n", 1)
+                self.assertEqual(token, "", "the job's first input line carries the GitHub token")
+                self.assert_input(engine, command, payload, resume=resume)
 
     def test_larger_inbox_batch_keeps_every_image_visually_inspectable(self):
         batch = [{**self.image, "id": str(index) * 32, "source_message_id": f"message-{index}"} for index in range(5)]

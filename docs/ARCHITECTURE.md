@@ -1031,7 +1031,12 @@ temporary directories; launchd refuses service control to any sandboxed process.
 runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
-confinement checks. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
+CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
+bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
+which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The token never appears
+among the job's settings (they form its command line), in a file or in a log; a launcher without a
+sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
 (the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
