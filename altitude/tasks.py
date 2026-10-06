@@ -657,6 +657,10 @@ def removable_messages(project: str, slug: str, task: dict) -> set[str]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return set()
     protected = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    request = task.get("daemon_request") or {}
+    if request.get("status") in ("pending", "executing"):
+        protected.add(request.get("send_now"))
+    protected.add(task.get("send_now"))
     protected.update(task.get("message_deliveries") or {})
     for question in task.get("questions", []):
         protected.add((question.get("acceptance_message") or {}).get("id"))
@@ -695,6 +699,11 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
     queued = {row["id"] for row in pending(project, slug)}
     claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
     removable = removable_messages(project, slug, task) - receipts.keys()
+    request = task.get("daemon_request") or {}
+    selected = (request.get("send_now") if request.get("status") in ("pending", "executing")
+                else task.get("send_now"))
+    from . import dispatch
+    unavailable = dispatch.send_now_unavailable(project, task) if removable else None
     rows = task_messages(project, slug)
     for row in rows:
         if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
@@ -704,6 +713,12 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
                  else receipt.get("state", "delivered") if receipt else "queued" if row["id"] in queued else "unconfirmed")
         row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
                            "removable": row["id"] in removable}
+        if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and state in ("queued", "sending"):
+            sending_now = row["id"] == selected
+            reason = (task.get("blocked_reason") if sending_now and task.get("resume_after")
+                      else unavailable if row["id"] in removable else "This message is already being delivered.")
+            row["delivery"].update(send_now=row["id"] in removable and not unavailable,
+                                   send_now_reason=reason, send_now_pending=sending_now)
     return rows
 
 
@@ -768,7 +783,12 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         if task.get("state") != "blocked" or task.get("resume_claim"):
             return None
         _ensure_question(project, task)
-        rows = _pending_rows(task, path)
+        pending_rows = _pending_rows(task, path)
+        selected = task.get("send_now")
+        rows = [row for row in pending_rows if not selected or row["id"] == selected]
+        if selected and not rows:
+            raise TransitionError("The selected message is no longer queued.")
+        left = [row for row in pending_rows if row not in rows]
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
         request = task.get("daemon_request") or {}
         if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
@@ -787,7 +807,10 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         task.update({"resume_claim": claim, "dispatching": claim["at"]})
         task.pop("verified", None)  # A resumed owner must report its current work before completion.
         _save_claim_task(project, task)
-        path.unlink(missing_ok=True)
+        if left:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+        else:
+            path.unlink(missing_ok=True)
         return claim
 
 
@@ -860,6 +883,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         if suppress_retry and claim.get("block_id") == task.get("block_id"):
             task.pop("resume_after", None)
             task.pop("resume_request", None)
+            task.pop("send_now", None)
             task["resume_failed"] = claim_id
         elif consume_request:
             same_request = (claim.get("request") is not None
@@ -869,6 +893,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
             if same_request or same_timer:
                 task.pop("resume_after", None)
                 task.pop("resume_request", None)
+                task.pop("send_now", None)
                 task["resume_failed"] = claim_id
         _save_claim_task(project, task)
         S.regen_state_md(project)
@@ -916,7 +941,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "send_now"):
         task.pop(key, None)
 
 
@@ -932,9 +957,13 @@ def _take_turn(task: dict) -> None:
 
 def _supersede_resume(task: dict) -> None:
     # I-20260908-045037: a new question/block supersedes earlier wake requests and launch claims.
+    request = task.get("daemon_request") or {}
+    if request.get("send_now") and task.get("stop_id") == request.get("id"):
+        task.pop("stop_id", None)
     task["block_id"] = uuid.uuid4().hex
     task.pop("resume_after", None)
     task.pop("resume_request", None)
+    task.pop("send_now", None)
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
@@ -1191,6 +1220,11 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
+        request = task.get("daemon_request") or {}
+        if expected_daemon_request and request.get("operation") == "stop" and request.get("send_now"):
+            # Send now's Stop owns this new block; a later question still supersedes its continuation.
+            request["block_id"] = task["block_id"]
+            task["send_now"] = request["send_now"]
         if resume_pending:
             # #302: select the final-turn inbox under the same lock as the block; a later Send
             # sees a blocked task and schedules its own wake without losing an earlier message.

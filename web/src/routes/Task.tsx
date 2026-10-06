@@ -3,7 +3,8 @@ import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask } from "../data/api";
+import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
+import { SendNow } from "../components/SendNow";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
@@ -253,6 +254,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
   });
+  const sendNow = useSendNow(project, task.slug);
   const anchorKey = `${questionVisit}:${questionId ?? ""}:${revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -400,11 +402,17 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
         images={message.delivery?.state !== "removed" ? <MessageImages project={project} images={message.images} /> : undefined}
-        receipt={message.delivery ? message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · waiting for the session" : message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
           ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
-        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending}
+        {message.delivery?.removable || message.delivery?.send_now_pending || (sendNow.isError && sendNow.variables === message.id) || (removal.isError && removal.variables === message.id) ? <div className="queued-actions">
+        <SendNow visible={message.delivery?.state === "queued" && Boolean(message.delivery.removable || message.delivery.send_now_pending)} task
+          pending={Boolean(message.delivery?.send_now_pending || (sendNow.isPending && sendNow.variables === message.id))}
+          disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
+          reason={message.delivery?.send_now_reason} error={sendNow.variables === message.id ? sendNow.error : null} onClick={() => sendNow.mutate(message.id)} />
+        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || message.delivery.send_now_pending}
           onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+        </div> : null}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
         : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /></Reply>);

@@ -116,7 +116,42 @@ interface StubOptions {
   message?: () => Response | Promise<Response>;
   action?: () => Response | Promise<Response>;
   task?: () => Response;
+  sendNow?: () => Response | Promise<Response>;
 }
+
+describe("queued L2 Send now", () => {
+  it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
+    let release!: (response: Response) => void;
+    const message = { id: "steer-now", role: "operator", text: "Check this first", delivery: { state: "queued", at: null, removable: true, send_now: true } };
+    let record = { ...running, messages: [message] };
+    const fetchMock = stub(record, { task: () => jsonResponse(record), sendNow: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(screen.getByText("Interrupts current work like Stop, including attached reviews.")).toBeVisible();
+    expect(screen.getByText("Queued · waiting for a checkpoint")).toBeVisible();
+    record = { ...record, messages: [{ ...message, delivery: { ...message.delivery, state: "delivered", removable: false, send_now: false } }] };
+    await act(async () => release(jsonResponse({ ok: true })));
+    await screen.findByText("Delivered to session");
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(screen.getAllByText("Check this first")).toHaveLength(1);
+    const calls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/send-now"));
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "steer-now" });
+  });
+
+  it.each([[403, "You do not have permission to send this message now."], [409, "Answer the open question first"], [500, "Send now unconfirmed. Check this message’s status before trying again."]])("refreshes and explains failed delivery (%s)", async (status, expected) => {
+    const record = { ...running, messages: [{ id: "steer-now", role: "operator", text: "Keep evidence", delivery: { state: "queued", at: null, removable: true, send_now: true } }] };
+    const read = vi.fn(() => jsonResponse(record));
+    stub(record, { task: read, sendNow: () => jsonResponse({ error: "Answer the open question first" }, status) });
+    const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText(expected);
+    expect(read.mock.calls.length).toBeGreaterThan(1);
+    expect(screen.getByText("Keep evidence")).toBeVisible();
+  });
+});
 
 /** This computer's speech service for the current test: its last words are "spoken detail". */
 let voice = hostVoiceServer({ final: "spoken detail" });
@@ -139,6 +174,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.startsWith("/api/voice/live")) return voice.fetch(input, init);
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
+    if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
       const record = task as { messages?: unknown[] };

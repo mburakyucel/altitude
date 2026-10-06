@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { imageSendRefused, sendImageChat, streamChat, useChatDequeue } from "../data/api";
+import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
+import { SendNow } from "../components/SendNow";
 import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
@@ -182,6 +183,7 @@ export default function Conversation({
   }, [name, queryClient]);
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
+  const sendNow = useSendNow(name);
   const { phone } = useViewport();
   const navigate = useNavigate();
   const location = useLocation();
@@ -398,11 +400,17 @@ export default function Conversation({
             <ul className="queued" aria-label="Queued messages">
               {queued.map((row, index) => (
                 <li key={row.id} className="queued-row">
-                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
+                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? `Sending now · ${row.send_now_reason || "runs next"}` : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
                   {!row.trigger || row.trigger === "chat" ? (
-                    <button type="button" className="link" disabled={dequeue.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    <div className="queued-actions">
+                    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
+                      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
+                      reason={row.send_now ? row.send_now_reason : view?.send_now_reason}
+                      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
+                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || row.send_now} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
                     </button>
+                    </div>
                   ) : null}
                 </li>
               ))}

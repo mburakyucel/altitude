@@ -598,6 +598,52 @@ def claude_settings() -> Path:
     return p
 
 
+def _chat_interrupted(resume: str | None) -> dict:
+    return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0,
+            "cost": 0.0, "turns": 0, "structured": None, "tools": [],
+            "interrupted": True, "error": "Interrupted for a queued message", "safe_to_retry": False,
+            "rejection": None, "raw_stdout": "", "raw_stderr": "",
+            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+
+
+def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished: threading.Event,
+                          result: dict, env: dict, on_interrupt_error=None) -> None:
+    """Stop only this chat job, retaining serialization until its launcher and descendants finish.
+
+    An absent unit while the launcher is starting is not termination evidence. A failed stop or an
+    unavailable status leaves the turn waiting for natural completion, including its job runtime limit.
+    """
+    while not interrupt.is_set():
+        if finished.wait(0.05):
+            if not interrupt.is_set():
+                return
+    attempted = False
+    notified_error = None
+    while True:
+        try:
+            active = platform.job_active(unit, env)
+            if active and not attempted:
+                attempted = True
+                platform.job_stop(unit, env)
+                continue
+            if active and attempted:
+                result.setdefault("interrupt_error", "Immediate stop unconfirmed; waiting for job termination")
+            if not active and proc.poll() is not None and not platform.job_active(unit, env):
+                result.update(interrupted=True, error="Interrupted for a queued message", safe_to_retry=False)
+                return
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            result["interrupt_error"] = f"Immediate stop unconfirmed; waiting for job termination: {exc}"
+        error = result.get("interrupt_error")
+        if error and error != notified_error:
+            notified_error = error
+            if on_interrupt_error:
+                try:
+                    on_interrupt_error(error)
+                except Exception:
+                    logger.exception("Could not publish chat interruption status; retaining termination wait")
+        time.sleep(0.25)
+
+
 @config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
@@ -606,13 +652,17 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
-                 durable_timeout: bool = False, images: list[dict] | tuple = ()) -> dict:
+                 durable_timeout: bool = False, images: list[dict] | tuple = (),
+                 interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
-    made while a hold is in force.
+    made while a hold is in force. `interrupt` stops this chat's owned job and preserves partial output;
+    `interrupted` is returned only after termination is confirmed.
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
     restarted server distinguish an in-flight turn from a dead one."""
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     config.task_effort("claude", effort, role="l3")
     image_args, prompt = _image_input("claude", prompt, images)
     held = usage_hold()
@@ -651,15 +701,24 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     writable = _claude_writable(Path(cwd), config.ROOT)
-    if durable_timeout:
-        cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout,
+    unit = _claude_unit(f"sync-{uuid.uuid4().hex}")
+    if durable_timeout or interrupt is not None:
+        cmd = platform.job_command(unit, cmd, codex_env(env), runtime_max=timeout,
                                    writable=writable)
         env = codex_env(env, retain_user_bus=True)
     else:
         cmd = platform.confined(cmd, writable)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
+    interrupted, finished = {}, threading.Event()
+    watcher = None
+    if interrupt is not None:
+        watcher = threading.Thread(target=_watch_chat_interrupt,
+                                   args=(proc, unit, interrupt, finished, interrupted, env, on_interrupt_error), daemon=True)
+        watcher.start()
     if on_start:
         on_start(proc.pid)
     try:
@@ -675,8 +734,9 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
-    killer = threading.Timer(timeout, proc.kill)
-    killer.start()
+    killer = threading.Timer(timeout, proc.kill) if interrupt is None else None
+    if killer:
+        killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
@@ -737,7 +797,11 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         failure = exc
         raise
     finally:
-        killer.cancel()
+        if killer:
+            killer.cancel()
+        finished.set()
+        if watcher:
+            watcher.join()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()
@@ -758,6 +822,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     out.update(safe_to_retry=safe_to_retry, rejection=rejected or rejection("claude", out, model))
+    out.update(interrupted)
     if schema and out["structured"] is None and out["text"]:
         try:
             out["structured"] = json.loads(out["text"])
@@ -1980,10 +2045,14 @@ def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
                sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
-               durable_timeout: bool = False, images: list[dict] | tuple = ()) -> dict:
+               durable_timeout: bool = False, images: list[dict] | tuple = (),
+               interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
-    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
+    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
+    `interrupt` stops this chat's job; partial output and session metadata survive confirmed interruption."""
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     image_args, prompt = _image_input("codex", prompt, images)
     cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), *image_args, "--json", "--strict-config",
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
@@ -1998,10 +2067,19 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
-                            **({"runtime_max": timeout} if durable_timeout else {})), cwd=str(cwd),
+                            **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})), cwd=str(cwd),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    interrupted, finished = {}, threading.Event()
+    watcher = None
+    if interrupt is not None:
+        watcher = threading.Thread(target=_watch_chat_interrupt,
+                                   args=(proc, unit, interrupt, finished, interrupted,
+                                         codex_env(extra_env, retain_user_bus=True), on_interrupt_error), daemon=True)
+        watcher.start()
     if on_start:
         on_start(proc.pid)
     metadata = {}
@@ -2017,10 +2095,11 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         while True:
             remaining = deadline - time.monotonic()
             try:
-                stdout, stderr = proc.communicate(pending_input, timeout=remaining if metadata else min(0.5, remaining))
+                stdout, stderr = proc.communicate(pending_input, timeout=0.5 if interrupt is not None else
+                                                 remaining if metadata else min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired as exc:
-                if time.monotonic() >= deadline:
+                if interrupt is None and time.monotonic() >= deadline:
                     raise
                 pending_input = None
                 observe((exc.output or b"").decode("utf-8", errors="replace"))
@@ -2029,6 +2108,10 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         proc.kill()
         proc.communicate()
         raise
+    finally:
+        finished.set()
+        if watcher:
+            watcher.join()
     if not metadata:
         observe(stdout)
     events = _codex_parse(stdout or "")
@@ -2049,6 +2132,7 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
             "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
     result.update(safe_to_retry=_safe_output("codex", stdout or ""), rejection=rejection("codex", result, model))
+    result.update(interrupted)
     limited = usage_limit_in(result.get("error"))
     if limited:
         result["limited"] = limited
