@@ -998,10 +998,17 @@ recovery; its fresh dispatch still requires a fetched current base and a valid i
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
 project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
-workspace runs only under a recorded machine grant: the operator's answer to the owner's purpose
-question, recorded by the running owner from its task chat or by L3 or the operator, and verified
-mechanically against that question revision,
-opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
+workspace runs only under a recorded machine grant. An operator's answer to the owner's purpose
+question is recorded by the running owner from its task chat or by L3 or the operator and verified
+against that question revision. Alternatively, L3 applies an original operator approval from the
+same project's chat to an exact policy-purpose request: a unique, single-paragraph heading in the
+registered checkout's `refs/heads/main:AGENTS.md`, pinned to its commit, must cite the approval and
+match the current open owner-authored L3 question apart from whitespace. The standing path fences
+the observed attempt and stores the original approval, policy text/commit and question revision;
+task branches and dirty policy files supply no authority. L3 judges later corrections and revocations,
+revokes active grants and assigns policy removal; neither shell commands nor chat consent are
+classified automatically. Switching standing purposes requires revocation of the existing grant.
+Either grant opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
 executes the command in a job of its own through `engines.machine_command`, with the service manager
 reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
 the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches

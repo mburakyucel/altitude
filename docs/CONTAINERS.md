@@ -23,7 +23,13 @@ consent receipts live in `/home/altitude/.config/altitude/git-guards`, outside p
 writable roots. They use the image interpreter and source directly, without native installer state.
 Task machine commands, when explicitly authorized through the existing grant workflow, execute as
 the application user inside this container. They do not grant host access; no host runtime socket
-or command bridge is mounted. Host administration remains a separate operator action.
+or command bridge is mounted. On this project's machine, the
+[standing container approval](../AGENTS.md#container-operations-on-this-machine) covers host launcher
+operations, rootless Podman, launcher-created containers/images/volumes and execution inside them.
+The owner requests that exact policy scope from L3, which records the existing machine grant citing
+the standing approval without another operator question; see [machine access](CLI.md#machine-access).
+Native Altitude installation/service, host trust/network configuration, host credential directories
+and other host resources remain outside that approval. It does not apply to other projects.
 
 This deployment requires **container-wide `unmask=/proc/*`**. It permits nested native worker
 confinement but removes Podman's default masked/read-only proc mounts for every container process,

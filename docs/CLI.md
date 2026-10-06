@@ -849,6 +849,7 @@ alt task escalate <slug> --question <question> [--recommendation <approach> --la
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
+alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
@@ -1689,16 +1690,19 @@ operator-only; approval mode cannot combine with it or `--why`.
 
 A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
 or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant. Installation VMs, containers and sandboxed-browser checks run through
-[validation runs](#validation-runs) instead, with no grant:
+under a machine grant. Disposable installation VMs, containers and sandboxed-browser checks run
+through [validation runs](#validation-runs) instead, with no grant. Host container deployment work
+uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
 
 ```text
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
 
-The owner asks the operator once per purpose, in a plain question naming the purpose and its bounds
+Without applicable standing project approval, the owner asks the operator once per purpose,
+in a plain question naming the purpose and its bounds
 (what may run and what may not, limits, cleanup, verification and when the purpose ends), and
 resolves the operator's answer with `alt task resolve`. Whoever records the grant cites that same
 message after judging that the answer is a yes: the running owner for its own current attempt from a
@@ -1708,6 +1712,31 @@ revision of that operator question with no remainder. The grant binds to the tas
 attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
 answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
 record `machine-grant-refused` and change nothing.
+
+For standing approval, the owner copies the complete paragraph under **Container operations on this
+machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
+(without `--for-operator`). Task-specific steps, cleanup and verification belong in the preceding
+reply. L3 reads the original approval and later corrections, then records the grant with
+`--standing-policy 'Container operations on this machine'`, the paragraph's approval ID, the current
+question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
+a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
+from L3's message using the ordinary question flow.
+
+The grant reads only `refs/heads/main:AGENTS.md` in the registered project checkout, pinned to a
+commit. The heading must be unique and contain exactly one paragraph citing the backtick-quoted
+approval ID. That ID must name an original operator message in the same project's chat. The current
+open question must be owner-authored, directed to L3 and match the paragraph's raw Markdown apart
+from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
+and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
+commit and full text alongside the original operator approval, exact question and L3 rationale.
+This checks the recorded purpose; it does not classify shell commands or infer consent from prose.
+
+One grant occupies the task's grant slot. Revoke it before switching to or from a different standing
+purpose; the standing grant grants the entire policy scope, while its `--reason` retains the task's
+plan and limits. L3 stops applying a revoked approval immediately, revokes active grants with
+`--revoke`, and assigns removal of the policy paragraph. Existing grants do not automatically reread
+policy or interpret later chat. Widening a standing policy is a security decision under the project's
+review rules; another project needs its own operator approval and committed policy.
 
 The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
 including after a failed attempt, without approval for each command or attempt. One command at a time
