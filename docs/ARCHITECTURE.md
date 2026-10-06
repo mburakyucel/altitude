@@ -1013,6 +1013,9 @@ before the draft is ready, adopts no foreign draft and permits no tag movement/d
 replacement or immutable-setting change. Durable phase records and a global repository/version
 ledger under Altitude's `releases` directory retain task ownership across restart; retries reconcile
 remote state first. Only a definite create refusal without a remote side effect clears ownership.
+An uncertain draft create permits a fresh create only after successful tag and release reads prove
+both absent and reconciliation is recorded. A prior matching operator tag is admitted only when no
+unfinished `release.yml` push run remains for the approved commit, checked again before publication.
 Each write checks revocation/deadline, and every attempt has task audit evidence. Revocation cannot
 recall a request already sent. Completion consumes the grant; task completion or a new attempt
 expires it. Resume preserves it. A replacement grant under still-valid approval may recover only

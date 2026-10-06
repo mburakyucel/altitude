@@ -159,14 +159,19 @@ Shell-variable or quoted variants are not promised to match the exact native per
 `--check` verifies scope and prerequisites without writing to GitHub. Publish requires the actual
 current owner process, the approved commit on main, its successful push-event `check` job and the
 version's dated changelog section. It creates a draft targeting that commit, uploads and verifies
-the captured assets, then publishes. There is no preliminary tag push. Read-back verifies the tag
-and every asset. The title is `Altitude <version>`; `-rc.N` is a prerelease and never latest.
+the captured assets, then publishes. The command never pushes a tag first. A prior operator-created
+tag may be used if it matches the approved commit and no unfinished `release.yml` push run remains
+for that commit, checked again before publication. This permits completion after the hosted job
+finishes or is refused. Read-back verifies the tag and every asset. The title is `Altitude <version>`;
+`-rc.N` is a prerelease and never latest.
 
 Every attempt and external phase is recorded on the task. Interrupted publication reconciles
 the task's recorded draft before retrying; it does not adopt foreign drafts or blindly repeat
 uncertain writes. A repository/version ledger retains task ownership across daemon restarts;
-only a definite create refusal with no remote side effect releases it. Existing conflicting
-tags/releases and a tag with an active publisher refuse.
+only a definite create refusal with no remote side effect releases it. An uncertain draft creation
+retries only after successful tag and release reads establish that neither exists; the retry records
+that reconciliation before a fresh create. No manual ledger edit is needed. Existing conflicting
+tags/releases and a tag with an unfinished hosted publisher refuse.
 The grant cannot move/delete tags, replace assets, edit unrelated releases or change immutable
 release settings. Owner, L3 or operator can revoke it; deadlines, a new task attempt or task
 completion end it, and successful publication consumes it. Revocation cannot recall a request

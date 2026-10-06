@@ -1744,8 +1744,12 @@ replaces assets, adopts a foreign draft or changes immutable-release settings.
 Every external write rechecks the current grant and deadline. Revocation cannot recall an in-flight
 request. A global repository/version ledger under Altitude's `releases` directory serializes
 publication across daemon restarts. Only a definite create refusal with no remote side effect clears
-ownership; uncertain outcomes remain task-owned and require read-back reconciliation before retry. An existing tag
-must match and have no active publisher; conflicting releases refuse. No remote cleanup is automatic.
+ownership; uncertain outcomes remain task-owned and require read-back reconciliation before retry.
+After uncertain draft creation, successful reads must establish that neither the tag nor release
+exists before a recorded reconciliation permits a fresh create; no manual ledger edit is needed.
+An existing tag must match the approved commit, with no unfinished `release.yml` push run for that
+exact commit. This check repeats before publication, allowing completion of a matching operator tag
+after its hosted job finishes or is refused. Conflicting tags/releases refuse. No remote cleanup is automatic.
 The [release guide](RELEASING.md#publish-a-release) covers build provenance, manual publication,
 native first-use evidence and platform limits. Merge approval remains separate.
 

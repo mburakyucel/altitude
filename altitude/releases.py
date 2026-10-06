@@ -60,11 +60,11 @@ def _git(project: str, *args: str) -> str:
 
 
 def _repository(project: str) -> str:
-    origin = _git(project, "remote", "get-url", "origin")
-    match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:)([\w.-]+/[\w.-]+?)(?:\.git)?/?", origin)
-    if not match:
+    from .server import repository_url
+    url = repository_url(_git(project, "remote", "get-url", "origin"))
+    if not url:
         raise ValueError("release requires the registered project's GitHub origin")
-    return match[1]
+    return url.removeprefix("https://github.com/")
 
 
 def _names(version: str) -> list[str]:
@@ -170,7 +170,7 @@ def grant(project: str, slug: str, approval: str, *, version: str, sha: str, fil
             commits = re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", scope)
             if version not in versions or not any(commit.startswith(candidate) for candidate in commits):
                 raise ValueError("approval or its exact referenced question must name this version and commit")
-            if source == "project" and not (slug in row["text"] or question and (
+            if source == "project" and not (re.search(rf"(?<![\w-]){re.escape(slug)}(?![\w-])", row["text"]) or question and (
                     question in row["text"] or {"id": question, "revision": revision} in row.get("question_refs", []))):
                 raise ValueError("project-chat approval must identify this task or its exact question")
             previous = task.get("release_grant")
@@ -299,6 +299,15 @@ def _remote(grant: dict) -> dict | None:
     return rows[0] if rows else None
 
 
+def _publisher(grant: dict) -> None:
+    """An existing tag may already have queued the hosted release workflow."""
+    path = f"actions/workflows/release.yml/runs?head_sha={grant['sha']}&event=push"
+    if any(run.get("head_sha") == grant["sha"] and run.get("event") == "push"
+           and run.get("status") != "completed"
+           for run in _pages(grant["repository"], path, "workflow_runs")):
+        raise ValueError("existing tag has an active hosted publisher; wait for its result")
+
+
 def _assets(grant: dict, release: dict, *, complete: bool, marker: str | None = None) -> set[str]:
     body = grant["notes"].strip()
     if release.get("draft") and marker:
@@ -404,9 +413,14 @@ def run(project: str, slug: str, attempt: object, *, owner, check: bool = False)
             if release and release.get("draft") and release["id"] != record.get("release_id"):
                 raise ValueError("existing draft is not this task's recorded draft")
             if record.get("pending") == "create" and not record.get("release_id"):
-                raise ValueError("draft creation outcome is uncertain; reconcile the recorded attempt before retrying")
-            if tag and not release:
-                raise ValueError("existing tag may have another publisher; reconcile before publishing")
+                if tag:
+                    raise ValueError("draft creation outcome is uncertain and a tag appeared; reconcile before retrying")
+                # Both authoritative reads completed: the prior create left neither draft nor tag.
+                record["pending"] = None
+                S.write_json(ledger, record)
+                event("release-reconciled", phase="create", outcome="absent")
+            if tag and (not release or release["draft"]):
+                _publisher(grant)
             uploaded = _assets(grant, release, complete=not release["draft"], marker=record.get("marker")) if release else set()
             if release and not release["draft"]:
                 if not tag:
@@ -430,14 +444,16 @@ def run(project: str, slug: str, attempt: object, *, owner, check: bool = False)
                     event("release-write", phase=phase)
                     try:
                         result = _api(grant["repository"], path, **kwargs)
-                    except APIError as exc:
-                        if exc.refused:
+                    except (APIError, OSError, subprocess.SubprocessError) as exc:
+                        if isinstance(exc, APIError) and exc.refused:
                             record["pending"] = None
                             if phase == "create":
                                 ledger.unlink()
                             else:
                                 S.write_json(ledger, record)
                             event("release-write-refused", phase=phase)
+                        else:
+                            event("release-write-uncertain", phase=phase)
                         raise
                     if phase == "create":
                         record["release_id"] = result["id"]
@@ -463,7 +479,8 @@ def run(project: str, slug: str, attempt: object, *, owner, check: bool = False)
             _assets(grant, fresh, complete=True, marker=record["marker"])
             if not fresh["draft"]:
                 raise ValueError("release was published concurrently; reconcile before reporting completion")
-            _tag(grant)
+            if _tag(grant):
+                _publisher(grant)
             write("publish", f"releases/{int(release['id'])}", method="PATCH",
                   data={"draft": False, "body": grant["notes"],
                         "make_latest": "false" if "-rc." in grant["version"] else "true"})

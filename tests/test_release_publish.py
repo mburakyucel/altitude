@@ -257,6 +257,7 @@ class ApprovedPublication(AltitudeCase):
         self.remote_release = None
         self.remote_assets = {}
         self.remote_tag = None
+        self.initial_tag = None
         self.calls = []
         self.interrupt = None
         self.create_failure = None
@@ -265,6 +266,7 @@ class ApprovedPublication(AltitudeCase):
         self.check_job = {"name": "check", "conclusion": "success"}
         self.check_run = {"id": 11, "head_sha": self.sha, "event": "push",
                           "head_branch": "main", "conclusion": "success"}
+        self.release_runs = []
         self.patch(releases, "_api", side_effect=self.api)
 
     def assets(self, *, version=None, sha=None, repository=None):
@@ -323,6 +325,10 @@ class ApprovedPublication(AltitudeCase):
                 return {"workflow_runs": [self.check_run]}
             if route == "actions/runs/11/jobs":
                 return {"jobs": [self.check_job]}
+            if route == "actions/workflows/release.yml/runs":
+                self.assertIn(f"head_sha={self.sha}", path)
+                self.assertIn("event=push", path)
+                return {"workflow_runs": copy.deepcopy(self.release_runs)}
             if route == f"git/ref/tags/{self.version}":
                 return copy.deepcopy(self.remote_tag)
             if route == "releases":
@@ -339,13 +345,13 @@ class ApprovedPublication(AltitudeCase):
                 failure, self.create_failure = self.create_failure, None
                 raise failure
             self.assertIsNone(self.remote_release, "retry must never blindly create another draft")
-            self.assertIsNone(self.remote_tag, "the manual path must not create a tag before uploading")
+            self.assertEqual(self.remote_tag, self.initial_tag, "the manual path must not create a tag before uploading")
             self.assertTrue(data["draft"])
             self.remote_release = {"id": 21, **data}
             result, phase = self.remote_release, "create"
         elif method == "POST" and route == "releases/21/assets":
             self.assertTrue(self.remote_release["draft"])
-            self.assertIsNone(self.remote_tag)
+            self.assertEqual(self.remote_tag, self.initial_tag)
             name = upload.name
             self.assertNotIn(name, self.remote_assets, "retry must never replace or duplicate an upload")
             result = {"name": name, "state": "uploaded", "digest": "sha256:" + hashlib.sha256(upload.read_bytes()).hexdigest()}
@@ -389,6 +395,12 @@ class ApprovedPublication(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "consumed"):
             self.grant(approval)
 
+    def test_ssh_origin_grant_uses_same_archive_repository_identity(self):
+        git("remote", "set-url", "origin", f"ssh://git@github.com/{self.repository}.git", cwd=self.repo)
+        grant = self.grant()
+        self.assertEqual(grant["repository"], self.repository)
+        self.assertEqual(self.run_publish()["status"], "published")
+
     def test_commit_prefix_and_exact_historical_question_preserve_the_scope_seen(self):
         T.block(self.project, self.slug, f"Publish {self.version} at {self.sha[:9]}?", actor="l2",
                 expected_state="running", expected_attempt=1, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
@@ -420,6 +432,16 @@ class ApprovedPublication(AltitudeCase):
         path.write_text(json.dumps(row) + "\n")
         grant = self.grant(approval, source="project", actor="l3")
         self.assertEqual((grant["approval"], grant["source"]), (row["turn_id"], "project"))
+
+    def test_project_approval_for_longer_task_slug_does_not_approve_its_prefix(self):
+        row = {"turn_id": "another-task-project-answer", "role": "user", "by": T.OPERATOR_MESSAGE_ROLE,
+               "trigger": "chat", "at": S.now(),
+               "text": f"Publish {self.version} at {self.sha} for task {self.slug}-followup."}
+        path = config.project_dir(self.project) / "chat.jsonl"
+        path.write_text(json.dumps(row) + "\n")
+        with self.assertRaisesRegex(T.TransitionError, "identify this task"):
+            self.grant({"id": row["turn_id"]}, source="project", actor="l3")
+        self.assertIsNone(S.load_task(self.project, self.slug).get("release_grant"))
 
     def test_grant_rejects_wrong_scope_relay_missing_identity_and_wrong_attempt(self):
         valid = self.approval()
@@ -591,15 +613,43 @@ class ApprovedPublication(AltitudeCase):
         self.assertEqual(self.run_publish()["status"], "published")
         self.assertEqual(sum(method == "POST" and path == "releases" for method, path, _ in self.calls), 2)
 
-    def test_uncertain_create_without_remote_receipt_never_blindly_retries(self):
+    def retry_after_absent_create(self, failure):
+        self.grant()
+        self.create_failure = failure
+        with self.assertRaises(type(failure)):
+            self.run_publish()
+        self.assertEqual(self.events("release-write-uncertain")[0]["phase"], "create")
+        self.assertIsNone(self.remote_release)
+        self.assertIsNone(self.remote_tag)
+        before = len(self.calls)
+        self.assertEqual(self.run_publish()["status"], "published")
+        reconciliation = self.events("release-reconciled")[-1]
+        self.assertEqual((reconciliation["phase"], reconciliation["outcome"]), ("create", "absent"))
+        retried = [(method, path) for method, path, _ in self.calls[before:]]
+        creation = retried.index(("POST", "releases"))
+        self.assertIn(("GET", f"git/ref/tags/{self.version}"), retried[:creation])
+        self.assertTrue(any(method == "GET" and path.startswith("releases?") for method, path in retried[:creation]))
+        self.assertEqual(sum(method == "POST" and path == "releases" for method, path, _ in self.calls), 2)
+
+    def test_uncertain_create_retries_only_after_remote_draft_and_tag_absence(self):
+        self.retry_after_absent_create(releases.APIError("fixture outcome unknown"))
+
+    def test_create_oserror_is_audited_and_reconciled_before_retry(self):
+        self.retry_after_absent_create(OSError("fixture process could not start"))
+
+    def test_create_timeout_is_audited_and_reconciled_before_retry(self):
+        self.retry_after_absent_create(subprocess.TimeoutExpired(["gh", "api"], 120))
+
+    def test_uncertain_create_with_new_tag_refuses_fresh_creation(self):
         self.grant()
         self.create_failure = releases.APIError("fixture outcome unknown")
         with self.assertRaises(releases.APIError):
             self.run_publish()
-        with self.assertRaisesRegex(ValueError, "creation outcome is uncertain"):
+        self.remote_tag = {"object": {"type": "commit", "sha": self.sha}}
+        with self.assertRaisesRegex(ValueError, "uncertain|tag"):
             self.run_publish()
         self.assertEqual(sum(method == "POST" and path == "releases" for method, path, _ in self.calls), 1)
-        self.assertIsNone(self.remote_tag)
+        self.assertEqual(self.events("release-reconciled"), [])
 
     def test_revocation_after_upload_stops_before_publication(self):
         self.grant()
@@ -626,13 +676,40 @@ class ApprovedPublication(AltitudeCase):
         with self.assertRaisesRegex(ValueError, "recorded draft"):
             self.run_publish()
 
-    def test_tag_conflict_or_unclaimed_tag_refuses_without_modification(self):
+    def test_tag_conflict_refuses_without_modification(self):
         self.grant()
-        for sha, error in (("1" * 40, "approved commit"), (self.sha, "another publisher")):
-            self.remote_tag = {"object": {"type": "commit", "sha": sha}}
-            with self.subTest(sha=sha), self.assertRaisesRegex(ValueError, error):
+        self.remote_tag = {"object": {"type": "commit", "sha": "1" * 40}}
+        with self.assertRaisesRegex(ValueError, "approved commit"):
+            self.run_publish()
+        self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
+
+    def test_existing_approved_tag_waits_for_every_release_workflow_then_publishes(self):
+        self.grant()
+        self.initial_tag = self.remote_tag = {"object": {"type": "commit", "sha": self.sha}}
+        completed = {"id": 31, "event": "push", "head_sha": self.sha, "status": "completed", "conclusion": "failure"}
+        for status in ("queued", "in_progress", "waiting", "requested", "pending", None):
+            self.release_runs = [completed, {**completed, "id": 32, "status": status}]
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "publisher|workflow"):
                 self.run_publish()
         self.assertFalse(any(method != "GET" for method, _, _ in self.calls))
+        self.release_runs = [completed, {**completed, "id": 32, "status": "completed"}]
+        self.assertEqual(self.run_publish()["status"], "published")
+        self.assertEqual(self.remote_tag, self.initial_tag)
+
+    def test_release_workflow_is_rechecked_after_upload_before_publication(self):
+        self.grant()
+        self.initial_tag = self.remote_tag = {"object": {"type": "commit", "sha": self.sha}}
+        self.release_runs = [{"id": 31, "event": "push", "head_sha": self.sha,
+                              "status": "completed", "conclusion": "failure"}]
+        self.before_publish_read = lambda: self.release_runs[0].update(status="queued")
+        with self.assertRaisesRegex(ValueError, "publisher|workflow"):
+            self.run_publish()
+        self.assertTrue(self.remote_release["draft"])
+        self.assertEqual(len(self.remote_assets), 5)
+        self.assertFalse(any(method == "PATCH" for method, _, _ in self.calls))
+        self.assertEqual(self.remote_tag, self.initial_tag)
+        self.release_runs[0]["status"] = "completed"
+        self.assertEqual(self.run_publish()["status"], "published")
 
     def test_removed_task_message_is_not_approval(self):
         approval = self.approval()

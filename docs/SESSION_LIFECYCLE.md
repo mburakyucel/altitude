@@ -435,7 +435,9 @@ approval may support a replacement grant for the same target/files, preserving i
 identity and original deadline. Revocation, task completion,
 deadline or consumed publication blocks further writes even if a running engine retains an allow
 rule. An interrupted publication keeps its task-owned draft and phase evidence for read-back
-reconciliation; it never automatically repeats an uncertain write or deletes remote state.
+reconciliation; it never blindly repeats an uncertain write or deletes remote state. An uncertain
+draft creation can retry after successful reads establish that both tag and release are absent,
+with reconciliation recorded before a fresh create and no manual ledger edit.
 
 ### Image delivery and recovery
 
