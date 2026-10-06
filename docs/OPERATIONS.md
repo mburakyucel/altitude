@@ -412,6 +412,9 @@ under its scoped administrator authority. It closes admission and atomically emp
 installation's key file before requesting local job stop and VM cleanup as the runner. It requires
 no remote acknowledgement. Retained `state/runs/<run>/evidence.json` stays available for local
 administrator retrieval; an interrupted guest's bounded results are exported before scratch cleanup.
+If invalid candidate artifacts prevent export and the guest never wrote its receipt, revocation
+retains whichever protected summaries exist and records incomplete evidence before cleanup. Missing
+summaries never become a passing validation result; invalid candidate artifacts are not exported.
 The private `revocation.json` receipt distinguishes key removal from confirmed cleanup. If stop,
 export or cleanup fails, access stays revoked, evidence and the active recovery record remain, and
 the command fails; reapply the revoke plan under the same purpose after inspecting the named local

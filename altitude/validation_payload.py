@@ -307,7 +307,7 @@ def restore(payload: dict, destination: Path) -> None:
 
 
 def collect_results(directory: Path | int, *, names: tuple[str, ...] | None = None) -> dict:
-    """Capture evidence; a broker's explicit failure may retain only its protected summaries."""
+    """Capture evidence; a failure may retain only the protected summaries that exist."""
     if names is not None and (type(names) is not tuple or len(names) != 2
                               or set(names) != {"output.log", "receipt.json"}):
         raise ValueError("Only protected validation summaries may be selected")
@@ -330,7 +330,12 @@ def collect_results(directory: Path | int, *, names: tuple[str, ...] | None = No
             if len(entries) >= ENTRY_LIMIT or path.lower() in seen:
                 raise ValueError("Duplicate or excessive validation evidence entries")
             seen.add(path.lower())
-            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            try:
+                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if names is not None:
+                    continue  # An interrupted guest may never have written its receipt/log.
+                raise
             if names is not None and not stat.S_ISREG(info.st_mode):
                 raise ValueError("Protected validation summary is not a regular file")
             if stat.S_ISDIR(info.st_mode):

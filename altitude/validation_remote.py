@@ -108,9 +108,12 @@ class Broker:
                         evidence = payload.collect_results(area / "results")
                     except (OSError, ValueError):
                         evidence = payload.collect_results(area / "results", names=("output.log", "receipt.json"))
+                        result["evidence_complete"] = False
                     write_json(area / "evidence.json", evidence)
                     record = self._record(ident)
                     record["evidence_digest"] = evidence["digest"]
+                    if result.get("evidence_complete") is False:
+                        record["evidence_error"] = "Incomplete guest results; available protected summaries retained"
                     write_json(area / "record.json", record)
                 self._reap()
                 result["cleanup"] = not active.exists()
@@ -168,6 +171,12 @@ class Broker:
         if request.keys() - allowed:
             raise ValueError("Unsupported validation request fields")
         with locked(self.home):
+            # A fresh submit's reachability probe does not reap another run.
+            # Existing identities still reconcile through the normal status path.
+            if operation == "status":
+                record = self._record(ident)
+                if record["status"] == "absent":
+                    return record
             self._reap()
             area = self._area(ident)
             record = self._record(ident)

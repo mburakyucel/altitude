@@ -343,8 +343,13 @@ class ValidationPayloadTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 payload.collect_results(source, names=names)
         (source / "receipt.json").unlink()
+        interrupted = payload.collect_results(source, names=("output.log", "receipt.json"))
+        self.assertEqual(set(interrupted["entries"]), {"output.log"})
+        self.assertEqual(interrupted["entries"]["output.log"], result["entries"]["output.log"])
+        (source / "receipt.json").symlink_to(source / "output.log")
         with self.assertRaises(ValueError):
             payload.collect_results(source, names=("output.log", "receipt.json"))
+        (source / "receipt.json").unlink()
         (source / "receipt.json").write_bytes(b"x" * 65537)
         with self.assertRaises(ValueError):
             payload.collect_results(source, names=("output.log", "receipt.json"))

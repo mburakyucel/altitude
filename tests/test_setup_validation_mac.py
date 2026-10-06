@@ -489,6 +489,23 @@ class LocalRevocationBrokerTests(unittest.TestCase):
         self.assertTrue(result["cleanup"])
         self.assertEqual(evidence.read_text(), 'existing retained evidence')
 
+    def test_invalid_artifact_without_guest_receipt_does_not_block_revocation_cleanup(self):
+        artifacts = self.area / 'results/artifacts'
+        artifacts.mkdir()
+        (artifacts / 'unsafe').symlink_to('/unrelated')
+        self.assertFalse((self.area / 'results/receipt.json').exists())
+        result = self.broker.revoke()
+        self.assertTrue(result['cleanup'])
+        self.assertFalse(result['evidence_complete'])
+        self.assertFalse((self.home / 'active.json').exists())
+        evidence = remote.read_json(self.area / 'evidence.json')
+        self.assertEqual(set(evidence['entries']), {'output.log'})
+        record = remote.read_json(self.area / 'record.json')
+        self.assertIn('Incomplete guest results', record['evidence_error'])
+        self.assertIsNone(record['exit'])
+        self.assertTrue(self.broker.revoke()['cleanup'])
+        self.assertEqual(remote.read_json(self.area / 'evidence.json'), evidence)
+
     def test_stop_failure_retains_active_identity_and_does_not_cleanup_evidence(self):
         self.stop.side_effect = RuntimeError("private native error")
         result = self.broker.revoke()

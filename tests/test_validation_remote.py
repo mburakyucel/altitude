@@ -377,6 +377,16 @@ class RemoteValidationTests(AltitudeCase):
                                     "argv": [sys.executable, "-c", "print('observed')"],
                                     "payload": candidate, "duration": 3600})
 
+    def test_new_identity_status_does_not_reap_an_unrelated_expired_run(self):
+        from unittest import mock
+        record = self.admitted()
+        with mock.patch.object(self.broker, '_reap', side_effect=RuntimeError('slow native cleanup')) as reap:
+            absent = self.broker.dispatch({'operation': 'status', 'run_id': 'b' * 32})
+            self.assertEqual(absent, {'run_id': 'b' * 32, 'status': 'absent'})
+            reap.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, 'slow native cleanup'):
+                self.broker.dispatch({'operation': 'status', 'run_id': record['run_id']})
+
     def test_transient_status_and_result_failures_recover_the_same_run(self):
         lost = {"status", "result"}
         def transient(request):
