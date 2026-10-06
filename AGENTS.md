@@ -33,11 +33,13 @@ only when a PR already touches it, never as its own project. `tests/test_project
 ratchets the counts so mentions outside a seam can only fall.
 
 Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. Every
-change ships for macOS too, with host differences behind that seam. When the owner cannot verify it
-on macOS and it is unclear whether it works there, its PR and report say so: the change is Linux-only,
-or macOS support is a named follow-up that the operator or L3 can run as a task on the Altitude instance
-on the Mac. Supported-platform claims in the docs follow recorded native evidence; see the
-[roadmap](docs/ROADMAP.md#native-macos-runtime).
+change ships for macOS too, with host differences behind that seam. A change is confirmed on a
+platform only by recorded evidence from a run there; Linux delivery does not finish macOS
+confirmation. Until the Mac validation sandbox (#556) makes those runs routine, owners name missing
+macOS confirmation in their PR and report and send L3 a tracking row for the relevant issue: #643
+for containers, #225 for native runtime, or #551 for installation. L3 maintains those rows.
+Linux merge checks and holds are unchanged. Supported-platform claims follow recorded native
+evidence; see the [roadmap](docs/ROADMAP.md#native-macos-runtime).
 
 Both engines use one execution and authority contract. Adapt that common contract when an
 integration conflicts with an engine's native operating model; do not build a second engine-specific
@@ -180,3 +182,13 @@ New dispatches continue while activation is pending and wait only during the req
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
 separate explicit authorization and post-change health verification; a recorded machine grant whose purpose
 names the service is that authorization for its owner, and every command under it is recorded on the task.
+
+### Container operations on this machine
+
+The operator's project-chat approval of 2026-10-06 18:24 UTC (`c6f1ba6f5929`) stands until the
+operator revokes it: L3 records a container-scoped machine grant on an owner's request without
+another operator question. Its scope is the Linux container deployment on this machine:
+`scripts/container.py` operations, rootless Podman, the volumes, images and containers the launcher
+creates, and anything executed inside those containers. It excludes the operator's native Altitude
+installation and service, host trust stores and network configuration, host credential directories,
+and every other host resource the launcher did not create. It grants nothing for other projects.

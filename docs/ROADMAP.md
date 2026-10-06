@@ -92,9 +92,13 @@ Public-release/history-audit work and P1 backup/continuity remain separately seq
 
 ### Native macOS runtime
 
-macOS is a target alongside Linux: every change ships for both behind `altitude/platform.py`, or
-names itself Linux-only or its macOS support as a follow-up task for the Altitude instance on the Mac
-(see [AGENTS.md](../AGENTS.md#seams)). #527 moved host mechanisms into the seam, and #570 put the
+macOS is a target alongside Linux: every change ships for both behind `altitude/platform.py`.
+Confirmation requires recorded evidence from a run on each platform; Linux delivery leaves macOS
+confirmation open until that evidence exists. Until the Mac validation sandbox (#556) makes runs
+routine, owners name the missing confirmation in their PR and report and send L3 a row for #643
+(containers), #225 (native runtime), or #551 (installation); L3 maintains those rows. Linux merge
+checks and holds stay unchanged (see [AGENTS.md](../AGENTS.md#seams)).
+#527 moved host mechanisms into the seam, and #570 put the
 macOS host behind it on `main`; Altitude runs from source on the operator's Mac. The native lifecycle
 checks on the Mac remain pending: install and `alt doctor`, CLI and app update with adoption,
 failed-update rollback, uninstall keeping data, logout/login, reboot then login, sleep past a

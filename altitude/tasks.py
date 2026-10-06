@@ -2312,14 +2312,35 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
-def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
-                         actor: str, source: str = "task", expected_attempt: int | None = None) -> dict:
-    """The operator's answer to the owner's purpose question is the only authority that opens the machine to a task.
+def _standing_machine_policy(project: str, heading: str, approval: str) -> dict:
+    """Capture one approved purpose from main, never a task's editable policy."""
+    root = config.project_path(project)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main^{commit}"], cwd=root,
+                                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+        document = subprocess.run(["git", "show", f"{commit}:AGENTS.md"], cwd=root,
+                                  check=True, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("standing policy requires AGENTS.md committed on the registered project's main") from exc
+    headings = list(re.finditer(r"^#{1,6} ([^\n]+)$", document, re.MULTILINE))
+    matches = [i for i, match in enumerate(headings) if match.group(1) == heading]
+    if len(matches) != 1:
+        raise ValueError("standing policy heading must identify exactly one section in AGENTS.md")
+    index = matches[0]
+    end = headings[index + 1].start() if index + 1 < len(headings) else len(document)
+    text = document[headings[index].end():end].strip()
+    if not text or re.search(r"\n\s*\n", text) or f"`{approval}`" not in text:
+        raise ValueError("standing policy must be one paragraph citing the backtick-quoted operator approval ID")
+    return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
-    The check is mechanical: the cited operator message resolved that exact current question revision as answered
-    with no remainder, so the recorded purpose is the question the operator actually read. Whoever records it
-    judges that the answer is a yes to that purpose: the running owner from a task-chat answer, as it applies a
-    merge approval, or L3 or the operator from either chat. Nobody can widen a grant; it binds to the current attempt.
+
+def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
+                         actor: str, source: str = "task", expected_attempt: int | None = None,
+                         standing_policy: str | None = None) -> dict:
+    """Record an exact operator answer, or L3's application of an approved project-policy purpose.
+
+    The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
+    question and attempt. An owner self-records only from the operator's task-chat answer.
     """
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
         raise TransitionError("a machine grant needs the owner, the coordinator or the operator and a reason")
@@ -2333,20 +2354,46 @@ def grant_machine_access(project: str, slug: str, approval: str, *, question: st
                 raise ValueError("the owner records a grant only while running its current attempt, "
                                  "from the operator's task-chat answer")
             decision = _question_target(task, question, revision)
+            policy = None
             saved = decision.get("resolution") or {}
-            if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
-                    or decision["status"] != "resolved" or decision["audience"] != "operator"
-                    or saved.get("disposition") != "answered" or saved.get("remaining")
-                    or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
-                raise ValueError("cite the operator message that answered the current operator question revision")
-            operator = _decision_source(project, slug, decision, approval, source, exact=True)
+            current = next(q for q in reversed(task["questions"]) if q["id"] == question)
+            if standing_policy is not None:
+                if actor != "l3" or source != "project":
+                    raise ValueError("only L3 records a standing project approval")
+                if expected_attempt != task.get("attempt"):
+                    raise ValueError("standing grant must name the current task attempt")
+                if (decision != current or decision["status"] != "open" or decision["audience"] != "l3"
+                        or decision["asked_by"] != "l2" or decision.get("design") or decision.get("response")):
+                    raise ValueError("standing grant needs the owner's current open L3 purpose question")
+                operator = next((row for row in _decision_messages(project, slug, "project")
+                                 if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
+                                 and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
+                if not operator:
+                    raise ValueError("standing approval must cite an original operator message in this project's chat")
+                policy = _standing_machine_policy(project, standing_policy, approval)
+                if decision["detail"].split() != policy["text"].split():
+                    raise ValueError("requested purpose must exactly match the standing policy scope")
+            else:
+                if (decision != current or decision["status"] != "resolved" or decision["audience"] != "operator"
+                        or saved.get("disposition") != "answered" or saved.get("remaining")
+                        or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
+                    raise ValueError("cite the operator message that answered the current operator question revision")
+                operator = _decision_source(project, slug, decision, approval, source, exact=True)
+            previous = task.get("machine_access")
+            if previous and (policy or previous.get("policy")) and any((
+                    previous.get("purpose", "").split() != decision["detail"].split(),
+                    previous.get("approval") != approval, previous.get("source") != source,
+                    previous.get("attempt") != task.get("attempt"), previous.get("policy") != policy)):
+                raise ValueError("revoke the existing machine grant before switching its purpose or standing policy")
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
             S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
-                           revision=revision, reason=reason, error=str(exc))
+                           revision=revision, reason=reason, standing_policy=standing_policy, error=str(exc))
             raise TransitionError(f"machine grant refused: {exc}") from exc
         grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
+        if policy:
+            grant["policy"] = policy
         task["machine_access"] = grant
         S.save_task(project, task)
         S.append_event(project, slug, "machine-grant", **grant)
