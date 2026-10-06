@@ -320,6 +320,20 @@ unavailable, or the browser refuses its sandbox inside it, checkpoint the eviden
 `--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
 Altitude's local fictional harness exception grants no authority for another project's verification.
 
+The queued-message **Send now** walkthrough uses real queue and task storage with deterministic
+engine interruption in `web/e2e/send-now.pw.ts`. `web/playwright.validation.config.ts` keeps the
+fixture viewports and enables Chromium's sandbox in the validation container. After committing
+the candidate, run the focused walkthrough with:
+
+```sh
+alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && pnpm build && pnpm exec playwright test --config playwright.validation.config.ts send-now.pw.ts; result=$?; cp -r ui-artifacts /results/ui-artifacts; exit "$result"'
+```
+
+Named states cover loading, queued controls, interruption pending, delivered and removed rows,
+denied and unconfirmed requests, unavailable delivery and waiting for system work. Unit and Python
+fixtures additionally cover selected-message ordering, concurrent pickup, question/fault supersession,
+Stop recovery and engine job termination. The emulated iPhone lane remains separate evidence.
+
 ## Validation environments
 
 Each environment establishes one kind of evidence; running more of them does not widen what any one

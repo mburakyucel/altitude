@@ -79,7 +79,9 @@ remain governed by the existing boundaries.
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
+worker at its next checkpoint; an explicit Stop ends a worker. **Send now** on an inbox-owned operator
+message interrupts current work through the same Stop path and resumes the saved session with that
+message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -1805,7 +1807,7 @@ tab preserves the source conversation and draft. This feature introduces no prov
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
-its run order and Remove until
+its run order, **Send now** and **Remove** until
 its turn starts, when the row becomes the turn's bubble and typing indicator. Queue claim writes the
 user history row and publishes the active record under the same lifecycle guard used by the API's
 history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
@@ -1816,6 +1818,27 @@ file in the project directory, so a reload, another device and a restart all see
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
+
+**Send now** promotes only the selected operator row and gives it its own next turn. Other queued
+rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
+writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
+removable until claim, including when no engine is available after admission. Removal does not undo
+an interruption already requested. The daemon requests interruption
+of the captured active chat turn through the engine seam, retains partial output and session identity,
+and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
+its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
+CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
+cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
+explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
+restart. The browser requests this action by message ID; it never interrupts an engine itself.
+
+In the task chat, the same control uses the existing durable Stop and resume operation, fences hook
+pickup before interruption, and delivers only the selected inbox row through the usual resume claim
+and handoff receipt. Like Stop, it cancels attached reviews and does not undo completed external
+effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
+with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
+question wait, fault recovery or unavailable saved-session engine explains the required continuation,
+answer or recovery instead of interrupting. Machine grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

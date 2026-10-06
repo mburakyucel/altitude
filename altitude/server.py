@@ -2196,6 +2196,18 @@ class Handler(BaseHTTPRequestHandler):
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+            if api == "l2" and len(parts) > 2 and parts[2] == "send-now":
+                project, slug = o["project"], o["slug"]
+                try:
+                    result = dispatch.request_send_now(project, slug, str(o.get("id") or ""))
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                if result.get("queued"):
+                    try:
+                        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+                    except Exception as exc:
+                        log(f"[{project}/{slug}] Send now saved; immediate wake failed: {exc}")
+                return self._json(result)
             if api == "l2" and len(parts) > 2 and parts[2] == "remove":
                 try:
                     T.remove_message(o["project"], o["slug"], str(o.get("id") or ""))
@@ -2252,6 +2264,14 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 return self._json({"ok": True, "engine": engine})
+            if api == "chat" and len(parts) > 2 and parts[2] == "send-now":
+                project = o["project"]
+                try:
+                    result = l3.send_now(project, str(o.get("id") or ""))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                request_l3_drain(project)
+                return self._json(result)
             if api == "chat" and len(parts) > 2 and parts[2] == "remove":
                 project = o["project"]
                 if not l3.drop_queued(project, str(o.get("id") or "")):
