@@ -326,7 +326,7 @@ fixture viewports and enables Chromium's sandbox in the validation container. Af
 the candidate, run the focused walkthrough with:
 
 ```sh
-alt task validate -- sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build && pnpm --dir web exec playwright test --config playwright.validation.config.ts send-now.pw.ts; result=$?; cp -r web/ui-artifacts /results/ui-artifacts; exit "$result"'
+alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && pnpm build && pnpm exec playwright test --config playwright.validation.config.ts send-now.pw.ts; result=$?; cp -r ui-artifacts /results/ui-artifacts; exit "$result"'
 ```
 
 Named states cover loading, queued controls, interruption pending, delivered and removed rows,
