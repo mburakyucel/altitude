@@ -1028,7 +1028,10 @@ Altitude's home, outside every worker's writable roots. The run is recorded like
 purpose `validation`, and results reach the task folder without following links. The worker's own
 confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
 storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
-admitting a run, altd records interrupted runs and removes what they left. See the
+admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
+and removes their scratch files. Failed evidence delivery retains the original area and keeps the
+runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
+evidence recording and cleanup, and refuses admission once restart is requested. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
@@ -1383,7 +1386,8 @@ coalition, so stopping a worker takes all its descendants. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
-while activation is pending. When those short windows are quiet, altd runs
+while activation is pending. When dispatch/resume claims, L3 turns, adversarial reviews, report
+verification and bounded validation runs (including evidence recording and cleanup) are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
@@ -1394,8 +1398,8 @@ system fault naming its reason at once and, while its request is still pending, 
 with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
-also waits, leaving reports durable for the next tick. A shared activity lock fences these short
-operations against the exclusive restart request, including the launch-to-binding race. Ordinary source changes never
+also waits, leaving reports durable for the next tick. A shared activity lock fences these
+operations and validation against the exclusive restart request, including admission races. Ordinary source changes never
 start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
 authorization and post-change health verification.
 

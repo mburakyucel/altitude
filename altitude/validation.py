@@ -249,6 +249,9 @@ def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
 
 def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Path, list[str]]:
     """The run's results as the task folder's `validation/<n>/` and its output as `validation/<n>.log`."""
+    receipt = S.read_json(area / "delivered.json")
+    if receipt:
+        return Path(receipt["results"]), receipt["skipped"]
     fd = _task_dir_fd(project, slug)
     try:
         skipped = copy_results(area / "results", fd, str(n))
@@ -257,7 +260,9 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
             _copy_file(str(log), fd, f"{n}.log")
     finally:
         os.close(fd)
-    return S.task_dir(project, slug) / "validation" / str(n), skipped
+    target = S.task_dir(project, slug) / "validation" / str(n)
+    S.write_json(area / "delivered.json", {"results": str(target), "skipped": skipped})
+    return target, skipped
 
 
 def cleanup(runs: list[Path]) -> dict:
@@ -269,7 +274,7 @@ def cleanup(runs: list[Path]) -> dict:
             path.unlink(missing_ok=True)
 
 
-def _interrupted(area: Path) -> None:
+def _interrupted(area: Path) -> bool:
     """Finish the ledger row of a run altd did not see end. `run.json` names the run before its row is written and is
     removed only after the row is finished, so a row still unfinished here was interrupted."""
     try:
@@ -277,31 +282,47 @@ def _interrupted(area: Path) -> None:
         runs = S.task_dir(record["project"], record["slug"]) / "machine.jsonl"
         rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
         for row in rows:
-            if row.get("unit") == record["unit"] and row.get("finished") is None:
+            if row.get("unit") != record["unit"]:
+                continue
+            if row.get("results") == str(area / "results"):
+                return False  # Evidence could not be delivered; keep its original files for recovery.
+            if row.get("finished") is None:
+                error = "altd stopped during the run; its next start stopped the run and retained its evidence"
+                try:
+                    target, skipped = _deliver(record["project"], record["slug"], row["n"], area, record["unit"])
+                    log = S.task_dir(record["project"], record["slug"]) / "validation" / f"{row['n']}.log"
+                    delivered = True
+                except OSError as exc:
+                    target, skipped = area / "results", []
+                    log = engines.machine_files(area, record["unit"])[0]
+                    error += f"; cannot copy evidence to the task folder: {exc}; original files remain in {area}"
+                    delivered = False
                 T.finish_machine_run(record["project"], record["slug"], {
                     **row, "finished": S.now(), "ended": "interrupted",
-                    "error": "altd stopped during the run; its next start stopped the run and removed its files"})
+                    "error": error, "results": str(target), "results_skipped": skipped, "log": str(log)})
+                return delivered
+        return True
     except FileNotFoundError:
-        pass
+        return not (area / "run.json").exists()
     except (OSError, ValueError, KeyError, TypeError) as exc:
         LOG.warning(f"validation: cannot finish the record of the interrupted run in {area}: {exc}")
+        return False
 
 
 def reconcile() -> None:
-    """At daemon start, before any run is admitted: stop what a run left when altd stopped, finish its record, then
+    """At daemon start, before any run is admitted: stop what a run left when altd stopped, retain evidence, then
     remove its containers and run area. Runs are admitted only once every area is gone; a failed cleanup keeps the
     runner closed until the next start."""
     with _lock:
+        _ready.clear()
         runs = sorted(p for p in (home() / "runs").glob("*") if p.is_dir()) if (home() / "runs").is_dir() else []
         if runs and not platform.validation_unavailable():
             platform.job_stop(f"{UNIT_PREFIX}*.service", platform.manager_env(engines.clean_env()))
-            for area in runs:
-                _interrupted(area)
-            cleanup(runs)
+            cleanup([area for area in runs if _interrupted(area)])
         left = [area for area in runs if area.exists()]
         if left:
-            LOG.error(f"validation: {len(left)} run area(s) left by an earlier altd could not be removed; validation "
-                      "runs stay refused until the next altd start removes them")
+            LOG.error(f"validation: {len(left)} run area(s) retained because evidence or cleanup could not finish; "
+                      "validation runs stay refused until recovery and the next altd start")
             return
         if runs:
             LOG.warning(f"validation: removed {len(runs)} run area(s) left by an earlier altd")
@@ -325,6 +346,13 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
         owner=lambda task: False) -> dict:
     """One validation run for the running owner's current attempt; returns the command's exit status and output.
     `owner(task)` says whether the request comes from that task's own worker."""
+    with config.restart_lock() as ready:
+        if not ready or config.restart_in_progress():
+            raise ValueError("alt task validate: Altitude is restarting; retry when it is ready")
+        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, owner=owner)
+
+
+def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object, owner) -> dict:
     S.require_task_slug(slug)
     if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
             or sum(len(a) + 1 for a in argv) > COMMAND_LIMIT):
@@ -397,21 +425,26 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
                                     "output": "", "output_truncated": False}
                 ended = ("turned off" if stopped else "failed" if failure else "exit" if result["exit"] is not None
                          else "timeout" if result["timed_out"] else "no exit status")
+                if target is None:
+                    target = area / "results"
+                    row["log"] = str(engines.machine_files(area, unit)[0])
                 row.update({key: result[key] for key in ("exit", "timed_out", "started", "finished", "error")},
                            ended=ended, results=str(target) if target else None, results_skipped=skipped)
                 if failure and not row["error"]:
                     row["error"] = failure
                 T.finish_machine_run(project, slug, row)
                 recorded = True
-                (area / "run.json").unlink(missing_ok=True)
+                if target != area / "results":
+                    (area / "run.json").unlink(missing_ok=True)
         finally:
             try:
                 # An unrecorded outcome keeps the area and its run.json for the next start to record; the containers
                 # stop either way.
-                cleanup([area] if recorded and area.exists() else [])
-                if recorded and area.exists():
-                    LOG.warning(f"validation: {area} was not fully removed; the next altd start retries it")
+                cleanup([area] if recorded and target != area / "results" and area.exists() else [])
             finally:
+                if area.exists():
+                    _ready.clear()
+                    LOG.warning(f"validation: retained {area}; evidence or cleanup needs recovery before another run")
                 _lock.release()
     return {**result, "n": row["n"], "commit": commit, "results": str(target), "results_skipped": skipped,
             "publish": row["publish"], "log": row["log"], "unit": unit}
