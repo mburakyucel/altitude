@@ -291,16 +291,14 @@ def _interrupted(area: Path) -> bool:
                 try:
                     target, skipped = _deliver(record["project"], record["slug"], row["n"], area, record["unit"])
                     log = S.task_dir(record["project"], record["slug"]) / "validation" / f"{row['n']}.log"
-                    delivered = True
                 except OSError as exc:
                     target, skipped = area / "results", []
                     log = engines.machine_files(area, record["unit"])[0]
                     error += f"; cannot copy evidence to the task folder: {exc}; original files remain in {area}"
-                    delivered = False
-                T.finish_machine_run(record["project"], record["slug"], {
+                saved = T.finish_machine_run(record["project"], record["slug"], {
                     **row, "finished": S.now(), "ended": "interrupted",
                     "error": error, "results": str(target), "results_skipped": skipped, "log": str(log)})
-                return delivered
+                return saved.get("results") != str(area / "results")
         return True
     except FileNotFoundError:
         return not (area / "run.json").exists()

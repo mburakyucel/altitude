@@ -325,9 +325,10 @@ class TestValidationRunner(AltitudeCase):
             (areas[name] / "run.json").write_text(json.dumps({"project": self.project, "slug": self.slug,
                                                               "unit": f"altitude-validation-{name}.service"}))
             if name != "unrecorded":
-                row = T.start_machine_run(self.project, self.slug, lambda n: {
-                    "purpose": "validation", "command": "true", "unit": f"altitude-validation-{name}.service",
-                    "started": (datetime.now(timezone.utc) - timedelta(seconds=validation.TIMEOUT + 60)).isoformat()})
+                expired = (datetime.now(timezone.utc) - timedelta(seconds=validation.TIMEOUT + 60)).isoformat()
+                with mock.patch.object(S, "now", return_value=expired):
+                    row = T.start_machine_run(self.project, self.slug, lambda n: {
+                        "purpose": "validation", "command": "true", "unit": f"altitude-validation-{name}.service"})
             (areas[name] / "results" / "check").write_text("partial evidence\n")
             engines.machine_files(areas[name], f"altitude-validation-{name}.service")[0].write_text("before restart\n")
         T.finish_machine_run(self.project, self.slug, {**row, "exit": 0, "finished": S.now(), "ended": "exit"})
@@ -347,6 +348,8 @@ class TestValidationRunner(AltitudeCase):
         self.assertEqual([(r["ended"], r["exit"]) for r in saved], [("interrupted", None), ("exit", 0)],
                          "a row finished before its area was removed stays as it ended")
         self.assertIn("altd stopped during the run", saved[0]["error"])
+        self.assertGreater((datetime.now(timezone.utc) - datetime.fromisoformat(saved[0]["started"]))
+                           .total_seconds(), validation.TIMEOUT)
         self.assertIn("retained", saved[0]["error"])
         self.assertEqual(Path(saved[0]["log"]).read_text(), "before restart\n")
         self.assertEqual((Path(saved[0]["results"]) / "check").read_text(), "partial evidence\n")
@@ -408,6 +411,31 @@ class TestValidationRunner(AltitudeCase):
         T.start_machine_run(self.project, self.slug, lambda n: {
             "purpose": "validation", "command": "true", "unit": "altitude-validation-old.service"})
         self.assertEqual(server.settle_interrupted_machine_commands(), [])
+
+    def test_recovery_keeps_original_evidence_when_a_prior_terminal_event_names_it(self):
+        write = S.atomic_write
+
+        def interrupted_write(path, *args, **kwargs):
+            if path.name == "machine.jsonl" and any(e["kind"] == "machine-run"
+                                                   for e in S.read_events(self.project, self.slug)):
+                raise OSError("interrupted ledger replacement")
+            return write(path, *args, **kwargs)
+
+        with mock.patch.object(validation, "_deliver", side_effect=OSError("temporary copy failure")), \
+                mock.patch.object(S, "atomic_write", side_effect=interrupted_write):
+            result = self.validate(["sh", "-c", "echo original-log; echo original-result > /results/check"], status=400)
+        self.assertIn("interrupted ledger", result["error"])
+        [area] = list((validation.home() / "runs").iterdir())
+        validation.reconcile()
+        [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl")
+                 .read_text().splitlines()]
+        self.assertEqual(row["ended"], "failed", "the first terminal event remains authoritative")
+        self.assertEqual(Path(row["results"]), area / "results")
+        self.assertEqual(Path(row["log"]).read_text(), "original-log\n")
+        self.assertEqual((Path(row["results"]) / "check").read_text(), "original-result\n")
+        self.assertFalse(validation._ready.is_set())
+        validation.reconcile()
+        self.assertTrue(area.exists(), "repeated startup never deletes the ledger's evidence")
 
     def test_an_ordinary_grant_named_validation_is_still_settled_at_startup(self):
         T.start_machine_run(self.project, self.slug, lambda n: {

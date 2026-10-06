@@ -2431,10 +2431,10 @@ def start_machine_run(project: str, slug: str, fields) -> dict:
     return row
 
 
-def finish_machine_run(project: str, slug: str, row: dict) -> None:
+def finish_machine_run(project: str, slug: str, row: dict) -> dict:
     """Add the run's task and project events once, then replace its row with the outcome. The row is written last,
     so an interruption between the writes leaves it unfinished to finish again, and a second finish keeps the
-    outcome the first one recorded."""
+    outcome the first one recorded. Return that persisted outcome so evidence cleanup uses its paths."""
     runs = S.task_dir(project, slug) / "machine.jsonl"
     with S.project_lock(project):
         recorded = next((e for e in S.read_events(project, slug)
@@ -2448,6 +2448,7 @@ def finish_machine_run(project: str, slug: str, row: dict) -> None:
         rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
         S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
                                      for r in rows))
+        return row
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
