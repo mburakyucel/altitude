@@ -4,7 +4,7 @@ FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive PLAYWRIGHT_BROWSERS_PATH=/opt/playwright COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates cloud-image-utils curl fuse-overlayfs git gpgv libcap2-bin make openssh-client podman \
+        ca-certificates cloud-image-utils curl ffmpeg fuse-overlayfs git gpgv libcap2-bin liblcms2-2 make openssh-client podman \
         python3 qemu-system-x86 qemu-utils slirp4netns ubuntu-cloudimage-keyring uidmap xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
