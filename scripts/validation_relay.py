@@ -14,6 +14,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 
 SOURCE = Path(__file__).absolute().parent.parent
 if __name__ == '__main__':
@@ -108,38 +109,74 @@ def ssh_command(config: dict) -> list[str]:
             'altitude-validation-v1']
 
 
-def forward(config: dict, request: dict) -> dict:
+def exchange(config: dict, request: dict, output, timeout: int) -> None:
+    """One fixed SSH exchange; its reply remains on disk under the file-size cap."""
+    result = subprocess.run(ssh_command(config), input=platform.validation_frame_encode(request),
+                            stdout=output, stderr=subprocess.DEVNULL, timeout=timeout, check=False,
+                            preexec_fn=platform.validation_relay_transfer_limits)
+    if result.returncode != 0:
+        raise ValueError('Remote transport failed')
+    # Structural frame validation only. Do not decode/re-encode up to 384 MiB here.
+    platform.validation_frame_size(output)
+
+
+def forward(config: dict, request: dict, output) -> None:
+    """Write one response frame. Only a fresh submit gets a pre-send reachability probe.
+
+    The daemon assigns a fresh run ID and never resubmits it after uncertain admission.
+    A failed status probe therefore proves this submit was never sent. Any transport
+    failure after starting submit remains uncertain, including a lost SSH reply.
+    """
     validate_request(request)
+    submitted = request['operation'] != 'submit'
     try:
-        # Stream into bounded files: hostile remote output cannot exhaust relay memory.
-        import tempfile
-        with tempfile.TemporaryFile() as output:
-            result = subprocess.run(ssh_command(config), input=platform.validation_frame_encode(request),
-                                    stdout=output, stderr=subprocess.DEVNULL, timeout=120, check=False,
-                                    preexec_fn=platform.validation_relay_transfer_limits)
-            if result.returncode != 0 or output.tell() > platform.VALIDATION_FRAME_LIMIT + 8:
-                raise ValueError('Remote transport failed')
-            output.seek(0)
-            response = platform.validation_frame_read(output)
-            if output.read(1):
-                raise ValueError('Trailing remote protocol data')
-            return response
+        if not submitted:
+            with tempfile.TemporaryFile() as probe:
+                exchange(config, {'operation': 'status', 'run_id': request['run_id']}, probe,
+                         platform.VALIDATION_REACHABILITY_SECONDS)
+                if probe.seek(0, os.SEEK_END) > 16384:
+                    raise ValueError('Invalid reachability response')
+                probe.seek(0)
+                response = platform.validation_frame_read(probe)
+                if response != {'run_id': request['run_id'], 'status': 'absent'}:
+                    # Never replay an existing identity or a cancellation tombstone.
+                    if response.get('run_id') != request['run_id'] or response.get('status') not in {
+                            'running', 'finished', 'cancelled'}:
+                        raise ValueError('Invalid reachability response')
+                    probe.seek(0)
+                    platform.validation_frame_forward(probe, output.write)
+                    return
+            submitted = True
+        exchange(config, request, output, platform.VALIDATION_TRANSFER_SECONDS)
     except (OSError, ValueError, subprocess.TimeoutExpired):
-        return {'status': 'unavailable', 'error': 'The Mac is unavailable or its validation transport failed'}
+        response = {'status': 'unavailable', 'error': 'The Mac is unavailable or its validation transport failed'}
+        if not submitted:
+            response['accepted'] = False
+        output.seek(0)
+        output.truncate()
+        output.write(platform.validation_frame_encode(response))
 
 
 def handle(connection, config: dict) -> None:
-    connection.settimeout(125)
+    connection.settimeout(platform.VALIDATION_REQUEST_SECONDS)
     try:
         if not platform.validation_relay_peer(connection, config):
             response = {'status': 'unavailable', 'accepted': False,
                         'error': 'Only the configured daemon may use this relay'}
         else:
             with connection.makefile('rb') as stream:
-                response = forward(config, platform.validation_frame_read(stream))
+                request = platform.validation_frame_read(stream)
+            validate_request(request)
+            response = None
     except (OSError, ValueError, TypeError):
         response = {'status': 'unavailable', 'accepted': False, 'error': 'Invalid validation relay request'}
-    connection.sendall(platform.validation_frame_encode(response))
+    if response is not None:
+        connection.sendall(platform.validation_frame_encode(response))
+        return
+    # A disconnected recipient after forwarding cannot prove nonadmission.
+    with tempfile.TemporaryFile() as output:
+        forward(config, request, output)
+        platform.validation_frame_forward(output, connection.sendall)
 
 
 def main() -> int:

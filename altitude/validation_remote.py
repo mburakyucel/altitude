@@ -84,6 +84,42 @@ class Broker:
         path = self._area(ident) / "record.json"
         return read_json(path) if path.exists() else {"run_id": ident, "status": "absent"}
 
+    def revoke(self) -> dict:
+        """Local setup recovery after key removal; preserve evidence without remote acknowledgement."""
+        result = {"status": "revoked", "cleanup": False}
+        try:
+            with locked(self.home):
+                if not (self.home / "off").is_file():
+                    raise RuntimeError("Admission must be disabled before local revocation")
+                active = self.home / "active.json"
+                if not active.exists():
+                    if active.is_symlink():
+                        raise RuntimeError("Invalid active-run record")
+                    return {**result, "cleanup": True}
+                ident = request_identity(read_json(active))
+                result["run_id"] = ident
+                area = self._area(ident)
+                (area / "cancel").touch()
+                platform.validation_broker_stop(ident)
+                # Preserve any completed export. If work was interrupted before export,
+                # collect bounded results before the existing reaper detaches its image.
+                if not (area / "evidence.json").exists() and (area / "results").is_dir():
+                    try:
+                        evidence = payload.collect_results(area / "results")
+                    except (OSError, ValueError):
+                        evidence = payload.collect_results(area / "results", names=("output.log", "receipt.json"))
+                    write_json(area / "evidence.json", evidence)
+                    record = self._record(ident)
+                    record["evidence_digest"] = evidence["digest"]
+                    write_json(area / "record.json", record)
+                self._reap()
+                result["cleanup"] = not active.exists()
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
+            pass
+        if not result["cleanup"]:
+            result["error"] = "Keys revoked; local validation stop or cleanup needs recovery"
+        return result
+
     def _reap(self) -> None:
         """An expired or dead supervisor never releases admission before VM cleanup."""
         active = self.home / "active.json"
@@ -385,8 +421,31 @@ def reconcile() -> None:
             return  # Pending identity retains admission; local validation stays usable.
 
 
-def stop_all() -> None:
+def stop_all() -> threading.Thread | None:
     _cancel.set()
+    # An active caller owns cancellation. After restart there may be only a
+    # durable pending identity; turning validation off still requests its stop.
+    if not _lock.acquire(blocking=False):
+        return None
+    if not _pending().exists():
+        _lock.release()
+        return None
+
+    def cancel_pending():
+        try:
+            _reconcile()
+        except (OSError, ValueError, RuntimeError):
+            pass  # Keep the identity until a later reconciliation confirms cleanup.
+        finally:
+            _lock.release()
+
+    worker = threading.Thread(target=cancel_pending, name="remote-validation-cancel", daemon=True)
+    try:
+        worker.start()
+    except RuntimeError:
+        _lock.release()
+        raise
+    return worker
 
 
 def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
@@ -418,7 +477,11 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
         _pending().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_json(_pending(), pending)
         deadline = time.monotonic() + TIMEOUT
-        response = _call("submit", ident, argv=argv, payload=candidate, duration=TIMEOUT)
+        # The hour includes admission and the final status/result/ack exchanges.
+        # The Mac starts its own clock only after upload; reserving these windows
+        # keeps a full-length executor result inside the submitter's deadline.
+        duration = int(TIMEOUT - 4 * platform.VALIDATION_REQUEST_SECONDS - POLL_MAX_SECONDS)
+        response = _call("submit", ident, argv=argv, payload=candidate, duration=duration)
         not_admitted = response.get("accepted") is False
         pause = POLL_SECONDS
         while response.get("status") != "finished" and not not_admitted:

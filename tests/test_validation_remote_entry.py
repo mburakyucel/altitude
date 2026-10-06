@@ -80,6 +80,18 @@ class RemoteEntryTests(unittest.TestCase):
         load.assert_not_called()
         runtime.assert_not_called()
 
+    def test_revoke_is_fixed_local_only_and_returns_cleanup_receipt(self):
+        broker = mock.Mock()
+        broker.revoke.return_value = {"status": "revoked", "cleanup": True}
+        code, response, _, _ = self.invoke(b"", original=None, args=["revoke"], broker=broker)
+        self.assertEqual(code, 0)
+        self.assertEqual(response, broker.revoke.return_value)
+        broker.revoke.assert_called_once_with()
+        code, response, load, _ = self.invoke(b"", args=["revoke"], broker=broker)
+        self.assertEqual(code, 1)
+        self.assertIsNone(response)
+        load.assert_not_called()
+
     def test_internal_worker_accepts_only_fixed_run_argument_and_no_ssh_environment(self):
         broker = mock.Mock()
         code, response, _, _ = self.invoke(b"", original=None, args=["work", self.ident], broker=broker)

@@ -107,11 +107,16 @@ def private_source(value: str):
     return network
 
 
-def key_admission_closed(uid: int) -> None:
+def key_state(uid: int) -> Path:
     state = canonical(str(BASE / "state"))
     info = state.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o700:
         raise ValueError("Validation state ownership changed")
+    return state
+
+
+def key_admission_closed(uid: int) -> None:
+    state = key_state(uid)
     off = state / "off"
     info = off.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077:
@@ -141,7 +146,10 @@ def build_key_plan(value: dict) -> dict:
         raise ValueError("Installed validation configuration changed")
     python = canonical(config["python"])
     protected(python)
-    key_admission_closed(config["runner_uid"])
+    if action == "revoke":
+        key_state(config["runner_uid"])
+    else:
+        key_admission_closed(config["runner_uid"])
     rules = (BASE / "sshd.conf").read_text()
     match = re.match(r"Match User ([a-z_][a-z0-9_-]{0,31})\n", rules)
     if not match:
@@ -154,7 +162,7 @@ def build_key_plan(value: dict) -> dict:
     if len(original) > 4096:
         raise ValueError("Installed public-key file exceeds its limit")
     rows = original.decode("ascii").splitlines(keepends=True)
-    if not 1 <= len(rows) <= 2:
+    if not (0 if action == "revoke" else 1) <= len(rows) <= 2:
         raise ValueError("Expected only the current key and optional staged replacement")
     keys, source = [], None
     for row in rows:
@@ -169,7 +177,8 @@ def build_key_plan(value: dict) -> dict:
         if key in keys:
             raise ValueError("Duplicate installed public key")
         keys.append(key)
-    check_rules(SSHD_CONFIG.read_text(), match[1], str(private_source(source).network_address), expected)
+    if action != "revoke":
+        check_rules(SSHD_CONFIG.read_text(), match[1], str(private_source(source).network_address), expected)
     if action == "stage":
         key = public_key(canonical(value["public_key"]))
         if key in keys or len(keys) != 1:
@@ -182,25 +191,55 @@ def build_key_plan(value: dict) -> dict:
             raise ValueError("Retirement requires the exact old key and its staged replacement")
         keys.remove(old)
     else:
-        # A revoked identity cannot retrieve retained evidence; reconcile through the
-        # existing protocol before applying this one-way removal.
-        if any((BASE / "state/runs").glob("*/evidence.json")):
-            raise ValueError("Retrieve and acknowledge retained evidence before revocation")
         keys = []
     updated = "".join(f'from="{source}",restrict {key}\n' for key in keys).encode()
     return {"mode": "host-key", "value": value, "original": original, "updated": updated,
-            "runner_uid": config["runner_uid"]}
+            "runner_uid": config["runner_uid"], "config": config}
+
+
+def close_key_admission(uid: int) -> None:
+    off = key_state(uid) / "off"
+    fd = os.open(off, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, uid) or info.st_nlink != 1:
+            raise ValueError("Invalid admission-off marker")
+        os.fchmod(fd, 0o600)
+        os.fchown(fd, uid, -1)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def revocation_receipt(value: dict) -> None:
+    path, temporary = BASE / "revocation.json", BASE / ".revocation.new"
+    if path.exists() or path.is_symlink():
+        protected(path)
+    created = False
+    try:
+        _write(temporary, json.dumps(value, sort_keys=True).encode(), 0o600)
+        created = True
+        temporary.replace(path)
+    finally:
+        if created:
+            temporary.unlink(missing_ok=True)
 
 
 def apply_key_plan(plan: dict) -> None:
     path, temporary = BASE / "authorized_keys", BASE / ".authorized_keys.new"
     created = False
+    revoke = plan["value"]["action"] == "revoke"
+    if revoke:
+        close_key_admission(plan["runner_uid"])
     try:
         _write(temporary, plan["updated"], 0o644)
         created = True
         # The trusted runner keeps admission closed through this administrator action.
         # Recheck immediately before replacing only this installation's key file.
-        key_admission_closed(plan["runner_uid"])
+        if revoke:
+            close_key_admission(plan["runner_uid"])
+        else:
+            key_admission_closed(plan["runner_uid"])
         protected(path)
         if path.read_bytes() != plan["original"]:
             raise ValueError("Installed public keys changed during the transaction")
@@ -208,6 +247,19 @@ def apply_key_plan(plan: dict) -> None:
     finally:
         if created:
             temporary.unlink(missing_ok=True)
+    if revoke:
+        # Access is already removed. Neither a stop failure nor loss of this command
+        # restores keys; the private receipt makes incomplete cleanup recoverable.
+        receipt = {"keys_revoked": True, "cleanup": False, "error": "Local cleanup not yet confirmed"}
+        revocation_receipt(receipt)
+        try:
+            receipt = {**platform.validation_setup_revoke(plan["config"]), "keys_revoked": True}
+        except Exception:
+            revocation_receipt(receipt)
+            raise RuntimeError("Keys revoked; local cleanup needs recovery") from None
+        revocation_receipt(receipt)
+        if not receipt.get("cleanup"):
+            raise RuntimeError("Keys revoked; local cleanup needs recovery")
 
 
 def account_rules(account: str, command: str) -> tuple[str, dict]:

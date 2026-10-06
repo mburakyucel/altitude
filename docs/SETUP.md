@@ -573,10 +573,13 @@ These private mode-0600 JSON files contain `version: 1`, `mode: "host-key"` and 
 `stage` adds `public_key` naming the replacement public-key file; `retire` names the exact old
 `public_key` and already-staged `replacement_public_key`; `revoke` has no additional fields.
 Run `--plan PRIVATE_JSON` to check, then add `--apply` only under the setup/rotation grant.
-Every action requires the existing admission-off marker and no active run, preserves that marker,
-and changes only the installation's protected `authorized_keys`. Staging retains the current key
-and its exact source restriction. Retirement requires both keys to match; revocation empties the
-key file only after retained evidence is acknowledged. Unrelated key rows or account restrictions
+Staging and retirement require the existing admission-off marker and no active run and preserve
+that marker. Staging retains the current key and its exact source restriction; retirement requires
+both keys to match. Emergency revocation instead closes admission and empties the installation's
+key file before attempting local stop/cleanup as the dedicated runner. It accepts active runs and
+unacknowledged evidence, preserves evidence for local administrator retrieval, and writes the private
+`revocation.json` receipt beneath the installation directory. Cleanup failure never restores access;
+reapplying the same revoke plan retries local cleanup. Unrelated key rows or account restrictions
 are refused. These local checks cannot establish that Linux has adopted a replacement: follow the
 [verification order](OPERATIONS.md#remote-macos-validation) before retiring either old identity.
 

@@ -361,7 +361,9 @@ security boundary against the trusted runner or administrator. Existing task aut
 governs every submitted command; a reserved preflight window does not expand that scope.
 
 Settings → **Validation runs** also refuses new Mac submissions and requests cancellation of a
-running Mac job. Cancellation is confirmed only after the remote supervisor and VM stop and their
+running Mac job, including a pending identity with no active caller after daemon restart. An idle
+pending identity gets one background cancellation/reconciliation attempt; an unreachable Mac retains
+that identity for the next daemon start or Mac request. Cancellation is confirmed only after the remote supervisor and VM stop and their
 scratch mounts/clones are removed. Loss of the route, sleep, missing login or an unavailable SSH
 service cannot confirm cancellation. The pending run identity blocks further Mac submissions;
 Linux validation remains usable. After a daemon restart or a subsequent Mac request, reconciliation
@@ -405,10 +407,18 @@ remain available. The setup tools assume the trusted runner/admin preserves this
    The Mac installer verifies the two local rows, not the cross-host observation. Reopen admission
    only within the remaining scoped authority.
 
-To revoke remote access, close admission and reconcile active runs and retained evidence first,
-then apply the Mac host-key `revoke` plan. It empties only this installation's key file, preserves
-the off marker and leaves SSH configuration/services alone. Revocation does not terminate an
-existing SSH session; reconciliation precedes removal. Pin and verify a changed Mac host key
+To revoke a compromised or unavailable remote identity, apply the Mac host-key `revoke` plan
+under its scoped administrator authority. It closes admission and atomically empties only this
+installation's key file before requesting local job stop and VM cleanup as the runner. It requires
+no remote acknowledgement. Retained `state/runs/<run>/evidence.json` stays available for local
+administrator retrieval; an interrupted guest's bounded results are exported before scratch cleanup.
+The private `revocation.json` receipt distinguishes key removal from confirmed cleanup. If stop,
+export or cleanup fails, access stays revoked, evidence and the active recovery record remain, and
+the command fails; reapply the revoke plan under the same purpose after inspecting the named local
+recovery state. If key replacement itself fails, admission stays off but key removal is unconfirmed.
+Do not delete retained state to claim cleanup. Revocation does not terminate an existing SSH session
+or roll back an already-dispatched request. It leaves SSH configuration and unrelated services alone.
+Pin and verify a changed Mac host key
 independently; never disable host-key checking. Retire the installed relay/verifier socket units and Mac-only validation SSH
 rule, installed code, state and copied template only after admission is disabled and remote termination,
 cleanup and evidence retrieval are confirmed. Preserve preexisting accounts, templates, unrelated SSH rules and Altitude

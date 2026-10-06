@@ -119,6 +119,29 @@ class RemoteValidationTests(AltitudeCase):
         self.assertEqual((result["exit"], result["ended"]), (7, "exit"))
         self.assertIn("test failure", result["output"])
 
+    def test_full_executor_window_leaves_time_for_upload_result_and_acknowledgement(self):
+        from unittest import mock
+        clock = [0.0]
+        duration = []
+
+        def transfer(request):
+            clock[0] += platform.VALIDATION_REQUEST_SECONDS
+            if request["operation"] == "submit":
+                duration.append(request["duration"])
+            elif request["operation"] == "status":
+                clock[0] += duration[0]  # Executor uses its full preparation/cleanup window.
+            return self.forward(request)
+
+        self.transport.side_effect = transfer
+        self.patch(remote, "time", mock.Mock(wraps=time, monotonic=lambda: clock[0]))
+        result = self.validate()
+        self.assertEqual(result["exit"], 0, result)
+        self.assertGreater(duration[0], remote.CLEANUP_SECONDS)
+        self.assertLess(duration[0], remote.TIMEOUT)
+        self.assertLessEqual(clock[0], remote.TIMEOUT)
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual([r["operation"] for r in self.requests], ["submit", "status", "result", "result"])
+
     def test_invalid_artifacts_keep_protected_log_and_receipt_without_claiming_pass(self):
         result = self.validate("import os,pathlib; print('useful test log'); "
                                "pathlib.Path(os.environ['RESULTS'],'invalid-link').symlink_to('/unrelated')")
@@ -137,6 +160,40 @@ class RemoteValidationTests(AltitudeCase):
         self.assertIn("no passing result", result["error"])
         self.assertFalse(remote._pending().exists())
         self.assertEqual(self.rows()[0]["ended"], "unavailable")
+
+    def test_unreachable_mac_preflight_returns_without_submission_polling_or_pending_identity(self):
+        import tempfile
+        from unittest import mock
+        from scripts import validation_relay as relay
+        from tests.test_validation_relay import CONFIG
+        probes = []
+
+        def unreachable(argv, **kwargs):
+            import io
+            request = platform.validation_frame_read(io.BytesIO(kwargs['input']))
+            probes.append(request)
+            self.assertEqual(request['operation'], 'status')
+            self.assertEqual(kwargs['timeout'], 15)
+            raise subprocess.TimeoutExpired('private fixture transport', 15)
+
+        self.patch(relay, 'subprocess', mock.Mock(wraps=subprocess, run=unreachable,
+                                               TimeoutExpired=subprocess.TimeoutExpired))
+
+        def through_relay(request):
+            with tempfile.TemporaryFile() as output:
+                relay.forward(CONFIG, request, output)
+                output.seek(0)
+                return platform.validation_frame_read(output)
+
+        self.transport.side_effect = through_relay
+        result = self.validate()
+        self.assertEqual(result['ended'], 'unavailable')
+        self.assertIsNone(result['exit'])
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(self.launches, [])
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(self.transport.call_count, 1)
+        self.assertEqual(self.rows()[0]['ended'], 'unavailable')
 
     def test_uncertain_submission_is_cancelled_and_recovered_without_duplicate_submission(self):
         def lost_reply(request):
@@ -187,6 +244,46 @@ class RemoteValidationTests(AltitudeCase):
         self.patch(terminal, "owner_connection", return_value=False)
         self.validate(status=403)
         self.transport.assert_not_called()
+
+    def test_switch_off_cancels_pending_identity_without_an_active_caller(self):
+        def lost_reply(request):
+            if request["operation"] == "submit":
+                self.broker.dispatch(request)
+                remote.stop_all()
+            return {"status": "unavailable"}
+
+        self.transport.side_effect = lost_reply
+        self.validate()
+        self.assertTrue(remote._pending().exists())
+        self.transport.side_effect = self.forward
+        worker = remote.stop_all()
+        self.assertIsNotNone(worker)
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(len(self.launches), 1)
+        self.assertEqual(self.requests[0]["operation"], "cancel")
+        self.assertIsNone(self.rows()[0]["exit"])
+        self.assertTrue((S.task_dir(self.project, self.slug) / "validation/1-recovered/output.log").is_file())
+
+    def test_unreachable_idle_cancellation_retains_identity_and_releases_lock(self):
+        def lost_reply(request):
+            if request["operation"] == "submit":
+                self.broker.dispatch(request)
+                remote.stop_all()
+            return {"status": "unavailable"}
+
+        self.transport.side_effect = lost_reply
+        self.validate()
+        self.transport.reset_mock()
+        worker = remote.stop_all()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(remote._pending().exists())
+        self.assertEqual(self.transport.call_args.args[0]["operation"], "cancel")
+        self.transport.side_effect = self.forward
+        remote.reconcile()
+        self.assertFalse(remote._pending().exists())
 
     def test_mismatched_remote_identity_never_becomes_a_pass(self):
         def corrupt(request):

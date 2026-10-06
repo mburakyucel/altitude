@@ -346,9 +346,11 @@ without sudo, credentials, host directories, clipboard or a network adapter. `RE
 captures output separately and exports regular files with a protected result receipt.
 
 The Mac admits one run at a time, for at most one hour, with at most four vCPUs and 8 GiB RAM.
-That hour includes preparation and a two-minute teardown reserve: candidate execution stops before
-the outer supervisor limit. The Mac derives expiry from the bounded duration on its own clock;
-the Linux submitter also keeps a deadline, without assuming synchronized machine clocks.
+That hour reserves four bounded transport exchanges and one polling interval for admission and
+final status/result/acknowledgement. The remaining Mac window includes preparation and a two-minute
+teardown reserve; candidate execution stops before the outer supervisor limit. The Mac derives
+expiry from that shorter duration on its own clock; the Linux submitter keeps the overall deadline,
+without assuming synchronized machine clocks.
 The guest disk is at most 64 GiB, and the results scratch image is 512 MiB. Free host storage must
 cover the guest's full logical disk plus 2 GiB. Returned evidence is limited to 256 MiB of raw files,
 including a 32 MiB command log. Its digest-bound JSON inventory uses one base64 layer and a separate
@@ -358,6 +360,15 @@ log and receipt remain retrievable. These configured limits require native measu
 asleep or inaccessible Mac, missing GUI login, unavailable relay or dependency mismatch produces
 an explicit unavailable/uncertain result, never a pass. A locked screen alone is not a failure
 when the runner remains logged in and reachable; waking or unlocking the laptop is not automated.
+
+Before sending a new run, the relay makes a status round-trip with a 15-second bound. An unreachable
+Mac at that point returns unavailable without admitting or retaining a pending run. Once submission
+starts, a lost reply remains uncertain; the daemon never resubmits that identity. Each subsequent
+SSH exchange has a 120-second transfer bound. A maximum 368 MiB evidence inventory therefore needs
+more than 3.1 MiB/s sustained throughput, allowing for connection overhead; the actual private route
+remains unmeasured. Slower transfers report unavailable and leave unacknowledged evidence on the Mac
+for recovery. The credential relay checks the complete frame length on disk and forwards bounded
+chunks unchanged; the daemon decodes the JSON and verifies the returned identity and evidence.
 
 Dependency templates contain reviewed-main toolchains, frozen package stores and browser binaries.
 Candidate dependency manifests must match their recorded fingerprints; changed dependencies or

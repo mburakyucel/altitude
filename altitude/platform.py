@@ -2155,6 +2155,11 @@ def validation_runroot() -> str:
 
 VALIDATION_RELAY_SOCKET = '/run/altitude-validation-relay/control.sock'
 VALIDATION_FRAME_LIMIT = 384 * 1024 * 1024
+VALIDATION_TRANSFER_SECONDS = 120
+VALIDATION_REACHABILITY_SECONDS = 15
+VALIDATION_ATTEST_SECONDS = 20
+VALIDATION_SUBMIT_SECONDS = VALIDATION_REACHABILITY_SECONDS + VALIDATION_TRANSFER_SECONDS
+VALIDATION_REQUEST_SECONDS = VALIDATION_SUBMIT_SECONDS + VALIDATION_ATTEST_SECONDS + 5
 
 
 def validation_frame_encode(value: dict) -> bytes:
@@ -2173,7 +2178,7 @@ def validation_frame_read(stream) -> dict:
             if not chunk:
                 raise ValueError('Incomplete validation message')
             parts.extend(chunk)
-        return bytes(parts)
+        return parts
 
     size = struct.unpack('!Q', exact(8))[0]
     if not 0 < size <= VALIDATION_FRAME_LIMIT:
@@ -2184,6 +2189,32 @@ def validation_frame_read(stream) -> dict:
     return value
 
 
+def validation_frame_size(stream) -> int:
+    """Check a complete seekable frame before any bytes are sent to the daemon."""
+    stream.seek(0)
+    header = stream.read(8)
+    if len(header) != 8:
+        raise ValueError('Incomplete validation message')
+    size = struct.unpack('!Q', header)[0]
+    if not 0 < size <= VALIDATION_FRAME_LIMIT:
+        raise ValueError('Validation message exceeds the transfer limit')
+    if stream.seek(0, os.SEEK_END) != size + 8:
+        raise ValueError('Incomplete or trailing validation message')
+    return size
+
+
+def validation_frame_forward(stream, send) -> None:
+    """Forward a complete frame without materializing its JSON at the credential relay.
+
+    The fixed authenticated remote supplies these bytes. The daemon decodes and
+    validates their object/identity; the relay checks their byte boundary.
+    """
+    validation_frame_size(stream)
+    stream.seek(0)
+    while chunk := stream.read(1024 * 1024):
+        send(chunk)
+
+
 def validation_remote_request(request: dict) -> dict:
     """Only altd can use this fixed credential relay; workers receive an explicit refusal."""
     if not sys.platform.startswith('linux'):
@@ -2192,7 +2223,7 @@ def validation_remote_request(request: dict) -> dict:
     connected = False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-            connection.settimeout(125)
+            connection.settimeout(VALIDATION_REQUEST_SECONDS)
             connection.connect(VALIDATION_RELAY_SOCKET)
             connected = True
             connection.sendall(validation_frame_encode(request))
@@ -2207,7 +2238,6 @@ def validation_remote_request(request: dict) -> dict:
 
 VALIDATION_ATTESTER_SOCKET = '/run/altitude-validation-attester/control.sock'
 VALIDATION_SYSTEM_BUS = '/run/dbus/system_bus_socket'
-VALIDATION_ATTEST_SECONDS = 20
 
 
 def validation_user_manager_socket(uid: int) -> str:
@@ -2836,3 +2866,26 @@ def validation_setup_clone(source: Path, destination: Path) -> None:
 def validation_setup_python(executable: Path) -> None:
     subprocess.run([str(executable), "-I", "-B", "-c", "import sys; assert sys.version_info >= (3, 12)"],
                    check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def validation_setup_revoke(config: dict) -> dict:
+    """Run only installed local revocation as the job-owning UID, never as administrator."""
+    import pwd
+    if not _darwin() or os.geteuid() != 0:
+        raise RuntimeError("Local Mac revocation needs its administrator setup action")
+    account = pwd.getpwuid(config["runner_uid"])
+    entrypoint = Path("/Library/Application Support/AltitudeValidation/code/scripts/validation_remote.py")
+    result = subprocess.run([config["python"], "-I", "-B", str(entrypoint), "revoke"],
+                            user=account.pw_uid, group=account.pw_gid, extra_groups=(),
+                            env={"HOME": account.pw_dir, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            timeout=180, check=True)
+    if len(result.stdout) > 16384:
+        raise RuntimeError("Invalid local revocation receipt")
+    import io
+    stream = io.BytesIO(result.stdout)
+    receipt = validation_frame_read(stream)
+    if (stream.read(1) or not isinstance(receipt, dict) or type(receipt.get("cleanup")) is not bool
+            or receipt.get("status") != "revoked"):
+        raise RuntimeError("Invalid local revocation receipt")
+    return receipt

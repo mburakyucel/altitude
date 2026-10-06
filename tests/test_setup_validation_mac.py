@@ -12,10 +12,12 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 from scripts import setup_validation_mac as setup
+from altitude import validation_remote as remote
 
 
 class MacSetupTests(unittest.TestCase):
@@ -342,25 +344,83 @@ class MacSetupTests(unittest.TestCase):
             setup.build_plan(retire | {"replacement_public_key": str(self.key)})
         self.assertEqual((self.base / "authorized_keys").read_bytes(), original)
 
-    def test_revoke_refuses_retained_evidence_and_only_empties_own_key_file(self):
+    def test_emergency_revoke_closes_admission_before_local_stop_and_preserves_evidence(self):
         self.install_for_rotation()
         revoke = {"version": 1, "mode": "host-key", "action": "revoke"}
         evidence = self.base / "state/runs/fictional/evidence.json"
         evidence.parent.mkdir(parents=True)
         evidence.write_text('{}')
-        with self.assertRaisesRegex(ValueError, "acknowledge"):
-            setup.build_plan(revoke)
-        evidence.unlink()
-        ssh, off = self.ssh.read_bytes(), (self.base / "state/off").read_bytes()
-        self.apply(setup.build_plan(revoke))
+        active = self.base / "state/active.json"
+        active.write_text('{}')
+        off = self.base / "state/off"
+        off.unlink()
+        ssh = self.ssh.read_bytes()
+
+        def cleanup(config):
+            self.assertEqual((self.base / "authorized_keys").read_bytes(), b"")
+            self.assertTrue(off.is_file())
+            self.assertEqual(off.stat().st_mode & 0o777, 0o600)
+            return {"status": "revoked", "cleanup": True}
+
+        plan = setup.build_plan(revoke)
+        self.assertFalse(off.exists())  # preview cannot close admission
+        with mock.patch.object(setup.platform, "validation_setup_revoke", side_effect=cleanup) as native:
+            self.apply(plan)
+        native.assert_called_once()
         self.assertEqual((self.base / "authorized_keys").read_bytes(), b"")
-        self.assertEqual((self.base / "state/off").read_bytes(), off)
+        self.assertEqual(evidence.read_text(), '{}')
         self.assertEqual(self.ssh.read_bytes(), ssh)
         self.assertTrue((self.base / "broker.json").exists())
         self.assertTrue((self.base / "template/disk.img").exists())
+        self.assertTrue(json.loads((self.base / "revocation.json").read_text())["cleanup"])
+
+    def test_emergency_stop_failure_keeps_keys_revoked_and_can_retry_local_cleanup(self):
+        self.install_for_rotation()
+        revoke = {"version": 1, "mode": "host-key", "action": "revoke"}
+        with mock.patch.object(setup.platform, "validation_setup_revoke", side_effect=RuntimeError("private error")):
+            with self.assertRaisesRegex(RuntimeError, "Keys revoked"):
+                self.apply(setup.build_plan(revoke))
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), b"")
+        receipt = json.loads((self.base / "revocation.json").read_text())
+        self.assertTrue(receipt["keys_revoked"])
+        self.assertFalse(receipt["cleanup"])
+        self.assertNotIn("private error", json.dumps(receipt))
+        with mock.patch.object(setup.platform, "validation_setup_revoke", return_value={"status": "revoked", "cleanup": True}):
+            self.apply(setup.build_plan(revoke))
+        self.assertTrue(json.loads((self.base / "revocation.json").read_text())["cleanup"])
+
+    def test_emergency_key_swap_failure_stays_disabled_without_claiming_revocation(self):
+        self.install_for_rotation()
+        revoke = {"version": 1, "mode": "host-key", "action": "revoke"}
+        original = (self.base / "authorized_keys").read_bytes()
+        with (mock.patch.object(Path, "replace", side_effect=OSError("swap failed")),
+              mock.patch.object(setup.platform, "validation_setup_revoke") as cleanup):
+            with self.assertRaises(OSError):
+                self.apply(setup.build_plan(revoke))
+        self.assertEqual((self.base / "authorized_keys").read_bytes(), original)
+        self.assertTrue((self.base / "state/off").is_file())
+        self.assertFalse((self.base / "revocation.json").exists())
+        cleanup.assert_not_called()
 
 
 class MacSetupNativeSeamTests(unittest.TestCase):
+    def test_revocation_runs_only_fixed_installed_entry_as_runner_with_clean_environment(self):
+        receipt = {"status": "revoked", "cleanup": True}
+        account = mock.Mock(pw_uid=501, pw_gid=20, pw_dir="/Users/fictional-validation")
+        with (mock.patch.object(setup.platform, "_darwin", return_value=True),
+              mock.patch.object(setup.os, "geteuid", return_value=0),
+              mock.patch("pwd.getpwuid", return_value=account),
+              mock.patch.object(setup.platform.subprocess, "run", return_value=mock.Mock(
+                  stdout=setup.platform.validation_frame_encode(receipt))) as run):
+            actual = setup.platform.validation_setup_revoke({"runner_uid": 501, "python": "/prepared/python"})
+        self.assertEqual(actual, receipt)
+        self.assertEqual(run.call_args.args[0], ["/prepared/python", "-I", "-B",
+                         "/Library/Application Support/AltitudeValidation/code/scripts/validation_remote.py", "revoke"])
+        self.assertEqual(run.call_args.kwargs["user"], 501)
+        self.assertEqual(run.call_args.kwargs["group"], 20)
+        self.assertEqual(run.call_args.kwargs["extra_groups"], ())
+        self.assertNotIn("SSH_ORIGINAL_COMMAND", run.call_args.kwargs["env"])
+
     def test_ssh_configuration_is_validated_on_stdin_without_service_actions(self):
         with (mock.patch.object(setup.platform, "_darwin", return_value=True),
               mock.patch.object(setup.platform.subprocess, "run", return_value=mock.Mock(stdout="passwordauthentication no\n")) as run):
@@ -385,6 +445,74 @@ class MacSetupNativeSeamTests(unittest.TestCase):
             result = setup.platform.validation_setup_account("fictional")
         self.assertEqual(result["uid"], 501)
         self.assertEqual(run.call_args.args[0], ["/bin/launchctl", "print", "gui/501"])
+
+
+class LocalRevocationBrokerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        self.ident = "b" * 32
+        self.area = self.home / "runs" / self.ident
+        (self.area / "input").mkdir(parents=True)
+        (self.area / "results").mkdir()
+        (self.area / "results/output.log").write_text("retained guest output")
+        (self.home / "off").touch()
+        remote.write_json(self.home / "active.json", {"run_id": self.ident})
+        remote.write_json(self.area / "record.json", {"run_id": self.ident, "status": "running",
+                          "expires": time.time() + 3600, "cleanup": False})
+        self.broker = remote.Broker(self.home, self.home / "template", ["fixed-worker"])
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stop = self.stack.enter_context(mock.patch.object(setup.platform, "validation_broker_stop"))
+        self.stack.enter_context(mock.patch.object(setup.platform, "validation_broker_active", return_value=False))
+        self.cleanup = self.stack.enter_context(mock.patch.object(setup.platform, "validation_vm_cleanup"))
+
+    def test_active_run_is_stopped_and_evidence_exported_before_cleanup(self):
+        def cleanup(area):
+            self.assertEqual(area, self.area)
+            self.assertTrue((area / "evidence.json").exists())
+            self.stop.assert_called_with(self.ident)
+
+        self.cleanup.side_effect = cleanup
+        result = self.broker.revoke()
+        self.assertTrue(result["cleanup"])
+        self.assertFalse((self.home / "active.json").exists())
+        self.assertTrue((self.area / "cancel").exists())
+        self.assertTrue((self.area / "evidence.json").exists())
+        self.assertTrue((self.home / "off").exists())
+
+    def test_existing_unacknowledged_evidence_is_never_replaced_or_deleted(self):
+        evidence = self.area / "evidence.json"
+        evidence.write_text('existing retained evidence')
+        result = self.broker.revoke()
+        self.assertTrue(result["cleanup"])
+        self.assertEqual(evidence.read_text(), 'existing retained evidence')
+
+    def test_stop_failure_retains_active_identity_and_does_not_cleanup_evidence(self):
+        self.stop.side_effect = RuntimeError("private native error")
+        result = self.broker.revoke()
+        self.assertFalse(result["cleanup"])
+        self.assertNotIn("private native error", json.dumps(result))
+        self.assertTrue((self.home / "active.json").exists())
+        self.assertTrue((self.area / "results/output.log").exists())
+        self.cleanup.assert_not_called()
+
+    def test_cleanup_failure_keeps_exported_evidence_and_active_recovery_record(self):
+        self.cleanup.side_effect = RuntimeError("detach failed")
+        result = self.broker.revoke()
+        self.assertFalse(result["cleanup"])
+        self.assertTrue((self.home / "active.json").exists())
+        self.assertTrue((self.area / "evidence.json").exists())
+        self.assertFalse(remote.read_json(self.area / "record.json")["cleanup"])
+
+    def test_unexportable_results_are_retained_for_local_recovery_without_cleanup(self):
+        with mock.patch.object(remote.payload, "collect_results", side_effect=ValueError("invalid results")):
+            result = self.broker.revoke()
+        self.assertFalse(result["cleanup"])
+        self.cleanup.assert_not_called()
+        self.assertTrue((self.home / "active.json").exists())
+        self.assertTrue((self.area / "results/output.log").exists())
 
 
 if __name__ == "__main__":

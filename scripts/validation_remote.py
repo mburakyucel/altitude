@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None, *, source=None, output=None) -> int:
     source = sys.stdin.buffer if source is None else source
     output = sys.stdout.buffer if output is None else output
     external = argv == ["serve"]
+    revoke = argv == ["revoke"]
     dispatched = False
     platform = None
     response = None
@@ -105,20 +106,24 @@ def main(argv: list[str] | None = None, *, source=None, output=None) -> int:
         if external:
             if os.environ.get("SSH_ORIGINAL_COMMAND") != "altitude-validation-v1":
                 raise ValueError("Unsupported forced command")
-        elif (len(argv) != 2 or argv[0] != "work" or "SSH_ORIGINAL_COMMAND" in os.environ
-              or len(argv[1]) != 32 or any(c not in "0123456789abcdef" for c in argv[1])):
+        elif ("SSH_ORIGINAL_COMMAND" in os.environ or not revoke and
+              (len(argv) != 2 or argv[0] != "work" or len(argv[1]) != 32
+               or any(c not in "0123456789abcdef" for c in argv[1]))):
             raise ValueError("Unsupported internal command")
         config = load_config()
         platform, broker = runtime(config)
-        if not external:
+        if revoke:
+            response = broker.revoke()
+        elif not external:
             broker.work(argv[1])
             return 0
-        request = platform.validation_frame_read(source)
-        if source.read(1):
-            raise ValueError("Trailing protocol data")
-        # An exception after dispatch may follow admission; it cannot claim no work started.
-        dispatched = True
-        response = broker.dispatch(request)
+        else:
+            request = platform.validation_frame_read(source)
+            if source.read(1):
+                raise ValueError("Trailing protocol data")
+            # An exception after dispatch may follow admission; it cannot claim no work started.
+            dispatched = True
+            response = broker.dispatch(request)
     except Exception:
         # Never serialize native errors: they can contain private paths or endpoint details.
         response = unavailable(dispatched=dispatched)

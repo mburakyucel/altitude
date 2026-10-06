@@ -222,7 +222,8 @@ class TestVerifierUnitParsing(unittest.TestCase):
                                      'altitude-validation-relay.service', 'altitude-validation-relay.socket',
                                      'altitude-validation-attester@fixture.service', 'altitude-validation-attester.socket'],
                                     capture_output=True, text=True, timeout=30,
-                                    env={'PATH': '/usr/bin:/bin', 'SYSTEMD_LOG_LEVEL': 'warning'})
+                                    env={**{key: os.environ[key] for key in ('PATH', 'LD_LIBRARY_PATH')
+                                            if key in os.environ}, 'SYSTEMD_LOG_LEVEL': 'warning'})
             self.assertEqual(result.returncode, 0, result.stderr)
 
 
