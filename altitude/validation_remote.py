@@ -301,11 +301,16 @@ def _deliver(response: dict, pending: dict, *, recovered: bool = False) -> dict:
 
 
 def _reconcile() -> bool:
-    from . import state as S
+    from . import state as S, tasks as T
     path = _pending()
     if not path.exists():
         return True
     pending = read_json(path)
+    # First-finish semantics retain any already recorded outcome. A daemon death
+    # before finishing its ledger row is an interruption, with later evidence separate.
+    T.finish_machine_run(pending["project"], pending["slug"], {
+        **pending["row"], "exit": None, "ended": "interrupted", "finished": S.now(),
+        "error": "Mac validation interrupted; remote cancellation and evidence need reconciliation"})
     response = _call("cancel", pending["run_id"])
     if response.get("status") == "absent":
         path.unlink()
@@ -360,7 +365,7 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
             "purpose": "validation", "target": "macos", "command": shlex.join(argv), "unit": unit,
             "commit": candidate["commit"], "tree": candidate["tree"], "payload_digest": candidate["digest"],
             "run_id": ident, "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
-        pending = {"project": project, "slug": slug, "n": row["n"], "run_id": ident,
+        pending = {"project": project, "slug": slug, "n": row["n"], "run_id": ident, "row": row,
                    "commit": candidate["commit"], "tree": candidate["tree"], "payload_digest": candidate["digest"]}
         _pending().parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         write_json(_pending(), pending)
@@ -404,6 +409,18 @@ def run(project: str, slug: str, task: dict, argv: list[str]) -> dict:
     finally:
         try:
             if row is not None:
+                if not result.get("log"):
+                    try:
+                        directory = validation._task_dir_fd(project, slug)
+                        try:
+                            log = os.open(f"{row['n']}.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                          0o600, dir_fd=directory)
+                            with os.fdopen(log, "w") as stream:
+                                stream.write((result.get("error") or "Mac validation produced no command log") + "\n")
+                        finally:
+                            os.close(directory)
+                    except OSError:
+                        result.update(exit=None, error="Mac validation evidence delivery failed")
                 result.update(n=row["n"], commit=row["commit"], unit=row["unit"],
                               log=result.get("log", row["log"]), started=row["started"], finished=S.now())
                 T.finish_machine_run(project, slug, {**row, **{k: v for k, v in result.items() if k != "output"}})

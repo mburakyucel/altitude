@@ -25,6 +25,7 @@ FILE_LIMIT = 256 << 20
 ENTRY_LIMIT = 10000
 PATH_LIMIT = 1024
 DEPTH_LIMIT = 64
+EXPORT_TIMEOUT = 60
 _OID = re.compile(r"[0-9a-f]{40}\Z")
 _NAME = re.compile(r"[A-Za-z0-9_. @+,-]+\Z")
 
@@ -96,12 +97,16 @@ def _path(value: object) -> str:
     return value
 
 
-def _git(worktree: Path, *args: str) -> bytes:
+def _git(worktree: Path, *args: str, deadline: float | None = None) -> bytes:
     # Never inherit replacement refs, injected config, credentials or lazy fetching.
     env = {"PATH": os.defpath, "HOME": "/dev/null", "LC_ALL": "C",
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
            "GIT_NO_REPLACE_OBJECTS": "1", "GIT_NO_LAZY_FETCH": "1",
            "GIT_TERMINAL_PROMPT": "0"}
+    now = time.monotonic()
+    deadline = min(deadline, now + 60) if deadline is not None else now + 60
+    if deadline <= now:
+        raise ValueError("Candidate Git read timed out")
     try:
         process = subprocess.Popen(
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
@@ -109,7 +114,6 @@ def _git(worktree: Path, *args: str) -> bytes:
             env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         output = bytearray()
-        deadline = time.monotonic() + 60
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
@@ -221,19 +225,25 @@ def _candidate(commit: str, tree: str, read) -> tuple[dict, dict]:
 
 def export(worktree: Path) -> dict:
     """Export committed HEAD only; tracked working edits and other refs stay local."""
-    commit = _git(worktree, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
-    tree = _git(worktree, "rev-parse", "--verify", "HEAD^{tree}").decode().strip()
+    deadline = time.monotonic() + EXPORT_TIMEOUT
+    commit = _git(worktree, "rev-parse", "--verify", "HEAD^{commit}", deadline=deadline).decode().strip()
+    tree = _git(worktree, "rev-parse", "--verify", commit + "^{tree}", deadline=deadline).decode().strip()
 
     def read(oid: str, kind: str) -> bytes:
-        size = int(_git(worktree, "cat-file", "-s", oid))
+        size = int(_git(worktree, "cat-file", "-s", oid, deadline=deadline))
         if size > FILE_LIMIT:
             raise ValueError("Candidate object exceeds its size limit")
-        return _git(worktree, "cat-file", kind, oid)
+        return _git(worktree, "cat-file", kind, oid, deadline=deadline)
 
     objects, _ = _candidate(commit, tree, read)
-    return {"commit": commit, "tree": tree, **_pack({
+    if time.monotonic() >= deadline:
+        raise ValueError("Candidate export timed out")
+    result = {"commit": commit, "tree": tree, **_pack({
         "objects": {oid: [kind, _b64(raw)] for oid, (kind, raw) in objects.items()},
     })}
+    if time.monotonic() >= deadline:
+        raise ValueError("Candidate export timed out")
+    return result
 
 
 def _destination(destination: Path) -> None:

@@ -1,0 +1,210 @@
+"""Real task/HTTP/Git/evidence flow with only remote transport and native jobs replaced."""
+import http.client
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+
+from tests.support import AltitudeCase, make_repo
+from altitude import dispatch, engines, platform, server, state as S, tasks as T, terminal, validation
+from altitude import validation_remote as remote
+
+VM = r'''
+import json, os, pathlib, subprocess, sys
+area = pathlib.Path(sys.argv[1])
+request = json.loads((area / 'input/request.json').read_text())
+results = area / 'results'
+results.mkdir()
+artifacts = results / 'artifacts'
+artifacts.mkdir()
+with (results / 'output.log').open('wb') as log:
+    result = subprocess.run(request['argv'], cwd=area / 'input/candidate',
+                            env={'PATH': os.defpath, 'RESULTS': str(artifacts)},
+                            stdout=log, stderr=subprocess.STDOUT)
+receipt = {key: request[key] for key in ('run_id', 'commit', 'tree')}
+receipt.update(exit=result.returncode, ended='exit', error=None,
+               guest={'os': 'macos', 'version': 'fixture', 'chip': 'fixture'})
+(results / 'receipt.json').write_text(json.dumps(receipt))
+'''
+
+
+class RemoteValidationTests(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        self.private_ledgers()
+        self.runner = self.tmp / "runner"
+        self.patch(validation, "home", return_value=self.runner)
+        self.patch(terminal, "owner_connection", return_value=True)
+        self.slug = T.new(self.project, "Native validation", "One bounded Mac run")["slug"]
+        T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
+                   worktree=str(self.repo), branch="work")
+        root = dispatch.l2_job_root(self.project, self.slug)
+        root.mkdir(parents=True)
+        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines._claude_unit("agent")})
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.broker = remote.Broker(self.tmp / "mac", self.tmp / "template", ["fictional-broker"])
+        self.alive = set()
+        self.launches = []
+        self.requests = []
+        self.execute = True
+
+        def launch(worker, ident, area):
+            self.alive.add(ident)
+            self.launches.append(ident)
+
+        self.patch(platform, "validation_broker_launch", side_effect=launch)
+        self.patch(platform, "validation_broker_active", side_effect=lambda ident: ident in self.alive)
+        self.patch(platform, "validation_broker_stop", side_effect=self.alive.discard)
+        self.patch(platform, "validation_vm_cleanup", side_effect=lambda area: self.alive.discard(area.name))
+        self.patch(platform, "validation_vm_prepare", side_effect=lambda template, area: {
+            "argv": [sys.executable, "-c", VM, str(area)], "host": {"os": "macos", "chip": "fixture"},
+            "template": "fixture-template"})
+        self.transport = self.patch(platform, "validation_remote_request", side_effect=self.forward)
+
+    def forward(self, request):
+        self.requests.append(request)
+        ident = request["run_id"]
+        if request["operation"] in {"status", "cancel"} and ident in self.alive and self.execute:
+            self.broker.work(ident)
+        return self.broker.dispatch(request)
+
+    def validate(self, code="print('observed')", status=200, **options):
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=10)
+        try:
+            body = {"project": self.project, "slug": self.slug, "attempt": "1", "target": "macos",
+                    "command": [sys.executable, "-c", code], **options}
+            connection.request("POST", "/api/task/validate", json.dumps(body), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            value = json.loads(response.read())
+            self.assertEqual(response.status, status, value)
+            return value
+        finally:
+            connection.close()
+
+    def rows(self):
+        return [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text().splitlines()]
+
+    def test_exact_revision_command_exit_log_artifacts_and_single_task_record(self):
+        (self.repo / "untracked-private").write_text("must remain local")
+        result = self.validate("import pathlib,os,subprocess; "
+                               "assert not pathlib.Path('untracked-private').exists(); "
+                               "print(subprocess.check_output(['git','rev-parse','HEAD']).decode()); "
+                               "pathlib.Path(os.environ['RESULTS'],'proof.txt').write_text('observed')")
+        self.assertEqual(result["exit"], 0, result)
+        self.assertIn(result["commit"], result["output"])
+        self.assertEqual((Path(result["results"]) / "artifacts/proof.txt").read_text(), "observed")
+        self.assertEqual(Path(result["log"]).read_text(), result["output"])
+        [row] = self.rows()
+        self.assertEqual((row["target"], row["purpose"], row["exit"]), ("macos", "validation", 0))
+        self.assertEqual(row["host"]["chip"], "fixture")
+        self.assertEqual(row["guest"]["version"], "fixture")
+        self.assertTrue(row["cleanup"])
+        self.assertFalse(remote._pending().exists())
+        self.assertFalse((self.broker.home / "active.json").exists())
+        self.assertFalse((self.broker._area(row["run_id"]) / "evidence.json").exists())
+        self.assertEqual(len(self.launches), 1)
+
+    def test_nonzero_command_result_is_not_transport_unavailable(self):
+        result = self.validate("import sys; print('test failure'); sys.exit(7)")
+        self.assertEqual((result["exit"], result["ended"]), (7, "exit"))
+        self.assertIn("test failure", result["output"])
+
+    def test_missing_relay_records_explicit_unavailable_without_reserving_a_run(self):
+        self.transport.side_effect = lambda request: {"status": "unavailable", "accepted": False}
+        result = self.validate()
+        self.assertIsNone(result["exit"])
+        self.assertEqual(result["ended"], "unavailable")
+        self.assertIn("no passing result", result["error"])
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(self.rows()[0]["ended"], "unavailable")
+
+    def test_uncertain_submission_is_cancelled_and_recovered_without_duplicate_submission(self):
+        def lost_reply(request):
+            self.broker.dispatch(request)
+            return {"status": "unavailable"}
+
+        self.transport.side_effect = lost_reply
+        first = self.validate()
+        self.assertIsNone(first["exit"])
+        self.assertTrue(remote._pending().exists())
+        self.transport.side_effect = self.forward
+        remote.reconcile()
+        self.assertFalse(remote._pending().exists())
+        self.assertEqual(len(self.launches), 1)
+        self.assertEqual(self.requests[0]["operation"], "cancel")
+        # Recovery preserves the original uncertain outcome; later evidence is separate.
+        self.assertIsNone(self.rows()[0]["exit"])
+        recovered = S.task_dir(self.project, self.slug) / "validation/1-recovered"
+        self.assertTrue((recovered / "output.log").is_file())
+
+    def test_switch_cancellation_stays_unconfirmed_until_remote_cleanup(self):
+        self.execute = False
+
+        def switch_off(request):
+            result = self.forward(request)
+            if request["operation"] == "submit":
+                remote.stop_all()
+            return result
+
+        self.transport.side_effect = switch_off
+        result = self.validate()
+        self.assertIsNone(result["exit"])
+        self.assertTrue(remote._pending().exists())
+        self.assertEqual([r["operation"] for r in self.requests], ["submit", "cancel"])
+        remote.reconcile()
+        self.assertTrue(remote._pending().exists())
+        self.alive.clear()  # Native supervisor has stopped, including every VM descendant.
+        remote.reconcile()
+        self.assertFalse(remote._pending().exists())
+
+    def test_wrong_owner_options_and_attempt_never_reach_transport(self):
+        self.validate(status=403, attempt="2")
+        self.validate(status=400, kvm=True)
+        self.validate(status=400, publish=8080)
+        self.validate(status=400, target="other")
+        self.patch(terminal, "owner_connection", return_value=False)
+        self.validate(status=403)
+        self.transport.assert_not_called()
+
+    def test_mismatched_remote_identity_never_becomes_a_pass(self):
+        def corrupt(request):
+            response = self.forward(request)
+            if request["operation"] == "result":
+                response["commit"] = "0" * 40
+            return response
+
+        self.transport.side_effect = corrupt
+        result = self.validate()
+        self.assertIsNone(result["exit"])
+        self.assertTrue(remote._pending().exists())
+
+    def test_cleanup_failure_closes_remote_admission(self):
+        self.patch(platform, "validation_vm_cleanup", side_effect=RuntimeError("fixture cleanup failure"))
+        result = self.validate()
+        self.assertIsNone(result["exit"])
+        self.assertTrue(remote._pending().exists())
+        self.assertTrue((self.broker.home / "active.json").exists())
+        self.validate(status=400)
+        self.assertEqual(len(self.launches), 1)
+
+    def test_duplicate_remote_submission_keeps_one_identity_and_supervisor(self):
+        self.execute = False
+
+        def twice(request):
+            response = self.forward(request)
+            if request["operation"] == "submit":
+                self.assertEqual(self.broker.dispatch(request), response)
+                remote.stop_all()
+            return response
+
+        self.transport.side_effect = twice
+        self.validate()
+        self.assertEqual(len(self.launches), 1)

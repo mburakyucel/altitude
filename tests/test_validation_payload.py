@@ -66,6 +66,46 @@ class ValidationPayloadTests(unittest.TestCase):
                                          "GIT_CONFIG_VALUE_0": "100"}):
             self.assertEqual(payload.export(self.repo)["commit"], self.git("rev-parse", "HEAD").decode().strip())
 
+    def test_export_pins_tree_when_head_moves_after_commit_read(self):
+        commit = self.git("rev-parse", "HEAD").decode().strip()
+        tree = self.git("rev-parse", "HEAD^{tree}").decode().strip()
+        real_git = payload._git
+
+        def moving_head(worktree, *args, **kwargs):
+            result = real_git(worktree, *args, **kwargs)
+            if args == ("rev-parse", "--verify", "HEAD^{commit}"):
+                self.git("update-ref", "HEAD", self.parent)
+            return result
+
+        with mock.patch.object(payload, "_git", side_effect=moving_head):
+            exported = payload.export(self.repo)
+        self.assertEqual(exported["commit"], commit)
+        self.assertEqual(exported["tree"], tree)
+        destination = self.root / "restored"
+        payload.restore(exported, destination)
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=destination).decode().strip(), commit)
+        self.assertTrue((destination / "run.sh").exists())
+        self.assertEqual(self.git("rev-parse", "HEAD").decode().strip(), self.parent)
+
+    def test_export_deadline_is_shared_and_prevents_another_git_process(self):
+        clock = [0.0]
+        real_git = payload._git
+        deadlines = []
+
+        def elapsed_read(worktree, *args, **kwargs):
+            deadlines.append(kwargs.get("deadline"))
+            result = real_git(worktree, *args, **kwargs)
+            clock[0] += 21  # Each read is within its own timeout; together they exceed it.
+            return result
+
+        with mock.patch.object(payload, "time", mock.Mock(monotonic=lambda: clock[0])), \
+                mock.patch.object(payload, "_git", side_effect=elapsed_read), \
+                mock.patch.object(payload.subprocess, "Popen", wraps=subprocess.Popen) as processes:
+            with self.assertRaisesRegex(ValueError, "timed out"):
+                payload.export(self.repo)
+        self.assertEqual(deadlines, [payload.EXPORT_TIMEOUT] * 4)
+        self.assertEqual(processes.call_count, 3)
+
     def test_digest_and_identity_tampering_refused_before_writes(self):
         original = payload.export(self.repo)
         document = payload._unpack(original)
