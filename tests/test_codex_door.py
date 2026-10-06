@@ -139,13 +139,21 @@ class TestCodexAdapter(AltitudeCase):
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
         self.assertEqual({path for path, access in rules.items() if access == "deny"},
                          {str(path) for path in platform.job_control_paths()})
-        # The job's reader exports the token alone and hands the engine the rest of its input unchanged.
+        # In the job's environment, without the bus, GitHub accepts the worker only after the reader exports the
+        # token; the engine receives the rest of its input unchanged.
         wrapper = command[command.index("/bin/sh"):command.index(config.CODEX_BIN)]
-        engine = [sys.executable, "-c", "import os, sys; print(os.environ.get('GH_TOKEN')); print(sys.stdin.read())"]
-        for line, expected in ((b"fixture-token\n", "fixture-token"), (b"\n", "None")):
-            seen = subprocess.run([*wrapper, *engine], input=line + b"prompt\nbody", capture_output=True,
-                                  env={"PATH": os.environ["PATH"], "GH_TOKEN": "ambient-fixture-token"})
-            self.assertEqual(seen.stdout.decode().split("\n", 1), [expected, "prompt\nbody\n"])
+        engine = ["/bin/sh", "-c", "gh api user && cat"]
+        env = {**self.job_env, "PATH": os.environ["PATH"], "FAKE_GH_DIR": str(state), "GH_TOKEN": "ambient-fixture-token"}
+        signed_in = subprocess.run([*wrapper, *engine], input=sent, capture_output=True, env=env)
+        self.assertEqual(signed_in.returncode, 0, signed_in.stderr)
+        self.assertEqual(signed_in.stdout.decode().split("\n", 1)[0], '{"login": "fixture-operator"}')
+        self.assertTrue(signed_in.stdout.endswith(b"\n\nbrief"))
+        unsigned = subprocess.run([*wrapper, *engine], input=b"\nbrief", capture_output=True, env=env)
+        self.assertIn(b"HTTP 401: Requires authentication", unsigned.stderr)
+        # A launcher without a sign-in still starts the worker, without a token.
+        (state / "token.txt").unlink()
+        _, procs = self._launch(actual_settings=True)
+        self.assertTrue(procs[0].stdin.getvalue().startswith(b"\n"))
 
     def test_fresh_turn_runs_codex_exec_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"

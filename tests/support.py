@@ -293,6 +293,12 @@ elif cmd == ("auth", "token"):
     if read("token.txt") is None or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
         fail("no oauth token found for github.com")
     print(read("token.txt"))
+elif cmd == ("api", "user"):
+    # Signed in through the keyring on the session bus or an exported token; otherwise unauthenticated.
+    token = (read("token.txt") or "").strip()
+    if not token or not (os.environ.get("DBUS_SESSION_BUS_ADDRESS") or os.environ.get("GH_TOKEN") == token):
+        fail("HTTP 401: Requires authentication (https://api.github.com/graphql)")
+    print('{"login": "fixture-operator"}')
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''
