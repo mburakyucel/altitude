@@ -345,10 +345,12 @@ def add_worktree(repo: Path, slug: str) -> Path:
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
-    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`. A worker
+    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture."""
 
     gated = False
     host: str | None = None
+    github = False
 
     def setUp(self) -> None:
         super().setUp()
@@ -357,6 +359,8 @@ class AltitudeCase(unittest.TestCase):
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
+        if not self.github:
+            self.patch(engines, "github_token", return_value="")
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = self.tmp / "repo"

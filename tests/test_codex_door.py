@@ -40,6 +40,7 @@ class FakeProcess:
 
 class TestCodexAdapter(AltitudeCase):
     host = "linux"  # systemd fixtures
+    github = True  # launches read the sign-in through the gh fixture
 
     def setUp(self):
         super().setUp()

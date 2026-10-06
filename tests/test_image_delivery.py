@@ -126,7 +126,6 @@ class TestNativeImages(ImageDeliveryCase):
                      mock.patch.object(engines, "claude_agents", return_value=[]), \
                      mock.patch.object(platform, "job_active", return_value=True), \
                      mock.patch.object(engines, "_git_dirs", return_value=[]), \
-                     mock.patch.object(engines, "github_token", return_value=""), \
                      mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
                     common = dict(cwd=self.repo, persona=persona, model="original-model", settings=self.tmp / "settings.json",
                                   extra_env={"ALTITUDE_TASK": "owner"}, job_root=self.tmp / "jobs", images=[self.image],
