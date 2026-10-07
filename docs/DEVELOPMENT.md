@@ -320,7 +320,27 @@ the named compiler omits legacy nested carveouts, and component equality does no
 broader parent write clause preserves the child's protections. This candidate does not repair or
 establish that pre-existing native boundary.
 Required browser protections and the security merge hold still apply. The validation container
-does not establish native Mac acceptance; the sandbox-required runner is unavailable on macOS.
+does not establish native Mac acceptance; its Darwin admission refusal is distinct from the native
+Mach launch failure and the separate remote Mac rig. Explicitly authorized native acceptance runs only
+inside the actual fresh intended confined candidate worker. Before browser launch, record its protected
+executable/package identity, effective role policy and roots, native job/coalition and actual exclusion
+of protected recovery inputs. Run locked Chromium with `chromiumSandbox:true`, finite blank/local-fictional
+content, disposable profile/config/cache and cleanup. OS detection, preparation merge or installed bytes
+alone do not establish that context. Unavailable context/protections still fault-block; no host-grant,
+outside-worker or Linux-browser substitute is accepted.
+
+The [bounded foreground trial/restore command](OPERATIONS.md#native-browser-runtime-trial) prepares the
+complete fixed package, preserves stock identity and service definition, selects one existing executable
+setting and uses guarded activation. Deterministic tests cover package/link/digest refusal, one-key scope,
+handled interruption/phase deadline, explicit fault abort, activation failure, concurrent restore refusal,
+drift, complete stock identity/effective PATH, extra-role root exclusion, pending recovery and candidate-job
+termination including reviewers after stock activation. They establish application transitions only; native enforcement,
+process/service health and the original isolation/peer acceptance remain separate unperformed evidence.
+Current stock-role deny evidence protects installation/recovery inputs and job-record provenance before
+candidate installation/selection or trusting those inputs. The separate purpose may stage disposable
+writable probe fixtures first; the probes stay in confined stock roles and preserve actual authority records.
+Protected live launch roots supplement mutable task records; the candidate repeats
+actual deny checks before browser acceptance. Unknown launch-root evidence refuses the operation.
 
 ## Validation runner
 
@@ -375,9 +395,13 @@ macOS, where Podman runs inside a virtual machine of its own and there is no KVM
 
 ### Browser verification
 
-Worker confinement and the browser's own sandbox are separate protections. A worker cannot give
-Playwright's bundled Chromium the user namespaces its sandbox needs, but the validation container
-can. Run verification that needs the browser sandbox through `alt task validate`, and launch with
+Worker confinement and the browser's own sandbox are separate protections. On Linux, the validation
+container provides the user namespaces that bundled Chromium needs. Ordinary verification requiring
+the browser sandbox runs through `alt task validate`. Explicitly authorized native acceptance runs
+inside the actual fresh intended confined candidate worker after recording its protected executable,
+complete package, effective policy, write roots and native job identity, as described in the
+[native candidate acceptance gates](#native-mac-browser-runtime-candidate). Operating-system detection,
+preparation delivery and installation alone do not establish native eligibility. Launch with
 [`chromiumSandbox: true`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox),
 because Playwright defaults it to false. Use blank or local fictional content, a finite timeout, and a
 disposable profile.
@@ -402,8 +426,9 @@ After source delivery and normal activation, repeat both checks through `alt tas
 retain its commit, image tag, log and result paths before declaring runner recovery. Linux desktop
 WebKit emulation does not establish native macOS or iOS acceptance.
 
-Never disable either sandbox, add sandbox-bypass flags, or chmod/chown a SUID helper. If the runner is
-unavailable, or the browser refuses its sandbox inside it, checkpoint the evidence and block with
+Never disable either sandbox, add sandbox-bypass flags, or chmod/chown a SUID helper. If the required
+runner or evidenced native context is unavailable, or the browser refuses its sandbox there,
+checkpoint the evidence and block with
 `--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
 Altitude's local fictional harness exception grants no authority for another project's verification.
 

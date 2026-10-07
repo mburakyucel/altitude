@@ -82,7 +82,10 @@ class TestRepositoryInstructions(AltitudeCase):
                         # project rules.
                         self.assertEqual(prompt.count(engines.BROWSER_VERIFICATION_NOTE), 1)
                         for requirement in ("alt task validate", "chromiumSandbox:true", "Never disable either sandbox",
-                                            "chmod/chown a SUID helper", "block with --fault"):
+                                            "chmod/chown a SUID helper", "block with --fault",
+                                            "Explicitly authorized native runtime", "actual fresh intended confined",
+                                            "effective role policy", "operating-system detection",
+                                            "outside-worker browser run"):
                             self.assertIn(requirement, prompt)
                         self.assertTrue(prompt.endswith("Continue task." if resume else "Start task."))
             self.assertEqual(before, {p.name: p.read_bytes() for p in self.repo.iterdir() if p.is_file()})

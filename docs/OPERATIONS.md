@@ -284,6 +284,63 @@ health handling. Native prevention acceptance separately requires a successful g
 with a new service PID, API/UI health and worker/session survival. A running service or an absent
 pending flag establishes neither the cause of a prior bootstrap failure nor that acceptance.
 
+## Native browser runtime trial
+
+`scripts/native_browser_trial.py` is the operator lifecycle command for the single reviewed
+[native browser candidate](DEVELOPMENT.md#native-mac-browser-runtime-candidate). Preparing source does
+not authorize its execution. The task needs the explicit protected-trial security decision and a separate
+recorded installation/service purpose grant before protected installation, global selection or activation.
+Use the reviewed activated source from the deployed primary checkout, with the service's `ALTITUDE_HOME`.
+Before candidate installation/selection or trusting authoritative recovery/job inputs, record deny evidence in the current confined stock roles for the
+candidate destination, source, stock package, service definition, recovery inputs and native job records.
+Job-record UID/modes alone are not that evidence. The fresh candidate repeats actual deny checks before
+browser acceptance; no fixture, operating-system detection or installation receipt supplies these gates.
+If needed, the separate recorded purpose first stages/removes disposable writable sacrificial fixtures
+beside those protected locations, preserving the actual authority records. Write-deny probes run only in
+the intended confined stock roles; fixture existence and readonly Unix modes prove no sandbox denial.
+
+```text
+python3 scripts/native_browser_trial.py trial /path/to/the/reviewed/complete/package --seconds 90
+python3 scripts/native_browser_trial.py restore
+```
+
+The ordinary owner invokes the first command through `alt task run`; it is one bounded foreground
+machine job, surviving owner replacement and daemon restart. No browser/provider verification runs in
+that job. It copies and verifies the fixed complete package outside worker/state/checkout roots, saves
+protected original/selected definitions and stock executable identity, changes only the existing global
+executable environment setting, and uses the guarded source activation path. L3 uses supported Stop/resume
+to launch the same owner in the actual intended confined candidate context. The native interval is at most
+90 seconds. A 60-second admission deadline bounds protection/status inspection before locking.
+Separate 210-second deadlines cover preparation/activation/acceptance and stock recovery;
+bounded activation-job cleanup leaves time below the existing ten-minute command limit. An explicit
+matching task/attempt fault or unreadable identity ends the foreground interval early. Task data can
+request abort only; protected inputs fix every path, executable and activation action. Coordinator
+latency can exhaust the interval without yielding acceptance. Existing workers keep their prior executable.
+
+The transaction restores stock selection after the interval or handled failure/interruption, stops identified
+candidate jobs through native controls, performs guarded stock activation/new-PID/API/UI checks and sweeps
+candidate jobs again after activation. Stock selection alone does not end surviving candidate jobs. Complete
+package, backup and current-definition digests are checked; drift is preserved and recovery stays pending.
+The native standalone stock package, including resources and internal links, is frozen using the effective
+engine launch PATH; delegated wrappers are refused. Candidate executable modes are fixed. One protected
+lifetime lock refuses a concurrent trial/restore rather than racing selection or health evidence.
+Protected receipt/backups live beside Altitude's state in its `-browser-trial` directory, outside current task
+and state roots, including engine-added state/configuration and native temporary roots. Native job record
+ancestry receives the same exclusions. Actual live launch roots supplement mutable task records, using
+protected launch commands and their selected permission arguments; unknown roots refuse the trial.
+Readonly modes supplement these exclusions; actual role deny evidence is still
+required before native browser acceptance. A retained prior trial area prevents another trial until the
+operator restores and archives it; no generic runtime update/selector framework is installed.
+
+`restore` uses that fixed protected receipt independently of a running daemon or owner. It is usable by the
+operator with native service access or a command already admitted under the purpose. It grants no new
+ownerless command admission and L3 cannot execute the owner's grant. An outer timeout, revocation, SIGKILL
+or host/service-manager loss may prevent cleanup. Quiet-point refusal, unavailable API, uncertain job
+identity, drift or failed health remains explicit recovery-pending evidence, never stock health. An offline
+operator restore may then be the remaining recovery action. Existing grant revocation and activation guards
+are retained. Archive evidence only after verified stock health and candidate termination; revoke the purpose
+when operations/evidence are complete. Trial results do not approve durable adoption or release other holds.
+
 ## Preserve source TLS before upgrading
 
 An existing source deployment that relies on implicit certificate discovery needs an explicit TLS
@@ -328,7 +385,7 @@ never counts as successful preservation.
 
 ## Validation runs
 
-Task owners run installation VMs, containers and sandboxed-browser checks through the
+Task owners run installation VMs, containers and ordinary sandboxed-browser checks through the
 [validation runner](DEVELOPMENT.md#validation-runner): one disposable rootless Podman container at a
 time, started by altd as the operator's account. Its image, image layers and the cached Ubuntu cloud
 image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 GiB free there, and its own area is removed
@@ -339,6 +396,11 @@ after its log and results are retained. Each run appears on its task as a machin
 unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
 and records them as interrupted. If copying evidence fails, the ledger names the original paths
 in the runner area; that area stays intact and new runs stay refused pending recovery.
+
+Explicitly authorized native browser acceptance uses the actual fresh intended confined candidate
+worker and the [native acceptance gates](DEVELOPMENT.md#native-mac-browser-runtime-candidate).
+The operator trial command above installs and restores the fixed candidate; it provides no
+outside-worker browser verification or automatic native eligibility.
 
 ## Voice input
 
