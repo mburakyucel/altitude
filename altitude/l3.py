@@ -343,6 +343,13 @@ def project_message(sender, target, text, *, summary, request_id, reply_to=None)
                 _write_queue(queue_path(target), rows + [row])
         # No nested project locks: opposite-direction sends cannot deadlock. A same-id retry repairs
         # an interrupted source acknowledgement from the accepted queue or retained receipt.
+        if reply_to:
+            with _lifecycle_guard(sender):
+                active = _active.get(sender, {})
+                acknowledge = active.get("project_message_receipt")
+                selected = active.get("project_message_ids", set())
+            if acknowledge and original["id"] in selected:
+                acknowledge()  # A participant-bound reply proves input before any tool-result event.
         with S.project_lock(sender):
             _message_chat(sender, row, "sent")
         return {"accepted": True, "project_message": _message_public(row, sender, "sent")}
@@ -374,7 +381,7 @@ def _supplied_message_ids(project):
 
 
 def _record_project_messages(project, selected):
-    """A completed provider turn or assistant output proves supply; launch/route refusal does not."""
+    """Persist proven supply; registration was checked before providing the input."""
     identities = {row["id"] for row in selected}
     if not identities:
         return
@@ -387,13 +394,9 @@ def _record_project_messages(project, selected):
             if row.get("trigger") != "project-message" or row["id"] not in identities:
                 remaining.append(row)
                 continue
-            with config.project_activity(row["sender"]) as attached:
-                if not attached or not _message_current(row):
-                    remaining.append(row)
-                    continue
-                _message_chat(project, row, "supplied")
-                if row["id"] not in receipts:
-                    S.project_log(project, "project-message-received", message=row)
+            _message_chat(project, row, "supplied")
+            if row["id"] not in receipts:
+                S.project_log(project, "project-message-received", message=row)
         _write_queue(queue_path(project), remaining)
 
 
@@ -1245,6 +1248,29 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                      for key in ("images", "request_id", "request_digest") if key in image_message} if image_message else {}))
         information = _pending_project_messages(project) if choice.get("engine") else []
         prompt = _project_message_prompt(information) + prompt
+        receipt_lock = threading.Lock()
+        receipt_errors = []
+        def acknowledge(result=None):
+            nonlocal information
+            if result is not None and not (result.get("text") or result.get("tools") or
+                    (result.get("completed") and not result.get("interrupted"))):
+                return
+            with receipt_lock:
+                supplied, information = information, []
+                try:
+                    _record_project_messages(project, supplied)
+                except OSError as exc:
+                    # Preserve provider success. A retained chat receipt reconciles queue removal;
+                    # failure before that proof remains visible and may repeat on the next turn.
+                    receipt_errors.append(str(exc))
+                    try:
+                        chat_log(project, "error", "Coordinator message receipt could not be saved; "
+                                 "delivery may repeat on the next ordinary turn.", trigger=trigger, turn_id=turn_id)
+                    except OSError:
+                        print("Coordinator message receipt could not be saved", file=sys.stderr)
+        with _lifecycle_guard(project):
+            active_turn.update(project_message_receipt=acknowledge,
+                               project_message_ids={row["id"] for row in information})
         tried = []
         def provider_started(pid):
             with _lifecycle_guard(project):
@@ -1257,13 +1283,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 with S.project_lock(project):
                     resolved = image_store.resolve(project, image_message["images"]) if image_message else []
                 res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, provider_started, slug,
+                                   on_result=acknowledge,
                                    **({"images": resolved} if resolved else {}))
             except (image_store.ImageError, engines.ImageInputError) as exc:
                 chat_log(project, "error", str(exc), trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
                 return {"completed": False, "error": str(exc), "turn_id": turn_id}
-            if (res.get("completed") and not res.get("interrupted")) or res.get("_assistant_output"):
-                _record_project_messages(project, information)
-                information = []
+            if receipt_errors:
+                res["project_message_error"] = receipt_errors[-1]
             if res.get("interrupted"):
                 return res
             if res.get("rejection"):
@@ -1291,7 +1317,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 "undelivered": True}
 
 
-def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=()):
+def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None):
     turn_id = active_turn["id"]
     if trigger == "chat":
         from . import audit
@@ -1330,6 +1356,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     if engine == "codex":
         res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
                           handoff, model=choice.get("model"), on_start=on_start, slug=slug,
+                          on_result=on_result,
                           **({"images": images} if images else {}))
     else:
         text = _header(project, trigger, fresh, slug) + handoff + prompt
@@ -1350,7 +1377,8 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
             _remove_runtime(runtime)
         res.update({"skipped": False, "_turn_started_at": turn_started_at, "engine": "claude",
                     "routing": choice})
-        res["_assistant_output"] = bool(res.get("text"))  # Before the synthetic interruption notice.
+        if on_result:
+            on_result({**res, "completed": not bool(res.get("error") or res.get("rejection") or res.get("limited"))})
         if res.get("interrupted"):
             res["text"] = _interrupted_text(res)
         if (res.get("rejection") or res.get("limited")) and res.get("safe_to_retry"):
@@ -1416,7 +1444,7 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
-                slug: str | None = None, images=()) -> dict:
+                slug: str | None = None, images=(), on_result=None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     sid = None if fresh else session.get("session_id")
@@ -1463,8 +1491,10 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
            "error": identity_error or result.get("error"), "tools": result.get("tools") or [],
            "skipped": False, "completed": False, "rejection": result.get("rejection"),
            "safe_to_retry": result.get("safe_to_retry", False), "limited": result.get("limited"),
-           "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice, "turn_id": turn_id,
-           "_assistant_output": bool(result.get("text"))}
+           "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice, "turn_id": turn_id}
+    if on_result:
+        on_result({**out, "interrupted": result.get("interrupted"),
+                   "completed": not bool(out.get("error") or out.get("rejection") or out.get("limited"))})
     if result.get("interrupted"):
         out.update(text=_interrupted_text(result), interrupted=True, safe_to_retry=False)
     if (out.get("rejection") or out.get("limited")) and out.get("safe_to_retry"):

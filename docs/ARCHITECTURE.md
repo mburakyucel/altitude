@@ -1354,6 +1354,10 @@ API projections. Source Sent acknowledges acceptance, not handling; recipient pe
 incoming history when supplied on an ordinary turn. Each information row stays separately folded
 outside routine system groups, with only Show/Hide. Existing literal history search attributes it
 as information; decision readers and human conversation handoffs exclude it.
+Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
+CLI launch alone does not. Incoming precedes the reply/final answer. Receipt write failure reports
+an error while preserving the provider result; a saved incoming row reconciles interrupted queue
+removal, while information without a saved receipt remains pending and may repeat.
 Expanded diagnostic code is read-only; message prose does not inherit the receiving project's
 terminal actions, file links or implicit issue-number links. Explicit public URLs remain clickable.
 

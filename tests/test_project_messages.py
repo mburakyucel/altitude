@@ -313,3 +313,76 @@ class TestProjectMessages(AltitudeCase):
         self.send()
         self.assertEqual(l3.queue_message(self.peer, "Ordinary request", trigger="chat")["position"], 1)
         self.assertEqual(l3.queue_message(self.peer, "Next request", trigger="chat")["position"], 2)
+
+    def test_reply_before_interruption_records_incoming_before_sent_and_never_replays(self):
+        for engine in config.ENGINES:
+            message = self.send(request_id="reply-interrupt-" + engine)
+            def execute(prompt, **options):
+                self.assertIn(message["message_id"], prompt)
+                self.send(self.peer, self.project, "Fixture fix is merged; activation unverified.",
+                          summary="Fix status", request_id="interrupt-reply-" + engine,
+                          reply_to=message["exchange_id"])
+                self.assertEqual(l3.queued(self.peer), [], "accepted tool reply proves supply immediately")
+                return {"text": "", "interrupted": True, "error": "Fixture interruption after tool side effect",
+                        "session_id": "fixture-session", "reported_session_id": "fixture-session", "usage": {}}
+            with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                 mock.patch.object(engines, "claude_print", side_effect=execute), \
+                 mock.patch.object(engines, "codex_exec", side_effect=execute):
+                self.assertTrue(l3.turn(self.peer, "Ordinary triage")["interrupted"])
+            rows = self.rows(self.peer)
+            incoming = next(i for i, row in enumerate(rows) if row["turn_id"] == message["message_id"])
+            reply = next(i for i, row in enumerate(rows) if row["project_message"]["reply_to"] == message["exchange_id"])
+            self.assertLess(incoming, reply)
+            self.assertEqual(l3._pending_project_messages(self.peer), [])
+
+    def test_tool_output_and_transient_sender_fence_do_not_replay_proven_supply(self):
+        for engine in config.ENGINES:
+            self.send(request_id="tools-" + engine)
+            original = l3._record_project_messages
+            def record(project, selected):
+                with config.project_activity(self.project, exclusive=True) as attached:
+                    self.assertTrue(attached)
+                    return original(project, selected)
+            result = {"text": "", "tools": [{"name": "Read", "input": "fictional local fixture"}],
+                      "interrupted": True, "session_id": "fixture-session", "reported_session_id": "fixture-session"}
+            with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                 mock.patch.object(l3, "_record_project_messages", side_effect=record), \
+                 mock.patch.object(engines, "claude_print", return_value=result.copy()), \
+                 mock.patch.object(engines, "codex_exec", return_value=result.copy()):
+                self.assertTrue(l3.turn(self.peer, "Ordinary triage")["interrupted"])
+            self.assertEqual(l3._pending_project_messages(self.peer), [])
+
+    def test_receipt_failure_preserves_direct_and_queued_turn_results_and_chat_order(self):
+        for engine in config.ENGINES:
+            for failure in ("chat", "queue"):
+                message = self.send(request_id="receipt-" + engine + "-" + failure)
+                result = {"text": "Fixture triage succeeded", "session_id": "fixture-session",
+                          "reported_session_id": "fixture-session", "usage": {}}
+                original = l3.chat_log if failure == "chat" else l3._write_queue
+                def fail(*args, **kwargs):
+                    is_receipt = (kwargs.get("trigger") == "project-message" if failure == "chat"
+                                  else any(row.get("turn_id") == message["message_id"] for row in self.rows(self.peer)))
+                    if is_receipt:
+                        raise OSError("Fixture receipt failure")
+                    return original(*args, **kwargs)
+                if failure == "queue":
+                    l3.queue_message(self.peer, "Ordinary queued triage", trigger="chat")
+                with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                     mock.patch.object(l3, "chat_log" if failure == "chat" else "_write_queue", side_effect=fail), \
+                     mock.patch.object(engines, "claude_print", return_value=result.copy()), \
+                     mock.patch.object(engines, "codex_exec", return_value=result.copy()):
+                    response = l3.turn(self.peer, "Ordinary direct triage") if failure == "chat" else l3.deliver_queued(self.peer)
+                self.assertTrue(response["completed"])
+                self.assertFalse(response.get("error"))
+                self.assertIn("Fixture receipt failure", response["project_message_error"])
+                self.assertTrue(any(row["role"] == "error" and "receipt could not be saved" in row["text"]
+                                    for row in l3.chat_history(self.peer, None)))
+                self.assertEqual(len(l3._pending_project_messages(self.peer)), 1 if failure == "chat" else 0)
+                if failure == "chat":
+                    self.supply(self.peer)
+                else:
+                    history = l3.chat_history(self.peer, None)
+                    received = next(i for i, row in enumerate(history) if row.get("turn_id") == message["message_id"])
+                    answered = next(i for i, row in enumerate(history) if row.get("turn_id") == response["turn_id"]
+                                    and row["role"] == "assistant")
+                    self.assertLess(received, answered)
