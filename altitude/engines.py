@@ -607,8 +607,12 @@ def clean_env(environment: dict | None = None) -> dict:
 
 
 #: Job settings appear on the job's command line, so a worker's GitHub token travels on its first input line instead.
+#: Only a pipe gives up that line for good: an engine reading a file from its beginning sent the token as prompt text,
+#: so the reader starts no engine on any other input.
 GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
-GITHUB_INPUT = 'IFS= read -r GH_TOKEN && [ -n "$GH_TOKEN" ] && export GH_TOKEN || unset GH_TOKEN; exec "$@"'
+GITHUB_INPUT = ('[ -p /dev/stdin ] || { echo "altitude-worker: input is not a pipe; the engine was not started" >&2; '
+                'exit 125; }; IFS= read -r GH_TOKEN && [ -n "$GH_TOKEN" ] && export GH_TOKEN || unset GH_TOKEN; '
+                'exec "$@"')
 
 
 def github_token(env: dict) -> str:
