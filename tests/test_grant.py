@@ -21,8 +21,8 @@ from datetime import datetime, timedelta, timezone
 from tests.support import REPO, AltitudeCase, add_worktree, git, make_repo
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal
 
-SHIM = r'''#!/usr/bin/env python3
-"""systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
+# On the suite's interpreter: macOS's /usr/bin/python3 is an xcrun shim whose cache warnings would join the log.
+SHIM = f"#!{sys.executable}\n" + r'''"""systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
 import subprocess, sys
 args = sys.argv[1:]
 command = args[args.index("--") + 1:]

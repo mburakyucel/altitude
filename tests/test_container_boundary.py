@@ -13,6 +13,8 @@ from altitude import config, dispatch, installation, l3, platform, server, sourc
 
 
 class TestContainerIdentity(AltitudeCase):
+    host = "linux"  # the image and its single-user namespace are Linux's
+
     def identity(self, uid=0):
         marker = mock.MagicMock()
         marker.lstat.return_value = SimpleNamespace(st_uid=uid, st_mode=stat.S_IFREG | 0o644)
