@@ -702,7 +702,11 @@ non-invasive diagnosis iterates without approval rounds, and only missing access
 or service change, unapproved spend, a live-provider test or an explicit restriction needs a decision.
 Operator grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
 The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
-and incident evidence, not a new lifecycle state or perpetual polling.
+and incident evidence to actively continue unfinished authorized work without another administrative
+approval. L3 follows prerequisites to the present actionable blocker and reconciles terminal recovery
+results; significant stalls receive a visible FYI with the reason and concrete next step/trigger or
+narrow missing operator decision. Legitimate waits and running workers need no manufactured activity,
+new lifecycle state or perpetual polling.
 Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
 the saved block in place; they are readable in the conversation and delivered at a later supported
 resume. Operator discussion retains its ordinary wake behavior. Explicit resume can requeue a
