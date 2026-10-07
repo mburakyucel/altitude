@@ -1550,6 +1550,12 @@ def _launchd_control(action: str) -> str:
         run(LAUNCHCTL, "bootout", target)
         if job["coalition"] and not _confirm_stopped(job["coalition"]):
             raise RuntimeError("Native user service failed: processes the service started are still running")
+        # I-20260929-182608: ended processes do not establish that launchd removed the label for bootstrap.
+        deadline = time.monotonic() + 45
+        while _print(LABEL) is not None:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Native user service failed: service label was not removed within 45s")
+            time.sleep(0.1)
     if action == "stop":
         return ""
     logs_dir().mkdir(parents=True, exist_ok=True)

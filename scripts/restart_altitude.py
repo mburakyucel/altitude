@@ -208,12 +208,17 @@ def publish_and_restart(staging: Path) -> None:
             DIST.rename(staging)
         if had_previous and backup.exists():
             backup.rename(DIST)
-        try:
-            restart_unit()
-        except RestartError:
-            pass
+        recovery = "no prior web bundle was available; recovery not attempted"
+        if had_previous:
+            try:
+                recovery_pid = int(unit_properties().get("MainPID", "0") or 0)
+                restart_unit()
+                wait_healthy(recovery_pid)
+                recovery = "restored the prior web bundle; recovery API/UI health verified"
+            except (RestartError, ValueError) as recovery_error:
+                recovery = f"restored the prior web bundle; recovery failed: {recovery_error}"
         diagnostics()
-        raise RestartError(f"restart verification failed; restored the prior web bundle: {exc}") from exc
+        raise RestartError(f"restart verification failed: {exc}; {recovery}") from exc
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)

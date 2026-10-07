@@ -1251,7 +1251,12 @@ tick discovers merged changes independently of worker completion. Dispatch, resu
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
 fault releases a window whose unit died silently. altd runs the guarded build-and-restart
-script itself. Validation also refuses new runs during that window. Unexpected daemon exit or host
+script itself. On macOS, service Stop/restart confirms its coalition cleanup and label removal before
+returning Stop or bootstrapping the replacement, with a 45-second removal limit. Independent workers
+remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
+recovery service's API/UI health from a new process; its error retains both activation failure and
+recovery outcome. An absent prior bundle is explicit, and no recovery is attempted without one.
+Validation also refuses new runs during that window. Unexpected daemon exit or host
 reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
 delivery keeps the original run area for recovery.
 The web update notice is dismissible per browser for the pending update and failure identity.

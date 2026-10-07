@@ -120,7 +120,7 @@ class Service(DarwinCase):
         platform.control("start")
         self.assertEqual(self.launchd.commands[-1], ["kickstart", target])
         platform.control("restart")
-        self.assertEqual(self.launchd.commands[-2:], [["bootout", target],
+        self.assertEqual(self.launchd.commands[-3:], [["bootout", target], ["print", target],
                                                       ["bootstrap", domain, str(platform.service_path())]])
         stopped.assert_called_once_with(900)
         self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
@@ -129,7 +129,7 @@ class Service(DarwinCase):
         platform.control("stop")  # already stopped: nothing to do
         platform.control("reload")  # launchd reads the definition when bootstrapping
         platform.control("disable")
-        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target],
+        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target], ["print", target],
                                                  ["disable", target]])
         with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
@@ -139,6 +139,70 @@ class Service(DarwinCase):
         self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
         with self.assertRaisesRegex(RuntimeError, "still running"):
             platform.control("stop")
+
+    def test_restart_waits_for_label_removal_after_the_processes_end_and_preserves_worker_jobs(self):
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+        worker = "dev.altitude.job.worker"
+        self.launchd.jobs[worker] = described(worker, coalition=901)
+        stopped = self.patch(platform, "_stop_members", return_value=True)
+        sleep = self.patch(platform.time, "sleep")
+        removing = False
+        reads = 0
+
+        def delayed(argv, **kwargs):
+            nonlocal removing, reads
+            if argv[1] == "bootout":
+                removing = True  # acknowledgement precedes removal; no service processes remain
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if argv[1] == "print" and removing:
+                reads += 1
+                if reads == 3:
+                    self.launchd.jobs.pop(platform.LABEL)
+            if argv[1] == "bootstrap" and platform.LABEL in self.launchd.jobs:
+                return subprocess.CompletedProcess(argv, 5, "", "Bootstrap failed: 5: Input/output error")
+            return self.launchd(argv, **kwargs)
+
+        platform.subprocess.run.side_effect = delayed
+        platform.control("restart")
+        self.assertEqual(reads, 3)
+        self.assertEqual(sleep.call_count, 2)
+        stopped.assert_called_once_with(900)
+        self.assertEqual(self.launchd.jobs[worker], described(worker, coalition=901))
+        self.assertEqual(self.launchd.commands[-1][0], "bootstrap")
+
+    def test_stalled_or_unreadable_label_removal_refuses_restart_and_stop(self):
+        for action in ("restart", "stop"):
+            for unreadable in (False, True):
+                with self.subTest(action=action, unreadable=unreadable):
+                    self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                    self.launchd.commands.clear()
+                    removing = False
+
+                    def blocked(argv, **kwargs):
+                        nonlocal removing
+                        if argv[1] == "bootout":
+                            removing = True
+                            return subprocess.CompletedProcess(argv, 0, "", "")
+                        if argv[1] == "print" and removing and unreadable:
+                            return subprocess.CompletedProcess(argv, 5, "", "unreadable service")
+                        return self.launchd(argv, **kwargs)
+
+                    with mock.patch.object(platform.subprocess, "run", side_effect=blocked), \
+                            mock.patch.object(platform, "_stop_members", return_value=True), \
+                            mock.patch.object(platform.time, "monotonic", side_effect=[0, 46]), \
+                            mock.patch.object(platform.time, "sleep"):
+                        expected = "unreadable service" if unreadable else "not removed"
+                        with self.assertRaisesRegex(RuntimeError, expected):
+                            platform.control(action)
+                    self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_linux_service_restart_keeps_the_systemd_contract(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), \
+                mock.patch.object(platform.host_platform, "machine", return_value="x86_64"), \
+                mock.patch.object(platform.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            platform.control("restart")
+        self.assertEqual(run.call_args.args[0], ["systemctl", "--user", "restart", "altitude.service"])
 
     def test_logs_read_the_service_log(self):
         self.assertEqual(platform.logs(), "")
