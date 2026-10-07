@@ -294,8 +294,9 @@ an installed runtime or recovery evidence.
 The CLI's `--version` reports the source-build version `0.0.0`; identify this candidate by its
 custom package metadata, compiled stamp and executable digests, rather than an official-release label.
 
-Installation and selection require their own operator-approved machine purpose and a protected
-artifact. The existing executable setting covers several roles; exclusion is proved in their
+Installation and selection require separate approval of protected-artifact adoption under the
+current authority rules. An operator grant cannot loosen confinement or engine permission settings.
+The existing executable setting covers several roles; exclusion is proved in their
 effective policies. No automatic installation, update, general CLI replacement or service action
 is part of preparation. Maintainers review and rebase the patch for each upstream update.
 Adoption requires a new intended confined candidate worker, finite blank/local fictional preflight
