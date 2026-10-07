@@ -125,6 +125,37 @@ test("shrinking bottom content while following does not manufacture an upward ge
   await walk.state("shrink-02-short-tail-and-next-output-still-follow", { visible: [live.getByRole("button", { name: "Pause", exact: true }), live.getByText(update.latest, { exact: false })], hidden: [live.getByRole("button", { name: "Follow", exact: true })] });
 });
 
+test("Pause during a pending tail refresh preserves the visible reading window", async ({ page, request }, info) => {
+  const task = await fixture(request);
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  const body = live.locator(".live-body");
+  await page.goto(task.path);
+  await expect(live.getByText(task.latest, { exact: false })).toBeInViewport();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const pending = page.waitForRequest((outgoing) => transcriptMode(new URL(outgoing.url()), "initial"));
+  await page.route((url) => transcriptMode(url, "initial"), async (route) => { await gate; return route.continue(); });
+  try {
+    const burst = await task.control("burst");
+    await task.control("reset-index");
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await pending;
+    await live.getByRole("button", { name: "Pause", exact: true }).click();
+    const anchor = await readingAnchor(body);
+    const reconciled = page.waitForResponse((reply) => transcriptMode(new URL(reply.url()), "reconcile"));
+    release();
+    await reconciled;
+    await expect(live.getByText(burst.latest, { exact: false })).toBeAttached();
+    await expect(live.getByText("Reconnecting to the session…", { exact: true })).toHaveCount(0);
+    await expectAnchor(body, anchor);
+    await expect(live.getByText(task.latest, { exact: false })).toBeInViewport();
+    await expect(live.getByText(burst.latest, { exact: false })).not.toBeInViewport();
+    await walkthrough(page, info).state("pause-race-retains-reading-window", {
+      visible: [live.getByRole("button", { name: "Follow", exact: true }), live.getByText(task.latest, { exact: false })], hidden: [],
+    });
+  } finally { release(); }
+});
+
 test("infinite history loads on upward intent, preserves expansion and anchor through failure, and reaches complete history", async ({ page, request }, info) => {
   const task = await fixture(request);
   const walk = walkthrough(page, info);
