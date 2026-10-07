@@ -448,6 +448,12 @@ Stop, queued steering, replacement admission and continuation of the same saved 
 Its synchronous application driver owns a separate fictional state directory inside the persistent
 home; the image daemon serves readiness with its default fresh state. This lane does not establish
 daemon scheduling, browser onboarding, interrupted-launch recovery or real provider compatibility.
+The native image profile probe also runs `alt task status` for a fictional held task and edits a
+workspace file with bundled Python under the generated task profile. It verifies protected image
+identity and denied writes to its files and ancestors, alongside the existing denied-root/socket
+matrix. Identity unit cases cover namespace ownership, invalid markers and native authority refusal;
+launch/resume fixtures cover the container editing instruction. These checks make no provider calls.
+
 Run `python3 -m unittest tests.test_container_workflow` before the authorized image gate: it runs
 the same workflow and CLI with a local-process platform adapter, without host services. Workspace
 results do not establish native systemd or image support; those require the gate's retained results.

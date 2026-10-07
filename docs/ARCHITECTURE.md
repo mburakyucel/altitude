@@ -14,7 +14,10 @@ validation of the selected runtime clients, not hostile-process confinement. The
 
 The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
 inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
-runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
+runtime/bootstrap operations. Its protected image-path check recognizes root ownership through a
+worker's single-user namespace without accepting worker-writable identity. Marker and instance use
+the same check; invalid identity fails closed. Container editing guidance uses bundled Python through
+confined exec on launch and resume. Browser terminal, host speech and native activation/update routes
 refuse every peer in that deployment. Source merges remain ordinary project delivery; application
 activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
 manager. Immutable resources and persistent home/projects have separate lifetimes. The reusable

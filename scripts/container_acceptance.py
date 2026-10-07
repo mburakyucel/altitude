@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Finite Linux image-bootstrap gate. Uses disposable rootless storage and network-none payloads.
+"""Finite Linux image-bootstrap gate. Uses disposable rootless storage and the reviewed deployment network.
 
 Results deliberately name uncovered full application, provider, browser and Mac acceptance. This
 entry point runs only with authorized runtime access; it never installs a host tool or changes policy.
@@ -169,7 +169,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
     evidence.mkdir(parents=True, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix="acg-"))
     result = {"passed": False, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-              "scope": "image bootstrap with network-none payload", "cleanup": [],
+              "scope": "image bootstrap with reviewed slirp4netns network", "cleanup": [],
               "uncovered": ["actual engine sandbox in stripped image", "project/coordinator/task workflow",
                             "Stop/restart/recreation and volume lock concurrency", "image update/backup/recovery",
                             "published networking/HTTPS and browser onboarding", "Mac ARM64", "live authentication/providers"]}
@@ -215,7 +215,7 @@ def run(archive: Path, checksum: str, evidence: Path, *, native_binary: Path | N
             result["image"] = {key: image.get(key) for key in ("Id", "Digest", "Architecture", "Labels")}
             for volume in ("fixture-home", "fixture-projects"):
                 container.local_volume(volume,lineage='1'*32,pair='2'*32,role=volume.removeprefix('fixture-'),create=True)
-            create = ["create", "--name", "altitude-bootstrap-fixture", "--network=none", "--cgroupns=private",
+            create = ["create", "--name", "altitude-bootstrap-fixture", "--network=slirp4netns", "--cgroupns=private",
                           "--cgroup-parent", parent,
                           "--security-opt=unmask=/proc/*", "--memory=512m", "--cpus=1", "--pids-limit=256",
                           "--env", "ALTITUDE_PORT=19443", "--env", "ALTITUDE_PUBLIC_HOST=container-fixture.invalid",
