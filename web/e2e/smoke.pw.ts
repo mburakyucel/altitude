@@ -76,7 +76,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByText("Loading file…", { exact: true })).toHaveCount(0);
     } else if (task && design) {
       await expect(main.getByRole("heading", { name: "Conversation layout", exact: true })).toBeVisible();
-      await expect(main.getByText(`Preview · v${task.question!.revision}`, { exact: true })).toBeVisible();
+      await expect(main.getByText(/^Preview · v\d+$/)).toHaveCount(0);
       await expect(main.getByRole("img", { name: "Phone conversation", exact: true })).toBeVisible();
       await expect(main.getByRole("img", { name: "Desktop conversation", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Preview text", exact: true }))

@@ -1491,7 +1491,7 @@ acceptance, transfers ownership or access, or releases an approval question or m
 ### Task design previews
 
 Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
-explanation with its ordinary question. The resulting **View preview · vN** link in Needs you and the task
+explanation with its ordinary question. The resulting **View preview · <saved title>** link in Needs you and the task
 conversation opens a browser tab over Altitude's normal connection. Use a title that identifies
 whether the captures show a proposal or an implementation review. Phone and desktop readers can
 inspect the screenshots at full size and use **Back to question** for feedback or the existing quick
@@ -1536,8 +1536,9 @@ publish them before any repository commit. Follow the [capture guidance](../AGEN
 The response includes `design_url`, for example
 `/projects/example/tasks/chat-layout/design/<question-id>/1`. This is a path on the current Altitude
 connection, not a filesystem path or an external upload. Use the returned reference; the same
-**View preview · v1** entry is rendered in Needs you, beside the question in its conversation and
-in the open question's navigation when it is offscreen. Publication follows
+**View preview · Compact chat proposal** entry is rendered in Needs you and beside the question in
+its conversation. The offscreen question jump returns to that entry. The link and viewer heading use
+the captured title, not the question revision as a proposal version. Publication follows
 the ordinary L3-first audience rules unless explicitly directed to the operator.
 
 The question contains the captured text and titles, and the task retains the selected image bytes.
@@ -1547,7 +1548,8 @@ For an existing design question, use its same reason and add `--design-file`; it
 when replacement recommendation flags are omitted. An ordinary block with no design file parks the
 existing question and retains its saved preview.
 
-Old links remain bound to the old capture and identify a newer question when one exists. Missing or
+Old links retain their captured title and content, say **Earlier preview** when superseded, and
+identify a newer question when one exists. Missing or
 altered saved content shows **Design unavailable**, with Retry and Back to question; it never serves
 different content at that version. First acceptance refuses unavailable evidence. Feedback remains a
 normal message, and explicit acceptance uses the existing question/revision checks. Neither viewing,

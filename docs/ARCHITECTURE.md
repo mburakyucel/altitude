@@ -2408,7 +2408,9 @@ question revision; changing any selected content or label advances it, preservin
 and design. A normal block without design inputs retains the attached capture. There is no separate
 review conversation, approval state or artifact registry.
 
-`question_view` exposes `design_url` for **View preview · vN** in Needs you and the owning question.
+`question_view` exposes `design_url` and the captured `design_title` for **View preview · <saved title>**
+in Needs you and the owning question. Links and viewer headings identify the saved proposal by its
+title; the question revision is an identity and answer fence, not a displayed proposal version.
 The conversation's offscreen-question jump reaches that question, where its preview opens.
 Within a group it follows an open member with a preview, then another open member, including after
 partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
@@ -2422,8 +2424,8 @@ require a registered project, resolve the owning task and exact question revisio
 saved content hashes. Raster responses use explicit image types, `nosniff`, a restrictive CSP and
 no-store caching. Source paths and arbitrary task files are never URL inputs. Missing, altered,
 unsupported or inaccessible evidence returns **Design unavailable**, with no fallback to another
-version. Loading, Retry and Back remain in the ordinary preview page. Earlier captures identify
-their revision and link back to its historical question; current question metadata is polled without
+version. Loading, Retry and Back remain in the ordinary preview page. Superseded captures say
+**Earlier preview** and link back to their historical question; current question metadata is polled without
 replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.

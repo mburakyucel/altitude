@@ -31,9 +31,8 @@ export default function TaskDesign() {
       <button className="link" onClick={() => void preview.refetch()}>Retry</button>
     </div> : <>
       <header className="design-heading">
-        <p className="text-meta text-muted">Preview · v{preview.data.revision}</p>
         <h1>{preview.data.title}</h1>
-        {preview.data.superseded ? <p className="text-meta" role="status">Earlier version. {preview.data.current_question_url ? <Link to={preview.data.current_question_url}>Open current question</Link> : "Return to the question for the latest discussion."}</p> : null}
+        {preview.data.superseded ? <p className="text-meta" role="status">Earlier preview. {preview.data.current_question_url ? <Link to={preview.data.current_question_url}>Open current question</Link> : "Return to the question for the latest discussion."}</p> : null}
       </header>
       {preview.data.images.map((item) => <Screenshot key={item.url} {...item} />)}
       <section aria-label="Preview text" className="design-text"><h2>Preview</h2><Prose text={preview.data.text} /></section>

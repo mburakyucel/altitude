@@ -236,6 +236,7 @@ export const DecisionSchema = z
     id: z.string().nullish(),
     revision: z.number().nullish(),
     design_url: z.string().nullish(),
+    design_title: z.string().nullish(),
     anchor_id: z.string().nullish(),
     group_id: z.string().nullish(),
     group_revision: z.number().nullish(),

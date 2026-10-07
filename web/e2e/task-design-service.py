@@ -109,6 +109,13 @@ def main():
                 proposal.write_text("The revised proposal keeps replies together and moves the question below the explanation.")
                 present()
                 return self._json({"ok": True})
+            if self.path == "/fixture/proposal-v5":
+                T.resume("atlas", slug)
+                proposal.write_text("Proposal v5 uses tabs for settings, model choice and menus.")
+                T.block("atlas", slug, "Approve the tabbed design (v5)?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": "burak"}, recommendation="Build the v5 tabbed proposal.",
+                        recommendation_label="Build v5", design={**design, "title": "Proposal v5: settings, model choice and menus"})
+                return self._json({"ok": True})
             if self.path == "/fixture/damage-snapshot":
                 question = S.load_task("atlas", slug)["questions"][-1]
                 image = question["design"]["images"][0]
