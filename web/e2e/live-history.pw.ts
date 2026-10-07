@@ -39,8 +39,13 @@ async function expectAnchor(body: Locator, anchor: Awaited<ReturnType<typeof rea
 
 async function upward(page: Page, body: Locator) {
   await body.evaluate((node) => { node.scrollTop = 0; });
-  await body.hover();
-  await page.mouse.wheel(0, -400);
+  if (page.context().browser()?.browserType().name() === "webkit") {
+    // Mobile WebKit has no mouse-wheel API; exercise the viewer's keyboard intent path.
+    await body.press("ArrowUp");
+  } else {
+    await body.hover();
+    await page.mouse.wheel(0, -400);
+  }
 }
 
 test("following after an epoch reset opens a bounded recent tail across a burst, with older history still accessible", async ({ page, request }, info) => {
