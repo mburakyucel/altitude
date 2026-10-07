@@ -956,7 +956,24 @@ def codex_turns(job_root: Path, session_id: str) -> list[Path]:
         if not isinstance(record, dict):
             continue
         stdout = _codex_paths(job_root, record_path.stem)["stdout"]
-        thread = _codex_thread(_codex_events(stdout)) or record.get("session_id")
+        # The initialization record identifies the thread; do not parse the whole transcript
+        # merely to discover which sources the live viewer must subsequently project.
+        thread = None
+        try:
+            with stdout.open(errors="replace") as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "thread.started" and event.get("thread_id"):
+                        thread = str(event["thread_id"])
+                        break
+                    if isinstance(event, dict) and event.get("type", "").startswith(("item.", "turn.")):
+                        break
+        except OSError:
+            pass
+        thread = thread or record.get("session_id")
         if thread == session_id and stdout.is_file():
             turns.append((str(record.get("started_at") or ""), record_path.stem, stdout))
     return [path for _, _, path in sorted(turns)]

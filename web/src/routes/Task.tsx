@@ -306,6 +306,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [active, updateQuestionVisibility]);
+  useLayoutEffect(() => {
+    // A removed preview can clamp scrollTop before a queued scroll event sees its
+    // replacement. Restore following during the commit, before that event can pause it.
+    const node = scroller.current;
+    if (active && following.current && node) node.scrollTop = node.scrollHeight;
+  });
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();

@@ -2403,6 +2403,29 @@
   padding: 12px 16px 16px;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
+}
+.live-history-status {
+  /* Keep loading and its Retry visible without moving the reader's row anchor. */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+.live-record-control {
+  min-height: 44px;
+}
+.live-history-status > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.live-history-status .btn {
+  border: 1px solid var(--border);
 }
 .live-line {
   margin: 0;

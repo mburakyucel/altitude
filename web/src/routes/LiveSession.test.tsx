@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -38,7 +38,8 @@ const transcript = {
   slug: "fix-timer",
   engine: "claude",
   session_id: "0123456789abcdef",
-  cursor: 8,
+  attempt: 1, cursor: "epoch:8", lower: "", next: "", more: false, reset: false,
+  has_earlier: false, has_engine_records: true, deleted: [],
   redaction: "credential-shaped keys and values are redacted; model reasoning is never shown",
   events: [
     { seq: 0, source: "platform", kind: "boundary", type: "state", role: "system", at: at(0), text: "queued → running · altd" },
@@ -52,13 +53,17 @@ const transcript = {
   ],
 };
 
-const boundariesOnly = { ...transcript, cursor: 1, events: [transcript.events[0]] };
+const rawEvents = transcript.events.map((event) => ({ ...event, id: `record-${event.seq}`, order: String(event.seq).padStart(8, "0"), version: event.seq + 1 }));
+const normalEvents = rawEvents.filter((event) => !["engine", "result"].includes(event.kind)).map((event) => event.seq === 3
+  ? { ...event, status: "completed", output: "On branch fix-timer\nnothing to commit" } : event);
+const normalTranscript = { ...transcript, events: normalEvents };
+const boundariesOnly = { ...normalTranscript, has_engine_records: false, events: [normalEvents[0]] };
 
-function stub(options: { task?: unknown; transcript?: () => Response } = {}) {
+function stub(options: { task?: unknown; transcript?: (url: string) => Response | Promise<Response> } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
-    if (url.includes("/api/transcript/")) return options.transcript ? options.transcript() : jsonResponse(transcript);
+    if (url.includes("/api/transcript/")) return options.transcript ? options.transcript(url) : jsonResponse({ ...normalTranscript, events: url.includes("raw=1") ? rawEvents : normalEvents });
     if (url.includes("/api/task/")) return jsonResponse(options.task ?? task);
     return jsonResponse({ error: "not found" }, 404);
   });
@@ -204,12 +209,102 @@ describe("LiveSession", () => {
 
   it("offers Retry when the session cannot be read", async () => {
     let fail = true;
-    stub({ transcript: () => (fail ? jsonResponse({ error: "boom" }, 500) : jsonResponse(transcript)) });
+    stub({ transcript: () => (fail ? jsonResponse({ error: "boom" }, 500) : jsonResponse(normalTranscript)) });
     const { user } = renderApp({ route });
     const panel = await openPanel();
     expect(await within(panel).findByText(/Could not read the session/)).toBeInTheDocument();
     fail = false;
     await user.click(within(panel).getByRole("button", { name: "Retry" }));
     expect(await within(panel).findByText("Reading the timer code first.")).toBeInTheDocument();
+  });
+
+  it("uses whole-session facts even when the recent window contains only a platform boundary", async () => {
+    stub({ task: { ...task, state: "done" }, transcript: () => jsonResponse({ ...normalTranscript, events: [normalEvents[0]], has_earlier: true }) });
+    renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
+    expect(within(panel).queryByText("No session file for this attempt")).toBeNull();
+  });
+
+  it("loads one earlier page only on upward intent, including a short initial viewport, and retries history in place", async () => {
+    let historyReads = 0;
+    let fail = true;
+    const earlier = { ...normalEvents[2], id: "earlier", order: "00000000", text: "An earlier step" };
+    stub({ transcript: (url) => {
+      if (url.includes("mode=history")) {
+        historyReads += 1;
+        return fail ? jsonResponse({ error: "unavailable" }, 503)
+          : jsonResponse({ ...normalTranscript, events: [earlier], has_earlier: true, lower: "00000000" });
+      }
+      return jsonResponse({ ...normalTranscript, has_earlier: true, lower: "00000001" });
+    } });
+    const { user } = renderApp({ route });
+    const panel = await openPanel();
+    await within(panel).findByRole("region", { name: "Live transcript" });
+    expect(historyReads).toBe(0);
+    const historySlot = panel.querySelector(".live-history-status");
+    expect(historySlot).toBeEmptyDOMElement();
+    const body = within(panel).getByLabelText("Session activity");
+    fireEvent.wheel(body, { deltaY: -60 });
+    await within(panel).findByText("Could not load earlier activity.");
+    expect(panel.querySelector(".live-history-status")).toBe(historySlot);
+    expect(within(panel).getByText("Reading the timer code first.")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Follow" })).toBeInTheDocument();
+    fail = false;
+    await user.click(within(panel).getByRole("button", { name: "Retry" }));
+    await within(panel).findByText("An earlier step");
+    expect(historySlot).toBeEmptyDOMElement();
+    expect(historyReads).toBe(2);
+    expect(within(panel).queryByText("Beginning of session")).toBeNull();
+    fireEvent.keyDown(body, { key: "ArrowUp" });
+    await waitFor(() => expect(historyReads).toBe(3));
+    expect(panel.querySelectorAll('[data-transcript-id="earlier"]')).toHaveLength(1);
+  });
+
+  it("keeps expanded tool rows and read-only text when updates fail, then resumes updates without duplicate rows", async () => {
+    let fail = false;
+    stub({ transcript: (url) => url.includes("mode=delta") && fail
+      ? jsonResponse({ error: "offline" }, 503) : jsonResponse(normalTranscript) });
+    const { user } = renderApp({ route });
+    const panel = await openPanel();
+    const command = (await within(panel).findByText("git status", { selector: "code" })).closest("details")!;
+    await user.click(command.querySelector("summary")!);
+    expect(command).toHaveAttribute("open");
+    fail = true;
+    fireEvent.focus(window);
+    await within(panel).findByText("Could not update the session.");
+    expect(command).toHaveAttribute("open");
+    expect(within(panel).queryByText("Following live · new steps appear at the bottom")).toBeNull();
+    fail = false;
+    await user.click(within(panel).getByRole("button", { name: "Retry" }));
+    await within(panel).findByText("Following live · new steps appear at the bottom");
+    expect(panel.querySelectorAll('[data-transcript-id="record-3"]')).toHaveLength(1);
+    expect(command).toHaveAttribute("open");
+  });
+
+  it("fetches raw detail only by disclosure and each additional chunk only by Show more", async () => {
+    const detailOffsets: string[] = [];
+    stub({ transcript: (url) => {
+      const query = new URL(url, "http://localhost").searchParams;
+      if (query.get("mode") === "record") {
+        detailOffsets.push(query.get("offset")!);
+        return jsonResponse(query.get("offset") === "0" ? { text: "First redacted chunk", next_offset: 4000 }
+          : { text: " and the remaining record", next_offset: null });
+      }
+      return jsonResponse({ ...normalTranscript, events: query.get("raw") === "1" ? [rawEvents[3]] : normalEvents });
+    } });
+    const { user } = renderApp({ route });
+    const panel = await openPanel();
+    await within(panel).findByRole("region", { name: "Live transcript" });
+    await user.click(within(panel).getByRole("button", { name: "Raw events" }));
+    const raw = await within(panel).findByRole("region", { name: "Raw events" });
+    expect(detailOffsets).toEqual([]);
+    await user.click(within(raw).getByRole("button", { name: "Full record" }));
+    await within(raw).findByText("First redacted chunk");
+    expect(detailOffsets).toEqual(["0"]);
+    await user.click(within(raw).getByRole("button", { name: "Show more" }));
+    await within(raw).findByText("First redacted chunk and the remaining record");
+    expect(detailOffsets).toEqual(["0", "4000"]);
+    expect(within(raw).queryByRole("button", { name: "Show more" })).toBeNull();
   });
 });
