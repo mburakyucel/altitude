@@ -319,6 +319,10 @@ class TestProjectMessages(AltitudeCase):
             message = self.send(request_id="reply-interrupt-" + engine)
             def execute(prompt, **options):
                 self.assertIn(message["message_id"], prompt)
+                for state in (l3.active(self.peer), l3.chat_state(self.peer)):
+                    encoded = json.dumps(state)
+                    self.assertNotIn("project_message_receipt", encoded)
+                    self.assertNotIn("project_message_ids", encoded)
                 self.send(self.peer, self.project, "Fixture fix is merged; activation unverified.",
                           summary="Fix status", request_id="interrupt-reply-" + engine,
                           reply_to=message["exchange_id"])

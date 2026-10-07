@@ -614,7 +614,12 @@ def active(project: str) -> dict | None:
     """The minimal public identity of this process's running turn, never its private prompt."""
     with _lifecycle_guard(project):
         turn = _active.get(project)
-        return dict(turn) if turn else None
+        return _turn_identity(turn)
+
+
+def _turn_identity(turn):
+    return {key: turn[key] for key in ("id", "started_at", "trigger", "slug", "provider_started", "interrupt_error")
+            if key in turn} if turn else None
 
 
 def note_task(project: str, slug: str) -> bool:
@@ -648,7 +653,7 @@ def chat_state(project: str, limit: int = 60) -> dict:
                                           or ("Runs next after system work" if turn and turn["trigger"] != "chat"
                                               else "Waiting for current turn to stop" if turn else "Runs next"))
         return {"history": chat_history(project, limit), "queued": waiting,
-                "active": dict(turn) if turn else None, "busy": turn_lock.locked(),
+                "active": _turn_identity(turn), "busy": turn_lock.locked(),
                 "send_now_reason": unavailable}
 
 
