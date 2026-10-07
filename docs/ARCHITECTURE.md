@@ -1069,7 +1069,11 @@ Installation VMs, containers and sandboxed-browser checks need no grant: `POST /
 lets the running owner's current attempt, from a process in its own worker job, run one command
 against its committed `HEAD` in a disposable rootless Podman container. altd starts that container
 from its own deployed image, with fixed flags and limits, and keeps the runner's storage beside
-Altitude's home, outside every worker's writable roots. The run is recorded like a machine run with
+Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
+uses the supported runner without host package installation. Image corrections take effect after
+normal source activation and require a successful browser check through that effective runner;
+testing a nested candidate image alone does not establish recovery. The run is recorded like a machine run with
 purpose `validation`, and results reach the task folder without following links. The worker's own
 confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
 storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
