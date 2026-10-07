@@ -370,7 +370,8 @@ def main(argv=None) -> None:
     mc.add_argument("--question"); mc.add_argument("--revision", type=int)
     mc.add_argument("--source", choices=("task", "project"), default="task"); mc.add_argument("--reason", required=True)
     mc.add_argument("--standing-policy", metavar="HEADING", help="L3: exact purpose from a single AGENTS.md paragraph on main")
-    mc.add_argument("--attempt", type=int, help="L3: observed current attempt, required with --standing-policy")
+    mc.add_argument("--from-task", metavar="SLUG", help="L3: the operator answered this question in another task of the project")
+    mc.add_argument("--attempt", type=int, help="L3: observed current attempt, required with --standing-policy or --from-task")
     rn = ts.add_parser("run", help="current L2: run one command under the task's operator grant, outside the worker sandbox")
     rn.add_argument("slug"); rn.add_argument("command")
     vl = ts.add_parser("validate", help="current L2: run a command in a disposable validation container for its own task, no grant needed")
@@ -784,10 +785,10 @@ def main(argv=None) -> None:
                 out(T.record_grant(p, args.slug, args.approval, question=args.question, revision=args.revision,
                                    reason=args.reason, actor=ACTOR, source=args.source,
                                    expected_attempt=int(attempt) if ACTOR == "l2" else args.attempt,
-                                   standing_policy=args.standing_policy))
+                                   standing_policy=args.standing_policy, from_task=args.from_task))
             else:
-                if any(value is not None for value in (args.standing_policy, args.attempt, args.approval, args.question,
-                                                        args.revision)):
+                if any(value is not None for value in (args.standing_policy, args.from_task, args.attempt, args.approval,
+                                                        args.question, args.revision)):
                     sys.exit("alt task grant --revoke: takes only --reason")
                 out(T.revoke_grant(p, args.slug, args.reason, actor=ACTOR,
                                    expected_attempt=int(attempt) if ACTOR == "l2" else None))

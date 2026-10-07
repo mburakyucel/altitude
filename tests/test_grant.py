@@ -200,6 +200,53 @@ class TestOperatorGrant(AltitudeCase):
                          ("project", "Yes, publish it.", question["detail"]))
         self.assertEqual(self.run_command("echo published")["exit"], 0)
 
+    def test_l3_applies_an_operator_answer_from_another_task_for_the_identical_purpose(self):
+        earlier = T.new(self.project, "Close device installation", "Verify the published release.")["slug"]
+        T.dispatch(self.project, earlier, attempt=1, session_id="earlier", agent_id="earlier", worktree=str(self.repo),
+                   branch="earlier")
+        self.tick()
+        T.block(self.project, earlier, "May I run repeated installation VMs against the published release?",
+                actor="l2", expected_state="running", expected_attempt=1, updates={"waiting_on": "burak"})
+        question = S.load_task(self.project, earlier)["questions"][-1]
+        self.tick()
+        other = T.message(self.project, earlier, "burak", "Something else entirely.", by="burak")
+        self.tick()
+        row = T.message(self.project, earlier, "burak", "Yes, run them.", by="burak",
+                        question_id=question["id"], revision=question["revision"])
+        self.tick()
+        T.resume(self.project, earlier)
+        self.tick()
+        T.resolve_question(self.project, earlier, question["id"], question["revision"], row["id"],
+                           disposition="answered", reason="Operator agreed.", expected_attempt=1)
+        apply = dict(question=question["id"], revision=question["revision"], reason="Burak's earlier yes, same purpose.")
+        refusals = [  # who applies it, which attempt it binds, and which answer it cites
+            (dict(approval=row["id"], actor="l2", expected_attempt=1, from_task=earlier), "only L3"),
+            (dict(approval=row["id"], actor="l3", expected_attempt=None, from_task=earlier), "current attempt"),
+            (dict(approval=row["id"], actor="l3", expected_attempt=2, from_task=earlier), "current attempt"),
+            (dict(approval=row["id"], actor="l3", expected_attempt=1, from_task=self.slug), "another task"),
+            (dict(approval=row["id"], actor="l3", expected_attempt=1, from_task=earlier, standing_policy="X",
+                  source="project"), "another task"),
+            (dict(approval=other["id"], actor="l3", expected_attempt=1, from_task=earlier), "answered the current"),
+            (dict(approval=row["id"], actor="l3", expected_attempt=1), "question is unavailable"),
+        ]
+        for fields, error in refusals:
+            with self.assertRaisesRegex(T.TransitionError, error):
+                T.record_grant(self.project, self.slug, **fields, **apply)
+        self.assertEqual(len(self.events("grant-refused")), len(refusals))
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+        grant = T.record_grant(self.project, self.slug, row["id"], actor="l3", expected_attempt=1, from_task=earlier,
+                               **apply)
+        self.assertEqual((grant["purpose"], grant["answer"], grant["approval"], grant["from_task"], grant["attempt"]),
+                         (question["detail"], "Yes, run them.", row["id"], earlier, 1))
+        self.assertIsNone(S.load_task(self.project, earlier).get("grant"))
+        self.assertEqual(self.run_command("echo granted")["exit"], 0)
+        again = T.record_grant(self.project, self.slug, row["id"], actor="l3", expected_attempt=1, from_task=earlier,
+                               **apply)
+        self.assertEqual(again["id"], grant["id"])
+        T.revoke_grant(self.project, self.slug, "Acceptance complete.", actor="l3")
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+
     def test_the_owner_records_its_grant_from_the_operators_task_chat_answer(self):
         question = self.ask()
         row = self.answer(question)

@@ -2370,11 +2370,13 @@ def _standing_policy(project: str, heading: str, approval: str) -> dict:
 
 def record_grant(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
                  actor: str, source: str = "task", expected_attempt: int | None = None,
-                 standing_policy: str | None = None) -> dict:
+                 standing_policy: str | None = None, from_task: str | None = None) -> dict:
     """Record an exact operator answer, or L3's application of an approved project-policy purpose.
 
     The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
-    question and attempt. An owner self-records only from the operator's task-chat answer.
+    question and attempt. An owner self-records only from the operator's task-chat answer. L3 may apply
+    the operator's answer to a question another task of this project asked (`from_task`), for that
+    identical purpose; the grant records where the answer came from and binds this task's current attempt.
     """
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
         raise TransitionError("an operator grant needs the owner, the coordinator or the operator and a reason")
@@ -2387,10 +2389,18 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                                   or source != "task"):
                 raise ValueError("the owner records a grant only while running its current attempt, "
                                  "from the operator's task-chat answer")
-            decision = _question_target(task, question, revision)
+            asked = task
+            if from_task is not None:
+                if actor != "l3" or standing_policy is not None or from_task == slug:
+                    raise ValueError("only L3 applies an operator answer from another task, without a standing policy")
+                if expected_attempt != task.get("attempt"):
+                    raise ValueError("a grant from another task's answer must name this task's current attempt")
+                S.require_task_slug(from_task)
+                asked = S.load_task(project, from_task)
+            decision = _question_target(asked, question, revision)
             policy = None
             saved = decision.get("resolution") or {}
-            current = next(q for q in reversed(task["questions"]) if q["id"] == question)
+            current = next(q for q in reversed(asked["questions"]) if q["id"] == question)
             if standing_policy is not None:
                 if actor != "l3" or source != "project":
                     raise ValueError("only L3 records a standing project approval")
@@ -2412,7 +2422,7 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                         or saved.get("disposition") != "answered" or saved.get("remaining")
                         or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
                     raise ValueError("cite the operator message that answered the current operator question revision")
-                operator = _decision_source(project, slug, decision, approval, source, exact=True)
+                operator = _decision_source(project, from_task or slug, decision, approval, source, exact=True)
             previous = task.get("grant")
             if previous and (policy or previous.get("policy")) and any((
                     previous.get("purpose", "").split() != decision["detail"].split(),
@@ -2421,16 +2431,20 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                 raise ValueError("revoke the existing operator grant before switching its purpose or standing policy")
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
             S.append_event(project, slug, "grant-refused", actor=actor, approval=approval, question=question,
-                           revision=revision, reason=reason, standing_policy=standing_policy, error=str(exc))
+                           revision=revision, reason=reason, standing_policy=standing_policy, from_task=from_task,
+                           error=str(exc))
             raise TransitionError(f"operator grant refused: {exc}") from exc
         grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
         if policy:
             grant["policy"] = policy
+        if from_task:
+            grant["from_task"] = from_task
         # Commands run under one grant id; recording the same answer again keeps it, so they keep running.
         same = previous and all(previous.get(key) == grant.get(key) for key in
-                                ("purpose", "approval", "question", "revision", "source", "attempt", "policy"))
+                                ("purpose", "approval", "question", "revision", "source", "attempt", "policy",
+                                 "from_task"))
         grant["id"] = previous["id"] if same and previous.get("id") else uuid.uuid4().hex
         task["grant"] = grant
         S.save_task(project, task)
