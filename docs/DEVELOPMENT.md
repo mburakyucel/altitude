@@ -282,7 +282,7 @@ and `make browser-sandbox` call it automatically inside a task.
   listed. The run's container, clone and area are removed afterwards, including after a timeout or a stop.
   Activation waits through execution, evidence recording and cleanup; validation admission shares
   the restart fence and refuses runs once restart is requested.
-- **Record.** Each run is recorded on its task like a [machine run](CLI.md#machine-access), with
+- **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
   purpose `validation`, the command, commit, image, exit and how it ended. A run that altd did not
   see end, including an expired run left by a host reboot or unexpected daemon exit, is stopped and
   recorded as interrupted at the next start. Its log and results are copied before scratch files are
@@ -298,7 +298,7 @@ The runner is available on Linux x86_64 with `podman` and `slirp4netns`. KVM nee
 account to hold `/dev/kvm`, as it does during a desktop login. The runner is not implemented on
 macOS, where Podman runs inside a virtual machine of its own and there is no KVM; there
 `alt task validate` reports it unavailable and the Settings switch says why. Options the fixed container does not offer still need a
-[machine grant](CLI.md#machine-access).
+[operator grant](CLI.md#operator-grant).
 
 ### Browser verification
 
@@ -621,7 +621,7 @@ while the restarted guest waits for its unplugged card. Inside a task, `make ins
 through the [validation runner](#validation-runner) with KVM. The committed `SOURCE` (default `HEAD`)
 is built inside the container, results go to the task folder's `validation/<n>/`, and the cloud image
 is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
-need the operator's own shell or a [machine grant](CLI.md#machine-access). The runner never touches
+need the operator's own shell or a [operator grant](CLI.md#operator-grant). The runner never touches
 the host's Altitude service, trust stores or network configuration.
 
 ## CI and candidate identity
@@ -699,7 +699,7 @@ lower bound. Owners can read exports but not remove them. An owner that needs a 
 for review copies it into its task. When admission refuses, L3 coordinates the cleanup: a read-only
 inventory of completed exports whose PR has merged or closed, or whose main run a later green main
 superseded, with no open task or incident relying on them; their receipts and console logs copied
-into the recovery task; and an operator machine grant to measure the full size as the CI account,
+into the recovery task; and an operator grant to measure the full size as the CI account,
 remove exactly that list and verify that the runner starts queued jobs. Never remove active jobs,
 open PRs' failures or the only copy of evidence awaiting review. A budget refusal requires bounded
 cleanup and verification, not a quota increase. Task evidence stays accessible through review. No new paid

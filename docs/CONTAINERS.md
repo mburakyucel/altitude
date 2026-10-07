@@ -26,8 +26,8 @@ the application user inside this container. They do not grant host access; no ho
 or command bridge is mounted. On this project's machine, the
 [standing container approval](../AGENTS.md#container-operations-on-this-machine) covers host launcher
 operations, rootless Podman, launcher-created containers/images/volumes and execution inside them.
-The owner requests that exact policy scope from L3, which records the existing machine grant citing
-the standing approval without another operator question; see [machine access](CLI.md#machine-access).
+The owner requests that exact policy scope from L3, which records an operator grant citing
+the standing approval without another operator question; see [operator grant](CLI.md#operator-grant).
 Native Altitude installation/service, host trust/network configuration, host credential directories
 and other host resources remain outside that approval. It does not apply to other projects.
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
-from tests.test_machine_access import SHIM
+from tests.test_grant import SHIM
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, validation
 
 RUNNER_HOME = validation.home

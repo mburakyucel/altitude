@@ -394,7 +394,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
 | Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
 | Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
-| Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
+| Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
@@ -997,43 +997,16 @@ The [recovery procedure](CLI.md#dirty-checkout-recovery) leaves resumption expli
 task with a saved `main-unpushed` fault can requeue on explicit resume independently of deployment
 recovery; its fresh dispatch still requires a fetched current base and a valid isolated worktree.
 
-Release publication uses one task-bound grant and one fixed `alt task publish` operation. The grant
-retains the original operator message, repository/version/full commit, validated asset paths and
-hashes, committed notes, attempt and optional deadline. Upload captures unchanged bytes at run time;
-the grant stores no asset bytes. Direct approval names version/commit; a
-contextual answer retains its exact historical question revision. L2 records its own task-chat
-answer; L3 records project-chat approval. The recorder judges consent and later corrections;
-the daemon checks provenance and scope. Revoked or consumed approval cannot mint another grant.
-
-Publishing admits only a connection from the current owner's worker job, with matching
-project/task/attempt/state. The fixed daemon operation checks the approved commit's main ancestry,
-exact-SHA push `check` job, dated notes and unchanged validated assets. It creates the task's draft,
-uploads and verifies assets, then publishes and reads back the tag and files. It creates no tag
-before the draft is ready, adopts no foreign draft and permits no tag movement/deletion, asset
-replacement or immutable-setting change. Durable phase records and a global repository/version
-ledger under Altitude's `releases` directory retain task ownership across restart; retries reconcile
-remote state first. Only a definite create refusal without a remote side effect clears ownership.
-An uncertain draft create permits a fresh create only after successful tag and release reads prove
-both absent and reconciliation is recorded. A prior matching operator tag is admitted only when no
-unfinished `release.yml` push run remains for the approved commit, checked again before publication.
-Each write checks revocation/deadline, and every attempt has task audit evidence. Revocation cannot
-recall a request already sent. Completion consumes the grant; task completion or a new attempt
-expires it. Resume preserves it. A replacement grant under still-valid approval may recover only
-that task's recorded draft with the same target/files, preserving the original approval's historical
-identity and deadline.
-
-The engine seam generates exact publish/check allowances at launch/resume. A mid-turn grant needs
-an ordinary same-attempt resume to load them. Stale native permission cannot override daemon
-revocation; inherited policy is unchanged. This controls Altitude's supported command, not every raw
-GitHub call made with the operator's account. Recorded hashes prove asset integrity, not independent
-build provenance; publication appends a fixed disclosure of that limit to the dated notes.
-[Release publication](RELEASING.md#publish-a-release) records native first-use and
-macOS evidence gaps; [the CLI](CLI.md#release-publication) defines the grant and recovery interface.
-
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
-project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
-workspace runs only under a recorded machine grant. An operator's answer to the owner's purpose
+project lock. Neither engine's worker reaches the user service manager or sudo. Anything outside the
+workspace that the operator permits (a service change, a deploy, a publication, an external write) runs
+only under the one recorded [operator grant](CLI.md#operator-grant): altd executes each command as the
+operator outside the worker sandbox and records it. The grant reaches the engines' own guards through the
+engine seam: a Claude owner's session settings allow its own `alt task run` call ahead of the auto-mode
+classifier, while altd refuses that call without a current grant; a Codex owner's sandbox is unchanged. A
+granted command runs with the operator's access and is trusted to stay inside the approved purpose; the
+record, not command parsing, makes it accountable. An operator's answer to the owner's purpose
 question is recorded by the running owner from its task chat or by L3 or the operator and verified
 against that question revision. Alternatively, L3 applies an original operator approval from the
 same project's chat to an exact policy-purpose request: a unique, single-paragraph heading in the
@@ -1260,7 +1233,7 @@ A holder whose descriptors or unit cannot be read identifies nothing, so an agen
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
 altd does, and also its decoded, dot-resolved form; a path with `;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
-using the terminal to leave its sandbox and bypass the machine-grant flow. The check has known
+using the terminal to leave its sandbox and bypass the operator-grant flow. The check has known
 limits. A process an agent starts outside those units, through the user service manager or a
 scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
 proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
@@ -1312,7 +1285,7 @@ state enforces it. Irretrievable history remains unknown. L3 uses retained evide
 reads for remaining questions, then exposes the narrow gap if they cannot establish recovery.
 The owner investigates as part of its task, iterating non-invasive diagnosis without approval rounds;
 a changed operational contract, missing access, material machine change, unapproved spend or explicit
-restriction waits for its decision. Machine grants, fix scope and holds bind; no new privilege or
+restriction waits for its decision. Operator grants, fix scope and holds bind; no new privilege or
 automatic fault retry is introduced.
 Missing evidence and unrelated delivery establish no recovery. For newly investigated
 incidents it judges whether the cause matches an existing issue and attaches it, records
@@ -1618,9 +1591,7 @@ Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
 published private-preview version and release notes. Pushing the approved tag runs the release
 workflow, which checks that commit's main `check` run, builds and attests the archive, `install.py`
 and the generated `install.sh`, and publishes them as the GitHub release that the one-command install
-fetches. An approved task owner can instead publish captured manual-build assets through the
-task's release grant, without hosted build attestation. Publication does not gate automatic
-activation of merged changes. The UI and testing rules remain in the
+fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
 
 ### Web delivery
@@ -1877,7 +1848,7 @@ and handoff receipt. Like Stop, it cancels attached reviews and does not undo co
 effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
 with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
 question wait, fault recovery or unavailable saved-session engine explains the required continuation,
-answer or recovery instead of interrupting. Machine grants and merge holds keep their existing rules.
+answer or recovery instead of interrupting. Operator grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

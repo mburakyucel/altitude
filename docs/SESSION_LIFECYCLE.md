@@ -246,7 +246,7 @@ Failure, invalid output, a reviewer that read no captured input, and cancellatio
 request; retry is explicit. Restart
 reconciliation cancels orphaned invocations and never launches a replacement. Capacity
 is released only after termination is confirmed; uncertain termination follows task-local incident
-recovery. A reviewer has no task ownership or machine grant. Its findings and recorded usage remain
+recovery. A reviewer has no task ownership or operator grant. Its findings and recorded usage remain
 on the task, separate from native-helper usage attribution. Later proposal/code/base/context changes
 show their relevant staleness; L2 reconciliation does not claim the reviewer examined later revisions.
 Landing lists all stale subjects and changed evidence together. The owner explains their dispositions
@@ -413,31 +413,6 @@ Task details expose `engine_model` and `engine_reasoning_effort`; Monitor sessio
 expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
-
-### Release permission on resume
-
-A recorded [release grant](CLI.md#release-publication) supplies exact native allow rules for that
-task's `alt task publish <slug>` and `alt task publish <slug> --check` forms through the engine seam.
-The grant result shows the exact commands with the literal slug; shell-variable or quoted forms
-are not promised to match the native rule.
-Launch/resume regenerates task settings; recording a grant does not reload a running engine.
-After a mid-turn grant the owner checkpoints and parks for L3 to resume the same attempt. Project-chat
-approval is recorded by L3 before that resume. Neither operation grants merge approval or changes
-inherited engine policy or user settings.
-
-The resumed owner first runs `--check` without GitHub writes, then publishes through the same
-daemon authority contract on either engine. Check acceptance does not prove the distinct publish
-invocation is admitted. A native refusal is reported without bypassing it. Live publish acceptance
-and GitHub ordering remain first-use evidence, as recorded in the [release guide](RELEASING.md#publish-a-release).
-
-Normal resume retains the grant. A new attempt expires it; a still-valid, unrevoked original
-approval may support a replacement grant for the same target/files, preserving its historical
-identity and original deadline. Revocation, task completion,
-deadline or consumed publication blocks further writes even if a running engine retains an allow
-rule. An interrupted publication keeps its task-owned draft and phase evidence for read-back
-reconciliation; it never blindly repeats an uncertain write or deletes remote state. An uncertain
-draft creation can retry after successful reads establish that both tag and release are absent,
-with reconciliation recorded before a fresh create and no manual ledger edit.
 
 ### Image delivery and recovery
 
@@ -694,7 +669,7 @@ action, a justified wait with a finite meaningful observation, or the exact capa
 decision when no supported path can establish recovery. The owner investigates as part of its task:
 non-invasive diagnosis iterates without approval rounds, and only missing access, a material machine
 or service change, unapproved spend, a live-provider test or an explicit restriction needs a decision.
-Machine grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
+Operator grants, fix scope and merge holds remain. This creates no automatic fault retry or new access.
 The [L3 next-action obligation](../personas/l3.md#authority-and-coordination) uses existing conversations
 and incident evidence, not a new lifecycle state or perpetual polling.
 Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
@@ -997,7 +972,7 @@ not certify browser isolation, so verification that needs the browser's own sand
 `alt task validate`, in a disposable container where Playwright's Chromium keeps it with
 `chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
 owner blocks through `alt task block --fault`, preserving the evidence, and L3 owns supported recovery.
-Neither a fictional sandbox-disabled test harness nor a machine grant authorizes bypassing required
+Neither a fictional sandbox-disabled test harness nor a operator grant authorizes bypassing required
 browser or worker protections. The instruction takes effect on launches/resumes after normal source
 activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
 delivery, not provider adherence or live browser isolation. See
@@ -1073,17 +1048,20 @@ hard-failure mode would prevent every headless L3 turn; the deny-by-default tool
 Claude's confinement, while Codex retains its native filesystem sandbox.
 
 Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and a
-Codex L2 cannot write outside its writable roots. A task that needs such a change asks the operator for
-machine access for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
-or L3 or the operator records it (`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
+Codex L2 cannot write outside its writable roots. A task that needs such a change, or any other action the
+operator permits, asks the operator for an [operator grant](CLI.md#operator-grant) for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
+or L3 or the operator records it (`alt task grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision. `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
 carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
 and exit status to the task folder itself; altd completes the row in `machine.jsonl` and records the task event
 and the project log entry. A grant binds to one task attempt, survives resume, and is
 revoked by the owner, L3 or the operator; a non-running task, a stale attempt, an earlier attempt's grant or a
-missing grant refuses with the reason. When Altitude restarts during a command, the unit continues, the next
-altd completes its row from the saved exit status, and the CLI reconnects and prints that command's result. The door is altd's
+missing grant refuses with the reason. Revoking the grant also stops a command still running under it. Each
+launch and resume rewrites a Claude owner's session settings with the allow rule for its own `alt task run`,
+so a grant recorded or revoked mid-session takes effect without a resume: altd, not the rule, decides.
+When Altitude restarts during a command, the unit continues, the next
+altd completes its row from the saved exit status, or stops the unit if its grant was revoked meanwhile, and the CLI reconnects and prints that command's result. The door is altd's
 operator-trusted HTTP surface, reachable by every worker on this single-account host; altd checks the task
 record, not the calling process.
 
