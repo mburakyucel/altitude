@@ -377,10 +377,14 @@ Chromium reports itself adequately sandboxed and every renderer runs as a non-ro
 seccomp, in its own namespaces. A successful launch alone does not prove every protection a task
 needs. Keep the isolation evidence the task requires.
 
-WebKit's finite prerequisite check is `node scripts/webkit_smoke.mjs RESULT.json` after installing
-the web dependencies. It opens a local fictional page with the emulated iPhone settings and records
-the Playwright/browser versions, executable, non-root user and page result. Run it alongside
-`make browser-sandbox` when changing the runner image. A candidate image can be built and tested
+WebKit's finite prerequisite check opens a local fictional page with the emulated iPhone settings
+and records the Playwright/browser versions, executable, non-root user and page result:
+
+```sh
+alt task validate -- sh -c 'pnpm --dir web install --frozen-lockfile && node scripts/webkit_smoke.mjs /results/webkit-smoke.json && node scripts/browser_sandbox.mjs /results/browser-sandbox.json'
+```
+
+Run both checks when changing the runner image. A candidate image can be built and tested
 with nested Podman inside a validation run; this does not replace the deployed runner image.
 After source delivery and normal activation, repeat both checks through `alt task validate` and
 retain its commit, image tag, log and result paths before declaring runner recovery. Linux desktop
