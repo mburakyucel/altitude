@@ -1137,10 +1137,11 @@ confinement checks. A task worker on either engine reaches GitHub with the opera
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
 bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
 which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The reader starts nothing
-unless its input is a pipe, so the engine reads only what follows the token line. The token never appears
-among the job's settings (they form its command line) or in a log, and on disk only in the macOS
-launcher's private input copy until the job's supervisor starts; a launcher without a sign-in starts the
-worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+unless its input is a pipe, so the engine reads only what follows the token line. Altitude never puts
+the token among the job's settings (they form its command line) or in a log, and writes it to disk only
+in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
+hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
+too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
 (the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
