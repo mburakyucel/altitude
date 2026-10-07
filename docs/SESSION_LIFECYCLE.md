@@ -987,7 +987,7 @@ not certify browser isolation, so verification that needs the browser's own sand
 `alt task validate`, in a disposable container where Playwright's Chromium keeps it with
 `chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
 owner blocks through `alt task block --fault`, preserving the evidence, and L3 owns supported recovery.
-Neither a fictional sandbox-disabled test harness nor a operator grant authorizes bypassing required
+Neither a fictional sandbox-disabled test harness nor an operator grant authorizes bypassing required
 browser or worker protections. The instruction takes effect on launches/resumes after normal source
 activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
 delivery, not provider adherence or live browser isolation. See
@@ -1066,7 +1066,8 @@ Neither L2 launch carries the user service bus, so a worker cannot reload or res
 Codex L2 cannot write outside its writable roots. A task that needs such a change, or any other action the
 operator permits, asks the operator for an [operator grant](CLI.md#operator-grant) for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
 or L3 or the operator records it (`alt task grant`), which altd accepts only when the cited message is the operator's own answer to
-that current question revision. `alt task run` then writes the run's row and executes each command as the
+that current question revision; L3 may instead cite the operator's answer to the identical purpose in another task of
+the project (`--from-task`). `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
 carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
 and exit status to the task folder itself; altd completes the row in `machine.jsonl` and records the task event
