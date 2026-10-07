@@ -2534,7 +2534,9 @@ after a lost index or a long absence; older rows remain available by scrolling u
 preserves a paused reader's visible row while reconnecting. Source writes during a read leave its
 fingerprint stale so the next poll includes them without failing the current bounded read.
 Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
-refresh the projection without resetting reading position. Access and generation are checked
+refresh the projection without resetting reading position. Before a render changes the transcript,
+a paused viewer captures native scrolling whose event has not arrived yet; that position and its
+upward-history intent survive the refresh. Access and generation are checked
 before and after reads. Transcript state never authorizes task actions.
 
 Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and

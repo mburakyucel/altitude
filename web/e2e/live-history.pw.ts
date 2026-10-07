@@ -299,6 +299,62 @@ test("raw history has unique records and explicit chunked disclosure with local 
   }
 });
 
+test("a paused upward scroll survives a refresh before its native scroll event", async ({ page, request }, info) => {
+  const task = await fixture(request);
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  const body = live.locator(".live-body");
+  await page.goto(task.path);
+  await expect(live.getByText(task.latest, { exact: false })).toBeVisible();
+  await live.getByRole("button", { name: "Raw events", exact: true }).click();
+  await expect(live.getByRole("region", { name: "Raw events", exact: true })).toBeVisible();
+  await live.getByRole("button", { name: "Pause", exact: true }).click();
+  const before = await live.locator("[data-transcript-id]").count();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route((url) => transcriptMode(url, "history"), async (route) => { await gate; return route.continue(); });
+  const history = page.waitForResponse((response) => transcriptMode(new URL(response.url()), "history"));
+  try {
+    await body.evaluate((node) => {
+      // Native scroll dispatch waits for a frame. A real refresh publishes its
+      // fetching state now, forcing a React commit into that scheduling gap.
+      node.scrollTop = 0;
+      window.dispatchEvent(new Event("online"));
+    });
+    await expect(live.getByText("Loading earlier activity…", { exact: true })).toBeVisible();
+    const anchor = await readingAnchor(body);
+    release();
+    await history;
+    await expect.poll(() => live.locator("[data-transcript-id]").count()).toBeGreaterThan(before);
+    await expectAnchor(body, anchor);
+    const ids = await live.locator("[data-transcript-id]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-transcript-id")));
+    expect(new Set(ids).size).toBe(ids.length);
+  } finally { release(); }
+  await expect(live.getByRole("button", { name: "Follow", exact: true })).toBeVisible();
+  await walkthrough(page, info).state("history-refresh-keeps-upward-intent", {
+    visible: [live.getByRole("button", { name: "Follow", exact: true })], hidden: [],
+  });
+  if (info.project.name === "phone") {
+    const anchor = await readingAnchor(body);
+    await page.getByRole("link", { name: "Conversation", exact: true }).click();
+    await page.getByRole("link", { name: "Live session", exact: true }).click();
+    await expectAnchor(body, anchor);
+  }
+  await body.evaluate((node) => {
+    // Follow in the same native-event gap must win over the older scroll intent.
+    node.scrollTop = 0;
+    const follow = [...node.closest(".live-panel")!.querySelectorAll("button")].find((button) => button.textContent === "Follow")!;
+    follow.click();
+  });
+  await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect.poll(() => body.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
+  const update = await task.control("append");
+  // Fixture source records predate the platform tail in Raw events; the update
+  // merges above it while following must still keep the viewport at the bottom.
+  await expect(live.getByText(update.latest, { exact: false })).toBeAttached();
+  await expect.poll(() => body.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
+  await expect(live.getByRole("button", { name: "Follow", exact: true })).toHaveCount(0);
+});
+
 test("switching away from a pending initial read aborts it and cannot populate another task", async ({ page, request }, info) => {
   const task = await fixture(request);
   const empty = await fixture(request, 0);
