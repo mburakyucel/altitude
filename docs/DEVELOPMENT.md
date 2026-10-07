@@ -50,6 +50,9 @@ the pinned pnpm must already be available there. A missing manager remains a too
 prerequisite. When a worktree's existing `node_modules` uses another pnpm store, run
 `pnpm --dir web install --force --frozen-lockfile` once to reinstall from the task's store;
 ordinary frozen installs then reuse it. This replaces the shared temporary-store workaround.
+Each task starts with an empty package store, so its first install downloads the locked dependencies
+and requires registry/network access; package downloads are not shared between tasks. The forced
+frozen reinstall also requires those packages in the task store or network access. It changes no lockfile.
 Tool caches last through task resumptions and are removed before task archival; they are not
 archived as review evidence. Existing package-tool content/version checks and GitHub CLI log
 cache rules apply; delivery still reads current candidate checks. The tools create their own

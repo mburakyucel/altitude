@@ -1,6 +1,7 @@
 """Issue #617: confined workers keep writable tool caches without moving installed managers."""
 import json
 import sys
+import tomllib
 from pathlib import Path
 from unittest import mock
 
@@ -31,7 +32,8 @@ class TaskToolCache(AltitudeCase):
         self.patch(platform, "job_active", return_value=False)
         for host in ("linux", "darwin"):
             for engine in ("claude", "codex"):
-                root = self.tmp / host / engine / "l2-engine"
+                task = T.new(self.project, f"{host} {engine} cache", "Fictional worker")
+                root = S.task_dir(self.project, task["slug"]) / "l2-engine"
                 for resume in (False, True):
                     with self.subTest(host=host, engine=engine, resume=resume):
                         init = ({"type": "system", "subtype": "init", "session_id": "session"}
@@ -45,10 +47,17 @@ class TaskToolCache(AltitudeCase):
                                   f"print({json.dumps(init)!r}, flush=True)\n"
                                   f"print({json.dumps(end)!r}, flush=True)\n")
                         def command(unit, argv, child_env, **kw):
-                            self.assertEqual(child_env["ALTITUDE_TASK"], "cache-task")
+                            self.assertEqual(child_env["ALTITUDE_TASK"], task["slug"])
                             self.assertEqual(child_env["COREPACK_HOME"], "/fixture/managers")
                             for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
                                 self.assertTrue(Path(child_env[key]).is_relative_to(root / "tool-cache"))
+                                if engine == "claude":
+                                    self.assertTrue(any(Path(child_env[key]).is_relative_to(path) for path in kw["writable"]))
+                                else:
+                                    settings = [argv[n + 1] for n,part in enumerate(argv[:-1]) if part == "-c"]
+                                    policy = tomllib.loads("\n".join(setting for setting in settings if setting.startswith("permissions.")))
+                                    roots = policy["permissions"]["altitude-task"]["workspace_roots"]
+                                    self.assertTrue(any(Path(child_env[key]).is_relative_to(path) for path in roots))
                             self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
                             return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()),
                                     sys.executable, "-c", script]
@@ -56,7 +65,7 @@ class TaskToolCache(AltitudeCase):
                              mock.patch.object(platform, "job_command", side_effect=command):
                             result = engines._start_worker(engine, "fixture", "continue", cwd=self.repo,
                                 job_root=root, resume="session" if resume else None,
-                                extra_env={"ALTITUDE_TASK":"cache-task", "COREPACK_HOME":"/fixture/managers",
+                                extra_env={"ALTITUDE_TASK":task["slug"], "COREPACK_HOME":"/fixture/managers",
                                            "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})
                             self.assertEqual(result["returncode"], 0, result)
                             worker_id = result["agent"]["id"]
@@ -77,16 +86,30 @@ class TaskToolCache(AltitudeCase):
         evidence.write_text('{}')
         other_cache = S.task_dir(self.project, other["slug"]) / "l2-engine/tool-cache"
         other_cache.mkdir(parents=True)
-        T._archive(self.project, task["slug"])
+        T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
         archived = S.archive_dir(self.project) / task["slug"]
         self.assertFalse((archived / "l2-engine/tool-cache").exists())
         self.assertTrue((archived / "l2-engine/worker.json").exists())
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
         self.assertTrue(other_cache.exists())
 
     def test_cache_cleanup_failure_does_not_claim_archival(self):
         task = T.new(self.project, "Cache cleanup error", "Fictional task")
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
             with self.assertRaisesRegex(PermissionError, "cleanup refused"):
-                T._archive(self.project, task["slug"])
+                T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
         self.assertTrue(S.task_dir(self.project, task["slug"]).exists())
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
         self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
+
+    def test_completion_cleanup_failure_retains_reported_state_and_no_digest(self):
+        task = T.new(self.project, "Completion cleanup error", "Fictional task")
+        T.dispatch(self.project, task["slug"], attempt=1, session_id="fixture", agent_id="fixture",
+                   worktree="/fictional/worktree", branch="fixture")
+        T.report(self.project, task["slug"], {"verdict":"ok", "prs":[], "spend":{}})
+        with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
+            with self.assertRaisesRegex(PermissionError, "cleanup refused"):
+                T.done(self.project, task["slug"], "Fixture completion")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "reported")
+        self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
+        self.assertFalse((S.task_dir(self.project, task["slug"]) / "digest.md").exists())

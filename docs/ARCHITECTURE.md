@@ -568,8 +568,9 @@ Every L2 launch and resume supplies the same task-local tool-cache environment o
 GitHub CLI logs and package-tool caches live under `l2-engine/tool-cache` inside the task's existing
 writable runtime root; installed Corepack managers retain their original location. Tool-native
 validation/invalidation rules apply, and live delivery checks remain authoritative. Archival removes
-this disposable cache subtree while retaining worker and review evidence. Cleanup failure prevents
-archival rather than recording the cache as removed. [Development](DEVELOPMENT.md#local-checks)
+this disposable cache subtree while retaining worker and review evidence. Cache cleanup precedes
+the terminal state change under the project lock; failure retains the task's prior state and location.
+[Development](DEVELOPMENT.md#local-checks)
 describes frozen-install handling for worktrees with an existing pnpm store and native evidence limits.
 Altitude supplies focused [role instructions](../personas/), repository context and delivery
 boundaries. Execution strategy stays adaptable because a fixed sequence of stages and specialist

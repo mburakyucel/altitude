@@ -1118,6 +1118,7 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        _remove_tool_cache(project, slug)
         _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -1375,6 +1376,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                              and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
             raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
                                              *(verified.get("problems") or [])]))
+        _remove_tool_cache(project, slug)
         task = _move(project, task, "done", actor, **({"findings_tracked": tracked} if tracked else {}))
         if tracked:
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
@@ -1413,6 +1415,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
             continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(task)
+        _remove_tool_cache(project, slug)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
@@ -1425,13 +1428,17 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
     return task
 
 
+def _remove_tool_cache(project: str, slug: str) -> None:
+    """Dispose tool data before a terminal state is saved, under the caller's project lock."""
+    try:
+        shutil.rmtree(S.tasks_dir(project) / slug / "l2-engine" / "tool-cache")
+    except FileNotFoundError:
+        pass  # Tasks that never launched have no tool caches.
+
+
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
-        try:
-            shutil.rmtree(src / "l2-engine" / "tool-cache")
-        except FileNotFoundError:
-            pass  # Tasks that never launched have no tool caches.
         dst = S.archive_dir(project) / slug
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)

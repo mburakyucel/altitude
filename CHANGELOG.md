@@ -8,6 +8,8 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Confined task owners use writable task-local tool caches without relocating installed Corepack
   managers. Native terminal fixtures clean up without `ps`, and source-launch fixtures isolate the
   service branch and boot identity. Claude-native and protected-browser acceptance remain explicit gaps.
+  Each task's first frozen install downloads its dependencies into a fresh store; an existing
+  worktree uses one frozen forced reinstall when its pnpm store changes.
 
 - The container image pins a verified GitHub CLI release supporting Altitude's PR fields. Its
   credential-free image check catches the older distribution CLI that signs in but cannot open
