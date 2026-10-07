@@ -19,7 +19,7 @@ class TestProcessOwnership(AltitudeCase):
         def write_stat(start="777", state="R"):
             stat.write_text("42 (fixture) " + " ".join([state, *["0"] * 18, start]))
         write_stat()
-        with mock.patch.object(platform, "PROC", proc):
+        with mock.patch.object(platform, "PROC", proc), mock.patch.object(platform.sys, "platform", "linux"):
             identity = platform.process_identity(42)
             self.assertTrue(platform.process_identity_live(identity))
             for field, value in (("start", "778"), ("boot", "other-boot"), ("namespace", "pid:[456]")):

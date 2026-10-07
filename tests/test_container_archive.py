@@ -12,6 +12,7 @@ from tests.support import container_namespace_metadata
 from altitude import container_archive as backup
 
 
+@unittest.skipUnless(hasattr(os, "listxattr"), "the archive runs in the Linux image, which keeps Linux extended attributes (macOS containers: #643)")
 class ArchiveTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

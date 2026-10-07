@@ -79,7 +79,12 @@ reads libproc and session membership on Mac, or procfs on Linux, without executi
 and vanished processes are omitted, and a confirmed member that cannot be read fails cleanup.
 The native platform probe separately covers job coalitions. The
 walkthroughs press the platform's own editing keys (`ControlOrMeta`), so select-all, copy and paste
-are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in for systemd set `host = "linux"`, and
+are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in
+for systemd set `host = "linux"`; on a Mac such a case reads its own process from a procfs fixture,
+and the systemd-run and Podman stand-ins run on the suite's interpreter rather than `/usr/bin/python3`,
+whose xcrun shim reports a validation run's read-only lookup cache in the logs they write.
+The container archive cases skip where Python has no Linux extended attributes: the archive runs in
+the Linux image.
 `tests/test_platform_darwin.py` covers the macOS side of the platform seam with fixtures on any host.
 `python3 scripts/platform_probe.py` checks the same mechanisms natively on either host with
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
@@ -504,8 +509,13 @@ than a worker's:
   `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
   home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment
   checkout, and other processes' temporary files and caches stay out; only xcrun's lookup cache is
-  readable, so `/usr/bin/git` stays fast. Toolchains outside the home (`/opt/homebrew`, `/usr`) stay
-  readable; `PATH` keeps altd's entries outside the home.
+  readable, never writable, so `/usr/bin`'s xcrun shims stay fast. Toolchains outside the home
+  (`/opt/homebrew`, `/usr`, the developer directory) stay readable. `PATH` keeps altd's entries
+  outside the home, with the active developer directory's `usr/bin` just ahead of `/usr/bin`, so
+  `git` (and `python3` when no earlier entry has one) run without the shims, which report the
+  read-only cache as an `error:` on their stderr. A descriptor walk from `/`, as `tasks.task_file`
+  makes, cannot open the hidden `/private/tmp`, so `tests/test_task_files.py` holds natively, not
+  in a run.
 - **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
   sockets are reachable at any depth in each of its own folders, such as the coordinator verb broker
   a suite binds under `TMPDIR`, and for the system's name resolution and log; other processes'

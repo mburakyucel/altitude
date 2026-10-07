@@ -14,6 +14,8 @@ from scripts import container, container_acceptance
 
 
 class TestContainerBusIdentity(AltitudeCase):
+    host = "linux"  # the launcher keeps Podman on the Linux user bus
+
     def test_fixture_runtime_retains_bus_for_environment_stripped_children(self):
         root = self.tmp / "gate"
         root.mkdir()

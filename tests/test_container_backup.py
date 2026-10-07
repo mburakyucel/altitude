@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 import tarfile
+import unittest
 from unittest import mock
 
 from altitude import platform, container_archive
@@ -116,6 +117,7 @@ class BackupTests(AltitudeCase):
         self.assertFalse(any(c.args[0][0]=='rm' for c in command.call_args_list))
         self.assertTrue(record.exists())
 
+    @unittest.skipUnless(hasattr(os, "listxattr"), "the archive runs in the Linux image, which keeps Linux extended attributes (macOS containers: #643)")
     def test_backup_permissions_checksum_and_completion_are_required(self):
         directory=self.tmp/'backup'; directory.mkdir(mode=0o700)
         for filename in ('data.tar','image.tar'):
