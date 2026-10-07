@@ -281,6 +281,8 @@ attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
 attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
+with open(os.path.join(area, "seen.json"), "w") as stream:
+    json.dump(seen, stream)
 print(json.dumps(seen))
 """
 
@@ -317,6 +319,8 @@ def validation_confinement():
         output = log.read_text() if log.exists() else ""
         lines = [line for line in output.splitlines() if line.startswith("{")]
         seen = json.loads(lines[-1]) if lines else {}
+        saved = json.loads((area / "seen.json").read_text()) if (area / "seen.json").exists() else None
+        check(saved == seen, f"output reached the runner's log: {bool(lines)}; attempts saved in the area {saved}")
         allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "git"}
         check(seen and all(seen[key] == (key in allowed) for key in seen),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")

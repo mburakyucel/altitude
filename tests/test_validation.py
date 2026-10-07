@@ -610,7 +610,7 @@ class TestValidationProfile(TestCase):
         shared = '(subpath "/private/var/folders/ab/cd") (subpath "/private/tmp") (subpath "/private/var/tmp")'
         for clause in (f'(deny file-write*)(allow file-write* {roots} (subpath "/dev"))',
                        f'(deny file-read* (subpath "{home}") {shared})(allow file-read* {roots})',
-                       f'(allow file-write-data (literal "{own}/unit.log"))', f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
+                       f'(allow file-write-data file-read-metadata (literal "{own}/unit.log"))', f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
                        '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
                        f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
                        '(path-literal "/private/var/run/mDNSResponder")',

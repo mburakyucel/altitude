@@ -2278,7 +2278,7 @@ def validation_in_container() -> bool:
 def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     """The Seatbelt profile of a macOS validation run, stricter than a worker's. The run may write and read only its
     own `roots` (clone, results, home and temporary folder) and devices, and append to its runner's `output` log
-    through the descriptor it inherits (Seatbelt checks those writes by path too); read nothing else in the operator's home or
+    through the descriptor it inherits (Seatbelt checks that descriptor's writes and status by path too); read nothing else in the operator's home or
     the shared temporary folders, where Altitude's records, credentials, checkouts, caches and other processes' files
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
     Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
@@ -2295,7 +2295,7 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     return "".join([
         "(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))",
         f'(deny file-write*)(allow file-write* {paths("subpath", own)} (subpath "/dev"))',
-        f"(allow file-write-data {paths('literal', [os.path.realpath(output)])})",
+        f"(allow file-write-data file-read-metadata {paths('literal', [os.path.realpath(output)])})",
         f"(deny file-read* {paths('subpath', hidden)})(allow file-read* {paths('subpath', own)})",
         f"(allow file-read-metadata {paths('literal', ancestors)})",
         f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
