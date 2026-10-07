@@ -144,9 +144,11 @@ test.describe("L3 Send now", () => {
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
     await page.route("**/api/chat/atlas?*", async (route) => { await readGate; await route.continue(); }, { times: 1 });
+    await page.route((url) => url.pathname === "/api/project/atlas", async (route) => { await readGate; await route.continue(); }, { times: 1 });
     try {
       await walk.open("/projects/atlas");
-      await walk.state("l3-00-loading", { visible: [page.getByLabel("Loading", { exact: true })], hidden: [page.getByRole("button", { name: "Send now", exact: true })] });
+      if (info.project.name === "desktop") await expect(page.getByRole("region", { name: "Work", exact: true }).getByLabel("Loading", { exact: true })).toBeVisible();
+      await walk.state("l3-00-loading", { visible: [convo.getByLabel("Loading", { exact: true })], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
     } finally { releaseRead(); }
     await walk.state("l3-01-empty-queue", { visible: [field], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
     await field.fill("Keep working");
