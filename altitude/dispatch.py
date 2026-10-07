@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -1596,7 +1597,7 @@ def occupies_slot(task: dict) -> bool:
 
 def poll(project: str) -> list[dict]:
     """Return L2 turns that exited, using each task's persisted engine adapter."""
-    from . import reviews, usage
+    from . import incidents, reviews, usage
     reviews.poll(project)
     task_rows = S.list_tasks(project)
     finished = []
@@ -1621,7 +1622,21 @@ def poll(project: str) -> list[dict]:
         if t["state"] != "running":
             continue
         engine = l2_engine(t)
-        a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
+        live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
+        try:
+            a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            # #676: an unavailable unit is not an exited worker. Keep ownership and capacity;
+            # a task fault would block it and release its slot. Other tick work still proceeds.
+            S.write_json(live_p, {"at": S.now(), "agent": {"status": "unknown", "state": "unknown",
+                         "engine": engine}, "idle_since": None})
+            # Fault kinds appear in public issue titles; keep the task name out of that identity.
+            identity = hashlib.sha256(t["slug"].encode()).hexdigest()[:12]
+            incidents.system_fault(f"worker-status:{identity}",
+                                   f"{project}/{t['slug']}: worker status unavailable: {exc}. "
+                                   "Task state and capacity reservation retained; termination is unconfirmed.",
+                                   project=project)
+            continue
         metadata = {key: a[key] for key in ("engine_model", "engine_reasoning_effort") if a and key in a}
         if metadata and any(t.get(key) != value for key, value in metadata.items()):
             with S.project_lock(project):
@@ -1631,7 +1646,6 @@ def poll(project: str) -> list[dict]:
                     current.update(metadata)
                     S.save_task(project, current)
                     t.update(metadata)
-        live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         prev = S.read_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
                  "pid": a.get("pid"), "usage": a.get("usage"), **metadata} if a else None)
