@@ -425,8 +425,9 @@ than a worker's:
 - **Reads** nothing in the operator's home or the shared temporary folders (`/private/tmp`,
   `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
   home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment
-  checkout, and other processes' temporary files and caches stay out. Toolchains outside the home
-  (`/opt/homebrew`, `/usr`) stay readable; `PATH` keeps altd's entries outside the home.
+  checkout, and other processes' temporary files and caches stay out; only xcrun's lookup cache is
+  readable, so `/usr/bin/git` stays fast. Toolchains outside the home (`/opt/homebrew`, `/usr`) stay
+  readable; `PATH` keeps altd's entries outside the home.
 - **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
   sockets are reachable only in its own folders and for the system's name resolution and log, so
   other processes' sockets, such as an SSH agent, stay out. The run shares the host's loopback, so a
