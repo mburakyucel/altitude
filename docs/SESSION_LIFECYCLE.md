@@ -1014,7 +1014,12 @@ not certify browser isolation, so verification that needs the browser's own sand
 `chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
 owner blocks through `alt task block --fault`, preserving the evidence, and L3 owns supported recovery.
 Neither a fictional sandbox-disabled test harness nor an operator grant authorizes bypassing required
-browser or worker protections. The instruction takes effect on launches/resumes after normal source
+browser or worker protections. Altitude's explicitly approved fictional Mac harness runs through the
+existing Seatbelt validation runner without Chromium's inner sandbox; it changes no stock worker
+permissions and establishes only the fictional journeys actually run. Shared configuration owns
+launch options, and actual runner identity/profile, finite preflight and cleanup remain evidence
+requirements. It grants no private/live-content, Simulator or native-worker acceptance.
+The instruction takes effect on launches/resumes after normal source
 activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
 delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).

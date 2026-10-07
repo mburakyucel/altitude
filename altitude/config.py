@@ -198,9 +198,9 @@ def defaults_view(name: str) -> dict:
                       for role in ROLES]}
 
 
-def subprocess_env(environment: dict[str, str] | None = None) -> dict[str, str]:
+def subprocess_env() -> dict[str, str]:
     """Keep an explicit Node; otherwise expose the installed nvm default without shell profiles."""
-    env = dict(os.environ if environment is None else environment)
+    env = dict(os.environ)
     path = env.get("PATH", os.defpath)
     nvm = Path(env.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
     if shutil.which("node", path=path) or not nvm.is_file():

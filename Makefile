@@ -20,6 +20,8 @@ ui:             ## isolated headless browser walkthroughs at phone and desktop w
 	cd web && pnpm ui $(UI_ARGS)
 ui-shell:       ## fictional project/draft/clipboard recovery lane in Chromium headless shell (build first)
 	cd web && pnpm ui:shell $(UI_ARGS)
+ui-validate:    ## disposable candidate fictional browser checks; invoke with alt task validate -- make ui-validate [UI_ARGS=spec]
+	python3 scripts/validate_ui.py $(UI_ARGS)
 ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first)
 	cd web && pnpm ui:ios $(UI_ARGS)
 installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]]); inside a task, through the validation runner

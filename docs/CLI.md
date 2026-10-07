@@ -1827,11 +1827,10 @@ operator asks a task to do and permits, such as changing a service unit, reloadi
 installing a user-level toolchain, deploying, publishing a release or package, or writing to an external
 service, runs under one operator grant: the operator's yes to a stated purpose, after which the owner runs
 each command as the operator with `alt task run`. Disposable installation VMs, containers,
-sandboxed-browser checks and other candidate checks run through [validation runs](#validation-runs) instead, with no grant. Explicitly
-authorized native runtime acceptance stays inside its evidenced fresh intended confined candidate worker;
-a grant never runs its browser checks elsewhere. The bounded
-[native trial/restore](OPERATIONS.md#native-browser-runtime-trial) is an operator lifecycle operation,
-not new ownerless grant admission. Host
+browser and other candidate checks run through [validation runs](#validation-runs) instead,
+with no grant. The approved Mac fictional harness uses the existing Seatbelt runner without
+Chromium's inner sandbox; dual-protection checks use the Linux container. A grant never substitutes
+an outside-worker browser run or changes worker permissions. Host
 container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
 
 ```text
