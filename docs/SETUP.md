@@ -2,8 +2,9 @@
 
 The [container candidate](CONTAINERS.md) uses container-local tools, sign-ins and project volumes.
 Native installation commands below do not install into that image. Linux container onboarding
-passes with fictional engines on phone/desktop; actual Mac and account sign-in compatibility remain
-unverified.
+passes on phone/desktop with real GitHub and one coding-engine sign-in. Credentials in the
+persistent home survive the observed reboot and image replacement; see the
+[live run and its limits](CONTAINERS.md#live-linux-run). Mac acceptance remains unverified.
 After container replacement, the browser explains that new AI work is paused and shows the host
 Continue command. It retains messages and setup requests until that action; an ordinary restart
 of the same container retains its previous admission. See [container recovery](CONTAINERS.md#lifecycle-and-recovery).
@@ -41,7 +42,10 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   package manager, application source checkout or UI build. The backend uses Python's standard library.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
   Authenticate GitHub CLI, verify `gh auth status`, and configure Git name/email and your
-  SSH or HTTPS Git credentials. Altitude's delivery path expects a clean primary `main`
+  SSH or HTTPS Git credentials. For HTTPS with GitHub CLI credentials, run `gh auth setup-git`
+  and verify `git fetch origin main` in the selected repository: CLI sign-in alone can succeed
+  while Git authentication is still unset. In a container, run both commands inside its shell;
+  see [container sign-in](CONTAINERS.md#first-use). Altitude's delivery path expects a clean primary `main`
   checkout with an `origin/main` branch and the project's applicable checks.
 - At least one installed, authenticated **Codex or Claude Code CLI**, usable from the same
   Linux account that runs Altitude. Authenticate using the engine's native setup. CLI versions must support the headless,
@@ -396,7 +400,7 @@ Declining permission, or a browser without notifications, leaves Needs you and t
 
 ## First run in the browser
 
-After [pairing](#pair-each-device), with no project managed, the web app opens First run. Its four steps are skippable, go **‹ Back**
+After [pairing](#pair-each-device), with no project managed, the web app opens First run. Its five steps are skippable, go **‹ Back**
 without saving, keep their place in the URL across reloads and are each a row in
 **Settings → This machine** afterwards:
 
@@ -405,6 +409,7 @@ without saving, keep their place in the URL across reloads and are each a row in
 | **Your name**, filled in from `ALTITUDE_OPERATOR` or Git's global `user.name` | `operator_name` in `$ALTITUDE_HOME/settings.json`. Screens, agent prompts and incident sanitization use it; clearing it returns to the environment value or Git's name, and with neither, screens say “you”. |
 | **What the agents need**: the GitHub CLI and a coding agent signed in, Git installed | Nothing. Each unmet check shows the command to run in a terminal on this computer, the install command for a missing tool or the sign-in command (`gh auth login`, the agent's own) for an installed one, with **Copy** and **Check again**. One signed-in agent is enough; the others read as optional. The browser never asks for a password or token. |
 | **Report Altitude’s own faults?**, off by default | `incident_repository`: off keeps incidents on this computer; on stores the repository, Altitude's own filled in or a fork you name, after the signed-in GitHub CLI confirms it can see it. |
+| **Voice** | Saves the speech backend when selected and starts host voice setup where available. Host voice is unavailable in a container; browser recognition remains an option in supported browsers. Skipping does not block project setup. |
 | **Add your projects** | `projects_folder` when **Change…** picks another folder, and one registration per **Add project** or **Add all**. Only the folders directly inside the projects folder are listed; nothing is created, cloned or scanned. Adding opens the project's Setup and ends First run. |
 
 The environment variables in [configuration](#configuration-and-limits) remain the

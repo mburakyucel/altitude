@@ -100,7 +100,7 @@ print(json.dumps({'examined':examined, 'elevated':elevated, 'excluded':'kernel/r
 '''
 
 PROBE = r'''
-import json, os, ssl, time, urllib.request
+import json, os, ssl, subprocess, time, urllib.request
 from pathlib import Path
 import sys
 sys.path.insert(0, '/opt/altitude')
@@ -110,6 +110,11 @@ assert os.getuid() == 1000
 assert config.HOST == '0.0.0.0', config.HOST
 assert config.PUBLIC_HOST == 'container-fixture.invalid', config.PUBLIC_HOST
 assert config.PORT == 19443, config.PORT
+# No authentication or network request: the parser lists supported JSON fields.
+# The live container run found that the distro CLI could sign in but not serve alt land.
+fields = subprocess.run(['gh', 'pr', 'view', '--json'], capture_output=True, text=True, timeout=10)
+assert fields.returncode != 0 and 'baseRefOid' in (fields.stdout + fields.stderr).split(), fields.stderr
+github_cli = subprocess.check_output(['gh', '--version'], text=True, timeout=10).splitlines()[0]
 context = ssl.create_default_context(cafile=str(config.TLS_DIR / 'ca.crt'))
 base = 'https://localhost:' + str(config.PORT)
 def request(path, body=None):
@@ -147,7 +152,8 @@ for key in ['Seccomp:', 'CapEff:']:
     assert line.split()[1] == ('2' if key == 'Seccomp:' else '0000000000000000'), line
 print(json.dumps({'health':health, 'machine':machine, 'daemon_no_new_privileges':True,
     'certificate':tls.info(), 'service':service, 'service_environment':service_environment,
-    'daemon_wildcard_listener':True, 'advertised_certificate_san':True}, indent=2))
+    'daemon_wildcard_listener':True, 'advertised_certificate_san':True,
+    'github_cli':github_cli, 'github_landing_fields':True}, indent=2))
 '''
 
 
