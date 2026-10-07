@@ -37,7 +37,8 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
   const records = questionRecords(task);
   const questions = records.filter((q) => q["status"] === "open"
     && (q["audience"] === "l3" || !task["handed_back"] || text(q["asked"]) > text(task["handed_back"])));
-  const incomingQuestion = decision?.id && !records.some((q) => q["id"] === decision.id)
+  const incomingQuestion = decision?.id && !records.some((q) => q["id"] === decision.id
+    && Number(q["revision"] ?? 1) >= (decision.revision ?? 1) && text(q["asked"]) >= text(decision.asked))
     && (!task["handed_back"] || text(decision.asked) > text(task["handed_back"]));
   const coordinator = questions.find((q) => q["audience"] === "l3" && !q["response"]);
   const question = statusExcerpt(coordinator?.["detail"] ?? coordinator?.["question"]);

@@ -106,6 +106,12 @@ describe("task explanations", () => {
       .toMatch(/your answer/i);
   });
 
+  it.each([1, 2])("keeps a later re-ask of revision %i visible over an older answered record", (revision) => {
+    const decision: Decision = { project: "atlas", slug: blocked.slug, id: "access-question", kind: "asks", revision, asked: "2026-10-07T04:05:00Z" };
+    const task = { ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator", { revision: 1, response: { text: "Approved" } })] };
+    expect(taskExplanation(task, decision)).toMatch(/your answer/i);
+  });
+
   it("ignores resolved coordinator questions", () => {
     const explanation = taskExplanation({ ...blocked, fault: "l2-died", questions: [question("l3", { status: "resolved" })] });
     expect(explanation).not.toMatch(/approved machine access/i);
