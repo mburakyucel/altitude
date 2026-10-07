@@ -304,6 +304,26 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
     return target, skipped
 
 
+def _own(name: str, dir_fd: int | None = None) -> None:
+    """Give folder `name` and the folders in it their owner's permissions back. Each is changed through its parent's
+    descriptor and opened without following links, so a link swapped in for a folder is never followed."""
+    try:
+        mode = os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode
+        if not stat.S_ISDIR(mode):
+            return
+        os.chmod(name, stat.S_IMODE(mode) | stat.S_IRWXU, dir_fd=dir_fd, follow_symlinks=False)
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except (OSError, NotImplementedError):
+        return  # removal names what stays
+    try:
+        for entry in os.scandir(fd):
+            _own(entry.name, fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _remove(path: Path) -> str | None:
     """Remove `path` as the operator's account. A link in its place is removed, never followed. Its folders first get
     their owner's permissions back, since a run can leave one without write permission, as the native browser trial's
@@ -311,19 +331,7 @@ def _remove(path: Path) -> str | None:
     if path.is_symlink():
         path.unlink()
         return None
-
-    def own(folder: str) -> None:
-        if not os.path.islink(folder):
-            try:
-                os.chmod(folder, stat.S_IMODE(os.lstat(folder).st_mode) | stat.S_IRWXU)
-            except OSError:
-                pass  # removal below names what stays
-
-    if path.is_dir():
-        own(str(path))
-        for root, folders, _ in os.walk(path):
-            for name in folders:
-                own(os.path.join(root, name))
+    _own(str(path))
     failures = []
     shutil.rmtree(path, onexc=lambda _call, entry, exc: failures.append(
         f"{entry}: {getattr(exc, 'strerror', None) or exc}"))

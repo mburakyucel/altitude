@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import threading
@@ -667,6 +668,25 @@ class TestMacValidationRunner(RunnerCase):
             self.assertTrue(area.exists(), "the area stays as the marker while its temporary folder remains")
         self.assertEqual(self.validate(["true"])["ended"], "exit")
         self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
+
+
+    def test_restoring_permissions_never_follows_a_link_swapped_in_for_a_folder(self):
+        outside = self.tmp / "operator-files"
+        outside.mkdir(mode=0o500)
+        self.addCleanup(outside.chmod, 0o700)
+        temp = self.tmp / "av-swap"
+        (temp / "package").mkdir(parents=True)
+        chmod = os.chmod
+
+        def swapped(name, mode, *, dir_fd=None, follow_symlinks=True):
+            if name == "package":  # after the folder was seen, before its permissions change
+                os.rmdir("package", dir_fd=dir_fd)
+                os.symlink(outside, "package", dir_fd=dir_fd)
+            return chmod(name, mode, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        with mock.patch.object(validation.os, "chmod", side_effect=swapped):
+            self.assertIsNone(validation._remove(temp))
+        self.assertFalse(os.path.lexists(temp))
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o500, "the link's target is untouched")
 
 
 class TestValidationProfile(TestCase):
