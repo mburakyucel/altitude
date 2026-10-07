@@ -115,9 +115,18 @@ def container_command(name: str, run: Path, argv: list[str], *, kvm: bool, publi
             image_tag(), *argv]
 
 
+def candidate_dirs(run: Path) -> list[Path]:
+    """The folders of a run area the candidate sees: its clone, results and, in a container, an empty mount point, or
+    on macOS a home and temporary folder of its own. The area's other files (`run.json`, the delivery receipt, the
+    unit's log and exit status) are the runner's, outside the candidate's reach."""
+    names = ("empty",) if platform.validation_in_container() else ("home", "tmp")
+    return [run / name for name in ("work", "results", *names)]
+
+
 def native_script(run: Path, argv: list[str]) -> str:
-    """macOS: the owner's command in the run's clone under the validation profile. Its environment is only this: a
-    home and temporary folder in the run area, and altd's PATH without folders the profile hides."""
+    """macOS: the owner's command in the run's clone under the validation profile, which admits only the run's
+    candidate folders. Its environment is only this: a home and temporary folder of its own, and altd's PATH without
+    folders the profile hides."""
     hidden = os.path.realpath(Path.home())
     path = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
             if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)]
@@ -125,14 +134,15 @@ def native_script(run: Path, argv: list[str]) -> str:
            "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
-                      f"exec {shlex.join(platform.validation_command(run, config.PORT, argv, env))}"])
+                      "exec " + shlex.join(platform.validation_command(tuple(candidate_dirs(run)), config.PORT, argv,
+                                                                        env))])
 
 
 def isolation() -> str:
     """What isolated a run, for its record: the image tag, or the digest of the profile for a run area."""
     if platform.validation_in_container():
         return image_tag()
-    profile = platform.validation_profile(home() / "runs" / "run", config.PORT)
+    profile = platform.validation_profile(tuple(candidate_dirs(home() / "runs" / "run")), config.PORT)
     return "seatbelt:" + hashlib.sha256(profile.encode()).hexdigest()[:16]
 
 
@@ -431,8 +441,8 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
     row, result, failure, stopped, target, skipped = None, None, None, False, None, []
     try:
-        for name in ("work", "results", "empty" if contained else "home", *(() if contained else ("tmp",))):
-            (area / name).mkdir(parents=True)
+        for folder in candidate_dirs(area):
+            folder.mkdir(parents=True)
         for name in ("storage", "tmp", "cache"):
             (home() / name).mkdir(exist_ok=True)
         with _state:
@@ -467,11 +477,11 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             _active.clear()
         recorded, delivered, cleanup_error = row is None, target is not None, None
         try:
-            # Cleanup comes before the record, so a run whose cleanup failed is never recorded as a success. A run
-            # that never started leaves nothing to keep. Evidence that was not delivered stays in place, and run.json
-            # and the delivery receipt stay until the record exists, for the next start to finish an interrupted one.
-            scratch = [area] if row is None else [area / name for name in ("work", "results", "empty", "home", "tmp")
-                                                   if delivered]
+            # Cleanup of the run's processes and of everything the candidate could write comes before the record, so
+            # a run whose cleanup failed is never recorded as a success. A run that never started leaves nothing to
+            # keep. Evidence that was not delivered stays in place. Only the runner's own files (run.json, the receipt,
+            # log and exit status) stay until the record exists, for the next start to finish an interrupted run.
+            scratch = [area] if row is None else candidate_dirs(area) if delivered else []
             cleanup_error = cleanup([path for path in scratch if path.exists()], unit if row is not None else None)
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),

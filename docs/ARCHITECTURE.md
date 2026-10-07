@@ -1086,9 +1086,9 @@ Candidate checks, installation VMs, containers and sandboxed-browser checks need
 job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
 disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
 limits. On macOS it runs as a job under the platform's validation Seatbelt profile, stricter than a
-worker's: it writes only its run area and temporary folders, reads nothing else in the operator's home,
-reaches neither Altitude's port, Unix sockets in the home nor the keychain, and launchd refuses it
-service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+worker's: it writes and reads only its own folders in the run area, reads nothing else in the operator's
+home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets nor
+the keychain, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
 Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
 uses the supported runner without host package installation. Image corrections take effect after
 normal source activation and require a successful browser check through that effective runner;

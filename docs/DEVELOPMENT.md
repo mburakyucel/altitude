@@ -389,8 +389,10 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
   that folder from Altitude's home without following links. Links and oversized files are skipped and
   listed. The run's container or processes, clone and area are removed afterwards, including after a
-  timeout or a stop. Cleanup comes before the record: a run whose cleanup does not finish ends as
-  `cleanup failed`, keeps its area and closes the runner until the next start.
+  timeout or a stop. Cleanup of the processes and of every folder the candidate could write comes
+  before the record: a run whose cleanup does not finish ends as `cleanup failed`, keeps its area and
+  closes the runner until the next start. The runner's own files in the area (the run's identity,
+  delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
   Activation waits through execution, evidence recording and cleanup; validation admission shares
   the restart fence and refuses runs once restart is requested.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
@@ -417,13 +419,17 @@ On a Mac, where Podman would need a virtual machine of its own and there is no K
 runs the command as a launchd job under `platform.validation_profile`, a Seatbelt profile stricter
 than a worker's:
 
-- **Writes** only the run's area (clone, results, a home and a temporary folder of its own), the
-  shared temporary folders and devices.
-- **Reads** nothing in the operator's home except its area: Altitude's home and records, credentials,
-  engine and GitHub sign-ins and checkouts, including the deployment checkout, stay out. Toolchains
-  outside the home (`/opt/homebrew`, `/usr`) stay readable; `PATH` keeps altd's entries outside the home.
-- **Network** reaches the internet and loopback, except Altitude's own port on any address and Unix
-  sockets in the home. The run shares the host's loopback, so a server it starts binds a free port.
+- **Writes** only the run's own folders (clone, results, a home and a temporary folder) and devices.
+  The runner's files beside them in the area stay out of reach.
+- **Reads** nothing in the operator's home or the shared temporary folders (`/private/tmp`,
+  `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
+  home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment
+  checkout, and other processes' temporary files and caches stay out. Toolchains outside the home
+  (`/opt/homebrew`, `/usr`) stay readable; `PATH` keeps altd's entries outside the home.
+- **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
+  sockets are reachable only in its own folders and for the system's name resolution and log, so
+  other processes' sockets, such as an SSH agent, stay out. The run shares the host's loopback, so a
+  server it starts binds a free port.
 - **Keychain** lookups are refused, and launchd refuses service control to every sandboxed process,
   so a run cannot start, stop or change a service. It signals only its own processes.
 - **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
@@ -432,9 +438,9 @@ than a worker's:
 The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
 are shared with Linux; there is no memory, process or CPU limit. `--kvm` and `--publish` are refused.
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
-fixture run in the home writes and reads only its area and is refused the home, a stand-in for
-Altitude's port, home sockets, the keychain, launchd and its supervisor, while system files, other
-loopback ports, its own sockets and Git work.
+fixture run in the home writes and reads only its own folder and is refused the home, the shared
+temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
+supervisor, while system files, name resolution, other loopback ports, its own sockets and Git work.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),

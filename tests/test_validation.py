@@ -565,7 +565,9 @@ class TestMacValidationRunner(RunnerCase):
         self.assertFalse({key for key in env if key.startswith(("ALTITUDE_", "GIT_", "CLAUDE", "CODEX"))}
                          - {"ALTITUDE_VALIDATION"}, "nothing of altd's environment crosses")
         self.assertNotIn(str(Path.home() / "bin"), env["PATH"].split(":"), "folders the profile hides are dropped")
-        self.assertEqual(self.profile.read_text(), platform.validation_profile(area, config.PORT))
+        self.assertEqual(self.profile.read_text(), platform.validation_profile(
+            (area / "work", area / "results", area / "home", area / "tmp"), config.PORT),
+            "the candidate's folders only: the runner's own files beside them stay out of its reach")
         self.assertFalse(area.exists())
         self.assertEqual(self.stops.call_args.args[0], result["unit"])
         [row] = self.rows()
@@ -596,19 +598,21 @@ class TestMacValidationRunner(RunnerCase):
 
 
 class TestValidationProfile(TestCase):
-    def test_the_profile_confines_a_run_to_its_area(self):
-        with mock.patch.object(platform.sys, "platform", "darwin"):
+    def test_the_profile_confines_a_run_to_its_own_folders(self):
+        with mock.patch.object(platform.sys, "platform", "darwin"), \
+                mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
             area = Path.home() / '.altitude-validation/runs/a"b'
-            profile = platform.validation_profile(area, 8890)
-        own = str(Path(os.path.realpath(Path.home())) / '.altitude-validation/runs/a\\"b')
+            profile = platform.validation_profile((area / "work", area / "results"), 8890)
         home = os.path.realpath(Path.home())
-        for clause in ("(deny file-write*)", f'(allow file-write* (subpath "{own}")',
-                       f'(deny file-read* (subpath "{home}"))(allow file-read* (subpath "{own}"))',
-                       f'(literal "{home}")', '(deny network-bind (local ip "*:8890"))',
-                       '(deny network-outbound (remote ip "*:8890"))',
-                       f'(deny network-outbound (remote unix-socket (subpath "{home}")))',
+        own = str(Path(home) / '.altitude-validation/runs/a\\"b')
+        roots = f'(subpath "{own}/work") (subpath "{own}/results")'
+        shared = '(subpath "/private/var/folders/ab/cd") (subpath "/private/tmp") (subpath "/private/var/tmp")'
+        for clause in (f'(deny file-write*)(allow file-write* {roots} (subpath "/dev"))',
+                       f'(deny file-read* (subpath "{home}") {shared})(allow file-read* {roots})',
+                       f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
+                       '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
+                       f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
+                       '(path-literal "/private/var/run/mDNSResponder")',
                        '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))"):
             self.assertIn(clause, profile)
-        self.assertNotIn(f'(subpath "{home}") ', profile.split("(deny file-read*")[0], "the home is never writable")
-        outside = platform.validation_profile(Path("/elsewhere/run"), 8890)
-        self.assertNotIn("file-read-metadata", outside, "no metadata clause without ancestors in the home")
+        self.assertNotIn(f'(subpath "{own}")', profile, "the runner's files beside the candidate's folders stay out")

@@ -229,7 +229,7 @@ def confinement():
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
 ATTEMPTS = r"""
 import json, os, plistlib, socket, subprocess, sys
-area, outside, home, port, other = sys.argv[1:6]
+area, outside, home, port, other, label, user_temp = sys.argv[1:8]
 port, other, seen = int(port), int(other), {}
 def attempt(name, action):
     try:
@@ -258,13 +258,17 @@ def run(*argv):
 def bootstrap():
     plist = os.path.join(area, "job.plist")
     with open(plist, "wb") as stream:
-        plistlib.dump({"Label": sys.argv[6], "ProgramArguments": ["/usr/bin/true"]}, stream)
+        plistlib.dump({"Label": label, "ProgramArguments": ["/usr/bin/true"]}, stream)
     run("launchctl", "bootstrap", f"gui/{os.getuid()}", plist)
 attempt("write-area", lambda: write(os.path.join(area, "inside")))
 attempt("write-home", lambda: write(os.path.join(outside, "written")))
 attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
 attempt("list-home", lambda: os.listdir(home))
 attempt("read-system", lambda: open("/etc/hosts").read())
+attempt("list-shared-temp", lambda: os.listdir("/private/tmp"))
+attempt("list-user-temp", lambda: os.listdir(os.path.dirname(user_temp.rstrip("/"))))
+attempt("write-shared-temp", lambda: write(f"/private/tmp/{label}"))
+attempt("resolve", lambda: socket.getaddrinfo("localhost", 80))
 attempt("bind-reserved", lambda: bind(port))
 attempt("bind-other", lambda: bind(0))
 attempt("connect-reserved", lambda: connect(port))
@@ -299,18 +303,19 @@ def validation_confinement():
                 listener.bind(("127.0.0.1", 0))
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
-        command = platform.validation_command(area, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
-                                                           str(outside), str(Path.home()), str(port), str(other), label],
+        command = platform.validation_command((area,), port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+                                                              str(outside), str(Path.home()), str(port), str(other),
+                                                              label, platform._user_temp()],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
-        # As a validation run: a logged job whose output and status stay in the run area (engines.machine_files).
-        log, status = area / "run.log", area / "run.exit"
+        # As a validation run: a logged job whose output and status are the runner's, beside the candidate's folders.
+        log, status = outside / "run.log", outside / "run.exit"
         subprocess.run(platform.logged_job_command(name("validation"), f"cd {shlex.quote(str(area))} && exec "
                                                    + shlex.join(command), log=log, status=status, env=env(), timeout=60),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
         output = log.read_text() if log.exists() else ""
         lines = [line for line in output.splitlines() if line.startswith("{")]
         seen = json.loads(lines[-1]) if lines else {}
-        allowed = {"write-area", "read-system", "bind-other", "connect-other", "unix-area", "git"}
+        allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "git"}
         check(seen and all(seen[key] == (key in allowed) for key in seen),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
@@ -319,8 +324,10 @@ def validation_confinement():
         for listener in listeners:
             listener.close()
         shutil.rmtree(outside, ignore_errors=True)
-    return ("only the area is written and read in the home; the reserved port, home sockets, keychain, launchd and "
-            "the supervisor are out of reach; system files, other loopback ports, own sockets and git work")
+        Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
+    return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
+            "sockets, keychain, launchd and the supervisor are out of reach; system files, name resolution, other "
+            "loopback ports, own sockets and git work")
 
 
 @row
