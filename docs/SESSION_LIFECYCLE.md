@@ -253,6 +253,21 @@ Landing lists all stale subjects and changed evidence together. The owner explai
 before assessing each request; late context changes during final validation retain the repository
 turn and original assessment deadline. Proposal findings and assessments remain independently required.
 The run neither switches engines after launch nor retries automatically.
+Failed launch, service inspection, invocation, nonzero exit, capture overflow and invalid-result paths
+retain `diagnostics` on that task's existing review record, readable through `alt task review status`
+by the owner and coordinator. Evidence names the launcher's exit status (null before launch), exception
+type/errno when available, sanitized stderr up to 8 KiB with head/tail retention, per-stream truncation
+and whether stream capture completed. Each raw stream is bounded to 2 MiB. Raw stderr overflow retains
+only complete lines in its leading half; its tail is withheld because the dropped middle can contain
+a credential's opening marker. A credential assignment redacts the remaining diagnostic text, including
+multiline or unterminated values; preceding diagnostics remain. Home paths and private operational
+identities use the existing incident privacy boundary; evidence that fails that check is withheld.
+Encoded text is decoded before redaction; nested encoding is withheld and incomplete private-key blocks
+are redacted. Stderr captured in full retains sanitized head/tail evidence within the 8 KiB bound.
+Provider stdout is not copied into diagnostics. Evidence survives cancellation, uncertain termination
+and explicit retries in its original review record. Successful review results retain their existing
+contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;
+the coordinator still requires verified recovery before an explicit retry.
 See [commands and evidence](CLI.md#cross-engine-review).
 
 ## Fresh dispatch

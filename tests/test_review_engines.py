@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 from unittest.mock import patch
 
 from altitude import config, engines, platform, route
@@ -156,6 +157,193 @@ class ReviewEngineTests(AltitudeCase):
         self.assertEqual(workers, [{"unit": result["worker"]["unit"], "pid": None, "started_ticks": None}, result["worker"]])
         self.assertTrue(result["termination_confirmed"])
         self.assertNotIn("runtime_max", service.call_args.kwargs)
+        self.assertNotIn("diagnostics", result, "successful reviews keep their existing result contract")
+
+    def test_startup_failure_keeps_sanitized_exception_and_errno(self):
+        self.fixture()
+        self.patch(engines.subprocess, "Popen", side_effect=FileNotFoundError(
+            2, "missing executable api_key=fictional-secret-value", "/Users/fictional/private/tool"))
+        result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual((evidence["exit_status"], evidence["exception_type"], evidence["errno"]),
+                         (None, "FileNotFoundError", 2))
+        self.assertIn("missing executable", evidence["stderr"])
+        self.assertIn("[REDACTED]", evidence["stderr"])
+        self.assertNotIn("fictional-secret-value", json.dumps(result))
+        self.assertNotIn("/Users/fictional", json.dumps(result))
+        self.assertTrue(result["termination_confirmed"])
+
+    def test_command_preparation_failure_keeps_diagnostics_before_spawn(self):
+        self.fixture()
+        self.patch(engines, "_review_command", side_effect=FileNotFoundError(2, "review executable disappeared"))
+        spawn = self.patch(engines.subprocess, "Popen")
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["errno"], 2)
+        self.assertIn("executable disappeared", result["diagnostics"]["stderr"])
+        self.assertTrue(result["termination_confirmed"])
+        spawn.assert_not_called()
+
+    def test_encoded_quoted_credentials_are_redacted_in_stderr_and_startup_exceptions(self):
+        credential = quote('"password": "fictional secret with spaces"', safe="")
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); sys.stderr.write('startup failed\\n' + {credential!r}); sys.exit(12)"]
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertIn("[REDACTED]", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        self.patch(engines.subprocess, "Popen", side_effect=OSError(2, "startup failed " + credential))
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["errno"], 2)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        capture = engines._BoundedRawCapture()
+        capture.add(quote(credential, safe=""))
+        self.assertIn("withheld", engines._review_diagnostics(capture)["stderr"])
+
+    def test_nonzero_exit_keeps_stderr_and_status_without_stdout_transcript(self):
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT'); "
+            "sys.stderr.buffer.write(b'cannot connect captured adapter\\ninvalid byte: \\xff\\n'"
+            "b'api_key=fictional-secret-value\\n/Users/fictional/private/tool\\n'); sys.exit(23)"]
+        result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual(evidence["exit_status"], 23)
+        self.assertIn("status 23", result["error"])
+        self.assertIn("cannot connect captured adapter", evidence["stderr"])
+        self.assertIn("invalid byte: \ufffd", evidence["stderr"])
+        self.assertIn("[REDACTED]", evidence["stderr"])
+        for private in ("PRIVATE TRANSCRIPT", "Private assignment", "fictional-secret-value", "/Users/fictional"):
+            self.assertNotIn(private, json.dumps(result))
+        self.assertTrue(evidence["capture_complete"])
+        self.assertFalse(evidence["stderr_truncated"])
+        self.assertFalse(evidence["stdout_truncated"])
+
+    def test_capture_overflow_names_stream_and_withholds_ambiguous_stderr_tail(self):
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT' * 1000); "
+            "sys.stderr.write('startup diagnostic\\napi_key=fictional-secret-value\\n' + 'x' * 20000 + "
+            "'\\nlast diagnostic\\n'); sys.exit(0)"]
+        with patch.object(engines, "RAW_CAPTURE_CAP", 1024):
+            result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("capture limit", result["error"])
+        evidence = result["diagnostics"]
+        self.assertEqual(evidence["exit_status"], 0)
+        self.assertTrue(evidence["stdout_truncated"])
+        self.assertTrue(evidence["stderr_truncated"])
+        self.assertIn("startup diagnostic", evidence["stderr"])
+        self.assertNotIn("last diagnostic", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
+        self.assertNotIn("PRIVATE TRANSCRIPT", json.dumps(result))
+        self.assertNotIn("fictional-secret-value", json.dumps(result))
+        self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
+
+    def test_diagnostic_bound_and_raw_cuts_do_not_expose_partial_credentials(self):
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\napi_key=" + "s" * 400 + "\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertEqual(evidence["stderr"], "useful start\n[capture limit: stderr tail withheld]\n")
+        self.assertTrue(evidence["stderr_truncated"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                    + "-----END PRIVATE KEY-----\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertNotIn("useful end", evidence["stderr"], "raw truncation withholds the ambiguous tail")
+        for private in ("prefix\n-----BEGIN PRIVATE KEY-----\nPRIVATE MATERIAL\n",
+                        "prefix\n" + "x" * 200 + "\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                        + "-----END PRIVATE KEY-----\nuseful end\n"):
+            capture = engines._BoundedRawCapture(128)
+            capture.add(private)
+            evidence = engines._review_diagnostics(capture)
+            self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+            self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n" + "benign padding\n" * 100 + "-----BEGIN PRIVATE KEY-----\n"
+                    + "PRIVATE MATERIAL\n" * 100)
+        evidence = engines._review_diagnostics(capture)
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        capture = engines._BoundedRawCapture()
+        capture.add("useful start\n" + "é" * 10000 + "\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertTrue(evidence["stderr_truncated"])
+        self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("useful end", evidence["stderr"])
+        capture = engines._BoundedRawCapture()
+        capture.add('connection refused\n"password": "fictional secret with spaces"\n'
+                    'cookie=session=fictional-cookie\nAuthorization: Bearer fictional-access-token\n')
+        evidence = engines._review_diagnostics(capture)
+        self.assertIn("connection refused", evidence["stderr"])
+        self.assertNotIn("fictional", evidence["stderr"])
+        self.assertEqual(evidence["stderr"].count("[REDACTED]"), 1)
+
+    def test_multiline_credentials_and_remaining_capture_are_withheld(self):
+        assignments = ['"password":\n"fictional secret with spaces"',
+                       'api_key="fictional\nsecret\nwith spaces"',
+                       'cookie=\nfictional-secret', 'Authorization: Bearer\nfictional-secret',
+                       '"secret": "unterminated\nfictional-secret']
+        for assignment in assignments:
+            for encoded in (False, True):
+                with self.subTest(assignment=assignment, encoded=encoded):
+                    stderr = "adapter startup failed\n" + assignment + "\nfollowing diagnostic\n"
+                    if encoded:
+                        stderr = quote(stderr, safe="")
+                    service = self.fixture()
+                    service.return_value = [sys.executable, "-I", "-c",
+                        f"import sys; sys.stdin.read(); sys.stderr.write({stderr!r}); sys.exit(12)"]
+                    result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    evidence = result["diagnostics"]
+                    self.assertEqual(evidence["exit_status"], 12)
+                    self.assertIn("adapter startup failed", evidence["stderr"])
+                    self.assertIn("[REDACTED]", evidence["stderr"])
+                    for private in ("fictional", "with spaces", "unterminated", "following diagnostic"):
+                        self.assertNotIn(private, evidence["stderr"])
+                    with patch.object(engines.subprocess, "Popen", side_effect=OSError(2, stderr)):
+                        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    self.assertEqual(result["diagnostics"]["errno"], 2)
+                    self.assertIn("adapter startup failed", result["diagnostics"]["stderr"])
+                    self.assertNotIn("fictional", json.dumps(result))
+                    self.assertNotIn("with spaces", json.dumps(result))
+
+    def test_incomplete_stderr_capture_is_named_in_failure_evidence(self):
+        self.fixture(exitcode=4)
+        self.patch(engines, "review_stop", return_value=True)
+        spawn = engines.subprocess.Popen
+        class FailedReader:
+            def read(self, size):
+                raise OSError("private reader failure")
+            def close(self):
+                self.stream.close()
+        def with_failed_stderr(*args, **kwargs):
+            process = spawn(*args, **kwargs)
+            reader = FailedReader()
+            reader.stream = process.stderr
+            process.stderr = reader
+            return process
+        self.patch(engines.subprocess, "Popen", side_effect=with_failed_stderr)
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["exit_status"], 4)
+        self.assertFalse(result["diagnostics"]["capture_complete"])
+        self.assertNotIn("private reader failure", json.dumps(result))
+
+    def test_stderr_overflow_does_not_fail_a_successful_review(self):
+        service = self.fixture()
+        service.return_value[-1] = service.return_value[-1].replace("sys.exit(0)", "sys.stderr.write('x' * 10000); sys.exit(0)")
+        with patch.object(engines, "RAW_CAPTURE_CAP", 4096):
+            result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["findings"][0]["id"], "F1")
+        self.assertNotIn("diagnostics", result)
 
     def test_failure_and_malformed_findings_never_become_clean_review(self):
         self.fixture(result={"text": "Malformed", "findings": [{"title": "No body"}]})
@@ -241,6 +429,8 @@ class ReviewEngineTests(AltitudeCase):
         started = self.patch(engines, "review_stop")
         result = engines.review("No model call", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertTrue(result["unavailable"])
+        self.assertEqual(result["diagnostics"]["exception_type"], "RuntimeError")
+        self.assertIn("user bus unavailable", result["diagnostics"]["stderr"])
         self.assertTrue(result["termination_confirmed"])
         self.assertIsNone(result["worker"])
         spawn.assert_not_called()
@@ -276,7 +466,7 @@ class ReviewEngineTests(AltitudeCase):
             with self.subTest(remaining=state):
                 active.return_value = state
                 result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
-                self.assertIn("failed", result["error"])
+                self.assertIn("status 1", result["error"])
                 self.assertEqual(result["termination_confirmed"], state is False)
                 stop.assert_called_with(result["worker"])
         self.assertEqual(stop.call_count, 2)
@@ -567,4 +757,3 @@ class ReviewRoutingTests(AltitudeCase):
         with patch.object(config, "ENGINES", ("codex",)):
             self.assertIsNone(route.pick_review({"l2_engine": "codex"}, {}, engine="claude")["engine"])
         self.assertIn("requires --engine", route.pick_review({"l2_engine": "codex"}, {"l2_engine": "claude"}, model="custom")["why"])
-
