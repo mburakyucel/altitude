@@ -29,8 +29,9 @@ logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
-isolated browser phases. Each phase retains `/usr/bin/time -p` wall/user/system output, written
-as one block so the parallel branches never interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
+isolated browser phases. The standard-library `scripts/time_command.py` reports wall/user/system
+timing without GNU-specific `time` options. Each summary is written as one block so parallel
+branches do not interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
 budget from Node's `availableParallelism()` for both languages: container CPU quotas may be
