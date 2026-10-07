@@ -10,17 +10,30 @@ import http.client
 import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, mock
 
 from tests.support import AltitudeCase, make_repo
 from tests.test_grant import SHIM
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, validation
 
 RUNNER_HOME = validation.home
+
+
+class TestValidationImage(TestCase):
+    def test_browser_pin_matches_the_walkthroughs_lockfile(self):
+        # #667: browser downloads alone cannot prepare a runner's Linux libraries.
+        # Keep image preparation tied to the version the application actually uses.
+        source = Path(__file__).resolve().parents[1]
+        image = (source / "scripts/validation.Containerfile").read_text()
+        lock = (source / "web/pnpm-lock.yaml").read_text()
+        pin = re.search(r"^ARG PLAYWRIGHT=(\S+)$", image, re.M).group(1)
+        versions = set(re.findall(r"^  '@playwright/test@([^']+)':", lock, re.M))
+        self.assertEqual(versions, {pin})
 
 PODMAN = r'''#!/usr/bin/env python3
 """podman stand-in: record the call; run a container's command on the host with its mounts in place."""

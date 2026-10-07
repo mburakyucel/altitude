@@ -319,8 +319,9 @@ altd accepts the request only from a process in the task's current worker job. `
 and `make browser-sandbox` call it automatically inside a task.
 
 - **Image.** altd builds the only image from its own deployed `scripts/validation.Containerfile`
-  (Ubuntu 24.04 with QEMU, nested Podman, Node and Playwright's Chromium). The image is tagged by the
-  file's hash and is never built from a candidate.
+  (Ubuntu 24.04 with QEMU, nested Podman, Node and pinned Playwright Chromium and WebKit, including
+  both browsers' system libraries). The image is tagged by the file's hash and is never built from
+  a candidate. Keep the Playwright pin aligned with `web/pnpm-lock.yaml` when upgrading browsers.
 - **Candidate.** The container sees a throwaway clone of the worktree's committed `HEAD` at `/work`,
   with the worktree's `origin/*` branches and tags. Uncommitted edits and the worktree itself stay
   out, and Git hooks are not run.
@@ -375,6 +376,19 @@ writes `browser-sandbox.json` to the run's results: browser version, launch opti
 Chromium reports itself adequately sandboxed and every renderer runs as a non-root user under
 seccomp, in its own namespaces. A successful launch alone does not prove every protection a task
 needs. Keep the isolation evidence the task requires.
+
+WebKit's finite prerequisite check opens a local fictional page with the emulated iPhone settings
+and records the Playwright/browser versions, executable, non-root user and page result:
+
+```sh
+alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && node ../scripts/webkit_smoke.mjs /results/webkit-smoke.json && node ../scripts/browser_sandbox.mjs /results/browser-sandbox.json'
+```
+
+Run both checks when changing the runner image. A candidate image can be built and tested
+with nested Podman inside a validation run; this does not replace the deployed runner image.
+After source delivery and normal activation, repeat both checks through `alt task validate` and
+retain its commit, image tag, log and result paths before declaring runner recovery. Linux desktop
+WebKit emulation does not establish native macOS or iOS acceptance.
 
 Never disable either sandbox, add sandbox-bypass flags, or chmod/chown a SUID helper. If the runner is
 unavailable, or the browser refuses its sandbox inside it, checkpoint the evidence and block with
@@ -461,15 +475,12 @@ Device results name their evidence class; a result in one class never stands in 
 | Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
 
 Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home
-Screen metadata or phone layout. It is outside `make check` and PR gates. Install WebKit into the
-same browser cache as Chromium; on Linux it also needs WebKit's system libraries, which
-`playwright install-deps webkit` installs with administrator rights (Ubuntu 24.04 desktop
-typically lacks only `libevent-2.1-7t64` and `libavif16`). Workers cannot install them.
+Screen metadata or phone layout. It is outside `make check` and PR gates. Task owners use the
+prepared validation image, which supplies Chromium, WebKit and both sets of system libraries;
+downloading WebKit in a worker does not install its Linux libraries. Commit the candidate first:
 
 ```sh
-PLAYWRIGHT_BROWSERS_PATH="${ALTITUDE_HOME:-$HOME/.altitude}/browsers" pnpm --dir web exec playwright install webkit
-pnpm --dir web build
-make ui-ios
+alt task validate -- sh -c '(cd web && pnpm install --frozen-lockfile && pnpm build) && make ui-ios; result=$?; cp -r web/ui-artifacts/ios /results/ios; exit "$result"'
 ```
 
 `web/playwright.ios.config.ts` runs one project named `phone`, so specs keep their phone layout and
