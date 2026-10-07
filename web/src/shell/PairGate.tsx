@@ -57,7 +57,7 @@ function PairScreen({ removed, onPaired }: { removed: boolean; onPaired: () => v
         {state.status === "pairing" ? "Pairing…" : "Pair"}
       </button>
       <p className="text-meta text-muted">Each code works once, for 10 minutes. This device stays paired until you remove it in Settings.</p>
-      <p className="text-meta text-muted">Did the browser warn about the certificate before showing this page? Pair only after it opens without a warning. For a container, export its public certificate with the host launcher's certificate command. For a native installation, use Add a phone in Settings › Devices on a paired device, or run <code>alt tls-share</code> on that computer.</p>
+      <p className="text-meta text-muted">Did the browser warn about the certificate before showing this page? Pair only after it opens without a warning. For a container, export its public certificate with the host launcher's certificate command. For a native installation, use Set up a device in Settings › Devices on a trusted, paired browser, or run <code>alt tls-share</code> on the computer hosting Altitude. For localhost, run <code>alt doctor</code> there and import its public <code>ca_cert</code> file using your browser's certificate settings.</p>
     </form>
   </main>;
 }

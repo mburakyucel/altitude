@@ -1621,7 +1621,7 @@ class Handler(BaseHTTPRequestHandler):
         if action == "code":
             return self._json(access.issue_code())
         if action in ("share", "share-close"):
-            denied = self._terminal_denied(json_body=True, subject="Add a phone")
+            denied = self._terminal_denied(json_body=True, subject="Set up a device")
             if denied:
                 return self._json({"error": denied}, 403)
             if action == "share-close":
@@ -3096,7 +3096,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
 
 
 def certificate_view() -> dict | None:
-    """The CA a device trusts, as Settings › Devices shows it for adding a phone; None without HTTPS or
+    """The CA a device trusts, as Settings › Devices shows it for device setup; None without HTTPS or
     without a CA file of its own."""
     ca = config.TLS_DIR / "ca.crt"
     if not config.TLS or not ca.exists():
@@ -3113,8 +3113,8 @@ _SHARE_LOCK = threading.Lock()
 
 
 def open_share() -> dict:
-    """Settings › Devices › Add a phone: one share window of the CA this service serves under, replacing an
-    earlier one, with its QR code and what the phone must match."""
+    """Settings › Devices › Set up a device: one share window of the CA this service serves under, replacing an
+    earlier one, with its QR code and what the device must match."""
     global _SHARE
     found = tls.located({"host": config.HOST, "port": config.PORT, "tls": config.TLS, "tls_dir": config.TLS_DIR})
     ca = config.TLS_DIR / "ca.crt"
@@ -3124,7 +3124,7 @@ def open_share() -> dict:
         tls.phone_address(found)
         _SHARE = tls.Share(found, ca.read_bytes(), tls.identity(ca))
         window = _SHARE
-    log("opened a ten-minute certificate share for a phone")
+    log("opened a ten-minute certificate share for device setup")
     return {"link": window.link, "seconds": round(window.remaining()), "name": window.authority["name"],
             "sha256": window.authority["sha256"],
             "qr": ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(window.link)]}
