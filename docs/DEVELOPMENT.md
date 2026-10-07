@@ -114,6 +114,14 @@ the missing native journeys and uses the required Linux candidate CI for `make c
 evidence. The [validation runner](#validation-runner) remains Linux-only; browser recovery and
 native-runtime adoption stay with their owners. No overall macOS support follows from fixture passes.
 
+The broader native Python suite also has uncovered fixture gaps: other resume integrations still
+read the confined kernel boot identity, Linux process fixtures access `/proc`, and container archive
+fixtures require Linux extended-attribute APIs and filename behavior. Admission/queue assertions
+can fail after those fixture errors leave a resume claim pending. These are not a native full-suite
+pass; retain the failing module and traceback alongside the focused command above. Container
+acceptance is tracked under #643 and native runtime/fixture acceptance under #225 and #617.
+Required Linux candidate CI remains the full-suite delivery gate while those native gaps are open.
+
 Clean-close report cases join their real turn-boundary L3 queue drain before inspecting faults
 or releasing case patches and project registration. The command socket is a fixture because
 scripted L3 turns do not call daemon verbs. An event-controlled regression holds a drain failure
