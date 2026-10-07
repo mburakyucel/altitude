@@ -79,7 +79,10 @@ reads libproc and session membership on Mac, or procfs on Linux, without executi
 and vanished processes are omitted, and a confirmed member that cannot be read fails cleanup.
 The native platform probe separately covers job coalitions. The
 walkthroughs press the platform's own editing keys (`ControlOrMeta`), so select-all, copy and paste
-are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in for systemd set `host = "linux"`, and
+are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in
+for systemd set `host = "linux"`; on a Mac such a case reads its own process from a procfs fixture,
+and the systemd-run and Podman stand-ins run on the suite's interpreter rather than `/usr/bin/python3`,
+whose xcrun shim reports a validation run's read-only lookup cache in the logs they write.
 `tests/test_platform_darwin.py` covers the macOS side of the platform seam with fixtures on any host.
 `python3 scripts/platform_probe.py` checks the same mechanisms natively on either host with
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by

@@ -139,6 +139,8 @@ sys.path.insert(0, str(REPO))
 from altitude import access, config, engines, incidents, monitor, platform  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
+#: The kernel the suite runs on; a case's `host` replaces `sys.platform` for its duration.
+NATIVE_PLATFORM = sys.platform
 
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
 GH = r'''#!/usr/bin/env python3
@@ -357,7 +359,8 @@ def add_worktree(repo: Path, slug: str) -> Path:
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
-    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`. A worker
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`; on a
+    kernel without procfs, a Linux `host` also reads the case's own process from a procfs fixture. A worker
     launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture."""
 
     gated = False
@@ -375,6 +378,8 @@ class AltitudeCase(unittest.TestCase):
             self.patch(engines, "github_token", return_value="")
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        if self.host == "linux" and NATIVE_PLATFORM != "linux":
+            self.linux_process_facts()
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         self.project = self._testMethodName.replace("_", "-")[:64]
@@ -395,6 +400,16 @@ class AltitudeCase(unittest.TestCase):
         supply their own observations instead of importing this integration fixture.
         """
         self.patch(platform, "_process_boot", return_value="fixture-boot")
+
+    def linux_process_facts(self) -> None:
+        """The case's own process as Linux procfs spells it: a resume claim records altd's process identity."""
+        proc, pid = self.tmp / "host-proc", os.getpid()
+        (proc / "sys/kernel/random").mkdir(parents=True)
+        (proc / "sys/kernel/random/boot_id").write_text("fixture-boot\n")
+        (proc / str(pid) / "ns").mkdir(parents=True)
+        (proc / str(pid) / "ns/pid").symlink_to("pid:[fixture]")
+        (proc / str(pid) / "stat").write_text(f"{pid} (python3) " + " ".join(["R", *["0"] * 18, "777"]) + "\n")
+        self.patch(platform, "PROC", proc)
 
     @staticmethod
     def _forget(name: str) -> None:

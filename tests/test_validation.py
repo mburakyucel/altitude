@@ -16,6 +16,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
@@ -40,8 +41,9 @@ class TestValidationImage(TestCase):
         versions = set(re.findall(r"^  '@playwright/test@([^']+)':", lock, re.M))
         self.assertEqual(versions, {pin})
 
-PODMAN = r'''#!/usr/bin/env python3
-"""podman stand-in: record the call; run a container's command on the host with its mounts in place."""
+# Fixture scripts run on the suite's interpreter, not macOS's /usr/bin/python3, whose xcrun shim reports
+# the run's read-only lookup cache in the logs these cases compare.
+PODMAN = f"#!{sys.executable}\n" + r'''"""podman stand-in: record the call; run a container's command on the host with its mounts in place."""
 import json, os, subprocess, sys
 args = sys.argv[1:]
 with open(RECORD, "a") as out:
