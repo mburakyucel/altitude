@@ -348,7 +348,10 @@ test("a paused upward scroll survives a refresh before its native scroll event",
   await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
   await expect.poll(() => body.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
   const update = await task.control("append");
-  await expect(live.getByText(update.latest, { exact: false })).toBeInViewport();
+  // Fixture source records predate the platform tail in Raw events; the update
+  // merges above it while following must still keep the viewport at the bottom.
+  await expect(live.getByText(update.latest, { exact: false })).toBeAttached();
+  await expect.poll(() => body.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
   await expect(live.getByRole("button", { name: "Follow", exact: true })).toHaveCount(0);
 });
 
