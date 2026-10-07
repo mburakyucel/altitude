@@ -2261,9 +2261,10 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
 
 
 def _review_env() -> dict:
-    """Authentication remains CLI-internal; no owner identity, bus or ambient credentials."""
+    """Authentication remains CLI-internal; no owner identity, bus or ambient credentials. USER names the login
+    whose macOS Keychain item holds the CLI's sign-in; without it Claude falls back to a stale plaintext file."""
     source = clean_env()
-    return {key: source[key] for key in ("HOME", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR")
+    return {key: source[key] for key in ("HOME", "USER", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR")
             if key in source}
 
 
@@ -2545,7 +2546,7 @@ def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str], dic
     # Free-form error strings may echo prompts, captured source or private details. Only fixed
     # vocabulary leaves this seam; even unknown codes/subtypes are not persisted.
     categories = {
-        "authentication": r"authentication|unauthorized|invalid api key|not logged in|run /login|login expired|oauth token",
+        "authentication": r"authentication|unauthorized|invalid api key|not logged in|run /login|login expired|oauth token|failed to authenticate|oauth session",
         "rate_limit": r"rate.?limit|quota|usage limit|usage credits|credit balance",
         "connection": r"connection|connect(?:ion)? refused|unable to connect|network|timed? out|timeout",
         "captured_input": r"captured_input|captured adapter|mcp",

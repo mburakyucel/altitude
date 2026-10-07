@@ -635,7 +635,8 @@ built-in tools, no skills and no safe mode, which disables every MCP server. Bot
 properties established by recorded reviewer runs, not by the suite. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason
 instead of completing with no coverage. CLI-internal authentication uses
-the configured account. Deterministic fixtures verify application behavior and adapter configuration;
+the configured account. The reviewer environment keeps only home, login name, path, locale and engine
+configuration directories; the login name lets Claude find its macOS Keychain sign-in. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
 Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness

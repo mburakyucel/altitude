@@ -129,8 +129,12 @@ class ReviewEngineTests(AltitudeCase):
                                      "GH_TOKEN": "secret", "ANTHROPIC_API_KEY": "secret", "OPENAI_API_KEY": "secret",
                                      "DBUS_SESSION_BUS_ADDRESS": "private", "SSH_AUTH_SOCK": "private"}):
             env = engines._review_env()
-        self.assertEqual(set(env) - {"HOME", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
+        self.assertEqual(set(env) - {"HOME", "USER", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
         self.assertNotIn("secret", env.values())
+
+    def test_environment_names_the_login_for_keychain_sign_in(self):
+        with patch.dict(os.environ, {"USER": "fictional-login"}):
+            self.assertEqual(engines._review_env()["USER"], "fictional-login")
 
     def fixture(self, *, result=None, answer=None, exitcode=0, served=True):
         if served:
@@ -329,6 +333,7 @@ class ReviewEngineTests(AltitudeCase):
             "Not logged in \u00b7 Please run /login": ["authentication"],
             "Login expired \u00b7 Please run /login": ["authentication"],
             "OAuth token revoked \u00b7 Please run /login": ["authentication"],
+            "Failed to authenticate: OAuth session expired and could not be refreshed": ["authentication"],
             "Credit balance is too low": ["rate_limit"],
             "Opus now uses usage credits": ["rate_limit"],
             "Unable to connect to API (ECONNREFUSED)": ["connection"],
