@@ -319,19 +319,21 @@ only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
 until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
-constraints ("No limits" when it has none), with the URL and per-platform trust steps. A phone gets
+constraints ("No limits" when it has none), with the URL and per-platform trust steps. A desktop or phone gets
 the public CA through a share window (`tls.Share`): for ten minutes it answers plain HTTP on the
 service's non-loopback address and an ephemeral port with a guided page, an iPhone configuration
 profile whose only payload is the CA certificate (`com.apple.security.root`, identifiers derived
 from the fingerprint so reinstalling replaces it), and the `ca.crt` bytes; nothing else, with no
 Altitude API or page. It closes at its deadline or on demand and cuts any open connection. The
 channel is unauthenticated, so the trusted screen that opened it shows the CA's name and
-fingerprint for the phone to compare before installing. `altitude/qr.py` draws its link as a QR
+fingerprint to compare with the downloaded certificate before installing. The guided page separates
+Linux browser imports, macOS Keychain trust, iPhone/iPad profiles and Android trust, with a common
+warning-free HTTPS check before pairing. `altitude/qr.py` draws its link as a QR
 code (byte mode, level M) for terminals and the browser. `alt tls-share` (operator only) opens a
 window in the CLI process, not in altd. It takes the address, port and TLS directory from the
 service record (below), not from the operator's shell. It fetches `/api/health` over HTTPS trusting
 only that directory's CA and requires the answer from the process that wrote the record before
-offering those bytes. Settings → Devices → **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
+offering those bytes. Settings → Devices → **Set up a device** asks altd to open one window (`POST /api/devices/share`, refused to agents and
 cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
 keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
 the page sends on Close (confirming only once it succeeds) or when it is left, including while the
@@ -339,7 +341,9 @@ window is still opening. The page keeps the window only in component state, neve
 query cache. **Open setup page** opens that same share URL in a new tab without opener access,
 retaining the original Settings page, certificate facts and sharing timer. The link is available
 only while sharing is open and disappears during closing or after expiry. `alt pair` takes its link
-from the same discovery. Remote binding and trust remain explicit;
+from the same discovery. Sharing refuses loopback-only addresses; a browser on the hosting computer
+imports the public `ca.crt` reported by `alt doctor` directly. Trust installation stays a deliberate
+operator action in the browser or OS. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
