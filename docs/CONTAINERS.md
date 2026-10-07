@@ -347,7 +347,7 @@ writable predicate. The acceptance policy rejects another kernel/runtime/network
 tuple rather than inheriting this list. Mac and other tuples require full remeasurement and review.
 
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
-image-bootstrap gate. It uses isolated rootless storage, fresh volumes, network-none payloads,
+image-bootstrap gate. It uses isolated rootless storage, fresh volumes, the reviewed `slirp4netns` network,
 resource/time limits, retained results and cleanup. It checks startup, local HTTPS, immutable-image
 API state and elevation-file inventory without changing host installation, services, policy or
 provider accounts. An owner needs the applicable runtime-access grant.
