@@ -572,6 +572,8 @@ this disposable cache subtree while retaining worker and review evidence. Cache 
 the terminal state change under the project lock; failure retains the task's prior state and location.
 Deletion walks from the runtime root through open directories without following links, and removes
 only the cache subtree relative to the held job-directory descriptor.
+Rejection stops the attached worker through the engine seam before disposal, so no live writer
+recreates the cache after archival.
 [Development](DEVELOPMENT.md#local-checks)
 describes frozen-install handling for worktrees with an existing pnpm store and native evidence limits.
 Altitude supplies focused [role instructions](../personas/), repository context and delivery

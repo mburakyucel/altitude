@@ -974,18 +974,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     usage.remember(task)
     if to == "rejected":
         usage.capture(project, task)
-    stopped = None
-    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
-        from . import engines
-        engine = task.get("l2_engine") or "claude"
-        try:
-            note = engines.remove_l2_worker(
-                engine, task["agent_id"], job_root=S.task_dir(project, task["slug"]) / "l2-engine")
-        except Exception as exc:
-            raise TransitionError(
-                f"{task['slug']}: cannot reject while its {engine} worker may still be live: {exc}"
-            ) from exc
-        stopped = (engine, note)
     task["state"] = to
     if to in ("reported", "done", "rejected"):
         _store_groups(task)
@@ -1006,10 +994,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if stopped:
-        engine, note = stopped
-        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
-                       engine=engine, note=note[:200])
     S.regen_state_md(project)
     return task
 
@@ -1118,6 +1102,18 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        if task["state"] in ("running", "blocked") and task.get("agent_id"):
+            from . import engines
+            engine = engines.transcript_engine(task)
+            try:
+                note = engines.remove_l2_worker(
+                    engine, task["agent_id"], job_root=S.task_dir(project, slug) / "l2-engine")
+            except Exception as exc:
+                raise TransitionError(
+                    f"{slug}: cannot reject while its worker may still be live: {exc}"
+                ) from exc
+            S.append_event(project, slug, "session-stopped", agent_id=task["agent_id"],
+                           engine=engine, note=note[:200])
         _remove_tool_cache(project, slug)
         _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
@@ -1432,7 +1428,7 @@ def _remove_tool_cache(project: str, slug: str) -> None:
     """Dispose tool data before a terminal state is saved, under the caller's project lock."""
     try:
         relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
-        with _directory(config.ROOT, list(relative.parts)) as directory:
+        with _directory(config.ROOT.resolve(), list(relative.parts)) as directory:
             shutil.rmtree("tool-cache", dir_fd=directory)
     except FileNotFoundError:
         pass  # Tasks that never launched have no tool caches.

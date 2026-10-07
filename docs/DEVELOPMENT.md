@@ -60,6 +60,15 @@ directories within the existing writable runtime root. Outside an L2 worker, sel
 store explicitly if your shell's defaults are restricted. Do not alter the lockfile to work around an installation failure. On a clean
 Linux CI host, `playwright install --with-deps chromium` also installs browser OS dependencies.
 
+Rejection confirms worker termination before cache disposal. If cleanup is refused, completion
+or rejection retains its prior state instead of claiming success. The owner repairs only its
+task's cache entry: unlink a replaced `l2-engine`/`tool-cache` link without following its target,
+or restore write/search permissions on task-owned cache directories, then retry the same action.
+Never change unrelated target data or confinement. A terminated owner requests that bounded
+repair through L3; an unavailable safe repair remains an explicit task-local dependency.
+The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
+links below it are refused.
+
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
 `cwebp`) and `bash` (macOS's own bash 3.2 has no bracketed paste, which the terminal walkthroughs

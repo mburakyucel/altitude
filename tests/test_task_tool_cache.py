@@ -1,12 +1,14 @@
 """Issue #617: confined workers keep writable tool caches without moving installed managers."""
 import json
+import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
-from altitude import engines, platform, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 class TaskToolCache(AltitudeCase):
@@ -76,6 +78,7 @@ class TaskToolCache(AltitudeCase):
                             self.assertEqual((row["sessionId"], row["state"]), ("session", "failed"))
 
     def test_archival_removes_only_this_tasks_tool_cache_and_retains_evidence(self):
+        self.assertTrue(T.shutil.rmtree.avoids_symlink_attacks)
         task = T.new(self.project, "Cache lifetime", "Fictional task")
         other = T.new(self.project, "Other lifetime", "Fictional task")
         directory = S.task_dir(self.project, task["slug"])
@@ -154,3 +157,75 @@ class TaskToolCache(AltitudeCase):
             T._remove_tool_cache(self.project, task["slug"])
         self.assertFalse((directory / "old-job/tool-cache").exists())
         self.assertEqual(keep.read_text(), "unrelated data")
+
+    def test_linked_cache_is_refused_and_entry_repair_allows_retry(self):
+        task = T.new(self.project, "Cache entry repair", "Fictional task")
+        job = S.task_dir(self.project, task["slug"]) / "l2-engine"
+        job.mkdir()
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        keep = elsewhere / "package"
+        keep.write_text("unrelated data")
+        (job / "tool-cache").symlink_to(elsewhere)
+        with self.assertRaises(OSError):
+            T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
+        (job / "tool-cache").unlink()
+        T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
+        self.assertEqual(keep.read_text(), "unrelated data")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
+
+    def test_configured_home_link_is_a_trusted_anchor(self):
+        task = T.new(self.project, "Linked runtime home", "Fictional task")
+        cache = S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache"
+        cache.mkdir(parents=True)
+        home = self.tmp / "runtime-home"
+        home.symlink_to(config.ROOT)
+        with mock.patch.object(config, "ROOT", home):
+            T._remove_tool_cache(self.project, task["slug"])
+        self.assertFalse(cache.exists())
+
+    def test_reject_stops_a_cache_writer_before_disposal_and_stop_failure_retains_cache(self):
+        self.quiet_engines()
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = T.new(self.project, f"Reject writer {engine}", "Fictional task")
+                task = T.dispatch(self.project, task["slug"], attempt=1, session_id="session", agent_id="fixture",
+                                  worktree=str(self.repo), branch="fixture", l2_engine=engine)
+                root = dispatch.l2_job_root(self.project, task["slug"])
+                cache = root / "tool-cache"
+                script = ("import pathlib,sys,time\np=pathlib.Path(sys.argv[1])\n"
+                          "end=time.monotonic()+10\nwhile time.monotonic()<end:\n"
+                          " p.mkdir(parents=True,exist_ok=True); (p/'package').write_text('fixture'); time.sleep(.01)\n")
+                child = subprocess.Popen([sys.executable, "-c", script, str(cache)])
+                def cleanup():
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+                self.addCleanup(cleanup)
+                deadline = time.monotonic() + 5
+                while not (cache / "package").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue((cache / "package").exists())
+                dispatch.request_task_operation(self.project, task["slug"], "reject", "Fixture rejection",
+                                                actor=config.OPERATOR_ACTOR, generation="fixture")
+                with mock.patch.object(engines, "remove_l2_worker", side_effect=RuntimeError("stop unconfirmed")):
+                    refused = dispatch.run_task_operation(self.project, task["slug"])
+                self.assertEqual(refused["request"]["status"], "refused", refused)
+                self.assertIn("stop unconfirmed", refused["request"]["note"])
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+                self.assertTrue(cache.exists())
+                dispatch.request_task_operation(self.project, task["slug"], "reject", "Retry fixture rejection",
+                                                actor=config.OPERATOR_ACTOR, generation="fixture")
+                def stop(actual_engine, worker_id, *, job_root):
+                    self.assertEqual((actual_engine, worker_id, job_root), (engine, "fixture", root))
+                    self.assertTrue(cache.exists())
+                    child.terminate()
+                    child.wait(timeout=5)
+                    return "fixture writer stopped"
+                with mock.patch.object(engines, "remove_l2_worker", side_effect=stop):
+                    result = dispatch.run_task_operation(self.project, task["slug"])
+                self.assertEqual(result["request"]["status"], "done", result)
+                self.assertFalse((S.tasks_dir(self.project) / task["slug"]).exists())
+                self.assertFalse((S.archive_dir(self.project) / task["slug"] / "l2-engine/tool-cache").exists())
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
