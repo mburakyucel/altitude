@@ -40,8 +40,9 @@ running validation or deploying each experiment. Validation work favors reusable
 points that owners run against their candidates over steps the operator repeats by hand; each
 [validation environment](DEVELOPMENT.md#validation-environments) names what it does not establish,
 and remaining manual steps name their reason. On the Mac, [validation runs](DEVELOPMENT.md#macos-validation-runs)
-cover candidate suites and fixture journeys; native launchd jobs and worker confinement, browsers
-with their own sandbox, and installation still have no automated Mac lane.
+cover candidate suites and fixture journeys, and the [installation lane](DEVELOPMENT.md#macos-installation-lane)
+covers installation, update detection, update, rollback and uninstall; native launchd jobs and worker
+confinement and browsers with their own sandbox still have no automated Mac lane.
 
 ### Portable installation: delivered and remaining
 
@@ -61,7 +62,8 @@ command against a release server inside the guest. Its hosted workflow has not e
 acceptance for a release needs a recorded run for its source commit. The synthetic version pair uses
 one source commit, so it supplies no cross-release migration evidence. Runs are independent of
 other owners' delivery and the required PR gate. This is partial #226 acceptance; the parent stays
-open, and macOS remains with `macos-support-native-runtime-behind-the`. Minimal OS installation,
+open. The [macOS installation lane](DEVELOPMENT.md#macos-installation-lane) runs the same lifecycle on
+the Mac under a throwaway home. Minimal OS installation,
 login/logout, browser/device CA trust, download from GitHub's published release, native confinement and
 live-provider compatibility remain outside this harness's evidence.
 
@@ -105,10 +107,11 @@ owners name the missing confirmation in their PR and report and send L3 a row fo
 (containers), #225 (native runtime), or #551 (installation); L3 maintains those rows. Linux merge
 checks and holds stay unchanged (see [AGENTS.md](../AGENTS.md#seams)).
 #527 moved host mechanisms into the seam, and #570 put the
-macOS host behind it on `main`; Altitude runs from source on the operator's Mac. The native lifecycle
-checks on the Mac remain pending: install and `alt doctor`, CLI and app update with adoption,
-failed-update rollback, uninstall keeping data, logout/login, reboot then login, sleep past a
-deadline, and the #551 install and update evidence. Two operator decisions of
+macOS host behind it on `main`; Altitude runs from source on the operator's Mac. The
+[installation lane](DEVELOPMENT.md#macos-installation-lane) checks install and `alt doctor`, update
+detection, CLI and app update, failed-update rollback and uninstall keeping data (#551). The native
+lifecycle checks still pending are adoption across an update with running tasks, logout/login,
+reboot then login and sleep past a deadline, on a spare account. Two operator decisions of
 September 28, 2026 shape it: operator-grant commands run unsandboxed, as on Linux, because launchd
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
@@ -168,7 +171,7 @@ above. The common confinement contract still needs proof before any support clai
 | Additional CLI engines | Integrate candidates such as **OpenCode**, preserving native tools, sessions, context and helpers. | Codex and Claude Code work today. Each added engine needs launch/resume/stop, permissions, authentication and optional usage observations implemented and verified through task delivery. |
 | Engine readiness and access | Select from installed, authenticated engines; document verified model-provider, subscription and API/access configurations. | One engine suffices with Auto or an explicit pin. Local readiness distinguishes configured, unknown and tested; it makes no provider request. Launch environment and role-model settings constrain configuration inheritance. |
 | [macOS runtime · #225](https://github.com/mburakyucel/altitude/issues/225) | Native OS/service integration with verified start, task execution, stop/resume, restart/adoption and shutdown. | Implemented behind the platform seam; spare-account acceptance (install, confinement, Stop, restart/adoption, update/rollback, logout/login, reboot, sleep) is pending. |
-| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Linux installs with one command from a published release, uses localhost HTTPS, explicit CA trust and retained data, and offers verified in-app and CLI updates. Native Mac and clean-machine acceptance remain pending; this increment does not close the parent. |
+| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Linux and macOS (from a release after `v0.1.0-rc.2`) install with one command from a published release, use localhost HTTPS, explicit CA trust and retained data, and offer verified in-app and CLI updates; the Mac lane runs under a throwaway home of an existing account. Clean-machine acceptance remains pending. |
 
 Engine work belongs at the [integration boundary](ARCHITECTURE.md#engine-integration-boundary),
 with remaining assumptions outside it moved as those files are touched. Platform support and

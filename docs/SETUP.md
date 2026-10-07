@@ -57,9 +57,10 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs a
-published release as the account that will use Altitude. The preview has no stable release yet, so
-install the newest release candidate from its own tag:
+On Linux x86_64 with Python 3.12 or newer and a systemd user manager, or on macOS 15 or newer on
+Apple silicon with Python 3.12, Homebrew's OpenSSL 3 and a logged-in desktop session, one command
+installs a published release as the account that will use Altitude. The preview has no stable
+release yet, so install the newest release candidate from its own tag:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
@@ -79,8 +80,11 @@ systemctl --user daemon-reload
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
-when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
-`openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
+when something is missing: Linux x86_64 or a Mac with Apple silicon, not root, Python 3.12 or newer,
+`curl`, a SHA-256 tool and `openssl`; on Linux `systemctl --user`, on a Mac macOS 15 or newer,
+OpenSSL 3 ahead of macOS's LibreSSL on PATH and launchd's domain of the logged-in desktop session.
+`v0.1.0-rc.2` and earlier releases stop on a Mac before downloading anything; a Mac installs a
+release whose `install.sh` lists these Mac checks. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
@@ -107,10 +111,15 @@ curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/
   sh install.sh
 ```
 
-On macOS the command stops before downloading anything and reports the macOS version, chip and
-Python it found: macOS installation waits for native acceptance ([#551](https://github.com/mburakyucel/altitude/issues/551)).
-A Mac runs Altitude from a source checkout instead: build the web app, run `bin/alt tls-init`, then
-`make install-service`, which installs a LaunchAgent of your login ([operations](OPERATIONS.md)).
+On a Mac the service is the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist` of your
+login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in
+`~/.local/share/altitude` and its settings in `~/.config/altitude`, as on Linux. A failed update
+restores the previous version by itself. If an installation or update is interrupted (the Mac
+sleeps, the terminal closes), `~/.local/bin/alt recover` finishes restoring the previous version; when
+`alt` itself is missing, the release's `install.py` does the same with
+`python3.12 install.py --recover`. Configuration, TLS identity and data are kept either way. A Mac can
+also run Altitude from a source checkout: build the web app, run `bin/alt tls-init`, then
+`make install-service`, which installs the same LaunchAgent from the checkout ([operations](OPERATIONS.md)).
 
 The same installer runs by hand from the release files, for example offline or with a private
 archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,

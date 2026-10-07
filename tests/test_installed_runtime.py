@@ -76,6 +76,20 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(observed["TLS_DIR"], str(self.tmp / "own-tls"))
         self.assertFalse((self.source / ".git").exists())
 
+    def test_saved_proxy_and_ca_bundle_reach_the_cli_and_other_saved_settings_refuse(self):
+        settings_file = self.tmp / "install.json"
+        env = {**os.environ, "PYTHONPATH": str(self.source), "ALTITUDE_CONFIG": str(settings_file)}
+        for key in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE"):
+            env.pop(key, None)
+        code = "import os; from altitude import config; print(os.environ['HTTPS_PROXY'], os.environ['SSL_CERT_FILE'])"
+        settings_file.write_text(json.dumps({"environment": {"HTTPS_PROXY": "http://127.0.0.1:3128",
+                                                             "SSL_CERT_FILE": "/tmp/proxy-ca.pem"}}))
+        result = subprocess.run([sys.executable, "-c", code], cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual((result.returncode, result.stdout), (0, "http://127.0.0.1:3128 /tmp/proxy-ca.pem\n"), result.stderr)
+        settings_file.write_text(json.dumps({"environment": {"PYTHONSTARTUP": "/tmp/elsewhere.py"}}))
+        result = subprocess.run([sys.executable, "-c", code], cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertIn("invalid installation environment setting: PYTHONSTARTUP", result.stderr)
+
     def test_fresh_defaults_and_source_checkout_ignore_install_settings(self):
         defaults = self.read_config()
         self.assertEqual((defaults["HOST"], defaults["TLS"]), ("127.0.0.1", "True"))

@@ -64,6 +64,8 @@ class DarwinCase(AltitudeCase):
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.patch(platform.Path, "home", return_value=self.home)
+        # The fixture home is the account's own, so the service is the account's LaunchAgent.
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir=str(self.home)))
         self.launchd = Launchd()
         self.patch(platform.subprocess, "run", side_effect=self.launchd)
 
@@ -77,13 +79,31 @@ class Service(DarwinCase):
         self.assertEqual(agent["ProgramArguments"],
                          ["/opt/homebrew/bin/python3.12", "-B", '/tmp/A 100% "trial"/current/bin/alt', "serve"])
         self.assertEqual(agent["EnvironmentVariables"], {"ALTITUDE_CONFIG": "/tmp/install.json", "ALTITUDE_SERVICE": "1",
-                                                         "ALTITUDE_TLS": "1", "PATH": "/opt/homebrew/bin:/usr/bin"})
+                                                         "ALTITUDE_TLS": "1", "PATH": "/opt/homebrew/bin:/usr/bin",
+                                                         "HOME": str(self.home)})
         self.assertEqual((agent["RunAtLoad"], agent["KeepAlive"], agent["Umask"]), (True, {"SuccessfulExit": False}, 0o077))
         self.assertEqual(agent["StandardErrorPath"], str(self.home / "Library/Logs/altitude/altd.log"))
         self.assertEqual(platform.service_path(), self.home / "Library/LaunchAgents/dev.altitude.altd.plist")
         for value in ("/tmp/app\n", "/tmp/app\r", "/tmp/app\x00"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 platform.definition(Path(value), Path("/usr/bin/python3"), Path("/tmp/install.json"), {"PATH": "/bin"})
+
+    def test_an_installation_under_another_home_has_its_own_label_and_never_addresses_the_accounts_service(self):
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir="/Users/operator"))
+        label = platform.service_label()
+        self.assertRegex(label, r"^dev\.altitude\.altd\.[0-9a-f]{12}$")
+        self.assertEqual(platform.service_path(), self.home / f"Library/LaunchAgents/{label}.plist")
+        agent = plistlib.loads(platform.definition(Path("/tmp/prefix"), Path("/usr/bin/python3"), Path("/tmp/install.json"),
+                                                   {"PATH": "/bin"}).encode())
+        self.assertEqual((agent["Label"], agent["EnvironmentVariables"]["HOME"]), (label, str(self.home)))
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+        self.assertEqual(platform.status()["ActiveState"], "inactive")
+        platform.control("restart")
+        platform.control("stop")
+        targets = {argument.rsplit("/", 1)[-1] for command in self.launchd.commands for argument in command[1:]}
+        self.assertIn(label, targets)
+        self.assertNotIn(platform.LABEL, targets)
+        self.assertIn(platform.LABEL, self.launchd.jobs)
 
     def test_status_speaks_the_installation_vocabulary(self):
         path = platform.service_path()

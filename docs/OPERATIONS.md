@@ -207,13 +207,16 @@ lookup; it refuses an older version, which `alt recover` restores. Every downloa
 HTTPS, the verified archive must be the requested version, and the version is compared with the
 installed one again under the installation lock, so a concurrent update cannot cause a downgrade.
 `alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
-you already have, with no network access. Installation checks the archive and manifest before
+you already have, with no network access. The service keeps the `HTTPS_PROXY`, `NO_PROXY` and
+`SSL_CERT_FILE` settings of the shell that installed it, so the lookup and downloads work behind an
+HTTPS proxy. Installation checks the archive and manifest before
 selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
 independent task workers are not stopped with the daemon. On a Mac the service is the LaunchAgent
-`dev.altitude.altd`: `alt service stop` boots it out until the next login or `alt service start`,
+`dev.altitude.altd` (an installation under another `HOME` gets a label derived from that home, so it
+never addresses the account's own service): `alt service stop` boots it out until the next login or `alt service start`,
 and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
 `altitude-update-<version>.log` beside it. Projects continue using ordinary checked
 PR delivery; a managed source clone does not update the installed application. Project Git guards
@@ -229,7 +232,8 @@ incomplete, use `alt recover`; if the launcher is unavailable, use the same trus
 receipt remains until restoration succeeds and prevents new dispatch/coordinator work while activation is unverified. Changed service ownership or unconfirmed stop refuses
 further mutation. Retain the failing archive/version and sanitized error for diagnosis.
 
-`alt uninstall` stops/removes only the owned service and launcher. It refuses unfinished tasks
+`alt uninstall` stops/removes only the owned service and launcher; on a Mac launchd keeps its
+disabled record for the label. It refuses unfinished tasks
 that still own worker inputs. Registered projects keep installed hook resources; otherwise
 application versions are removed. Configuration, certificate trust, histories, provider sessions
 and project worktrees remain. Updates do not prune prior versions. Removing retained data or

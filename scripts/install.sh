@@ -53,36 +53,12 @@ older_python() {
     return 1
 }
 
-# Output can end up in a shared log or issue, so the home directory reads as ~.
-tilde() {
-    case "$1" in
-        "$HOME"/*) printf '~%s\n' "${1#"$HOME"}" ;;
-        *) printf '%s\n' "$1" ;;
-    esac
-}
-
 sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -d ' ' -f 1
     else
         shasum -a 256 "$1" | cut -d ' ' -f 1
     fi
-}
-
-mac_stop() {
-    if [ -n "$python" ]; then
-        found="$(python_version "$python") at $(tilde "$python")"
-    else
-        found="3.12 or newer not found ($(older_python || echo 'no python3'))"
-    fi
-    cat >&2 <<EOF
-Altitude cannot be installed on this Mac yet. Nothing was installed or changed.
-  Detected: macOS $(sw_vers -productVersion 2>/dev/null || echo unknown) on $machine; Python $found
-  Missing: Altitude's native macOS runtime (background service and agent confinement) is not delivered yet.
-  Altitude $VERSION runs on Linux x86_64 with a systemd user service.
-  Follow macOS support: $REPOSITORY/issues/225
-EOF
-    exit 1
 }
 
 fetch() {
@@ -98,16 +74,20 @@ main() {
     system=$(uname -s)
     machine=$(uname -m)
     case "$system/$machine" in
-        Linux/x86_64 | Darwin/*) ;;
-        *) stop "Altitude $VERSION runs on Linux x86_64; this machine is $system $machine." ;;
+        Linux/x86_64 | Darwin/arm64) ;;
+        *) stop "Altitude $VERSION runs on Linux x86_64 or on a Mac with Apple silicon; this machine is $system $machine." ;;
     esac
     [ "$(id -u)" != 0 ] || stop "run this as the account that will use Altitude, not as root." \
         "Altitude installs into your home directory and needs no administrator rights."
-    python=$(find_python) || python=
-    # The macOS runtime (#225) replaces this stop; install.py and platform.py own its LaunchAgent.
-    [ "$system" != Darwin ] || mac_stop
-    [ -n "$python" ] || stop "Python 3.12 or newer was not found ($(older_python || echo 'no python3'))." \
-        "Install it first (Ubuntu 24.04 and newer include it: sudo apt install python3), then run this again."
+    if [ "$system" = Darwin ]; then
+        macos=$(sw_vers -productVersion 2>/dev/null) || macos=unknown
+        [ "${macos%%.*}" -ge 15 ] 2>/dev/null || stop "Altitude $VERSION needs macOS 15 or newer; this Mac runs macOS $macos." \
+            "Update macOS in System Settings > General > Software Update, then run this again."
+        python_fix="Install it first (with Homebrew: brew install python@3.12), then run this again."
+    else
+        python_fix="Install it first (Ubuntu 24.04 and newer include it: sudo apt install python3), then run this again."
+    fi
+    python=$(find_python) || stop "Python 3.12 or newer was not found ($(older_python || echo 'no python3'))." "$python_fix"
     command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
         stop "no SHA-256 tool (sha256sum or shasum) is installed." "Install coreutils, then run this again."
     for tool in curl openssl; do
@@ -116,6 +96,16 @@ main() {
     done
     [ "$system" != Linux ] || systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
         "Altitude runs as a systemd user service. Run this from a login or SSH session where systemctl --user works."
+    if [ "$system" = Darwin ]; then
+        # macOS's own openssl is LibreSSL, which cannot check a certificate's host name.
+        case "$(openssl version 2>/dev/null)" in
+            "OpenSSL "[3-9]*) ;;
+            *) stop "the openssl on PATH is $(openssl version 2>/dev/null || echo missing), not OpenSSL 3." \
+                "Install it (brew install openssl@3), put it ahead of /usr/bin (export PATH=\"\$(brew --prefix openssl@3)/bin:\$PATH\", also in your shell profile), then run this again." ;;
+        esac
+        launchctl print "gui/$(id -u)" >/dev/null 2>&1 || stop "no logged-in desktop session of this account is reachable." \
+            "Altitude runs as a LaunchAgent in your desktop session. Log in to this Mac's desktop, then run this again."
+    fi
 
     # macOS mktemp ignores TMPDIR without a template.
     workdir=$(mktemp -d "${TMPDIR:-/tmp}/altitude-install.XXXXXXXX")
