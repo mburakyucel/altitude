@@ -2387,7 +2387,50 @@ def _review_object(text: str) -> dict:
     raise ValueError("The review answer holds no JSON object.")
 
 
+def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str]]:
+    """#665: project structured error fields to fixed categories, never provider prose/source."""
+    try:
+        records = ([json.loads(stdout)] if engine == "claude" else
+                   [json.loads(line) for line in stdout.splitlines() if line.strip()])
+        if not all(isinstance(record, dict) for record in records):
+            return "malformed", []
+    except (ValueError, RecursionError):
+        return "malformed", []
+    messages, error_seen = [], False
+    for record in records:
+        if engine == "claude" and record.get("is_error") is True:
+            error_seen = True
+            values = record.get("errors", [])
+            if isinstance(values, list):
+                messages.extend(value for value in values if isinstance(value, str))
+            if isinstance(record.get("result"), str):
+                messages.append(record["result"])
+            if record.get("subtype") == "error_max_turns":
+                messages.append("maximum turns reached")
+        elif engine == "codex" and record.get("type") in ("turn.failed", "error"):
+            error_seen = True
+            error = record.get("error") if record["type"] == "turn.failed" else record
+            if isinstance(error, dict) and isinstance(error.get("message"), str):
+                messages.append(error["message"])
+    # Free-form error strings may echo prompts, captured source or private details. Only fixed
+    # vocabulary leaves this seam; even unknown codes/subtypes are not persisted.
+    categories = {
+        "authentication": r"authentication|unauthorized|invalid api key|not logged in",
+        "rate_limit": r"rate.?limit|quota|usage limit",
+        "connection": r"connection|connect(?:ion)? refused|network|timed? out|timeout",
+        "captured_input": r"captured_input|captured adapter|mcp",
+        "configuration": r"invalid (?:configuration|config|argument)|unknown (?:option|argument)|unrecognized (?:option|argument)",
+        "permission": r"permission denied|access denied|forbidden",
+        "context_limit": r"context (?:window|length|limit)|too many tokens",
+        "turn_limit": r"maximum turns|max turns",
+    }
+    labels = [label for label, pattern in categories.items()
+              if any(re.search(pattern, message, re.I) for message in messages)]
+    return ("recognized_error" if labels else "unrecognized_error" if error_seen else "no_structured_error"), labels
+
+
 def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_truncated=False,
+                        stdout=None, engine=None,
                         capture_complete=True, exception=None) -> dict:
     """Task-local failure evidence, never a copy of the provider's stdout transcript (#618)."""
     from . import incidents
@@ -2418,6 +2461,17 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
     evidence = {"exit_status": exit_status, "stderr": bounded.decode("utf-8", errors="ignore"),
                 "stderr_truncated": truncated or shortened,
                 "stdout_truncated": stdout_truncated, "capture_complete": capture_complete}
+    if stdout is None:
+        state, labels = "unavailable", []
+    elif not capture_complete:
+        state, labels = "incomplete", []
+    elif stdout_truncated:
+        state, labels = "truncated", []
+    elif not stdout.strip():
+        state, labels = "empty", []
+    else:
+        state, labels = _review_stdout_errors(engine, stdout)
+    evidence.update(stdout_state=state, stdout_errors=labels)
     if exception is not None:
         evidence["exception_type"] = type(exception).__name__
         evidence["errno"] = getattr(exception, "errno", None)
@@ -2520,6 +2574,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     def failed(error):
         return {**out, "error": error,
                 "diagnostics": _review_diagnostics(captures[1], exit_status=proc.returncode,
+                                                  stdout=stdout, engine=engine,
                                                   stdout_truncated=truncated,
                                                   capture_complete=not read_errors and not any(r.is_alive() for r in readers),
                                                   exception=failure_exception)}
