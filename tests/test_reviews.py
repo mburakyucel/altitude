@@ -126,6 +126,7 @@ class TestReviews(AltitudeCase):
                 completed = self.run_review(self.request(previous=failed["id"]))
                 self.assertEqual(completed["state"], "completed")
                 self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+                self.assess(completed)
                 previous = completed["id"]
                 self.engine.side_effect = run_engine_review
 
