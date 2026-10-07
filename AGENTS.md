@@ -35,7 +35,8 @@ ratchets the counts so mentions outside a seam can only fall.
 Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. Every
 change ships for macOS too, with host differences behind that seam. A change is confirmed on a
 platform only by recorded evidence from a run there; Linux delivery does not finish macOS
-confirmation. Until the Mac validation sandbox (#556) makes those runs routine, owners name missing
+confirmation. Owners run their candidate's checks on the Mac with `alt task validate`. For what a
+[macOS validation run](docs/DEVELOPMENT.md#macos-validation-runs) does not establish, owners name missing
 macOS confirmation in their PR and report and send L3 a tracking row for the relevant issue: #643
 for containers, #225 for native runtime, or #551 for installation. L3 maintains those rows.
 Linux merge checks and holds are unchanged. Supported-platform claims follow recorded native

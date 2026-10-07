@@ -1,10 +1,13 @@
-"""The validation runner: a task owner's command in a disposable rootless container, with no grant per run.
+"""The validation runner: a task owner's command against a throwaway clone of its committed HEAD, isolated from
+the operator's runtime, with no grant per run.
 
-altd builds the only image from its own deployed source (`scripts/validation.Containerfile`); a task's code enters
-a container at run time as a throwaway clone of the task branch's committed HEAD. The owner chooses the command,
-whether /dev/kvm is added and one container port published on 127.0.0.1. Everything else is fixed here: a non-root
-user mapped to the operator's account, no host mounts except the run's clone and results folder, rootless networking
-with host loopback closed, and one service unit whose limits bound the build, Podman and the container together.
+On Linux the command runs in a disposable rootless container. altd builds the only image from its own deployed source
+(`scripts/validation.Containerfile`). The owner chooses the command, whether /dev/kvm is added and one container port
+published on 127.0.0.1. Everything else is fixed here: a non-root user mapped to the operator's account, no host mounts
+except the run's clone and results folder, rootless networking with host loopback closed, and one service unit whose
+limits bound the build, Podman and the container together. On macOS, where Podman would need a virtual machine of its
+own, the command runs as a job under the platform's validation Seatbelt profile, with a home and temporary folder in
+its run area and nothing of altd's environment.
 The runner's storage sits beside Altitude's home, outside every worker's writable roots, and what a run produces
 reaches the task folder only through no-follow descriptors. Runs are recorded in the task's `machine.jsonl` like
 machine commands.
@@ -107,13 +110,37 @@ def container_command(name: str, run: Path, argv: list[str], *, kvm: bool, publi
             *(["--device=/dev/kvm"] if kvm else []),
             *([f"--publish=127.0.0.1:{publish[1]}:{publish[0]}"] if publish else []),
             f"--volume={run / 'work'}:/work", f"--volume={run / 'results'}:/results",
-            f"--volume={home() / 'cache'}:{IMAGE_CACHE}:O", "--env=ALTITUDE_VALIDATION=1", "--workdir=/work",
+            f"--volume={home() / 'cache'}:{IMAGE_CACHE}:O", "--env=ALTITUDE_VALIDATION=1",
+            "--env=VALIDATION_RESULTS=/results", "--workdir=/work",
             image_tag(), *argv]
+
+
+def native_script(run: Path, argv: list[str]) -> str:
+    """macOS: the owner's command in the run's clone under the validation profile. Its environment is only this: a
+    home and temporary folder in the run area, and altd's PATH without folders the profile hides."""
+    hidden = os.path.realpath(Path.home())
+    path = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
+            if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)]
+    env = {"HOME": str(run / "home"), "TMPDIR": str(run / "tmp"), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
+           "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
+    return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
+                      f"cd {shlex.quote(str(run / 'work'))} || exit 125",
+                      f"exec {shlex.join(platform.validation_command(run, config.PORT, argv, env))}"])
+
+
+def isolation() -> str:
+    """What isolated a run, for its record: the image tag, or the digest of the profile for a run area."""
+    if platform.validation_in_container():
+        return image_tag()
+    profile = platform.validation_profile(home() / "runs" / "run", config.PORT)
+    return "seatbelt:" + hashlib.sha256(profile.encode()).hexdigest()[:16]
 
 
 def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tuple[int, int] | None) -> str:
     """The unit's shell script: build the image when its Containerfile changed, refresh the verified cloud image
     for a VM run with the deployed runner's own code, then run the owner's command."""
+    if not platform.validation_in_container():
+        return native_script(run, argv)
     tag, pod = image_tag(), shlex.join(podman())
     lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
              f"{pod} image exists {tag} || {pod} build --quiet --tag={tag} "
@@ -132,14 +159,14 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
     return "\n".join(lines)
 
 
-def cleanup_script(runs: list[Path]) -> str:
-    """Remove every container on the runner's storage, the given run areas (files a container wrote as another
-    user are removed inside Podman's user namespace) and images of earlier Containerfiles."""
+def cleanup_script(paths: list[Path]) -> str:
+    """Remove every container on the runner's storage, the given paths (files a container wrote as another user
+    are removed inside Podman's user namespace) and images of earlier Containerfiles."""
     pod, tag = shlex.join(podman()), image_tag()
     return "\n".join([
         f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
         f"{pod} rm --all --force --time=0 >/dev/null",
-        *(f"{pod} unshare rm -rf {shlex.quote(str(run))}" for run in runs),
+        *(f"{pod} unshare rm -rf {shlex.quote(str(path))}" for path in paths),
         f"{pod} images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep '^localhost/altitude-validation:' "
         f"| grep -vx {shlex.quote(tag)} | xargs -r {pod} rmi --force >/dev/null",
         f"{pod} image prune --force >/dev/null", "exit 0"])
@@ -156,12 +183,12 @@ def _job(name: str, script: str, folder: Path, timeout: int, limits: bool) -> di
     return {**outcome, "started": started, **engines.machine_output(folder, name)}
 
 
-def _clone(worktree: Path, target: Path, project: str) -> str:
+def _clone(worktree: Path, target: Path, project: str) -> tuple[str, str]:
     """The task branch's committed HEAD as a repository of its own, with the project's remote-tracking branches
-    and tags, and the project's GitHub origin when it has one."""
+    and tags, and the project's GitHub origin when it has one. Returns the commit and its tree."""
     git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
-    commit = subprocess.run([*git, "-C", str(worktree), "rev-parse", "--verify", "HEAD^{commit}"],
-                            capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+    commit, tree = subprocess.run([*git, "-C", str(worktree), "rev-parse", "HEAD^{commit}", "HEAD^{tree}"],
+                                  capture_output=True, text=True, timeout=30, check=True).stdout.split()
     for step in (["clone", "--quiet", "--no-hardlinks", "--no-checkout", str(worktree), str(target)],
                  ["-C", str(target), "fetch", "--quiet", "--no-tags", str(worktree),
                   "+refs/remotes/origin/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"],
@@ -171,7 +198,7 @@ def _clone(worktree: Path, target: Path, project: str) -> str:
                             capture_output=True, text=True, timeout=10).stdout.strip()
     if re.fullmatch(r"(https://github\.com/|git@github\.com:)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", origin):
         subprocess.run([*git, "-C", str(target), "remote", "set-url", "origin", origin], check=True, timeout=10)
-    return commit
+    return commit, tree
 
 
 def _task_dir_fd(project: str, slug: str) -> int:
@@ -265,13 +292,31 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
     return target, skipped
 
 
-def cleanup(runs: list[Path]) -> dict:
-    name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
+def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
+    """Remove what runs left: Podman's containers on Linux, `unit`'s processes on macOS, and `paths`. Returns why
+    cleanup did not finish, or None."""
     try:
-        return _job(name, cleanup_script(runs), home(), 300, limits=False)
-    finally:
-        for path in engines.machine_files(home(), name):
-            path.unlink(missing_ok=True)
+        if platform.validation_in_container():
+            name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
+            try:
+                outcome = _job(name, cleanup_script(paths), home(), 300, limits=False)
+            finally:
+                for path in engines.machine_files(home(), name):
+                    path.unlink(missing_ok=True)
+            if outcome["exit"] != 0:
+                return f"the cleanup unit ended without success: {outcome['error'] or outcome['exit']}"
+        else:
+            if unit:
+                env = platform.manager_env(engines.clean_env())
+                platform.job_stop(unit, env)
+                if platform.job_active(unit, env):
+                    return f"processes of {unit} are still running"
+            for path in paths:
+                shutil.rmtree(path, ignore_errors=True)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return f"cleanup failed: {exc}"
+    left = [str(path) for path in paths if path.exists()]
+    return f"could not remove {', '.join(left)}" if left else None
 
 
 def _interrupted(area: Path) -> bool:
@@ -360,6 +405,10 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     unavailable = platform.validation_unavailable()
     if unavailable:
         raise ValueError(f"alt task validate: {unavailable}")
+    contained = platform.validation_in_container()
+    if not contained and (kvm or publish):
+        raise ValueError("alt task validate: --kvm and --publish need the Linux container runner; a macOS run binds "
+                         "free loopback ports itself")
     if not enabled():
         raise PermissionError(OFF)
     if kvm and not os.access(platform.KVM, os.R_OK | os.W_OK):
@@ -382,7 +431,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
     row, result, failure, stopped, target, skipped = None, None, None, False, None, []
     try:
-        for name in ("work", "results", "empty"):
+        for name in ("work", "results", "empty" if contained else "home", *(() if contained else ("tmp",))):
             (area / name).mkdir(parents=True)
         for name in ("storage", "tmp", "cache"):
             (home() / name).mkdir(exist_ok=True)
@@ -391,14 +440,15 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
                 raise PermissionError(OFF)
             _active.update(area=area, unit=unit, stopped=False)
         try:
-            commit = _clone(Path(task["worktree"]), area / "work", project)
+            commit, tree = _clone(Path(task["worktree"]), area / "work", project)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError(f"alt task validate: cannot copy the task branch's committed HEAD: {exc}") from exc
         ports = (publish, host_port()) if publish else None
         (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit}))
         row = T.start_machine_run(project, slug, lambda n: {
-            "purpose": "validation", "command": shlex.join(argv), "unit": unit, "commit": commit,
-            "image": image_tag(), "kvm": kvm, "publish": {"container": ports[0], "host": ports[1]} if ports else None,
+            "purpose": "validation", "command": shlex.join(argv), "unit": unit, "commit": commit, "tree": tree,
+            "host": platform.host_identity(), "isolation": isolation(), "kvm": kvm,
+            "publish": {"container": ports[0], "host": ports[1]} if ports else None,
             "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
         with _state:
             stopped = _active["stopped"]
@@ -415,34 +465,39 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     finally:
         with _state:
             _active.clear()
-        recorded = row is None
+        recorded, delivered, cleanup_error = row is None, target is not None, None
         try:
+            # Cleanup comes before the record, so a run whose cleanup failed is never recorded as a success. Evidence
+            # that was not delivered stays in place, and run.json and the delivery receipt stay until the record
+            # exists, for the next start to finish an interrupted one.
+            scratch = [area / name for name in ("work", "results", "empty", "home", "tmp") if delivered]
+            cleanup_error = cleanup([path for path in scratch if path.exists()], unit if row is not None else None)
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
                                     "error": "turned off before it started" if stopped else failure,
                                     "output": "", "output_truncated": False}
-                ended = ("turned off" if stopped else "failed" if failure else "exit" if result["exit"] is not None
+                ended = ("turned off" if stopped else "failed" if failure else "cleanup failed" if cleanup_error
+                         else "exit" if result["exit"] is not None
                          else "timeout" if result["timed_out"] else "no exit status")
                 if target is None:
                     target = area / "results"
                     row["log"] = str(engines.machine_files(area, unit)[0])
                 row.update({key: result[key] for key in ("exit", "timed_out", "started", "finished", "error")},
-                           ended=ended, results=str(target) if target else None, results_skipped=skipped)
+                           ended=ended, results=str(target) if target else None, results_skipped=skipped,
+                           cleanup=cleanup_error)
                 if failure and not row["error"]:
                     row["error"] = failure
                 T.finish_machine_run(project, slug, row)
                 recorded = True
-                if target != area / "results":
-                    (area / "run.json").unlink(missing_ok=True)
         finally:
             try:
-                # An unrecorded outcome keeps the area and its run.json for the next start to record; the containers
-                # stop either way.
-                cleanup([area] if recorded and target != area / "results" and area.exists() else [])
+                if recorded and delivered and not cleanup_error:
+                    shutil.rmtree(area, ignore_errors=True)
             finally:
                 if area.exists():
                     _ready.clear()
                     LOG.warning(f"validation: retained {area}; evidence or cleanup needs recovery before another run")
                 _lock.release()
-    return {**result, "n": row["n"], "commit": commit, "results": str(target), "results_skipped": skipped,
+    return {**result, "n": row["n"], "commit": commit, "tree": tree, "host": row["host"], "isolation": row["isolation"],
+            "ended": row["ended"], "cleanup": cleanup_error, "results": str(target), "results_skipped": skipped,
             "publish": row["publish"], "log": row["log"], "unit": unit}

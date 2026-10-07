@@ -1188,7 +1188,7 @@ def job_active(name: str, env: dict) -> bool:
 
 def job_stop(name: str, env: dict | None = None, *, timeout: int = 120) -> None:
     """Stop the job; `KillMode=control-group` takes every descendant with it (on macOS, every member of the job's
-    coalition). Callers confirm with `job_active`."""
+    coalition). A name with `*` stops every job it matches. Callers confirm with `job_active`."""
     if _darwin():
         return _launchd_job_stop(name, timeout)
     subprocess.run([SYSTEMCTL, "--user", "stop", name], capture_output=True, text=True, timeout=timeout, env=env)
@@ -1949,6 +1949,10 @@ def _launchd_job_active(name: str) -> bool:
 
 
 def _launchd_job_stop(name: str, timeout: int) -> None:
+    if "*" in name:  # every job whose record matches, as systemctl stops every unit a pattern matches
+        for path in _jobs().glob(_label(name)):
+            _launchd_job_stop(path.name.removeprefix("dev.altitude.job.") + ".service", timeout)
+        return
     label = _label(name)
     try:
         job = _print(label)
@@ -2253,14 +2257,61 @@ KVM = Path("/dev/kvm")
 
 
 def validation_unavailable() -> str | None:
-    """Why this host cannot run the validation runner's rootless Podman containers, or None when it can. macOS
-    runs Podman inside a virtual machine of its own and has no KVM, so the runner is not implemented there."""
+    """Why this host cannot run validation, or None when it can: rootless Podman containers on Linux x86_64, the
+    validation Seatbelt profile on a supported Mac."""
     if containerized():
         return "validation runs are unavailable inside this container image"
+    if _darwin():
+        return None if host_platform.machine() == "arm64" else "validation runs need Apple silicon on macOS"
     if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
-        return "validation runs need Linux x86_64 for now"
+        return "validation runs need Linux x86_64 or macOS on Apple silicon"
     missing = [tool for tool in ("podman", "slirp4netns") if not shutil.which(tool)]
     return f"validation runs need {' and '.join(missing)} on this computer" if missing else None
+
+
+def validation_in_container() -> bool:
+    """Whether a validation run is a rootless Podman container (Linux) rather than a process under the validation
+    Seatbelt profile (macOS, where Podman would need a virtual machine of its own)."""
+    return not _darwin()
+
+
+def validation_profile(area: Path, port: int) -> str:
+    """The Seatbelt profile of a macOS validation run, stricter than a worker's. The run may write only its own
+    `area`, the shared temporary folders and devices; read nothing in the operator's home except its area (Altitude's
+    records, credentials and checkouts stay out); reach no Unix socket under the home and nothing on Altitude's
+    `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd
+    refuses service control to every sandboxed process, so the run cannot start, stop or change a service."""
+    def paths(kind: str, values) -> str:
+        return " ".join(f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values)
+    home, own = os.path.realpath(Path.home()), os.path.realpath(area)
+    ancestors = [parent for parent in Path(own).parents if parent.is_relative_to(home)]
+    temporary = (os.path.realpath(_user_temp()), "/private/tmp", "/private/var/tmp", "/dev")
+    rules = ["(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))",
+             f"(deny file-write*)(allow file-write* {paths('subpath', (own, *temporary))})",
+             f"(deny file-read* {paths('subpath', [home])})(allow file-read* {paths('subpath', [own])})",
+             f"(allow file-read-metadata {paths('literal', ancestors)})" if ancestors else "",
+             f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
+             f"(deny network-outbound (remote unix-socket {paths('subpath', [home])}))",
+             f"(allow network-outbound (remote unix-socket {paths('subpath', [own])}))",
+             '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))']
+    return "".join(rules)
+
+
+def validation_command(area: Path, port: int, argv: list[str], env: dict[str, str]) -> list[str]:
+    """`argv` under the validation profile with exactly `env`: nothing of altd's own environment crosses."""
+    return [SANDBOX_EXEC, "-p", validation_profile(area, port), ENV_BIN, "-i",
+            *(f"{key}={env[key]}" for key in sorted(env)), *argv]
+
+
+def host_identity() -> str:
+    """The OS, its version and the architecture, as validation evidence names the host."""
+    if _darwin():
+        return f"macOS {host_platform.mac_ver()[0]} {host_platform.machine()}"
+    try:
+        release = host_platform.freedesktop_os_release().get("PRETTY_NAME", "")
+    except OSError:
+        release = ""
+    return " ".join(filter(None, (release, f"Linux {host_platform.release()}", host_platform.machine())))
 
 
 def validation_runroot() -> str:
