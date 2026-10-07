@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
+import fnmatch
 from contextlib import ExitStack, contextmanager
 import ipaddress
 import json
@@ -1974,6 +1975,83 @@ def _altitude_coalitions() -> dict[int, str]:
     if os.environ.get("ALTITUDE_SERVICE") == "1":
         units[_coalition_of(os.getpid())] = SERVICE
     return {coalition: unit for coalition, unit in units.items() if coalition}
+
+
+def require_native_browser_trial() -> None:
+    require_native_application()
+    if not _darwin():
+        raise RuntimeError("The native browser trial requires macOS; Linux uses its validation container")
+
+
+def _native_trial_job_root(excluded_roots: tuple[Path, ...]) -> Path:
+    root = _jobs()
+    if any(root.is_relative_to(p) or any(fnmatch.fnmatch(str(parent), str(p)) for parent in (root, *root.parents))
+           for p in excluded_roots):
+        raise RuntimeError("Native job records overlap worker write roots")
+    for path in (root, *root.parents):
+        st = path.lstat()
+        if stat.S_ISLNK(st.st_mode) or st.st_mode & 0o022:
+            raise RuntimeError("Native job record ancestry protection is unavailable")
+    if root.stat().st_uid != os.getuid():
+        raise RuntimeError("Native job record owner differs from the operator")
+    return root
+
+
+def native_trial_worker_specs(*, unit_prefixes: tuple[str, ...], excluded_roots: tuple[Path, ...]) -> list[dict]:
+    """Protected live launch evidence, retaining the actual roots after mutable task records change (#625).
+
+    Use the existing job/coalition lifetime checks, never task-writable worker records or process-name matching.
+    A malformed, shared-writable or linked job record makes cleanup uncertain instead of widening its targets.
+    """
+    if not _darwin() or containerized():
+        raise RuntimeError("Native runtime job evidence requires the native Mac platform")
+    root = _native_trial_job_root(excluded_roots)
+    found = []
+    for job in root.glob("*"):
+        if not job.name.startswith(tuple("dev.altitude.job." + prefix for prefix in unit_prefixes)):
+            continue
+        for path in (job, job / "spec.json"):
+            st = path.lstat()
+            if stat.S_ISLNK(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
+                raise RuntimeError("Native job record protection is unavailable")
+        with (job / "spec.json").open() as stream:
+            spec = json.load(stream)
+        if spec.get("label") != job.name or not isinstance(spec.get("command"), list):
+            raise RuntimeError("Native job identity is unavailable")
+        name = job.name.removeprefix("dev.altitude.job.") + ".service"
+        if job_active(name, {}):
+            found.append({**spec, "unit": name})
+    return found
+
+
+def native_runtime_jobs(executable: Path, *, unit_prefixes: tuple[str, ...], excluded_roots: tuple[Path, ...]) -> list[str]:
+    return sorted(spec["unit"] for spec in native_trial_worker_specs(
+        unit_prefixes=unit_prefixes, excluded_roots=excluded_roots) if str(executable) in spec["command"])
+
+
+def native_temporary_roots() -> tuple[Path, ...]:
+    # Keep parity with seatbelt_profile's private temp/cache parent and fixed device/temp roots.
+    return tuple(dict.fromkeys(Path(p).resolve() for p in
+                 (Path(_user_temp()).resolve().parent, "/private/tmp", "/private/var/tmp", "/dev", tempfile.gettempdir())))
+
+
+@contextmanager
+def native_browser_trial_deadline(seconds: int):
+    """Bound each foreground trial/recovery phase below the outer grant timeout (#625)."""
+    require_native_browser_trial()
+    def expired(signum, frame):
+        raise NativeBrowserTrialDeadline("Native browser trial phase deadline expired")
+    previous = signals.signal(signals.SIGALRM, expired)
+    previous_timer = signals.setitimer(signals.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signals.setitimer(signals.ITIMER_REAL, *previous_timer)
+        signals.signal(signals.SIGALRM, previous)
+
+
+class NativeBrowserTrialDeadline(BaseException):
+    """An internal transaction deadline must pass through service/status RuntimeError handlers."""
 
 
 # --- macOS: processes and sockets ---------------------------------------------------------------------------------

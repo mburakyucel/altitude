@@ -1630,9 +1630,15 @@ timings and candidate identity; [operations](OPERATIONS.md) covers service activ
 
 That sandbox-disabled launch belongs only to Altitude's fictional local UI harness. The shared worker
 launcher tells fresh and resumed owners to run verification that needs the browser's own sandbox
-through `alt task validate`, where Playwright's Chromium keeps it, and to fault-block if the runner is
-unavailable or the browser refuses its sandbox there. `make browser-sandbox` records the protections
-Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
+through `alt task validate`, where Playwright's Chromium keeps it. Explicitly authorized native runtime
+acceptance uses the actual fresh intended confined candidate worker, after recording protected package,
+effective policy/roots and native job identity, with sandbox-enabled finite blank/local preflight and
+disposable storage/cleanup. OS detection and preparation/installation alone grant no native eligibility.
+An unavailable required context/protection or failed sandbox launch fault-blocks the owner; a host grant
+never supplies browser acceptance. The [native trial transaction](OPERATIONS.md#native-browser-runtime-trial)
+uses an already-admitted foreground operator command and fixed protected stock restoration, retaining
+grant/role/revocation and guarded activation boundaries. It adds no background watcher or new admission.
+`make browser-sandbox` remains the Linux container route. See [browser verification](DEVELOPMENT.md#browser-verification).
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. Pushing the approved tag runs the release
