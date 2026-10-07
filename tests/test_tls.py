@@ -551,8 +551,8 @@ class TestShare(ServiceCase):
     """`alt tls-share` offers only the public CA, over plain HTTP, on the address a phone reaches."""
 
     def test_a_loopback_wildcard_or_plain_http_service_is_refused_before_anything_is_offered(self):
-        for settings, message in (({}, "configured for 127.0.0.1, which only this computer can open. Set the "
-                                       "service's ALTITUDE_HOST"),
+        for settings, message in (({}, "configured for 127.0.0.1, which only this computer can open. For this "
+                                       "computer, run alt doctor"),
                                   ({"host": "localhost"}, "configured for localhost"),
                                   ({"host": "::1"}, "configured for ::1"),
                                   ({"host": "0.0.0.0"}, "configured for 0.0.0.0"),
@@ -599,7 +599,11 @@ class TestShare(ServiceCase):
         for row in tls.fingerprint_rows(authority["sha256"]):
             self.assertIn(row, page)
         for text in ('href="/altitude.mobileconfig"', 'href="/ca.crt"', "Certificate Trust Settings",
-                     f'href="https://127.0.0.1:{health.port}"', "If it differs, stop here."):
+                     f'href="https://127.0.0.1:{health.port}"', "If it differs, stop here.",
+                     "Set up this device for Altitude", 'id="linux"', 'id="macos"', 'id="ios"', 'id="android"',
+                     "openssl x509 -in ca.crt -noout -subject -fingerprint -sha256",
+                     "Installed by you › Trusted Certificates › Import", "Secure Sockets Layer (SSL)",
+                     "This HTTP download page alone cannot prove", "Never transfer", "Verify HTTPS before pairing"):
             self.assertIn(text, page)
         with urllib.request.urlopen(link + "altitude.mobileconfig", timeout=5) as response:
             self.assertEqual(response.headers["Content-Type"], "application/x-apple-aspen-config")
@@ -631,7 +635,9 @@ class TestShare(ServiceCase):
         for row in tls.fingerprint_rows(authority["sha256"]):
             self.assertIn(row, steps)
         self.assertIn("contains only a Certificate, named Altitude local CA", steps)
-        self.assertIn("Before tapping Install", steps)
+        self.assertIn("Before installing", steps)
+        self.assertIn("open this link on your desktop", steps)
+        self.assertIn("Linux, macOS, iPhone/iPad and Android steps", steps)
         self.assertIn(tls.describe_scope(authority["scope"]), steps)
         self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
         self.assertIn(f"open https://127.0.0.1:{health.port} in a new Private tab", steps)

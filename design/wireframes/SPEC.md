@@ -1316,34 +1316,40 @@ once in the row ("It will need a new code to open Altitude again.", or "This bro
 the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
-With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. Add a phone shows a setup link and QR code, or run `alt tls-share` on the computer running
-Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
+With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
+Open a setup link and QR code here, or run `alt tls-share` on the computer running
+Altitude.", the primary **Set up a device** button, "Before trusting the downloaded certificate, check that its
 name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
 CA) and Expires. An unreadable certificate shows "Could not read the certificate: <reason>" in red;
 without HTTPS or a CA file the card is absent.
 
-| Add a phone state | What appears and what actions do |
+| Set up a device state | What appears and what actions do |
 | --- | --- |
-| Ready | **Add a phone**. |
+| Ready | **Set up a device**. |
 | Opening | **Opening…**, disabled. |
-| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with another phone’s camera, or open setup on this device in a new tab.", a primary **Open setup page** link, the address in small monospace, "Closes in 9:41" counting down each second and **Close**. Opening setup creates a new tab without opener access; the original page keeps the QR, timer, name and SHA-256 for the check. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Open setup on this device, enter the link on another computer, or scan the QR with a phone. Keep this Settings page open while downloading.", a primary **Open setup page** link, the address in small monospace, "Closes in 9:41" counting down each second and **Close**. Opening setup creates a new tab without opener access; the original page keeps the QR, timer, name and SHA-256 for the check. |
 | Closing | **Closing…**, disabled, while the service closes the link; **Open setup page** is absent. |
 | Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
-| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
-| Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
+| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Set up a device** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
+| Refused | The service's reason in red under **Set up a device**, such as a loopback-only or plain-HTTP service. |
 
-The phone page the QR code opens is served by the share link itself, light or dark with the phone:
-**Add this phone to Altitude**, "This lets the phone recognise your Altitude as genuine. Your phone
-asks you to approve each step.", a grey card with the CA name, its SHA-256 in four monospace rows and
-"It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.", then
-**iPhone or iPad** with a full-width blue **Download the profile** and four numbered steps (Allow and
+The setup page is served by the share link itself, light or dark with the device:
+**Set up this device for Altitude**, deliberate trust guidance, and a grey card with the CA name
+and SHA-256 in four monospace rows. It requires comparison with the trusted original Settings page
+or terminal, because the HTTP page alone proves no identity. Bordered navigation links jump to
+**Linux**, **macOS**, **iPhone or iPad** and **Android**. The desktop download section offers the
+public `ca.crt`, its read-only OpenSSL fingerprint command, and a single-certificate contents check.
+Linux instructions cover current/older Chromium certificate managers and Firefox Authorities;
+macOS uses the login keychain with explicit SSL trust, plus Firefox's separate import where needed.
+**iPhone or iPad** has a full-width blue **Download the profile** and four numbered steps (Allow and
 Close; Settings › Profile Downloaded, check the certificate name and More Details SHA-256, Install
 with the passcode, or Remove; Certificate Trust Settings; open the HTTPS address in a new Private tab
-with no warning, then pair), and **Android and other devices** with a grey **Download the
-certificate** and two steps. It names no step as automatic. `web/e2e/certificate.pw.ts` walks the
-card, every Add a phone state and the phone page at both widths.
+with no warning, then pair), and **Android** has **Download the Android certificate** and two steps.
+The final section verifies the exact HTTPS URL without a warning before pairing, distinguishing
+host-local and remote addresses and private-window pairing. It names no trust step as automatic.
+`web/e2e/certificate.pw.ts` walks the card, every sharing state, platform navigation, downloads,
+identity checks and verification instructions at both widths. Listening is inapplicable to this flow.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
@@ -1429,8 +1435,10 @@ a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the c
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
 field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning. To set up a phone, use Add a phone in Settings › Devices on a paired
-device, or run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+after it opens without a warning." The guidance points container users to the host launcher's public
+certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
+on the hosting computer. For localhost it directs the operator to `alt doctor` and the public `ca_cert`
+file. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |

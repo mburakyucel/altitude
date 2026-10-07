@@ -82,8 +82,11 @@ onboarding pass with fictional engines; Mac and real-account compatibility remai
    Altitude from a [source checkout](docs/SETUP.md#install-the-application) for now.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
-3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device) (`alt tls-share`
-   offers the certificate to a phone), open the printed HTTPS URL, [pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
+3. Follow the [certificate trust guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device).
+   On the hosting computer, use the public CA file reported by `alt doctor`; on another device,
+   use **Set up a device** or `alt tls-share` with your configured network address. Compare its
+   fingerprint, trust it deliberately, then verify the exact HTTPS URL without a warning.
+   [Pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
    use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
 <details>
