@@ -537,7 +537,7 @@
 +mod metadata_tests;
 --- /dev/null
 +++ b/codex-rs/sandboxing/src/seatbelt_metadata_tests.rs
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,437 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use std::collections::HashMap;
@@ -577,10 +577,13 @@
 +            panic!("expected predicate: {self:?}");
 +        };
 +        match parts[0].atom() {
-+            "allow" => parts[1..]
-+                .iter()
-+                .filter(|part| matches!(part, Self::List(_)))
-+                .any(|part| part.matches(path, params)),
++            "allow" => {
++                let predicates = parts[1..]
++                    .iter()
++                    .filter(|part| matches!(part, Self::List(_)))
++                    .collect::<Vec<_>>();
++                predicates.is_empty() || predicates.iter().any(|part| part.matches(path, params))
++            }
 +            "require-all" => parts[1..].iter().all(|part| part.matches(path, params)),
 +            "require-not" => !parts[1].matches(path, params),
 +            "literal" | "path" | "subpath" => {
@@ -948,7 +951,7 @@
 +    let child = cwd.join("child");
 +    fs::create_dir(&child).expect("child root");
 +    let policy = restricted_write_policy(&[&cwd, &child]);
-+    let mut args = metadata_args(
++    let args = metadata_args(
 +        &policy,
 +        &cwd,
 +        MacosSeatbeltProfile::Process,
@@ -961,6 +964,14 @@
 +        .position(|arg| arg == "-p")
 +        .expect("policy argument")
 +        + 1;
-+    args[index].push_str("\n(allow file-write* (subpath (param \"WRITABLE_ROOT_0\")))\n");
-+    assert!(emitted_write_allows(&args, &target));
++    for grant in [
++        "(allow file-write* (subpath (param \"WRITABLE_ROOT_0\")))",
++        "(allow file-write*)",
++        "(allow file-read* file-write*)",
++    ] {
++        let mut extended = args.clone();
++        extended[index].push('\n');
++        extended[index].push_str(grant);
++        assert!(emitted_write_allows(&extended, &target), "{grant}");
++    }
 +}
