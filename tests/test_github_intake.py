@@ -18,12 +18,66 @@ class TestGitHubIntake(AltitudeCase):
 
     def test_reference_parsing(self):
         url = "https://github.com/acme/widget/issues/121"
-        self.assertEqual(github_intake.task_reference("Fix", f"Please implement {url}"), ("acme", "widget", 121))
-        self.assertEqual(github_intake.task_reference("Implement GitHub issue #127", "focused brief"), (None, None, 127))
-        for text in (url + "?tab=1", "Fix https://github.com/acme/widget/pull/121", "Fix issue #121"):
-            self.assertIsNone(github_intake.task_reference("ordinary task", text), text)
+        self.assertEqual(github_intake.task_reference("Fix", f"Please implement {url}", ("acme", "widget")), 121)
+        self.assertEqual(github_intake.task_reference("Implement GitHub issue #127", "focused brief", ("acme", "widget")), 127)
+        for text in (url + "?tab=1", url + "/", url + "#fragment", url + "abc", url + "%2f",
+                     "Fix https://github.com/acme/widget/pull/121", "Fix issue #121"):
+            self.assertIsNone(github_intake.task_reference("ordinary task", text, ("acme", "widget")), text)
         with self.assertRaises(github_intake.IssueIntakeError):
-            github_intake.task_reference("GitHub issue #1", f"and {url}")
+            github_intake.task_reference("GitHub issue #1", f"and {url}", ("acme", "widget"))
+
+    def test_external_references_stay_context_without_gh_fetch(self):
+        external = "https://github.com/other/widget/issues/121"
+        brief = f"Use {external} and https://github.com/another/repo/issues/2 as context."
+        with mock.patch.object(github_intake.subprocess, "run", return_value=REMOTE) as run:
+            task = T.new("p", "Capability change", brief, actor="burak")
+        self.assertEqual([call.args[0][0] for call in run.call_args_list], ["git"])
+        self.assertEqual((S.task_dir("p", task["slug"]) / "request.md").read_text(), brief + "\n")
+
+    def test_external_context_does_not_conflict_with_local_parent(self):
+        external = "https://github.com/other/repo/issues/1"
+        local = "https://github.com/Acme/Widget/issues/121"
+        briefs = [f"Compare {external} while implementing {local}",
+                  f"Implement GitHub issue #121 with context {external}",
+                  f"{local} and GitHub issue #121; context {external}"]
+        gh = subprocess.CompletedProcess([], 0, json.dumps(ISSUE), "")
+        for i, brief in enumerate(briefs):
+            with self.subTest(brief=brief), mock.patch.object(github_intake.subprocess, "run", side_effect=[REMOTE, gh]) as run:
+                task = T.new("p", f"Mixed references {i}", brief, actor="burak")
+            self.assertIn(brief, (S.task_dir("p", task["slug"]) / "request.md").read_text())
+            self.assertEqual(run.call_args.args[0][3:6], ["121", "--repo", "acme/widget"])
+
+    def test_conflicting_local_parents_refuse_before_issue_fetch(self):
+        with mock.patch.object(github_intake.subprocess, "run", return_value=REMOTE) as run:
+            with self.assertRaisesRegex(T.TransitionError, "conflicting"):
+                T.new("p", "Ambiguous local", "GitHub issue #121 and https://github.com/acme/widget/issues/122; "
+                      "context https://github.com/other/repo/issues/9", actor="burak")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(list(S.tasks_dir("p").glob("ambiguous-local*")), [])
+
+    def test_common_chat_formatting_preserves_local_parent_intake(self):
+        url = "https://github.com/acme/widget/issues/121"
+        gh = subprocess.CompletedProcess([], 0, json.dumps(ISSUE), "")
+        for i, text in enumerate((f"**{url}**", f"_{url}_", f"{url}!", f"Link:{url}",
+                                  f"{url}—see context", f"{url}。", f"“{url}”")):
+            with self.subTest(text=text), mock.patch.object(github_intake.subprocess, "run", side_effect=[REMOTE, gh]):
+                task = T.new("p", f"Formatted parent {i}", text, actor="burak")
+            self.assertIn("## GitHub issue", (S.task_dir("p", task["slug"]) / "request.md").read_text())
+
+    def test_context_only_brief_needs_no_github_origin_but_shorthand_does(self):
+        brief = "Context https://github.com/other/repo/issues/121"
+        origins = [subprocess.CompletedProcess([], 1, "", "no origin"),
+                   subprocess.CompletedProcess([], 0, "https://fictional.invalid/acme/widget", ""),
+                   subprocess.TimeoutExpired(["git"], 20), OSError("fictional git failure")]
+        for i, response in enumerate(origins):
+            with self.subTest(origin=response), mock.patch.object(github_intake.subprocess, "run", side_effect=[response]) as run:
+                task = T.new("p", f"Context without origin {i}", brief, actor="burak")
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual((S.task_dir("p", task["slug"]) / "request.md").read_text(), brief + "\n")
+            with mock.patch.object(github_intake.subprocess, "run", side_effect=[response]) as run:
+                with self.assertRaises(T.TransitionError):
+                    T.new("p", "Explicit local parent", brief + "; GitHub issue #2", actor="burak")
+            self.assertEqual(run.call_count, 1)
 
     def test_issue_is_inlined_once_at_creation(self):
         gh = subprocess.CompletedProcess([], 0, json.dumps(ISSUE), "")
@@ -39,8 +93,7 @@ class TestGitHubIntake(AltitudeCase):
         run.assert_not_called()
 
     def test_failures_refuse_the_task_without_leaking_output(self):
-        cases = [("https://github.com/other/widget/issues/121", [REMOTE], "different repository"),
-                 ("Fix https://github.com/acme/widget/issues/121",
+        cases = [("Fix https://github.com/acme/widget/issues/121",
                   [REMOTE, subprocess.CompletedProcess([], 1, "", "credential-looking-secret")], "could not be read"),
                  ("Fix GitHub issue #121", [REMOTE, subprocess.TimeoutExpired(["gh"], 120)], "timed out")]
         for request, responses, message in cases:

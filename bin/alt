@@ -22,7 +22,7 @@ L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
-    ("issue", "new"), ("issue", "comment"), ("issue", "close"),
+    ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "inspect"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "preserve-checkout", "recheck-ci", "handoff", "grant", "release")),
     *(("incident", name) for name in ("new", "amend", "publish")),

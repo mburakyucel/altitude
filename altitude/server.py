@@ -290,6 +290,12 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             options = merge_approval_parser().parse_args(args[2:])
             receipt = apply_recorded_merge_approval(project, **vars(options))
             return {"returncode": 0, "stdout": json.dumps(receipt) + "\n", "stderr": ""}
+        if args[:2] == ["issue", "inspect"]:
+            from . import github_inspection
+            if stdin:
+                raise ValueError("alt issue inspect: no input body is accepted")
+            options = github_inspection.parser().parse_args(args[2:])
+            return {"returncode": 0, "stdout": github_inspection.inspect(project, **vars(options)), "stderr": ""}
         if args[:1] == ["issue"]:
             options = vars(issue_parser().parse_args(args[1:]))
             options.pop("text", None)
