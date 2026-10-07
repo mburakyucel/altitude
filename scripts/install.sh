@@ -117,7 +117,8 @@ main() {
     [ "$system" != Linux ] || systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
         "Altitude runs as a systemd user service. Run this from a login or SSH session where systemctl --user works."
 
-    workdir=$(mktemp -d)
+    # macOS mktemp ignores TMPDIR without a template.
+    workdir=$(mktemp -d "${TMPDIR:-/tmp}/altitude-install.XXXXXXXX")
     trap 'rm -rf "$workdir"' EXIT
     printf 'Installing Altitude %s ...\n' "$VERSION"
     fetch "$ARCHIVE" "$ARCHIVE_SHA256"

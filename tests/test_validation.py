@@ -551,6 +551,12 @@ class TestMacValidationRunner(RunnerCase):
         self.patch(platform, "validation_temp", side_effect=lambda run: self.tmp / f"av-{run}")
         hidden = Path.home() / "bin"
         self.setenv("PATH", f"{hidden}:{os.environ['PATH']}")
+        self.developer = self.tmp / "Developer"
+        (self.developer / "usr/bin").mkdir(parents=True)
+        select = self.bin_dir / "xcode-select"
+        select.write_text(f"#!/bin/sh\n[ \"$1\" = -p ] && echo {shlex.quote(str(self.developer))}\n")
+        select.chmod(0o755)
+        self.patch(platform, "XCODE_SELECT", str(select))
 
     def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
         (self.repo / "uncommitted.txt").write_text("not tested\n")
@@ -568,6 +574,10 @@ class TestMacValidationRunner(RunnerCase):
         self.assertFalse({key for key in env if key.startswith(("ALTITUDE_", "GIT_", "CLAUDE", "CODEX"))}
                          - {"ALTITUDE_VALIDATION"}, "nothing of altd's environment crosses")
         self.assertNotIn(str(Path.home() / "bin"), env["PATH"].split(":"), "folders the profile hides are dropped")
+        altd = self.altd_path()
+        at = altd.index("/usr/bin") if "/usr/bin" in altd else len(altd)
+        self.assertEqual(env["PATH"].split(":"), [*altd[:at], str(self.developer / "usr/bin"), *altd[at:]],
+                         "git and python3 skip /usr/bin's xcrun shims; altd's earlier entries still come first")
         self.assertEqual(self.profile.read_text(), platform.validation_profile(
             (area / "work", area / "results", area / "home", self.tmp / f"av-{area.name}"),
             area / f"{result['unit']}.log",
@@ -581,6 +591,16 @@ class TestMacValidationRunner(RunnerCase):
         self.assertTrue(row["isolation"].startswith("seatbelt:"))
         self.assertEqual(row["isolation"], validation.isolation(), "the digest does not depend on the run's folder")
         self.assertTrue(row["host"].startswith("macOS "))
+
+    def altd_path(self):
+        home = os.path.realpath(Path.home())
+        return [entry for entry in os.environ["PATH"].split(":")
+                if entry and not Path(os.path.realpath(entry)).is_relative_to(home)]
+
+    def test_a_host_without_developer_tools_keeps_altds_path(self):
+        self.patch(platform, "XCODE_SELECT", str(self.tmp / "absent"))
+        result = self.validate(["sh", "-c", 'echo "$PATH" > "$VALIDATION_RESULTS/path"'])
+        self.assertEqual((Path(result["results"]) / "path").read_text().strip().split(":"), self.altd_path())
 
     def test_container_options_are_refused(self):
         self.assertIn("Linux container runner", self.validate(["true"], kvm=True, status=400)["error"])
