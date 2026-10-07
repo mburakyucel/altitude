@@ -65,8 +65,10 @@ Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agen
 coding account's allowance and normal charges.
 
 [Linux container support](docs/CONTAINERS.md) is under validation. Its rootless Podman candidate uses
-dedicated project volumes and an explicit security exception. Linux lifecycle, backup and browser
-onboarding pass with fictional engines; Mac and real-account compatibility remain unverified.
+dedicated project volumes and an explicit security exception. Linux lifecycle and backup pass
+fixture checks; one live run verifies real sign-in, browser onboarding and authentication across
+image replacement. [Recorded evidence](docs/CONTAINERS.md#live-linux-run) names the remaining
+delivery and platform gaps; Mac acceptance remains unverified.
 
 1. Install the current release candidate as the account that will use Altitude:
 

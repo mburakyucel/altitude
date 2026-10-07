@@ -539,6 +539,10 @@ not claim those fixtures prove live provider compatibility. Record any additiona
 behavior in the task report. The native sandbox probe in `test_l3_privilege.py` is an existing
 explicit host-capability check with no model request; it is outside default test applicability.
 
+The operator separately authorizes one [live Linux container run](CONTAINERS.md#live-linux-run)
+on 2026-10-06. Its real sign-in, onboarding and single-task evidence do not change the fixture-based
+CI policy or authorize repeated provider runs.
+
 Image integration fixtures require the detected local `ffmpeg` converter (`ffmpeg` on Debian/Ubuntu).
 Color tests use the detected system `liblcms2` library (`liblcms2-2` on Debian/Ubuntu) for bounded
 color conversion; production reports unavailable profile conversion explicitly when it is absent.
