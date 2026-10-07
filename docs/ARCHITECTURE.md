@@ -634,7 +634,9 @@ live-provider compatibility remains unverified under the standing testing decisi
 
 Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
 evidence in the existing task-owned record. Recognized structured stdout error fields yield fixed
-diagnostic categories; stdout transcripts and arbitrary error prose are not copied into diagnostics.
+diagnostic categories, and a Claude result's allowlisted failure facts (subtype, terminal reason, API
+error kind and status) locate failures no category recognizes; stdout transcripts and arbitrary error
+prose are not copied into diagnostics.
 Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
 The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
