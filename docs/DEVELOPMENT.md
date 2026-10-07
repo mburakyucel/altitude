@@ -198,6 +198,9 @@ interception stays on for each test's browser context, so an overlay that expire
 while the app sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts`
 guards this.
 
+Loading walkthroughs scope assertions to their owning region; the Send now case holds independent
+Conversation and Work reads together so both loading states are present on desktop.
+
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
 no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
 (conversation, project isolation, task lifecycle, L2 progress, image input, file references,
