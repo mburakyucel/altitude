@@ -168,17 +168,21 @@ describe("mounted transcript reader", () => {
     expect(result.current.data?.has_earlier).toBe(true);
   });
 
-  it("keeps the reading window when Pause arrives during a recent-tail refresh", async () => {
+  it.each([false, true])("keeps the reading window when Pause arrives during a recent-tail refresh (queued history: %s)", async (older) => {
     let initial = 0;
+    const requests: URL[] = [];
     let releaseTail!: (value: Response) => void;
     let releaseHistory!: (value: Response) => void;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const mode = new URL(url, "http://local").searchParams.get("mode");
+      const request = new URL(url, "http://local");
+      requests.push(request);
+      const mode = request.searchParams.get("mode");
       if (mode === "initial") {
         if (++initial === 1) return response(page());
         return new Promise<Response>(resolve => { releaseTail = resolve; });
       }
       if (mode === "reconcile") return new Promise<Response>(resolve => { releaseHistory = resolve; });
+      if (mode === "history") return response(page({ cursor: "new:901", lower: "10", events: [row("older", "10", 1)] }));
       return response(page({ cursor: "new:901", events: [] }));
     }));
     const { result, rerender } = renderHook(({ following }) =>
@@ -189,11 +193,19 @@ describe("mounted transcript reader", () => {
     focus();
     await waitFor(() => expect(releaseTail).toBeDefined());
     rerender({ following: false });
+    if (older) act(() => result.current.loadOlder());
     await act(async () => releaseTail(response(page({ cursor: "new:900", lower: "80", events: [row("latest", "90", 900)] }))));
     expect(result.current.data?.events.map(e => e.id)).toEqual(["recent"]);
     await waitFor(() => expect(releaseHistory).toBeDefined());
+    const bounds = requests.find(request => request.searchParams.get("mode") === "reconcile")!.searchParams;
+    expect(bounds.get("lower")).toBe("20");
+    expect(bounds.get("after")).toBe("");
+    expect(bounds.get("cursor")).toBe("");
     await act(async () => releaseHistory(response(page({ cursor: "new:901", events: [row("recent", "20", 1), row("latest", "90", 900)] }))));
-    await waitFor(() => expect(result.current.reconnecting).toBe(false));
-    expect(result.current.data?.events.map(e => e.id)).toEqual(["recent", "latest"]);
+    await waitFor(() => expect(result.current.catchingUp).toBe(false), { timeout: 3500 });
+    expect(result.current.reconnecting).toBe(false);
+    expect(result.current.data?.events.map(e => e.id)).toEqual(older ? ["older", "recent", "latest"] : ["recent", "latest"]);
+    expect(requests.map(request => request.searchParams.get("mode"))).toEqual(["initial", "initial", "reconcile", ...(older ? ["history"] : []), "delta"]);
+    expect(requests.at(-1)?.searchParams.get("cursor")).toBe("new:901");
   });
 });

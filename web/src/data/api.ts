@@ -1008,7 +1008,7 @@ export function useTranscript(
         reader.catchingUp = true;
       }
       const history = historyWanted && !reader.sync && !reader.tail && !!reader.data?.has_earlier;
-      historyWanted = false;
+      if (history || !reader.data?.has_earlier) historyWanted = false;
       const sync = reader.sync;
       const mode = sync ? "reconcile" : history ? "history" : reader.data && !reader.tail ? "delta" : "initial";
       const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt), raw: raw ? "1" : "0", mode });

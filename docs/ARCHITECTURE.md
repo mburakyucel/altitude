@@ -2489,7 +2489,9 @@ concise status with its complete reason in details; a fault retains a visible ca
 scrolling column and expands on request. It appears only while both its public words and recorded
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
-reader's position. Stop is one click in the task header at both viewports, serving Conversation and
+reader's position. Following stays at latest through preview expiration and replacement; React
+commits restore the bottom before queued layout-induced scroll events can change following.
+Stop is one click in the task header at both viewports, serving Conversation and
 Live session with one action. Stop, Continue and Check status share its button treatment and position.
 It remains Stopping until termination is evidenced; failed or unknown
 termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
