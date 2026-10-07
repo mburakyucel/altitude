@@ -150,11 +150,15 @@ unix_server.close(); tcp_server.close(); broker.unlink()
 records['versions'] = {name: command(args).stdout.strip() for name, args in {
     'native_diagnostic': [str(binary), '--version'], 'bwrap': ['bwrap', '--version'],
     'git': ['git', '--version'], 'systemd': ['/lib/systemd/systemd', '--version']}.items()}
-records['limits'] = ['No provider, real credentials, external network or real coordinator broker. Image daemon stays on its separate state root.',
+records['limits'] = ['No provider, real credentials or real coordinator broker. Image daemon stays on its separate state root.',
+                     'The reviewed slirp4netns network permits outbound egress; this probe makes no external network calls.',
                      'Bus connection tests send no messages; TCP reaches only a fictional loopback listener.',
                      'No coordinator MCP session or real authentication compatibility claim.']
 failures = []
 control = records['unsandboxed_control']
+if (not control['identity']['containerized'] or not control['native_refused']
+        or any(control['identity_writes'].values())):
+    failures.append('unsandboxed control: image identity is writable or native authority is available')
 for name, result in control['writes'].items():
     if result['allowed'] != (name not in {'deployment', 'image_metadata', 'image_etc', 'image_root'}):
         failures.append('unsandboxed control differs from image ownership for ' + name)
