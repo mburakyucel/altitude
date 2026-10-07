@@ -1272,8 +1272,11 @@ If a running worker's unit identity or status is unavailable, polling records an
 and continues with the other tasks and tick work. The task stays running and reserves its capacity;
 its session, attempt, inbox, claims, questions and holds are retained. A completed provider result
 or fresh report does not prove termination while unit status is unknown. The existing incident
-channel notifies L3 once per unchanged task observation, using an opaque task key in public fault
-titles. L3 owns verified recovery; polling neither invents a unit nor stops or relaunches the worker.
+channel groups unavailable workers into one project observation and notifies L3 when that observation
+changes. Public fault titles contain no task identity. L3 owns verified recovery; polling neither
+invents a unit nor stops or relaunches the worker. Permanently lost unit identity has no supported
+termination-confirmation or reconstruction verb: the reservation stays pending trustworthy evidence,
+and L3 tracks that recovery capability gap separately from tick containment.
 Later available status returns the worker to ordinary reconciliation. Stop still requires its
 ownership record, and unavailable termination evidence remains unknown on either platform.
 An ended or missing worker's report is current only when its mtime is at or after the latest launch

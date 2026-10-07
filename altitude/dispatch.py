@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import fcntl
-import hashlib
 import json
 import os
 import subprocess
@@ -1601,6 +1600,7 @@ def poll(project: str) -> list[dict]:
     reviews.poll(project)
     task_rows = S.list_tasks(project)
     finished = []
+    unavailable = []
     for t in task_rows:
         if t["state"] in ("running", "blocked", "reported"):
             t = usage.refresh(project, t["slug"])
@@ -1630,12 +1630,7 @@ def poll(project: str) -> list[dict]:
             # a task fault would block it and release its slot. Other tick work still proceeds.
             S.write_json(live_p, {"at": S.now(), "agent": {"status": "unknown", "state": "unknown",
                          "engine": engine}, "idle_since": None})
-            # Fault kinds appear in public issue titles; keep the task name out of that identity.
-            identity = hashlib.sha256(t["slug"].encode()).hexdigest()[:12]
-            incidents.system_fault(f"worker-status:{identity}",
-                                   f"{project}/{t['slug']}: worker status unavailable: {exc}. "
-                                   "Task state and capacity reservation retained; termination is unconfirmed.",
-                                   project=project)
+            unavailable.append(f"{project}/{t['slug']}: {exc}")
             continue
         metadata = {key: a[key] for key in ("engine_model", "engine_reasoning_effort") if a and key in a}
         if metadata and any(t.get(key) != value for key, value in metadata.items()):
@@ -1678,6 +1673,10 @@ def poll(project: str) -> list[dict]:
             finished.append({"task": t, "agent": a, "needs_input": True})
             idle_since = None
         S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": idle_since})
+    if unavailable:
+        incidents.system_fault("worker-status",
+                               "Worker status unavailable. Task states and capacity reservations retained; "
+                               "termination is unconfirmed.\n" + "\n".join(sorted(unavailable)), project=project)
     return finished
 
 

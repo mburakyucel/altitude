@@ -169,8 +169,8 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
                          f"{'Its task is blocked. ' if task and touched is not None else ''}"
                          f"Incident {target}/{inc['id']} holds the evidence and {tracked}. Read the evidence, record "
-                         "verified recovery and prevention follow-through with `alt incident amend`. Unblock affected "
-                         "work first through supported recovery; if the cause matches an existing issue, attach it with "
+                         "verified recovery and prevention follow-through with `alt incident amend`. Inspect current "
+                         "state before choosing supported recovery; if the cause matches an existing issue, attach it with "
                          "`alt incident amend <id> --issue <url>`; record prevention ownership on the issue and give one concise FYI.",
                          trigger="incident")
     return {"kind": kind, "incident": inc["id"], "count": rec["count"], "issue": issue.get("issue")}

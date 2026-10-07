@@ -1,5 +1,4 @@
 """#676: unavailable unit identity cannot conclude a worker or abort project reconciliation."""
-import hashlib
 import json
 import subprocess
 from unittest import mock
@@ -80,15 +79,15 @@ class TestWorkerStatus(AltitudeCase):
                         self.assertEqual(live["agent"]["status"], "unknown")
                         self.assertIsNone(live["idle_since"])
                         faults = S.read_json(incidents.FAULTS)
-                        identity = hashlib.sha256(slug.encode()).hexdigest()[:12]
-                        self.assertIsNone(faults[json.dumps([self.project, f"worker-status:{identity}"])]["task"])
+                        self.assertIsNone(faults[json.dumps([self.project, "worker-status"])]["task"])
                         # Keep each variation isolated without hiding repeat-fault behavior.
                         S.save_task(self.project, {**after, "state": "blocked", "waiting_on": "l3"})
         evidence = incidents.index(self.project)
-        self.assertEqual(len(evidence), 12)
-        self.assertEqual(self.publish.call_count, 12)
-        queue = l3.queue_path(self.project).read_text()
-        self.assertNotIn("Its task is blocked", queue)
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(self.publish.call_count, 1)
+        queue = l3.queued(self.project)
+        self.assertEqual(len(queue), 12)  # One notice per changed observation, none for the repeated poll.
+        self.assertNotIn("Its task is blocked", json.dumps(queue))
 
     def test_uncertain_worker_keeps_last_slot_and_public_fault_omits_private_task_name(self):
         # Exercise the real publication sanitizer through a fictional GitHub executable.
@@ -123,6 +122,8 @@ class TestWorkerStatus(AltitudeCase):
                        "audience": "operator", "revision": 1, "question": "Keep this question"}],
                        resume_claim={"id": "keep-claim", "worker": {"id": "claimed-worker", "sessionId": "saved"}})
         S.save_task(self.project, blocked)
+        queued = T.new(self.project, "Queued work", "Wait for capacity")
+        self.patch(config, "machine_wip", return_value=1)
         self.patch(dispatch, "_claim_owner_live", return_value=True)
         self.patch(server.project_setup, "maintain")
         self.patch(server, "self_deploy")
@@ -132,11 +133,19 @@ class TestWorkerStatus(AltitudeCase):
         spawn = self.patch(server, "spawn")
         reports = self.patch(server, "resume_stranded_reports")
         resume = self.patch(server, "request_task_resume")
-        waiting_dispatch = self.patch(server, "dispatch_waiting")
+        waiting_dispatch = self.patch(server, "dispatch_waiting", wraps=server.dispatch_waiting)
         launch = self.patch(engines, "start_l2")
         # Real platform identity validation; only the external service-manager query is fictional.
         with mock.patch.object(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 3, "inactive\n", "")):
             server.tick_project(self.project)
+            resume.assert_not_called()
+            launch.assert_not_called()
+            self.assertEqual(S.load_task(self.project, queued["slug"])["state"], "queued")
+            self.assertIn("WIP limit", S.read_json(config.project_dir(self.project) / "hold.json")["reason"])
+            for observation in (spawn, reports, waiting_dispatch):
+                observation.reset_mock()
+            with mock.patch.object(config, "machine_wip", return_value=5):
+                server.tick_project(self.project)
         finished = [call.args[3] for call in spawn.call_args_list if call.args[1] is server.on_l2_finished]
         self.assertEqual({item["task"]["slug"] for item in finished}, {done["slug"], failed["slug"]})
         self.assertFalse(next(item for item in finished if item["task"]["slug"] == done["slug"]).get("died"))
@@ -145,6 +154,8 @@ class TestWorkerStatus(AltitudeCase):
         resume.assert_called_once_with(self.project, waiting["slug"])
         waiting_dispatch.assert_called_once_with(self.project)
         launch.assert_not_called()
+        self.assertEqual(S.load_task(self.project, queued["slug"])["state"], "queued")
+        self.assertIn("WIP limit", S.read_json(config.project_dir(self.project) / "hold.json")["reason"])
         self.assertEqual(S.load_task(self.project, unknown["slug"])["state"], "running")
         claimed = S.load_task(self.project, blocked["slug"])
         for key in ("resume_claim", "questions", "hold_merge", "session_id", "attempt", "waiting_on"):
@@ -172,4 +183,36 @@ class TestWorkerStatus(AltitudeCase):
                         OSError("fictional status read failure"), subprocess.TimeoutExpired("fixture", 1)):
             with self.subTest(failure=failure), mock.patch.object(platform, "job_active", side_effect=failure):
                 self.assertEqual(dispatch.poll(self.project), [])
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+
+    def test_shared_status_outage_is_one_project_incident_and_notice(self):
+        for slug in ("first", "second", "third"):
+            self.worker(slug)
+        with mock.patch.object(platform, "job_active", side_effect=RuntimeError("Worker unit status is unavailable")):
+            self.assertEqual(dispatch.poll(self.project), [])
+            self.assertEqual(dispatch.poll(self.project), [])
+        self.assertEqual(len(incidents.index(self.project)), 1)
+        self.assertEqual(len(l3.queued(self.project)), 1)
+        self.publish.assert_called_once()
+        for task in S.list_tasks(self.project):
+            self.assertEqual(task["state"], "running")
+            self.assertTrue(dispatch.occupies_slot(task))
+            self.assertIn(task["slug"], l3.queued(self.project)[0]["text"])
+
+    def test_legacy_missing_job_name_is_unknown_without_stop_or_relaunch(self):
+        self.patch(engines, "JOBS_DIR", self.tmp / "legacy-jobs")
+        task, paths, _ = self.worker("legacy", "claude")
+        paths["record"].unlink()
+        for job in ({}, {"state": "working"}, {"name": None}, {"name": ""}, {"name": "  "}, ["malformed"]):
+            with self.subTest(job=job), mock.patch.object(platform, "job_active") as active, \
+                 mock.patch.object(platform, "job_stop") as stop:
+                S.write_json(engines.JOBS_DIR / task["agent_id"] / "state.json", job)
+                self.assertEqual(dispatch.poll(self.project), [])
+                self.assertIsNone(engines.worker_termination(task, job_root=paths["record"].parent))
+                with self.assertRaisesRegex(RuntimeError, "identity is unavailable"):
+                    engines.worker_live("claude", task, job_root=paths["record"].parent)
+                with self.assertRaisesRegex(RuntimeError, "ownership record is unavailable"):
+                    engines.stop_l2_worker("claude", task["agent_id"], job_root=paths["record"].parent)
+                active.assert_not_called()
+                stop.assert_not_called()
                 self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
