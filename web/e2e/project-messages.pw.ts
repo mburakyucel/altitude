@@ -62,5 +62,7 @@ test("coordinator exchanges stay folded, move from inbox to history and preserve
   await walk.state("10-registration-changed", { visible: [line("Another probe"), line("Another probe").getByText("Registration changed · not supplied", { exact: false })], hidden: [card] });
   await page.route("**/api/chat/lab*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Fictional read unavailable"}' }));
   await page.reload();
-  await walk.state("11-read-error", { visible: [page.getByText("Could not load the conversation.", { exact: false })], hidden: [line("Another probe"), card] });
+  const error = page.getByText(/^Could not load the conversation\./);
+  await walk.state("11-read-error", { action: () => error.waitFor({ timeout: 30_000 }),
+    visible: [error, page.getByRole("button", { name: "Retry", exact: true })], hidden: [line("Another probe"), card] });
 });
