@@ -13,15 +13,17 @@ def main() -> int:
         print("Usage: time_command.py COMMAND [ARG ...]", file=sys.stderr)
         return 2
     start = time.monotonic()
+    # Catch before spawning so an interrupt during Popen cannot abandon the child.
+    # Unlike SIG_IGN, caught handlers reset on exec and leave child signals normal.
+    saved = {number: signal.signal(number, lambda *_: None)
+             for number in (signal.SIGINT, signal.SIGQUIT)}
     try:
-        child = subprocess.Popen(sys.argv[1:])
-    except OSError as error:
-        print(f"Cannot start timed command: {error.strerror}", file=sys.stderr)
-        return 127 if error.errno == errno.ENOENT else 126
-    # Terminal interrupts reach the child in our shared process group. Like time(1),
-    # the timer waits for that exit so it never loses the command or its summary.
-    saved = {number: signal.signal(number, signal.SIG_IGN) for number in (signal.SIGINT, signal.SIGQUIT)}
-    try:
+        try:
+            child = subprocess.Popen(sys.argv[1:], close_fds=False)
+        except OSError as error:
+            print(f"Cannot start timed command: {error.strerror}", file=sys.stderr)
+            return 127 if error.errno == errno.ENOENT else 126
+        # Terminal interrupts reach the child in our shared process group.
         _, status, usage = os.wait4(child.pid, 0)
         child.returncode = os.waitstatus_to_exitcode(status)
     finally:

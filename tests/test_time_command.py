@@ -48,3 +48,42 @@ class TimeCommandTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 127)
         self.assertIn("Cannot start timed command", result.stderr)
+
+    def test_startup_interrupt_still_reaps_real_child(self):
+        harness = '''
+import importlib.util, os, signal, subprocess, sys
+spec = importlib.util.spec_from_file_location("timer", sys.argv[1])
+timer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(timer)
+real_popen = subprocess.Popen
+def interrupted_popen(*args, **kwargs):
+    child = real_popen(*args, **kwargs)
+    os.kill(os.getpid(), signal.SIGINT)
+    return child
+timer.subprocess.Popen = interrupted_popen
+sys.argv = [sys.argv[1], sys.executable, "-c",
+            "import time, sys; time.sleep(.05); print('finished'); sys.exit(17)"]
+sys.exit(timer.main())
+'''
+        result = subprocess.run([sys.executable, "-c", harness, str(TIMER)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertEqual(result.stdout, "finished\n")
+        self.assert_timing(result.stderr)
+
+    def test_inherited_descriptor_reaches_command(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            result = subprocess.run(
+                [sys.executable, str(TIMER), sys.executable, "-c",
+                 f"import os; os.write({write_fd}, b'inherited')"],
+                pass_fds=(write_fd,), capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            os.close(write_fd)
+            write_fd = None
+            self.assertEqual(os.read(read_fd, 100), b"inherited")
+            self.assert_timing(result.stderr)
+        finally:
+            os.close(read_fd)
+            if write_fd is not None:
+                os.close(write_fd)
