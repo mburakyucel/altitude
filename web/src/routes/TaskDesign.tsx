@@ -24,7 +24,7 @@ export default function TaskDesign() {
   const back = `/projects/${name}/tasks/${slug}?${new URLSearchParams({ question: questionId, revision })}`;
   const denied = preview.error instanceof ApiError && [401, 403].includes(preview.error.status);
   return <div className="page design-page">
-    <Link className="text-meta" to={preview.data?.question_url ?? back}>← Back to question</Link>
+    <Link className="text-meta" to={preview.data?.question_url ?? back} replace>← Back to question</Link>
     {preview.isPending ? <p className="text-muted" role="status">Loading preview…</p> : preview.isError ? <div role="alert" className="design-unavailable">
       <h1>Design unavailable</h1>
       <p className="text-muted">{denied ? "Access to this preview is unavailable. Retry after access is restored." : "This saved preview could not be loaded. Return to the question for an update, or try again."}</p>
@@ -33,7 +33,7 @@ export default function TaskDesign() {
       <header className="design-heading">
         <p className="text-meta text-muted">Preview · v{preview.data.revision}</p>
         <h1>{preview.data.title}</h1>
-        {preview.data.superseded ? <p className="text-meta" role="status">Earlier version. {preview.data.current_question_url ? <Link to={preview.data.current_question_url}>Open current question</Link> : "Return to the question for the latest discussion."}</p> : null}
+        {preview.data.superseded ? <p className="text-meta" role="status">Earlier version. {preview.data.current_question_url ? <Link to={preview.data.current_question_url} replace>Open current question</Link> : "Return to the question for the latest discussion."}</p> : null}
       </header>
       {preview.data.images.map((item) => <Screenshot key={item.url} {...item} />)}
       <section aria-label="Preview text" className="design-text"><h2>Preview</h2><Prose text={preview.data.text} /></section>

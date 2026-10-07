@@ -41,6 +41,72 @@ test("project preview returns through its question to L3 without a history loop"
   await preview.close();
 });
 
+test("same-tab preview and question preserve browser Back and Forward", async ({ page, request }, info) => {
+  expect((await request.post("/fixture/project-preview")).ok()).toBe(true);
+  const q = (await task(request)).question;
+  await walkthrough(page, info).open("/projects/atlas");
+  const link = page.getByRole("link", { name: "Review the layout", exact: true });
+  // Exercise opening the ordinary anchor in this tab, without synthesizing router state.
+  await link.evaluate((node) => node.removeAttribute("target"));
+  await link.click();
+  await expect(page).toHaveURL(q.design_url);
+  await page.goBack();
+  await expect(page).toHaveURL("/projects/atlas");
+  await page.goForward();
+  await expect(page).toHaveURL(q.design_url);
+  await page.getByRole("link", { name: "← Back to question", exact: true }).click();
+  await expect(page).toHaveURL(atQuestion(q));
+  await page.goBack();
+  await expect(page).toHaveURL("/projects/atlas");
+  await page.goForward();
+  await expect(page).toHaveURL(atQuestion(q));
+  await page.reload();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL("/projects/atlas");
+});
+
+test("task-origin preview leaves its opener and draft intact and returns without a loop", async ({ page, request }, info) => {
+  const q = (await task(request)).question;
+  await walkthrough(page, info).open("/projects/atlas?tab=work");
+  await page.getByRole("region", { name: "Work", exact: true }).locator(`a[href="${atQuestion(q)}"]`).click();
+  const draft = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  await draft.fill("Keep this unsent question.");
+  const opened = page.waitForEvent("popup");
+  await card(page, q).getByRole("link", { name: "View preview · v1", exact: true }).click();
+  const preview = await opened;
+  await preview.getByRole("link", { name: "← Back to question", exact: true }).click();
+  await expect(preview).toHaveURL(atQuestion(q));
+  await preview.reload();
+  await expect(card(preview, q)).toBeInViewport();
+  await preview.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(preview).toHaveURL("/projects/atlas");
+  await preview.close();
+  await expect(page).toHaveURL(atQuestion(q));
+  await expect(draft).toHaveValue("Keep this unsent question.");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL("/projects/atlas?tab=work");
+  await page.goForward();
+  await expect(page).toHaveURL(atQuestion(q));
+});
+
+for (const current of [false, true]) {
+  test(`direct earlier preview returns to the ${current ? "current" : "captured"} question without a loop`, async ({ page, request }, info) => {
+    const q = (await task(request)).question;
+    expect((await request.post("/fixture/revise")).ok()).toBe(true);
+    const latest = (await task(request)).question;
+    await walkthrough(page, info).open(q.design_url);
+    await page.reload();
+    await expect(page.getByText("Earlier version.", { exact: false })).toBeVisible();
+    await page.getByRole("link", { name: current ? "Open current question" : "← Back to question", exact: true }).click();
+    const target = current ? latest : q;
+    await expect(page).toHaveURL(atQuestion(target));
+    await expect(card(page, target)).toBeInViewport();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL("/projects/atlas");
+    expect((await task(request)).question.status).toBe("open");
+  });
+}
+
 test("a saved proposal opens from chat, full size and back; a follow-up hands the turn back, is not approval, and approval retains the hold", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const initial = await task(request);
