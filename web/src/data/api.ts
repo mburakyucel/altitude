@@ -101,7 +101,7 @@ export async function makePairingCode(): Promise<PairingCode> {
 export const PhoneShareSchema = z.object({ link: z.string(), seconds: z.number(), name: z.string(), sha256: z.string(), qr: z.array(z.string()) }).passthrough();
 export type PhoneShare = z.infer<typeof PhoneShareSchema>;
 
-/** Add a phone: open the service's ten-minute certificate share window, replacing an earlier one. */
+/** Set up a device: open the service's ten-minute certificate share window, replacing an earlier one. */
 export async function openPhoneShare(): Promise<PhoneShare> {
   return PhoneShareSchema.parse(await post("/api/devices/share", {}));
 }

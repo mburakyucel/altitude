@@ -21,13 +21,21 @@ _PRIVATE = ("DNS:localhost", "DNS:local", "DNS:internal", "DNS:home.arpa",
             "IP:192.168.0.0/255.255.0.0", "IP:100.64.0.0/255.192.0.0",
             "IP:::1/ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "IP:fc00::/fe00::")
 TRUST_STEPS = (
-    "Any channel may carry ca.crt, and Settings > Devices > Add a phone or `alt tls-share` offers it to a phone "
-    "on this network for ten minutes through a QR code. "
+    "On the computer running Altitude, use the public ca_cert file reported here, including for localhost. "
+    "Any channel may carry ca.crt. Settings > Devices > Set up a device or `alt tls-share` offers it to a "
+    "desktop or phone on the configured private network for ten minutes through a setup link and QR code. "
     "Before installing, check that the file holds only this certificate (ca_name) and that its SHA-256 matches "
     "ca_sha256; otherwise delete it. Never transfer ca.key or server.key.",
-    "Linux Chrome/Chromium: chrome://certificate-manager, import ca.crt as a trusted website authority. "
+    "Before trusting a desktop download, inspect ca.crt with a certificate viewer or "
+    "openssl x509 -in ca.crt -noout -subject -fingerprint -sha256; compare the full fingerprint with this "
+    "trusted terminal or Settings, not just the download page.",
+    "Linux Chrome/Chromium: chrome://certificate-manager > Local certificates > Custom > Installed by you > "
+    "Trusted Certificates > Import; "
+    "older versions use chrome://settings/certificates > Authorities, with website trust. "
     "Firefox: Settings > Privacy & Security > View Certificates > Authorities > Import, trust for websites.",
-    "Mac: open ca.crt in Keychain Access, then set Trust > When using this certificate > Always Trust.",
+    "macOS Safari/Chrome: in Keychain Access, select the login keychain and import ca.crt. Open the "
+    "certificate, expand Trust and set Secure Sockets Layer (SSL) to Always Trust; close and authenticate "
+    "if asked. Firefox can use its separate Authorities import. Restart the browser before verifying.",
     "iPhone/iPad: open the share link in Safari, tap Download the profile and Allow. Then open Settings > "
     "Profile Downloaded; this entry appears after download, and an uninstalled profile expires after eight minutes. "
     "Also check General > VPN & Device Management for profiles. Check that it contains only a Certificate "
@@ -382,11 +390,12 @@ def located(found: dict) -> dict:
 def phone_address(found: dict) -> None:
     """Refuse a service a phone cannot open over HTTPS."""
     if not found["tls"]:
-        raise TLSFailure("The Altitude service serves plain HTTP, so it has no certificate for a phone to trust.")
+        raise TLSFailure("The Altitude service serves plain HTTP, so it has no certificate for a device to trust.")
     if found["name"] == "localhost" or found["kind"] == "IP" and ipaddress.ip_address(found["name"]).is_loopback:
         raise TLSFailure(f"The Altitude service is configured for {found['host']}, which only this computer can "
-                         "open. Set the service's ALTITUDE_HOST to the private-network address the phone opens, "
-                         "restart the service, then retry.")
+                         "open. For this computer, run alt doctor and import only its public ca_cert file "
+                         "using your browser's certificate settings. Sharing with another device needs the "
+                         "service's ALTITUDE_HOST set to its reachable private-network address and a service restart.")
 
 
 def _proven(found: dict) -> bytes:
@@ -445,7 +454,7 @@ def fingerprint_rows(sha256: str) -> list[str]:
 
 
 def _guide(authority: dict, service_url: str, minutes: float) -> bytes:
-    """The page the phone opens from the QR code: the fingerprint, both downloads and the remaining taps."""
+    """Device setup from the share link: identity, public downloads and deliberate trust steps."""
     from html import escape
 
     name = escape(authority["name"])
@@ -453,7 +462,7 @@ def _guide(authority: dict, service_url: str, minutes: float) -> bytes:
     address = escape(service_url)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Add this phone to Altitude</title>
+<title>Set up this device for Altitude</title>
 <style>
 body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0 auto;max-width:34rem;padding:1.25rem;color:#1d1d1f;background:#fff}}
 h1{{font-size:1.5rem;margin:.25rem 0 .75rem}}h2{{font-size:1.1rem;margin:1.75rem 0 .5rem}}
@@ -462,14 +471,51 @@ h1{{font-size:1.5rem;margin:.25rem 0 .75rem}}h2{{font-size:1.1rem;margin:1.75rem
 a.button{{display:block;text-align:center;padding:.8rem 1rem;border-radius:12px;background:#0a66d8;color:#fff;
 font-weight:600;text-decoration:none;margin:.5rem 0}}a.button.secondary{{background:#e8e8ed;color:#1d1d1f}}
 ol{{padding-left:1.25rem}}li{{margin:.4rem 0}}small{{color:#6e6e73}}a{{color:#0a66d8}}
+nav{{display:flex;flex-wrap:wrap;gap:.5rem}}nav a{{padding:.5rem .75rem;border:1px solid #86868b;border-radius:8px}}
+pre{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem}}h2{{scroll-margin-top:1rem}}
 @media (prefers-color-scheme:dark){{body{{background:#000;color:#f5f5f7}}.check{{background:#1c1c1e;border-color:#3a3a3c}}
 a{{color:#4da3ff}}a.button.secondary{{background:#2c2c2e;color:#f5f5f7}}small{{color:#98989d}}}}
 </style></head><body>
-<h1>Add this phone to Altitude</h1>
-<p>This lets the phone recognise your Altitude as genuine. Your phone asks you to approve each step.</p>
+<h1>Set up this device for Altitude</h1>
+<p>Trust the public certificate on your computer or phone, then pair its browser. You approve the trust change yourself.</p>
 <div class="check"><strong>{name}</strong><br><small>SHA-256</small><div class="sha">{rows}</div>
-<small>It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.</small></div>
-<h2>iPhone or iPad</h2>
+<small>It must match the full SHA-256 in the trusted Altitude Settings page or terminal that opened sharing.
+This HTTP download page alone cannot prove the certificate's identity. If it differs, stop here.</small></div>
+<p>Choose your device:</p>
+<nav aria-label="Device instructions"><a href="#linux">Linux</a><a href="#macos">macOS</a>
+<a href="#ios">iPhone or iPad</a><a href="#android">Android</a></nav>
+<h2 id="desktop">Download and check on desktop</h2>
+<a class="button secondary" href="/ca.crt">Download the certificate</a>
+<p>Save <strong>ca.crt</strong>. Before importing it, open it in a certificate viewer and check that it holds only
+one certificate named <strong>{name}</strong>. Compare its full SHA-256 with the trusted Settings page or terminal.
+On Linux or macOS, you can read its name and fingerprint in a terminal in the download folder:</p>
+<pre>openssl x509 -in ca.crt -noout -subject -fingerprint -sha256</pre>
+<p>Also inspect the file in a text editor: it must contain exactly one <strong>BEGIN CERTIFICATE</strong> /
+<strong>END CERTIFICATE</strong> block and no other payload. A file checksum is not the certificate fingerprint.</p>
+<p>Compare every hexadecimal pair; spaces, colons and letter case do not matter. If it differs or you cannot
+inspect it, stop before trusting it. Never transfer <strong>ca.key</strong> or <strong>server.key</strong>.</p>
+<h2 id="linux">Linux</h2>
+<ol>
+<li><a href="#desktop">Download and check the certificate</a>, including on the computer hosting Altitude.</li>
+<li><strong>Chrome or Chromium:</strong> open <strong>chrome://certificate-manager</strong> and choose
+<strong>Local certificates › Custom › Installed by you › Trusted Certificates › Import</strong>. Select <strong>ca.crt</strong>.
+Older versions use <strong>chrome://settings/certificates › Authorities › Import</strong>; enable trust for websites.</li>
+<li><strong>Firefox:</strong> open <strong>Settings › Privacy &amp; Security › Certificates › View Certificates › Authorities › Import</strong>.
+Select <strong>ca.crt</strong> and enable <strong>Trust this CA to identify websites</strong>.
+Firefox on Linux may need its own import even if another browser already trusts the certificate.</li>
+<li>Restart the browser, then <a href="#verify">verify HTTPS before pairing</a>.</li>
+</ol>
+<h2 id="macos">macOS</h2>
+<ol>
+<li><a href="#desktop">Download and check ca.crt</a>. Use the certificate file, not the iPhone profile.</li>
+<li>For <strong>Safari or Chrome</strong>, open <strong>Keychain Access</strong> (search for it with Spotlight),
+select the <strong>login</strong> keychain and drag the certificate file into it.</li>
+<li>Open the imported certificate, expand <strong>Trust</strong> and set <strong>Secure Sockets Layer (SSL)</strong>
+to <strong>Always Trust</strong>. Leave other uses at their defaults. Close the window and authenticate if macOS asks.</li>
+<li>For <strong>Firefox</strong>, use the Authorities import described under Linux if it does not use your macOS trust.</li>
+<li>Restart the browser, then <a href="#verify">verify HTTPS before pairing</a>.</li>
+</ol>
+<h2 id="ios">iPhone or iPad</h2>
 <p>Open this page in <strong>Safari</strong>, then tap <strong>Download the profile</strong>.</p>
 <a class="button" href="/altitude.mobileconfig">Download the profile</a>
 <ol>
@@ -485,13 +531,24 @@ If anything differs, tap <strong>Remove</strong>.</li>
 Check <strong>Settings › General › VPN &amp; Device Management</strong> for profiles, too.
 iOS deletes an uninstalled profile after eight minutes. If none is there, return to this page in Safari
 and download again. If there is no Allow prompt or the download fails, stop and report what Safari shows.</p>
-<h2>Android and other devices</h2>
-<a class="button secondary" href="/ca.crt">Download the certificate</a>
+<h2 id="android">Android</h2>
+<a class="button secondary" href="/ca.crt">Download the Android certificate</a>
 <ol>
 <li>Open <strong>Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate</strong>
-and choose the downloaded file. Firefox for Android also needs its third-party CA certificate setting.</li>
+and choose the downloaded file (names vary by device). Compare its name and full SHA-256 with your trusted
+Settings page or terminal before trusting it; stop if you cannot check them.
+Firefox for Android also needs its third-party CA certificate setting.</li>
 <li>Open <a href="{address}">{address}</a> in a new private tab. It must load with no warning; then pair this device.</li>
 </ol>
+<h2 id="verify">Verify HTTPS before pairing</h2>
+<p>Open the exact Altitude address <a href="{address}">{address}</a> in a new private window or tab.
+Compare this address with <strong>alt doctor</strong> on the hosting computer or the address in your trusted Altitude tab.
+It must load with no certificate warning. Do not bypass a warning: check the address, certificate identity
+and trust setting first. Only then pair this browser: run <strong>alt pair</strong> on the computer hosting Altitude,
+or make a code with <strong>Settings › Devices › Pair another device</strong> in an already trusted, paired browser.</p>
+<p>For everyday use, verify the regular window is warning-free too and pair there; private-window pairing ends when you close it.</p>
+<p>A second computer or phone needs the configured private-network address; localhost refers to that device itself.
+Keep the original Settings page or terminal open until the download finishes.</p>
 <p><small>This page works for {minutes:g} minutes after the QR code appeared, or until it is closed there.</small></p>
 </body></html>
 """.encode()
@@ -562,7 +619,7 @@ class Share:
         try:
             self._server = Server((found["name"], 0), Handler)
         except OSError as exc:
-            raise TLSFailure(f"Cannot listen on {found['name']} for the phone: {exc}.") from exc
+            raise TLSFailure(f"Cannot listen on {found['name']} for device setup: {exc}.") from exc
         host = f"[{found['name']}]" if self._server.address_family == socket.AF_INET6 else found["name"]
         self.link = f"http://{host}:{self._server.server_address[1]}/"
         threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
@@ -606,17 +663,17 @@ def share(minutes: float = SHARE_MINUTES, out=print) -> None:
     authority = identity(found["tls_dir"] / "ca.crt")
     window = Share(found, body, authority, minutes, sent=out)
     try:
-        out(f"For the next {minutes:g} minutes, scan this with the phone's camera and open the link:\n"
+        out(f"For the next {minutes:g} minutes, open this link on your desktop or scan it with a phone's camera:\n"
             f"{qr.terminal(window.link)}\n"
             f"  {window.link}\n"
-            "The page it opens has the downloads and the steps. Before tapping Install, check that:\n"
+            "The page has Linux, macOS, iPhone/iPad and Android steps. Before installing, check that:\n"
             f"  - it contains only a Certificate, named {authority['name']}\n"
-            "  - More Details > that certificate shows SHA-256:\n"
+            "  - the downloaded certificate's full SHA-256 matches this trusted terminal:\n"
             + "".join(f"      {row}\n" for row in fingerprint_rows(authority["sha256"])) +
-            "If anything differs, tap Remove and stop: someone else answered the link.\n"
+            "If anything differs or cannot be inspected, stop before trusting it. Never transfer private keys.\n"
             f"Trusting it allows: {describe_scope(authority['scope'])}\n"
             f"It expires {authority['expires']}.\n"
-            f"After Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
+            f"iPhone/iPad after Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
             f"Then open {found['url']} in a new Private tab. It must load with no warning; only then run alt pair.\n"
             "Ctrl-C closes the link sooner.")
         window.closed.wait()
