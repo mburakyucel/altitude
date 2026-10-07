@@ -157,7 +157,8 @@ hosted build attestation, so its notes say so.
    plus `--prerelease` for `-rc.N`, followed by the files in `<dir>`.
 3. Read the draft back and compare every asset's name and size with the build, then publish it with
    `gh release edit <version> --draft=false`. GitHub creates the tag with the release, so no tag is
-   pushed before the files are in place; a tag-triggered workflow meets an already-published release.
+   pushed before the files are in place. The tag still starts the release workflow, which fails
+   because the release already exists and changes nothing; that failed run is expected on this path.
 4. Read back the published release: its tag's commit is the approved SHA and every asset's digest
    matches `SHA256SUMS`.
 
