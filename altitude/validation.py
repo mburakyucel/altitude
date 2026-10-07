@@ -305,8 +305,9 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
 
 
 def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
-    """Remove what runs left: Podman's containers on Linux, `unit`'s processes on macOS, and `paths`. Returns why
-    cleanup did not finish, or None."""
+    """Remove what runs left: Podman's containers on Linux, `unit`'s processes on macOS, and `paths`, in order: on
+    macOS the first path that cannot be removed stops cleanup, so a run area listed last stays as the marker the next
+    start finds. A link in a path's place is removed, never followed. Returns why cleanup did not finish, or None."""
     try:
         if platform.validation_in_container():
             name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
@@ -324,10 +325,14 @@ def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
                 if platform.job_active(unit, env):
                     return f"processes of {unit} are still running"
             for path in paths:
+                if path.is_symlink():
+                    path.unlink()
                 shutil.rmtree(path, ignore_errors=True)
+                if os.path.lexists(path):
+                    break
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return f"cleanup failed: {exc}"
-    left = [str(path) for path in paths if path.exists()]
+    left = [str(path) for path in paths if os.path.lexists(path)]
     return f"could not remove {', '.join(left)}" if left else None
 
 
@@ -373,8 +378,9 @@ def reconcile() -> None:
         runs = sorted(p for p in (home() / "runs").glob("*") if p.is_dir()) if (home() / "runs").is_dir() else []
         if runs and not platform.validation_unavailable():
             platform.job_stop(f"{UNIT_PREFIX}*.service", platform.manager_env(engines.clean_env()))
-            cleanup([path for area in runs if _interrupted(area) for path in (area, *candidate_dirs(area))
-                     if path.exists()])
+            done = [area for area in runs if _interrupted(area)]
+            cleanup([path for path in (*(d for area in done for d in candidate_dirs(area)), *done)
+                     if os.path.lexists(path)])
         left = [area for area in runs if area.exists()]
         if left:
             LOG.error(f"validation: {len(left)} run area(s) retained because evidence or cleanup could not finish; "
@@ -484,8 +490,9 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             # a run whose cleanup failed is never recorded as a success. A run that never started leaves nothing to
             # keep. Evidence that was not delivered stays in place. Only the runner's own files (run.json, the receipt,
             # log and exit status) stay until the record exists, for the next start to finish an interrupted run.
-            scratch = [area, *candidate_dirs(area)] if row is None else candidate_dirs(area) if delivered else []
-            cleanup_error = cleanup([path for path in scratch if path.exists()], unit if row is not None else None)
+            scratch = [*candidate_dirs(area), area] if row is None else candidate_dirs(area) if delivered else []
+            cleanup_error = cleanup([path for path in scratch if os.path.lexists(path)],
+                                    unit if row is not None else None)
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
                                     "error": "turned off before it started" if stopped else failure,

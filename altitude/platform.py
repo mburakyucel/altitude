@@ -2293,7 +2293,9 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     def paths(kind: str, values) -> str:
         return " ".join(f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values)
     home = os.path.realpath(Path.home())
-    own = list(dict.fromkeys(os.path.realpath(root) for root in roots))
+    # A root's own name is never resolved: a worker may replace a folder in /private/tmp with a link, and Seatbelt
+    # matches the link's target, which no root then admits.
+    own = list(dict.fromkeys(os.path.join(os.path.realpath(Path(root).parent), Path(root).name) for root in roots))
     shared = list(dict.fromkeys(os.path.realpath(path) for path in (
         Path(_user_temp()).parent, "/private/tmp", "/private/var/tmp")))
     hidden = [home, *shared]

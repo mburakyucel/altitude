@@ -262,6 +262,7 @@ def bootstrap():
     run("launchctl", "bootstrap", f"gui/{os.getuid()}", plist)
 attempt("write-area", lambda: write(os.path.join(area, "inside")))
 attempt("write-home", lambda: write(os.path.join(outside, "written")))
+attempt("write-through-linked-root", lambda: write(os.path.join(outside, "linked", "written")))
 attempt("link-runner-file", lambda: os.symlink("/etc/hosts", os.path.join(outside, "run.exit.tmp")))
 attempt("read-runner-log", lambda: open(os.path.join(outside, "run.log")).read())
 attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
@@ -298,6 +299,7 @@ def validation_confinement():
     try:
         area.mkdir(parents=True)
         (outside / "secret").write_text("fictional credential\n")
+        (outside / "linked").symlink_to(outside)  # a root a worker replaced with a link into the home
         (outside / "s.sock").unlink(missing_ok=True)
         home_socket = socket.socket(socket.AF_UNIX)
         listeners.append(home_socket)
@@ -308,7 +310,7 @@ def validation_confinement():
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
         log, status = outside / "run.log", outside / "run.exit"
-        command = platform.validation_command((area,), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+        command = platform.validation_command((area, outside / "linked"), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
                                                               str(outside), str(Path.home()), str(port), str(other),
                                                               label, platform._user_temp()],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})

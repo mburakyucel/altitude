@@ -12,7 +12,9 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -600,7 +602,56 @@ class TestMacValidationRunner(RunnerCase):
         self.assertEqual(self.validate(["true"])["ended"], "exit")
 
 
+    def test_a_link_left_in_place_of_the_temporary_folder_is_removed_without_following_it(self):
+        target = self.tmp / "operator-files"
+        target.mkdir()
+        (target / "keep").write_text("operator\n")
+        temp = lambda area: self.tmp / f"av-{area.name}"  # noqa: E731
+
+        def replace(*args, **kwargs):
+            [area] = list((validation.home() / "runs").iterdir())
+            shutil.rmtree(temp(area))
+            temp(area).symlink_to(target)
+            return original(*args, **kwargs)
+        original = validation.engines.machine_command
+        with mock.patch.object(validation.engines, "machine_command", side_effect=replace):
+            result = self.validate(["true"])
+        self.assertEqual((result["ended"], result["cleanup"]), ("exit", None))
+        self.assertEqual((target / "keep").read_text(), "operator\n", "the link's target is untouched")
+        self.assertFalse(list((validation.home() / "runs").iterdir()))
+
+    def test_a_temporary_folder_that_cannot_be_removed_keeps_the_run_area_and_the_runner_closed(self):
+        real = shutil.rmtree
+
+        def stuck(path, *args, **kwargs):
+            if Path(path).name.startswith("av-"):
+                return None
+            return real(path, *args, **kwargs)
+        with mock.patch.object(validation.shutil, "rmtree", side_effect=stuck):
+            result = self.validate(["true"])
+            self.assertEqual(result["ended"], "cleanup failed")
+            self.assertIn("could not remove", result["cleanup"])
+            [area] = list((validation.home() / "runs").iterdir())
+            validation.reconcile()
+            self.assertTrue(area.exists(), "the area stays as the marker while its temporary folder remains")
+            self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
+        validation.reconcile()
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
+
 class TestValidationProfile(TestCase):
+    def test_a_root_replaced_by_a_link_admits_the_link_never_its_target(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(platform.sys, "platform", "darwin"):
+            link = Path(folder) / "av-run"
+            link.symlink_to(Path.home())
+            profile = platform.validation_profile((link,), Path(folder) / "unit.log", 8890)
+        own = os.path.join(os.path.realpath(folder), "av-run")
+        self.assertIn(f'(allow file-read* (subpath "{own}"))', profile)
+        self.assertNotIn(f'(allow file-read* (subpath "{os.path.realpath(Path.home())}"))', profile)
+
+
     def test_the_profile_confines_a_run_to_its_own_folders(self):
         with mock.patch.object(platform.sys, "platform", "darwin"), \
                 mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
