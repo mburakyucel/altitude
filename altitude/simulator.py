@@ -73,7 +73,7 @@ def plan() -> dict:
               if t.get("productFamily") == "iPhone"]
     if not phones:
         raise ValueError(f"{UNAVAILABLE}: {runtime.get('name')} supports no iPhone")
-    # The newest generation, and in it the base model: the plain name is the shortest.
+    # The newest generation, and in it the shortest-named model.
     phone = max(phones, key=lambda t: (t.get("minRuntimeVersion", 0), -len(t.get("name", ""))))
     return {"xcode": " ".join(xcode.split()), "runtime": f"{runtime.get('name')} ({runtime.get('buildversion')})",
             "runtime_id": runtime["identifier"], "device": phone.get("name"), "device_id": phone["identifier"]}

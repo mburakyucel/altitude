@@ -242,6 +242,9 @@ def main() -> int:
                 record["browser"] = safari.evaluate(
                     "({userAgent: navigator.userAgent, viewport: [innerWidth, innerHeight], "
                     "devicePixelRatio, speechRecognition: typeof webkitSpeechRecognition})")
+                # Leave the app, so its change stream ends before the service stops.
+                safari.evaluate("location.href = 'about:blank'; 0")
+                safari.wait("location.href === 'about:blank'", "a blank page")
     except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as exc:
         record["error"] = str(exc)
     finally:

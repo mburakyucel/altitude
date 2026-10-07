@@ -500,7 +500,7 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
 
 - **Phone.** Before the command starts, altd creates one iPhone in a private device set in the run's
   area, outside the folders the run can write, and boots it headless. It picks the newest available iOS
-  runtime and, among the iPhones it supports, the newest generation's base model, by detection. The
+  runtime and an iPhone of the newest generation it supports, the shortest-named model, by detection. The
   operator's own Simulator devices are never listed or touched. A boot takes about 20 seconds and the
   phone's data about 3 GB, inside the runner's 20 GiB free-disk check.
 - **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
@@ -509,8 +509,10 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   are listed, other inspectable processes in the phone are hidden, a request about anything else
   (another process, a page not listed, an automation session) closes the connection, and a page whose
   address is on Altitude's port is hidden and closes any connection inspecting it. The page's address
-  is read from Safari's listing, which updates shortly after a navigation, so a page can briefly
-  answer before its connection closes. One request of the relay's own, `_rpc_altitudeOpenURL:`, opens
+  is read from Safari's listing, which updates shortly after a navigation, so a page can answer
+  briefly before its connection closes (about 0.4 seconds on this Mac). Simulator Safari holds no
+  pairing, and Altitude answers an unpaired browser only with its page, files, health, access status
+  and pairing. One request of the relay's own, `_rpc_altitudeOpenURL:`, opens
   an `http(s)` loopback address with a port, never Altitude's, in Safari: that is how a run puts its
   first page on the phone. Safari runs as the operator's account outside the run's profile, like a
   browser on this Mac: its pages reach the internet and loopback, and it has no Altitude pairing.
