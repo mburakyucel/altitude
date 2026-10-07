@@ -271,7 +271,9 @@ Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
 `just test -p codex-sandboxing --lib --locked --target aarch64-apple-darwin --cargo-profile dev-small`.
 The patch admits only a network-enabled process policy semantically equal to canonical
 workspace-write plus both `/run/user/<real UID>/bus` and `/run/user/<real UID>/systemd` denies.
-It preserves the original emitted filesystem policy. Plain workspace-write is excluded, as are
+The comparison uses the named-profile compiler's canonical form, which omits legacy skip-missing
+defaults. Only the comparison operand is normalized; supplied restrictions and the emitted
+filesystem policy are unchanged. Plain workspace-write is excluded, as are
 other narrower policies. Identical effective permissions share eligibility regardless of profile name.
 The added policy tests cover effective worker roots, current role combinations, missing or wrong-UID
 denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
@@ -300,6 +302,10 @@ Adoption requires a new intended confined candidate worker, finite blank/local f
 with disposable storage and cleanup, worker/role negative checks and synthetic namespace/peer tests.
 Matching-name collisions, spoofing or cross-task port exchange/disruption stop adoption; the name
 filter supplies no task identity and Chromium's separate peer enforcement is disabled by default.
+Native metadata checks include child metadata under overlapping common-Git and worktree-Git roots:
+the named compiler omits legacy nested carveouts, and component equality does not prove that a
+broader parent write clause preserves the child's protections. This candidate does not repair or
+establish that pre-existing native boundary.
 Required browser protections and the security merge hold still apply. The validation container
 does not establish native Mac acceptance; the sandbox-required runner is unavailable on macOS.
 

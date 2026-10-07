@@ -20,7 +20,7 @@
  use codex_protocol::permissions::FileSystemSandboxPolicy;
  use codex_protocol::permissions::NetworkSandboxPolicy;
  use codex_protocol::permissions::PROTECTED_METADATA_PATH_NAMES;
-@@ -1050,6 +1052,44 @@
+@@ -1050,6 +1052,48 @@
          file_write_policy,
          network_policy,
      ];
@@ -39,6 +39,10 @@
 +                    &legacy_policy,
 +                    sandbox_policy_cwd,
 +                );
++            // Match :workspace's named-profile compiler (permissions.rs): it
++            // omits legacy skip-missing defaults. Normalize only this reference;
++            // never discard restrictions from the supplied/emitted policy.
++            protected_workspace.remove_skip_missing_path_entries();
 +            let uid = unsafe { libc::getuid() };
 +            for suffix in ["bus", "systemd"] {
 +                protected_workspace
@@ -67,7 +71,7 @@
      }
 --- a/codex-rs/sandboxing/src/seatbelt_tests.rs
 +++ b/codex-rs/sandboxing/src/seatbelt_tests.rs
-@@ -114,6 +114,382 @@
+@@ -114,6 +114,412 @@
  }
  
  struct TestConfigReloader;
@@ -75,7 +79,7 @@
 +#[test]
 +fn chromium_rendezvous_only_for_protected_networked_workspace_processes() {
 +    let workspace = TempDir::new().expect("temporary workspace");
-+    let canonical = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
++    let mut canonical = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
 +        &SandboxPolicy::WorkspaceWrite {
 +            writable_roots: Vec::new(),
 +            network_access: true,
@@ -84,6 +88,8 @@
 +        },
 +        workspace.path(),
 +    );
++    // Named :workspace inheritance omits these defaults during TOML conversion.
++    canonical.remove_skip_missing_path_entries();
 +    let uid = unsafe { libc::getuid() };
 +    let manager_denies = ["bus", "systemd"].map(|suffix| {
 +        FileSystemSandboxEntry::new(
@@ -111,17 +117,45 @@
 +    for path in [&git_common, &git_worktree, &task_state] {
 +        fs::create_dir_all(path).expect("create writable role root");
 +    }
-+    let mut worker = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-+        &SandboxPolicy::WorkspaceWrite {
-+            writable_roots: vec![git_common, git_worktree, task_state]
-+                .into_iter()
-+                .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute root"))
-+                .collect(),
-+            network_access: true,
-+            exclude_tmpdir_env_var: false,
-+            exclude_slash_tmp: false,
-+        },
-+        workspace.path(),
++    // Compiler-derived altitude-task shape, independently of the legacy
++    // constructor used by the guard. Named :workspace expands project roots
++    // into concrete paths and omits skip-missing metadata entries.
++    let mut worker = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::SlashTmp,
++            },
++            FileSystemAccessMode::Write,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Tmpdir,
++            },
++            FileSystemAccessMode::Write,
++        ),
++    ]);
++    worker.entries.extend(
++        [
++            workspace.path().to_path_buf(),
++            git_common,
++            git_worktree,
++            task_state,
++        ]
++        .into_iter()
++        .map(|path| {
++            FileSystemSandboxEntry::new(
++                AbsolutePathBuf::from_absolute_path(path)
++                    .expect("absolute root")
++                    .into(),
++                FileSystemAccessMode::Write,
++            )
++        }),
 +    );
 +    worker.entries.extend(manager_denies.clone());
 +    let mut denied_read = protected.clone();

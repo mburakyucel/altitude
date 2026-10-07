@@ -490,6 +490,8 @@ commands share that allowance; it is neither browser identity nor task isolation
 The guard excludes read-only, network-disabled, filesystem
 helper and other narrower custom policies by comparing filesystem semantics to canonical
 workspace-write plus the exact bus and systemd denies derived from the real account UID.
+Its comparison operand follows the named compiler's omission of legacy skip-missing defaults;
+supplied restrictions and emitted filesystem rules are unchanged.
 Plain workspace-write without those denies has no added allowance.
 A named custom profile with identical effective permissions has the same allowance. Existing file
 roots, metadata protections, process/signal restrictions and service denies remain in force.
