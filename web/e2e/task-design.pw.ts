@@ -5,7 +5,7 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "task-design-service.py" });
 const slug = "conversation-layout";
 const taskPath = `/projects/atlas/tasks/${slug}`;
-type Question = { id: string; revision: number; status: string; design_url: string };
+type Question = { id: string; revision: number; status: string; design_url: string; design_title: string };
 async function task(request: APIRequestContext) {
   const response = await request.get(`/api/task/atlas/${slug}`);
   expect(response.ok()).toBe(true);
@@ -15,6 +15,63 @@ const atQuestion = (q: Question) => `${taskPath}?question=${q.id}&revision=${q.r
 const park = async (request: APIRequestContext) => expect((await request.post("/fixture/park")).ok()).toBe(true);
 const card = (page: Page, q: Question) => page.getByRole("region", { name: "Task conversation", exact: true })
   .locator(`[data-question-id="${q.id}"][data-question-revision="${q.revision}"]`);
+
+test("proposal v5 identifies its saved title across review entries at question revision 3", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const first = (await task(request)).question;
+  expect((await request.post("/fixture/revise")).ok()).toBe(true);
+  expect((await request.post("/fixture/proposal-v5")).ok()).toBe(true);
+  const q = (await task(request)).question;
+  const title = "Proposal v5: settings, model choice and menus";
+  expect(q.revision).toBe(3);
+  expect(q.design_title).toBe(title);
+  expect((await request.post("/fixture/proposal-v5")).ok()).toBe(true);
+  expect((await task(request)).question).toEqual(q);
+  for (const [state, path] of [["needs-you", "/"], ["project-work", "/projects/atlas?tab=work"], ["task", atQuestion(q)]]) {
+    await walk.open(path);
+    if (state === "project-work") {
+      await page.getByRole("region", { name: "Work", exact: true }).locator(`a[href="${atQuestion(q)}"]`).click();
+    }
+    const link = page.getByRole("link", { name: `View preview · ${title}`, exact: true });
+    await link.scrollIntoViewIfNeeded();
+    await walk.state(`v5-revision-3-${state}`, {
+      visible: [link, page.getByText("Approve the tabbed design (v5)?", { exact: true })],
+      hidden: [page.getByRole("link", { name: "View preview · v3", exact: true })],
+    });
+    const opened = page.waitForEvent("popup");
+    await link.click();
+    const preview = await opened;
+    await expect(preview).toHaveURL(new RegExp(`${q.design_url}$`));
+    await walkthrough(preview, info).state(`v5-viewer-from-${state}`, {
+      visible: [preview.getByRole("heading", { name: title, exact: true })],
+      hidden: [preview.getByText("Preview · v3", { exact: true })],
+    });
+    await preview.close();
+  }
+  await walk.open(first.design_url);
+  await walk.state("v5-older-immutable-preview", {
+    visible: [page.getByRole("main").getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("Earlier preview.", { exact: false })],
+    hidden: [page.getByRole("heading", { name: title, exact: true })],
+  });
+});
+
+test("maximum-length unbroken titles wrap in review cards and the viewer", async ({ page, request }, info) => {
+  expect((await request.post("/fixture/long-title")).ok()).toBe(true);
+  const q = (await task(request)).question;
+  const title = "Settings".repeat(20);
+  const walk = walkthrough(page, info);
+  for (const [state, path] of [["needs-you", "/"], ["task", atQuestion(q)], ["viewer", q.design_url]]) {
+    await walk.open(path);
+    const label = state === "viewer" ? page.getByRole("heading", { name: title, exact: true })
+      : page.getByRole("link", { name: `View preview · ${title}`, exact: true });
+    await label.scrollIntoViewIfNeeded();
+    await walk.state(`long-title-${state}`, { visible: [label], hidden: [] });
+    const box = (await label.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(await label.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  }
+});
 
 test("project preview returns through its question to L3 without a history loop", async ({ page, request }, info) => {
   expect((await request.post("/fixture/project-preview")).ok()).toBe(true);
@@ -91,7 +148,7 @@ test("task-origin preview leaves its opener and draft intact and returns without
   const draft = page.getByRole("textbox", { name: "Message the L2", exact: true });
   await draft.fill("Keep this unsent question.");
   const opened = page.waitForEvent("popup");
-  await card(page, q).getByRole("link", { name: "View preview · v1", exact: true }).click();
+  await card(page, q).getByRole("link", { name: "View preview · Conversation layout", exact: true }).click();
   const preview = await opened;
   await preview.getByRole("link", { name: "← Back to question", exact: true }).click();
   await expect(preview).toHaveURL(atQuestion(q));
@@ -115,7 +172,7 @@ for (const current of [false, true]) {
     const latest = (await task(request)).question;
     await walkthrough(page, info).open(q.design_url);
     await page.reload();
-    await expect(page.getByText("Earlier version.", { exact: false })).toBeVisible();
+    await expect(page.getByText("Earlier preview.", { exact: false })).toBeVisible();
     await page.getByRole("link", { name: current ? "Open current question" : "← Back to question", exact: true }).click();
     const target = current ? latest : q;
     await expect(page).toHaveURL(atQuestion(target));
@@ -132,9 +189,9 @@ test("a saved proposal opens from chat, full size and back; a follow-up hands th
   const q = initial.question;
   await walk.open("/");
   await expect(page.getByRole("heading", { name: "Needs you", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "View preview · v1", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "View preview · Conversation layout", exact: true })).toBeVisible();
   await walk.open(atQuestion(q));
-  const link = card(page, q).getByRole("link", { name: "View preview · v1", exact: true });
+  const link = card(page, q).getByRole("link", { name: "View preview · Conversation layout", exact: true });
   await walk.state("01-question-preview-entry", { visible: [link, card(page, q).getByRole("button", { name: "Use this design" })], hidden: [] });
   const popup = page.waitForEvent("popup");
   await link.click();
@@ -177,7 +234,7 @@ test("a saved proposal opens from chat, full size and back; a follow-up hands th
   });
   await park(request);
   await previewWalk.state("04b-asked-again-decision-still-open", {
-    visible: [preview.getByText("Your turn · 1 question · asked again", { exact: true }), card(preview, q).getByRole("button", { name: "Use this design" }), card(preview, q).getByRole("link", { name: "View preview · v1", exact: true })],
+    visible: [preview.getByText("Your turn · 1 question · asked again", { exact: true }), card(preview, q).getByRole("button", { name: "Use this design" }), card(preview, q).getByRole("link", { name: "View preview · Conversation layout", exact: true })],
     hidden: [sent, card(preview, q).getByText("Decision recorded", { exact: true })],
   });
   await card(preview, q).getByRole("button", { name: "Use this design" }).click();
@@ -190,7 +247,7 @@ test("a saved proposal opens from chat, full size and back; a follow-up hands th
   await expect(card(preview, q).getByText("Decision recorded", { exact: true })).toBeVisible();
   expect((await task(request)).hold_merge).toBe(initial.hold_merge);
   await previewWalk.state("05-design-accepted-hold-retained", {
-    visible: [card(preview, q).getByText("Decision recorded", { exact: true }), card(preview, q).getByRole("link", { name: "View preview · v1", exact: true })],
+    visible: [card(preview, q).getByText("Decision recorded", { exact: true }), card(preview, q).getByRole("link", { name: "View preview · Conversation layout", exact: true })],
     hidden: [card(preview, q).getByRole("button", { name: "Use this design" })],
   });
   await preview.close();
@@ -206,7 +263,7 @@ test("a replacement labels the earlier saved proposal and returns to its exact q
   expect(current.id).toBe(q.id);
   expect(current.revision).toBe(q.revision + 1);
   await walk.state("earlier-fixed-version", {
-    visible: [page.getByText("Earlier version.", { exact: false }), page.getByRole("link", { name: "Open current question", exact: true })],
+    visible: [page.getByText("Earlier preview.", { exact: false }), page.getByRole("link", { name: "Open current question", exact: true })],
     hidden: [page.getByText("The revised proposal", { exact: false })],
   });
   await expect(page.getByRole("link", { name: "← Back to question", exact: true })).toHaveAttribute("href", atQuestion(q));
@@ -215,8 +272,8 @@ test("a replacement labels the earlier saved proposal and returns to its exact q
   await expect(card(page, q).getByRole("button", { name: "Use this design" })).toHaveCount(0);
   await walk.open(current.design_url);
   await walk.state("replacement-version", {
-    visible: [page.getByText("Preview · v2", { exact: true }), page.getByText("The revised proposal", { exact: false })],
-    hidden: [page.getByText("Earlier version.", { exact: false })],
+    visible: [page.getByRole("main").getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("The revised proposal", { exact: false })],
+    hidden: [page.getByText("Earlier preview.", { exact: false })],
   });
   expect((await task(request)).question.status).toBe("open");
 });
@@ -229,7 +286,7 @@ test("the current implementation preview is discoverable from Needs you, Work an
   const review = initial.question;
   expect(review.id).not.toBe(proposal.id);
   expect(review.revision).toBe(1);
-  const previewName = "View preview · v1";
+  const previewName = "View preview · Conversation layout — implementation review";
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const draft = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const back = info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : page.locator(".task-crumb");
@@ -298,7 +355,7 @@ test("the current implementation preview is discoverable from Needs you, Work an
   const earlier = card(page, proposal);
   await expect(earlier.getByText("Decision recorded", { exact: true })).toBeVisible();
   const opened = page.waitForEvent("popup");
-  await earlier.getByRole("link", { name: previewName, exact: true }).click();
+  await earlier.getByRole("link", { name: "View preview · Conversation layout", exact: true }).click();
   const savedProposal = await opened;
   await walkthrough(savedProposal, info).state("review-07-approved-proposal-provenance", {
     visible: [savedProposal.getByRole("main").getByRole("heading", { name: "Conversation layout", exact: true }), savedProposal.getByText("Keep the conversation easy to read. The question and its reply share one place.", { exact: true })],
@@ -326,12 +383,12 @@ test("a grouped review keeps its current preview reachable after another member 
   const walk = walkthrough(page, info);
   await walk.open(taskPath);
   const jumps = page.locator(".conversation-jumps");
-  const preview = jumps.getByRole("link", { name: "View preview · v1", exact: true });
+  const preview = jumps.getByRole("link", { name: "View preview · Conversation layout — implementation review", exact: true });
   const scroller = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".convo-scroll");
   const readBack = () => scroller.evaluate((node) => { node.scrollTop = 0; });
   await expect(card(page, review)).toBeInViewport();
   await walk.state("group-review-01-two-open-members-end-the-chat", {
-    visible: [card(page, review).getByRole("link", { name: "View preview · v1", exact: true }), card(page, date)],
+    visible: [card(page, review).getByRole("link", { name: "View preview · Conversation layout — implementation review", exact: true }), card(page, date)],
     hidden: [preview, jumps.getByRole("button", { name: /^Your turn/ })],
   });
   await readBack();
@@ -347,7 +404,7 @@ test("a grouped review keeps its current preview reachable after another member 
   await viewQuestion.click();
   await expect(card(page, review)).toBeInViewport();
   const opened = page.waitForEvent("popup");
-  await card(page, review).getByRole("link", { name: "View preview · v1", exact: true }).click();
+  await card(page, review).getByRole("link", { name: "View preview · Conversation layout — implementation review", exact: true }).click();
   const saved = await opened;
   await expect(saved).toHaveURL(new RegExp(`${review.design_url}$`));
   await expect(saved.getByRole("heading", { name: "Conversation layout — implementation review", exact: true })).toBeVisible();
@@ -359,7 +416,7 @@ test("a grouped review keeps its current preview reachable after another member 
   await expect(card(page, date).getByText("Decision recorded", { exact: true })).toBeVisible();
   expect((await request.post("/fixture/resolve-question", { data: { id: review.id } })).ok()).toBe(true);
   await walk.state("group-review-03-final-answer-removes-shortcuts", {
-    visible: [card(page, review).getByText("Decision recorded", { exact: true }), card(page, review).getByRole("link", { name: "View preview · v1", exact: true })],
+    visible: [card(page, review).getByText("Decision recorded", { exact: true }), card(page, review).getByRole("link", { name: "View preview · Conversation layout — implementation review", exact: true })],
     hidden: [preview, viewQuestion],
   });
   expect((await task(request)).hold_merge).toBe(initial.hold_merge);
