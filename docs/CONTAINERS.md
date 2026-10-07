@@ -42,6 +42,13 @@ fixed UID 1000 runs Altitude and its independent worker units. Image constructio
 setgid file bits and file capabilities and includes no sudo. Application code is root-owned under
 `/opt/altitude`. A root-owned marker outside persistent volumes selects image behavior; environment
 variables and forwarded headers cannot select native authority paths.
+Inside a worker's single-user namespace, image ownership can appear as the kernel's unmapped UID.
+The platform seam anchors that view to the protected filesystem root and checks the marker,
+instance file and every ancestor for matching ownership, type and permissions. It also rejects
+effective worker write access in that namespace. The unmapped UID cannot attest the original UID;
+the fixed image path and protected ancestors provide the trust boundary. Invalid existing identity
+fails closed. Container workers edit with bundled `python3` through confined exec; launch and resume
+instructions replace the host-only patch command without changing writable roots.
 
 Two local named volumes hold `/home/altitude` and `/home/altitude/Projects`. No host home, credential
 directory, device, runtime socket or source checkout is mounted. Clone/import projects inside the
@@ -369,7 +376,9 @@ and the requested certificate SAN; it does not test host port publication or cli
 An explicit `--native-sandbox-binary /path/to/diagnostic-executable` additionally copies an ordinary
 installed native diagnostic into the disposable image and exercises the application-generated task
 and coordinator profiles. It retains binary/probe hashes, positive controls, allowed/denied writes,
-manager/broker/loopback socket checks and a fictional Git commit. The source deployment is already
+manager/broker/loopback socket checks and a fictional Git commit. It also checks the normal confined
+`alt task status` command, image-instance recognition, a Python workspace edit, denied image/ancestor
+writes and native-operation refusal. The source deployment is already
 root-owned and denies the unsandboxed write control. The stripped-image lane passed with diagnostic
 CLI 0.158.0 and bubblewrap 0.12.0. Task writes were limited to worktree/Git/state/temp; coordinator
 writes were limited to scratch. Both denied user-manager sockets and Git-consent writes; the task

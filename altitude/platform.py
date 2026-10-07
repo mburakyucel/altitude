@@ -55,21 +55,50 @@ CONTAINER_PROJECTS = Path("/home/altitude/Projects")
 CONTAINER_USER_PATH = "/home/altitude/.local/bin:/usr/local/bin:/usr/bin:/bin"
 CONTAINER_CGROUP_ROOT = Path("/sys/fs/cgroup")
 IMAGE_MANAGED = "This container is image-managed. Replace or restart it from the host with Podman."
+
+
+def _container_identity(path: Path) -> bytes:
+    """Read fixed image metadata across the worker's single-user namespace (#660)."""
+    owner = Path('/').lstat().st_uid
+    if owner != 0:
+        if _darwin():
+            raise ValueError('Container identity requires root ownership')
+        # The kernel collapses unmapped owners to overflowuid. It cannot attest their original
+        # IDs: trust stays in the fixed image path and its protected ancestors, including /.
+        try:
+            mapping = [list(map(int, row.split())) for row in (PROC / 'self/uid_map').read_text().splitlines()]
+            overflow = int((PROC / 'sys/kernel/overflowuid').read_text())
+        except (OSError, ValueError) as exc:
+            raise ValueError('Container identity namespace is unavailable') from exc
+        uid = os.geteuid()
+        if (uid == 0 or owner != overflow or owner == uid or len(mapping) != 1
+                or len(mapping[0]) != 3 or mapping[0][0] != uid or mapping[0][1] < 0 or mapping[0][2] != 1):
+            raise ValueError('Container identity requires root ownership or a protected single-user namespace')
+    for entry in (path, *path.parents):
+        info = entry.lstat()
+        expected_type = stat.S_ISREG if entry == path else stat.S_ISDIR
+        if (not expected_type(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022
+                or owner != 0 and os.access(entry, os.W_OK, effective_ids=True)):
+            raise ValueError('Container identity and parents must be image-owned and non-writable')
+    with path.open('rb') as source:
+        identity = source.read(65)
+    if len(identity) > 64:
+        raise ValueError('Container identity is oversized')
+    return identity
+
+
 def containerized() -> bool:
     """Recognize the image contract; an invalid existing marker fails closed, never as native mode."""
     try:
-        info = CONTAINER_MARKER.lstat()
+        CONTAINER_MARKER.lstat()
     except FileNotFoundError:
         return False
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-        raise RuntimeError("Container identity must be a root-owned, non-writable regular file")
-    for parent in CONTAINER_MARKER.parents:
-        info = parent.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-            raise RuntimeError("Container identity must have root-owned, non-writable parent directories")
-    with CONTAINER_MARKER.open("rb") as source:
-        if source.read(64) != b"altitude-container-v1\n":
-            raise RuntimeError("Unsupported container identity; use a matching Altitude image")
+    try:
+        identity = _container_identity(CONTAINER_MARKER)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if identity != b"altitude-container-v1\n":
+        raise RuntimeError("Unsupported container identity; use a matching Altitude image")
     return True
 
 
@@ -134,10 +163,7 @@ def require_container_project(path: Path, *, folder: bool = False) -> None:
 
 
 def _container_instance() -> str:
-    info = CONTAINER_INSTANCE.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-        raise ValueError("Container instance identity is not root-owned and immutable to the application")
-    value = CONTAINER_INSTANCE.read_text().strip()
+    value = _container_identity(CONTAINER_INSTANCE).decode('ascii').strip()
     if not re.fullmatch(r"[0-9a-f]{32}", value):
         raise ValueError("Container instance identity is invalid")
     return value

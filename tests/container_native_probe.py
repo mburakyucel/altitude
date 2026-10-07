@@ -18,7 +18,7 @@ assert "security.capability" not in os.listxattr(binary)
 os.environ['ALTITUDE_HOME'] = str(home / 'sandbox-fixture-state')
 os.environ['CODEX_HOME'] = str(home / '.codex')
 sys.path.insert(0, '/opt/altitude')
-from altitude import config, engines, l3, platform
+from altitude import config, engines, l3, platform, state as S, tasks as T
 
 def command(args, cwd=None):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=20, check=True)
@@ -36,10 +36,14 @@ command(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.inv
 command(['git', 'worktree', 'add', '-b', 'task', str(workspace)], project)
 command(['git', 'worktree', 'add', '-b', 'other', str(sibling)], project)
 config.PROJECTS_FILE.write_text(json.dumps({'fixture': {'path': str(project)}}))
+task = T.new('fixture', 'Confined status fixture', 'Provider-free image identity probe.', hold_merge='Fixture hold')
+task.update(worktree=str(workspace), branch='task')
+S.save_task('fixture', task)
 git_roots = engines._git_dirs(workspace)
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
            'state': config.ROOT, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,
+           'image_metadata': platform.CONTAINER_MARKER.parent, 'image_etc': Path('/etc'), 'image_root': Path('/'),
            'guard_consent': platform.container_git_guards()[1],
            'lifecycle_receipt': platform._lifecycle_directory(),
            'protected_codex': workspace / '.codex', 'protected_agents': workspace / '.agents',
@@ -54,6 +58,7 @@ tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_server.bind(('127.0.0.1', 0)); tcp_server.listen(8)
 assert tcp_server.getsockname()[1] not in (8890, 8891)
 spec = {'targets': {k: str(v) for k, v in targets.items()}, 'broker': str(broker),
+        'task': task['slug'],
         'port': tcp_server.getsockname()[1],
         # Probe the real endpoints independently of how the profile represents denial.
         'controls': {'user_bus': '/run/user/1000/bus',
@@ -63,6 +68,24 @@ import errno, json, os, socket, subprocess, sys
 from pathlib import Path
 spec = json.loads(sys.argv[1]); role = sys.argv[2]
 out = {'role': role, 'writes': {}, 'connections': {}}
+sys.path.insert(0, '/opt/altitude')
+from altitude import platform
+out['identity'] = {'containerized': platform.containerized(), 'instance': platform._container_instance(),
+                   'uid_map': Path('/proc/self/uid_map').read_text(),
+                   'marker_uid': platform.CONTAINER_MARKER.stat().st_uid}
+try:
+    platform.require_native_application()
+    out['native_refused'] = False
+except RuntimeError:
+    out['native_refused'] = True
+out['identity_writes'] = {}
+for path in (platform.CONTAINER_MARKER, platform.CONTAINER_INSTANCE):
+    try:
+        fd = os.open(path, os.O_WRONLY)  # No truncation or mutation, even if a protection regresses.
+        os.close(fd)
+        out['identity_writes'][str(path)] = True
+    except OSError:
+        out['identity_writes'][str(path)] = False
 for name, directory in spec['targets'].items():
     path = Path(directory) / ('probe-' + role)
     try:
@@ -82,6 +105,17 @@ for name, family, address in [(name, socket.AF_UNIX, path) for name, path in spe
 out['security'] = [x for x in Path('/proc/self/status').read_text().splitlines()
                    if x.startswith(('Seccomp:', 'CapEff:', 'NoNewPrivs:'))]
 if role == 'task':
+    env = dict(os.environ, ALTITUDE_ACTOR='l2', ALTITUDE_PROJECT='fixture', ALTITUDE_TASK=spec['task'])
+    status = subprocess.run(['alt', 'task', 'status', spec['task']], env=env,
+                            capture_output=True, text=True, timeout=10)
+    out['task_status'] = {'exit': status.returncode, 'stdout': status.stdout, 'stderr': status.stderr}
+    edit = Path(spec['targets']['workspace']) / 'edit.txt'
+    edit.write_text('before\n')
+    changed = subprocess.run(['python3', '-c',
+        "from pathlib import Path; p=Path('edit.txt'); p.write_text(p.read_text().replace('before', 'after'))"],
+        cwd=spec['targets']['workspace'], capture_output=True, text=True, timeout=10)
+    out['workspace_edit'] = {'exit': changed.returncode, 'contents': edit.read_text()}
+    edit.unlink()
     git = subprocess.run(['git', '-C', spec['targets']['workspace'], '-c', 'user.name=Fixture',
                           '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty',
                           '-m', 'sandbox fixture'], capture_output=True, text=True, timeout=10)
@@ -121,7 +155,7 @@ records['limits'] = ['No provider, real credentials, external network or real co
 failures = []
 control = records['unsandboxed_control']
 for name, result in control['writes'].items():
-    if result['allowed'] != (name != 'deployment'):
+    if result['allowed'] != (name not in {'deployment', 'image_metadata', 'image_etc', 'image_root'}):
         failures.append('unsandboxed control differs from image ownership for ' + name)
 if not all(r['connected'] for r in control['connections'].values()):
     failures.append('unsandboxed socket controls failed')
@@ -132,6 +166,10 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
         failures.append(role + ': native sandbox unavailable')
         continue
     observed = row['observed']
+    if not observed['identity']['containerized'] or not observed['native_refused']:
+        failures.append(role + ': image identity or native authority refusal failed')
+    if any(observed['identity_writes'].values()):
+        failures.append(role + ': image identity is writable')
     security = dict(line.split(':', 1) for line in observed['security'])
     for key, expected in [('CapEff', '0000000000000000'), ('NoNewPrivs', '1'), ('Seccomp', '2')]:
         if security.get(key, '').strip() != expected:
@@ -145,6 +183,17 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
             failures.append(role + ': unexpected connection permission for ' + name)
     if role == 'task' and observed['git_commit']['exit'] != 0:
         failures.append('task: git commit failed')
+    if role == 'task':
+        status = observed['task_status']
+        try:
+            record = json.loads(status['stdout'])
+            valid = record['slug'] == task['slug'] and record['hold_merge'] == 'Fixture hold'
+        except (ValueError, KeyError):
+            valid = False
+        if status['exit'] != 0 or not valid:
+            failures.append('task: normal confined alt task status failed')
+        if observed['workspace_edit'] != {'exit': 0, 'contents': 'after\n'}:
+            failures.append('task: supported workspace edit failed')
 records['gate_failures'] = failures
 records['gate_passed'] = not failures
 print(json.dumps(records, indent=2))

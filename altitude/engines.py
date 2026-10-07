@@ -141,6 +141,12 @@ CODEX_PATCH_NOTE = (
     "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
     "sandbox and its configured writable roots."
 )
+CODEX_CONTAINER_PATCH_NOTE = (
+    "[altitude] Container editing contract (supersedes any earlier host patch constraint): "
+    "Edit files with bundled `python3` through the exec tool, inside the existing workspace sandbox "
+    "and its allowed writable roots. This image does not provide the shell `apply_patch` command. "
+    "Do not call the custom `apply_patch` tool or bypass confinement."
+)
 BROWSER_VERIFICATION_NOTE = (
     "[altitude] Browser sandbox: run verification that needs the browser's own sandbox with `alt task validate`, "
     "in a disposable container where Playwright's Chromium keeps it; launch with chromiumSandbox:true. Never "
@@ -1855,8 +1861,10 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
             cmd += ["-c", setting]
         cmd += [resume, "-"] if resume else ["-"]
-        text = prompt if resume else (
-            ((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE + "\n\n" + prompt)
+        in_container = platform.containerized()
+        patch_note = CODEX_CONTAINER_PATCH_NOTE if in_container else CODEX_PATCH_NOTE
+        text = ((patch_note + "\n\n" if in_container else "") + prompt) if resume else (
+            ((Path(persona).read_text() + "\n\n") if persona else "") + patch_note + "\n\n" + prompt)
     else:
         raise ValueError(f"unknown L2 engine {engine!r}")
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
