@@ -120,8 +120,10 @@ Native Codex evidence establishes these deterministic task/fixture and tool-cach
 on the recorded Mac OS/architecture/revision only. Claude-native execution and the full protected
 native browser suite need their own recorded runs. Until that evidence exists, a Mac owner records
 the missing native journeys and uses the required Linux candidate CI for `make check` delivery
-evidence. The [validation runner](#validation-runner) remains Linux-only; browser recovery and
-native-runtime adoption stay with their owners. No overall macOS support follows from fixture passes.
+evidence. The [Mac validation lane](#macos-validation-runs) supplies a separate fictional
+application environment; it does not establish native worker or browser-sandbox acceptance.
+Browser recovery and native-runtime adoption stay with their owners. No overall macOS support
+follows from fixture passes.
 
 The broader native Python suite also has uncovered fixture gaps: other resume integrations still
 read the confined kernel boot identity, Linux process fixtures access `/proc`, and container archive
