@@ -9,7 +9,7 @@ import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { agoText, when } from "../data/observed";
+import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
 import { taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
@@ -74,6 +74,8 @@ interface Facts {
   dot: "running" | "waiting" | "danger" | "idle";
   /** Compact state, engine/model and PR with its checks state; full reasons are disclosed. */
   chips: Chip[];
+  /** What the task requested, launched with and what its engine reported (SPEC.md §3.10). */
+  selection: ModelFacts;
   /** Task details: attempt and when it started or finished. */
   sub: string;
   /** What a queued task waits for; shown where the live panel would be. */
@@ -96,6 +98,38 @@ interface Facts {
   repository?: string | null;
 }
 
+const effortName = (value: string) => value === "xhigh" ? "Extra High" : value === "native" ? "engine default" : sentence(value);
+
+interface ModelFacts { chip: string; rows: [string, string][]; note: string }
+
+/**
+ * The chip says only what is known: "Requested · Opus on Claude · Max" before the engine reports, then what
+ * it reported, with "(requested Max)" when the two differ. Details keep the requested, launch and reported
+ * values and routing's recorded reason.
+ */
+function modelFacts(task: TaskView, engineLabel: string): ModelFacts {
+  const launchModel = str(task["launch_model"]) || str(task["model"]);
+  const launchEffort = str(task["launch_effort"]);
+  const reportedEffort = str(task["engine_reasoning_effort"]);
+  const engineModel = str(task["engine_model"]);
+  const reportedModel = engineModel && engineModel !== launchModel ? engineModel : "";
+  const reported = Boolean(reportedModel || reportedEffort);
+  const model = reportedModel || launchModel;
+  const name = [model ? modelName(model) : "", engineLabel].filter(Boolean).join(" on ");
+  const effort = reportedEffort ? effortName(reportedEffort) + (launchEffort && launchEffort !== reportedEffort ? ` (requested ${effortName(launchEffort)})` : "")
+    : launchEffort ? `${effortName(launchEffort)}${reported ? " requested" : ""}` : "";
+  const chip = !name ? "" : [reported || !(launchModel || launchEffort) ? "" : "Requested", name, effort].filter(Boolean).join(" · ");
+  const asked = [str(task["model"]), str(task["effort"]) ? effortName(str(task["effort"])) : ""].filter(Boolean).join(" · ");
+  const rows: [string, string][] = !name ? [] : [
+    ["Requested", asked ? `${asked} · set for this task` : "Project choice or defaults"],
+    ["Launched", [launchModel || "engine default model", launchEffort ? effortName(launchEffort) : "engine default effort"].join(" · ")],
+    ["Engine reports", [engineModel && reportedModel ? engineModel : "model not reported", reportedEffort ? effortName(reportedEffort) : "effort not reported"].join(" · ")],
+    ...(str(task["routing"]) ? [["Routing", sentence(str(task["routing"]))] as [string, string]] : []),
+  ];
+  const differs = Boolean(reportedEffort && launchEffort && reportedEffort !== launchEffort);
+  return { chip, rows, note: `${differs ? "The engine reported a different level. " : ""}Messages and resumes keep this model and effort; to redo the work on another one, ask L3.` };
+}
+
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
@@ -114,8 +148,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
   const engineLabel = overview?.engines.find((e) => e.engine === engineId)?.label ?? engineId;
-  const model = str(task["engine_model"]) || str(task["model"]);
-  const engineChip = [model ? sentence(model) : "", engineLabel].filter(Boolean).join(" on ");
+  const selection = modelFacts(task, engineLabel);
 
   const prs = arr(task["prs"]).map((n) => num(n)).filter((n): n is number => n != null);
   const number = prs[prs.length - 1];
@@ -160,7 +193,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     state,
     label,
     dot,
-    chips: [{ text: label }, ...(engineChip ? [{ text: engineChip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
+    chips: [{ text: label }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
     explanation: !faultKind && (state === "queued" || held) ? waiting : explanation,
@@ -168,6 +201,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     queueReason: state === "queued" || held ? wait?.hold ?? "" : "",
     holdReason: hold,
     engineLabel,
+    selection,
     finished,
     canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question))),
     canStop: state === "running",
@@ -536,7 +570,8 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
   if (!actions.confirm) return null;
   const question = "Reject this task?";
   return (
-    <div className="task-confirm" role="group" aria-label={question}>
+    <div className="task-confirm" role="group" aria-label={question}
+      onKeyDown={(event) => { if (event.key === "Escape" && !actions.pending) { event.stopPropagation(); actions.open(""); } }}>
       <p className="task-confirm-text">
         Reject this task? Its worker ends and the task is archived.
       </p>
@@ -550,12 +585,12 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
         />
       )}
       <div className="task-confirm-actions">
-        <button type="button" className="btn btn-primary" disabled={actions.pending} onClick={actions.run}>
-          {actions.pending ? <span className="spinner" aria-hidden /> : null}
-          Reject
-        </button>
-        <button type="button" className="btn btn-ghost" disabled={actions.pending} onClick={() => actions.open("")}>
+        <button type="button" className="btn" autoFocus disabled={actions.pending} onClick={() => actions.open("")}>
           Cancel
+        </button>
+        <button type="button" className="btn btn-danger" disabled={actions.pending} onClick={actions.run}>
+          {actions.pending ? <span className="spinner" aria-hidden /> : null}
+          Reject task
         </button>
       </div>
       {actions.error ? (
@@ -666,6 +701,10 @@ function TaskPage({
       }} />
       <TaskContext context={task.token_usage?.context} running={task.state === "running"} />
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
+      {facts.selection.rows.length ? <section aria-label="Model and effort"><h3>Model and effort</h3>
+        <dl className="task-model">{facts.selection.rows.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
+        <p className="text-meta text-muted">{facts.selection.note}</p>
+      </section> : null}
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}

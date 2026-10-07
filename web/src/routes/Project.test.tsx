@@ -104,25 +104,7 @@ async function openPanel(user: ReturnType<typeof renderApp>["user"]) {
 }
 
 describe("Project page", () => {
-  it("removal denial keeps the project, selected scope and history intact", async () => {
-    const fetchMock = mockFetch();
-    const base = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation((input, init) => String(input) === "/api/project/remove"
-      ? Promise.resolve(jsonResponse({ error: "Finish or reject fix-timer before removing this project." }, 409)) : base(input, init));
-    const { router, user } = renderApp({ route: "/projects/altitude" });
-    await user.click(await screen.findByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
-    expect(screen.getByText(/Removing this project detaches L3/)).toHaveTextContent("remaining worktrees, saved history and queued messages stay on disk");
-    await user.click(screen.getByRole("button", { name: "Remove" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Finish or reject fix-timer");
-    expect(router.state.location.pathname).toBe("/projects/altitude");
-    expect(localStorage.getItem("altitude.project")).toBe("altitude");
-    expect(screen.getByText("two tasks running.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("removes the last project from navigation, selection and cached history, leaving First run", async () => {
+  it("removes the last project from Settings, leaving First run without its selection or cached history", async () => {
     const data = { ...overview, queue: [], projects: [{ name: "altitude", managed: true, path: "/tmp/altitude" }] };
     const fetchMock = mockFetch({ overview: data, project: { ...project, tasks: [] } });
     const base = fetchMock.getMockImplementation()!;
@@ -130,20 +112,19 @@ describe("Project page", () => {
     fetchMock.mockImplementation((input, init) => String(input) === "/api/project/remove"
       ? new Promise<Response>((resolve) => { finish = resolve; }) : base(input, init));
     const { router, user, queryClient } = renderApp({ route: "/projects/altitude" });
-    await user.click(await screen.findByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await screen.findByText("two tasks running.");
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: /Remove/ })).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Project settings…" }));
+    await user.click(await screen.findByRole("button", { name: "Remove…" }));
+    await user.click(screen.getByRole("button", { name: "Remove altitude" }));
     expect(await screen.findByRole("button", { name: "Removing…" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Reset L3 conversation" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-    await user.keyboard("{Escape}");
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(posted(fetchMock, "/api/project/remove")).toEqual({ name: "altitude" });
     data.projects[0]!.managed = false;
     finish(jsonResponse({ ok: true }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
     await screen.findByRole("heading", { name: "Welcome to Altitude" });
     await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
-    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
     expect(queryClient.getQueryData(["chat", "altitude"])).toBeUndefined();
     expect(screen.queryByRole("link", { name: "altitude" })).toBeNull();
   });
@@ -400,33 +381,36 @@ describe("Project page", () => {
 
     await screen.findByRole("heading", { name: "altitude" });
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await screen.findByRole("menuitem", { name: "Reset L3 conversation" });
+    await screen.findByRole("menuitem", { name: "Reset L3 conversation…" });
     expect(screen.queryByRole("menuitem", { name: "Design boards" })).toBeNull();
   });
 
   it("moves keyboard focus through the menu, its confirmation and back to More actions", async () => {
     mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
+    const { router, user } = renderApp({ route: "/projects/altitude" });
 
     await screen.findByRole("heading", { name: "altitude" });
     const more = screen.getByRole("button", { name: "More actions" });
     await user.click(more);
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Settings…" })).toHaveFocus());
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(
+      ["Project settings…", expect.stringMatching(/^Setup…/), "Reset L3 conversation…", "All settings…"]);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Project settings…" })).toHaveFocus());
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: /^Setup:/ })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitem", { name: "Reset L3 conversation" })).toHaveFocus();
-    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
-    expect(screen.getByRole("menuitem", { name: "Remove project" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Reset L3 conversation…" })).toHaveFocus();
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reset" })).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Remove project" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Reset L3 conversation…" })).toHaveFocus());
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(more).toHaveFocus();
     await user.click(more);
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Settings…" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Project settings…" })).toHaveFocus());
+    await user.keyboard("{End}{Enter}");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));
   });
 
   it("resets the L3 conversation after an inline confirm", async () => {
@@ -435,14 +419,14 @@ describe("Project page", () => {
 
     await screen.findByRole("heading", { name: "altitude" });
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Reset L3 conversation" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Reset L3 conversation…" }));
     expect(posted(fetchMock, "/api/l3/reset")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reset" }));
     await waitFor(() => expect(posted(fetchMock, "/api/l3/reset")).toEqual({ project: "altitude" }));
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
-  it("removes the project after an inline confirm and leaves for Needs you", async () => {
+  it("removes a project from its Settings page and leaves for Needs you while others remain", async () => {
     const data = { ...overview, projects: [{ name: "altitude", managed: true }, { name: "sibling", managed: true }] };
     const fetchMock = mockFetch({ overview: data });
     const base = fetchMock.getMockImplementation()!;
@@ -450,15 +434,12 @@ describe("Project page", () => {
       if (String(input) === "/api/project/remove") data.projects[0]!.managed = false;
       return base(input, init);
     });
-    const { router, user } = renderApp({ route: "/projects/altitude" });
-
-    await screen.findByRole("heading", { name: "altitude" });
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+    const { router, user } = renderApp({ route: "/settings/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove…" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Remove altitude from Altitude?")).toBeNull();
-    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Remove…" }));
+    await user.click(screen.getByRole("button", { name: "Remove altitude" }));
     await waitFor(() => expect(posted(fetchMock, "/api/project/remove")).toEqual({ name: "altitude" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });

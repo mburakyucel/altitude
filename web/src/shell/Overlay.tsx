@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 
 /**
  * A scrim with a panel over it: the work panel from the right below the inline width, the phone's
- * project switcher from the bottom, First run centred. Esc or the scrim closes it.
+ * project switcher from the bottom, First run centred. Esc or the scrim closes it. Focus starts on the
+ * panel's `[data-autofocus]` element when it has one.
  */
 export function Overlay({
   label,
@@ -22,7 +23,7 @@ export function Overlay({
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const node = panel.current!;
-    node.focus({ preventScroll: true });
+    (node.querySelector<HTMLElement>("[data-autofocus]") ?? node).focus({ preventScroll: true });
     const containFocus = (event: FocusEvent) => {
       if (!node.contains(event.target as Node)) node.focus({ preventScroll: true });
     };

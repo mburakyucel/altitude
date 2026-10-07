@@ -79,6 +79,7 @@ export const routes: RouteObject[] = [
       { path: "/monitor", element: <Monitor /> },
       { path: "/settings", element: <Settings /> },
       { path: "/settings/voice", element: <Settings page="voice" /> },
+      { path: "/settings/projects", element: <Settings page="projects" /> },
       { path: "/settings/projects-folder", element: <Settings page="projects-folder" /> },
       { path: "/settings/name", element: <Settings page="name" /> },
       { path: "/settings/prerequisites", element: <Settings page="prerequisites" /> },

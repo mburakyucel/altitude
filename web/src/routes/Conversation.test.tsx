@@ -77,7 +77,16 @@ const chatView = { history, active: null, busy: false, queued: [], l3: { session
 
 type Fixtures = { chat?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>; sendNow?: () => Response | Promise<Response> };
 
+let defaults: Record<string, unknown> = {};
+const auto = {
+  l3_engine: null, l2_engine: null, l3_choice: null, l2_preference: null, l3_unavailable: null, routing: null, roles: [],
+  engines: [{ value: "alpha", label: "Alpha", efforts: [], routed: true }],
+  models: [{ engine: "alpha", model: "swift", label: "Swift" }, { engine: "alpha", model: "deep", label: "Deep" }],
+  efforts: { alpha: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] },
+};
+
 function mockFetch(fixtures: Fixtures = {}) {
+  defaults = auto;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
@@ -90,7 +99,11 @@ function mockFetch(fixtures: Fixtures = {}) {
       return fixtures.post ? fixtures.post(body) : streamResponse(['{"t":"Sure."}', '{"done":{"turn_id":"c3"}}']);
     }
     if (url.includes("/api/task/altitude/persist-paths")) return jsonResponse({ slug: "persist-paths", title: "Persist paths", state: "done", files: { digest: "Shipped." }, messages: [] });
-    if (url.includes("/api/l3/engine")) return jsonResponse({ ok: true });
+    if (url.endsWith("/api/defaults/altitude")) return jsonResponse(defaults);
+    if (url.endsWith("/api/defaults") && init?.method === "POST") {
+      defaults = { ...defaults, l3_choice: (JSON.parse(String(init.body)) as { value: null }).value };
+      return jsonResponse(defaults);
+    }
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -972,16 +985,20 @@ describe("Conversation", () => {
     await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it" }));
   });
 
-  it("pins the engine from the composer's pill with names from the API", async () => {
+  it("opens Models on L3 from the message box and saves a choice for this project", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
     await conversation();
-    const pill = screen.getByRole("combobox", { name: "L3 engine" });
-    expect(within(pill).getAllByRole("option").map((o) => o.textContent)).toEqual(["Auto", "Alpha"]);
-    await user.selectOptions(pill, "alpha");
-    await waitFor(() => expect(posted(fetchMock, "/api/l3/engine")).toEqual({ project: "altitude", engine: "alpha" }));
-    await user.selectOptions(pill, "");
-    await waitFor(() => expect(posted(fetchMock, "/api/l3/engine", 1)).toEqual({ project: "altitude", engine: null }));
+    const button = await screen.findByRole("button", { name: "L3 model: Auto" });
+    await user.click(button);
+    const dialog = screen.getByRole("dialog", { name: "Models · L3 · altitude only" });
+    expect(within(dialog).getByRole("radio", { name: /^Auto/ })).toHaveFocus();
+    await user.click(within(dialog).getByRole("radio", { name: /^Deep/ }));
+    await user.click(within(dialog).getByRole("radio", { name: "High" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in altitude" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetchMock, "/api/defaults")).toEqual({ project: "altitude", setting: "l3_choice", value: { engine: "alpha", model: "deep", effort: "high" }, expected: null });
+    expect(await screen.findByRole("button", { name: "L3 model: Deep · High" })).toHaveFocus();
   });
 
   it("shows the project name once on the phone, above the conversation", async () => {

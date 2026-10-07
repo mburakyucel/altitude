@@ -4,8 +4,9 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, useDevices, useMachine, useOverview } from "../data/api";
-import type { Certificate, Device, Overview, PairingCode, PhoneShare, Update } from "../data/api";
+import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
+import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
+import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -125,19 +126,64 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   </>;
 }
 
-/** The project Settings was opened from, or every managed project on a direct visit. */
-function ProjectRows({ from, state }: { from?: string; state: unknown }) {
+/** The project Settings was opened from: its L3 choice and routing, one tap from its page. */
+function ThisProject({ name, state }: { name: string; state: unknown }) {
+  const defaults = useProjectDefaults(name);
+  const data = defaults.data;
+  const routing = !data ? "" : data.l2_engine ? `tasks only on ${engineName(data, data.l2_engine)}`
+    : data.l2_preference ? `tasks prefer ${engineName(data, data.l2_preference)}` : "routing Auto";
+  return <Group title="This project">
+    <Link className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
+      <span><strong>{name}</strong>{" "}<small>{data ? `L3: ${choiceLabel(data.l3_choice, data, data.engines)} · ${routing}` : "L3, default models, routing, setup and removal"}</small></span><span aria-hidden>›</span>
+    </Link>
+  </Group>;
+}
+
+const engineName = (data: ProjectDefaults, engine: string) => data.engines.find((e) => e.value === engine)?.label ?? engine;
+
+/** Every managed project's settings, and the folder First run lists. */
+function ProjectsPage({ state }: { state: unknown }) {
   const overview = useOverview();
   const names = managedProjects(overview.data).map((row) => row.name);
-  const current = decodeURIComponent(/^\/projects\/([^/?]+)/.exec(from ?? "")?.[1] ?? "");
-  const shown = names.includes(current) ? [current] : names;
-  if (!shown.length) return null;
-  return <section className="settings-section" aria-label={current && shown[0] === current ? "This project" : "Projects"}>
-    <div><h2>{current && shown[0] === current ? "This project" : "Projects"}</h2><p className="text-meta text-muted">Applies only to that project.</p></div>
-    {shown.map((name) => <Link key={name} className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
-      <span><strong>{name}</strong>{" "}<small>L3 engine, models and reasoning effort</small></span><span aria-hidden>›</span>
-    </Link>)}
+  const roots = overview.data?.roots ?? [];
+  return <>
+    <p className="text-meta text-muted">Each project's L3, default models, routing, setup and removal.</p>
+    {overview.isPending ? <p role="status">Loading projects…</p>
+      : overview.isError && !overview.data ? <p role="alert" className="text-danger">Could not load projects. <button className="link" onClick={() => void overview.refetch()}>Retry</button></p>
+        : <div className="settings-group">
+          {names.map((name) => <Link key={name} className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
+            <span><strong>{name}</strong></span><span aria-hidden>›</span>
+          </Link>)}
+          {names.length === 0 ? <p className="settings-row text-muted">No project yet.</p> : null}
+        </div>}
+    <Group title="Folder">
+      <Link className="settings-row" to="/settings/projects-folder" state={state}>
+        <span><strong>Projects folder</strong>{" "}<small>{roots.join(" and ") || "Loading…"} · First run offers the folders directly inside it</small></span><span aria-hidden>›</span>
+      </Link>
+    </Group>
+  </>;
+}
+
+/** One titled group of rows on the Settings overview. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="settings-section" aria-label={title}>
+    <h2>{title}</h2>
+    <div className="settings-group">{children}</div>
   </section>;
+}
+
+/** New tasks as a Settings row: the same dialog as the control beside the quota. */
+function NewTasksRow({ project }: { project?: string }) {
+  const [open, setOpen] = useState(false);
+  const overview = useOverview();
+  const tasks = overview.data?.new_tasks;
+  const label = tasks ? closedLabel(tasks.value, tasks.unavailable, tasks, overview.data?.engines) : "Loading…";
+  return <>
+    <button type="button" className="settings-row" aria-haspopup="dialog" disabled={!tasks} onClick={() => setOpen(true)}>
+      <span><strong>New tasks</strong>{" "}<small>{!tasks ? label : tasks.value ? `${label} in every project, until you go back to Auto` : "Auto · each project's own defaults"}</small></span><span aria-hidden>›</span>
+    </button>
+    {open ? <ModelsDialog project={project} tab="tasks" onClose={() => setOpen(false)} /> : null}
+  </>;
 }
 
 /** The projects folder: First run offers the folders directly inside it. */
@@ -189,8 +235,8 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
   </div>;
 }
 
-/** The operator's terminal, off after install, and the agents' validation runs, on after install. */
-function MachineSwitches({ machine }: { machine: Machine | undefined }) {
+/** The operator's terminal, off after install. */
+function TerminalSwitch({ machine }: { machine: Machine | undefined }) {
   const client = useQueryClient();
   return <>
     {machine?.terminal_unavailable ? <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{machine.terminal_unavailable}</small></span></div> : <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
@@ -199,6 +245,13 @@ function MachineSwitches({ machine }: { machine: Machine | undefined }) {
         client.setQueryData(["machine"], await saveTerminalAccess(on));
         await client.invalidateQueries({ queryKey: ["terminal"] });
       }} />}
+  </>;
+}
+
+/** The agents' validation runs, on after install. */
+function ValidationSwitch({ machine }: { machine: Machine | undefined }) {
+  const client = useQueryClient();
+  return <>
     <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
       unavailable={machine?.validation_unavailable}
       detail="Agents test installs, containers and browsers in throwaway containers on this computer, and each run is recorded on its task. Turning this off stops a running one."
@@ -227,9 +280,10 @@ function DeviceRow({ device, current, onRemoved }: { device: Device; current: bo
       {state.status === "confirm" ? <small className="device-confirm">{current ? "This browser will need a new code to open Altitude again." : "It will need a new code to open Altitude again."}</small> : null}
       {state.status === "failed" ? <small role="alert" className="text-danger">{state.error.message}</small> : null}
     </span>
-    {state.status === "confirm" || state.status === "removing" ? <span className="device-actions">
-      <button type="button" className="btn" disabled={state.status === "removing"} onClick={() => setState({ status: "idle" })}>Cancel</button>
-      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}>{state.status === "removing" ? "Removing…" : "Remove"}</button>
+    {state.status === "confirm" || state.status === "removing" ? <span className="device-actions" role="group" aria-label={`Remove ${device.name}?`}
+      onKeyDown={(event) => { if (event.key === "Escape" && state.status === "confirm") setState({ status: "idle" }); }}>
+      <button type="button" className="btn" autoFocus disabled={state.status === "removing"} onClick={() => setState({ status: "idle" })}>Cancel</button>
+      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}>{state.status === "removing" ? "Removing…" : "Remove device"}</button>
     </span> : <button type="button" className="btn" onClick={() => setState({ status: "confirm" })}>Remove</button>}
   </li>;
 }
@@ -424,7 +478,7 @@ function VersionRows({ update }: { update: Update }) {
 }
 
 const titles = {
-  voice: "Voice input", "projects-folder": "Projects folder", name: "Your name",
+  voice: "Voice input", projects: "Projects", "projects-folder": "Projects folder", name: "Your name",
   prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices",
 } as const;
 
@@ -448,7 +502,10 @@ function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-repo
   </>;
 }
 
-/** Machine settings, then project settings, each as a compact row that opens its page. */
+/**
+ * Settings by destination (SPEC.md §3.15): the project it was opened from, models, projects, voice, devices
+ * and access, coding agents and the version. Each row shows its current value and opens its page.
+ */
 export default function Settings({ page }: { page?: keyof typeof titles }) {
   const { phone } = useViewport();
   const location = useLocation();
@@ -459,59 +516,76 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
     refetchInterval: (query) => query.state.data?.host.state === "setting-up" ? 1000 : false });
   const [reloadKey, setReloadKey] = useState(0);
   const state = location.state as { settingsFrom?: string } | null;
-  const voice = page === "voice";
   const machine = useMachine();
   const devices = useDevices();
   const roots = overview.data?.roots ?? [];
+  const managed = managedProjects(overview.data).map((row) => row.name);
+  const from = decodeURIComponent(/^\/projects\/([^/?]+)/.exec(state?.settingsFrom ?? "")?.[1] ?? "");
+  const current = managed.includes(from) ? from : undefined;
   useEffect(() => {
     if (settings.data) updateVoiceSettings(settings.data);
   }, [settings.data]);
   const title = page ? titles[page] : "Settings";
   const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
+  const voiceRow = settings.isPending ? <p role="status" className="settings-row">Loading voice settings…</p>
+    : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
+      : <Link className="settings-row" to="/settings/voice" state={state}>
+        <span><strong>Voice input</strong>{" "}<small>{voiceSummary(settings.data)}</small></span><span aria-hidden>›</span>
+      </Link>;
   return <>
     {phone ? <header className="phone-header settings-header">{back}<h1>{title}</h1></header> : null}
-    <div className="page settings-page">
+    <div className="page settings-page" data-overview={!page || undefined}>
       {!phone ? <>{page ? back : null}<h1>{title}</h1></> : null}
       {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
         : page === "devices" ? <DevicesPage />
+        : page === "projects" ? <ProjectsPage state={state} />
         : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>
         <ProjectsFolderForm roots={roots} />
-      </> : <>
-        {voice ? <p className="text-meta text-muted">Choose how speech becomes text. Applies to every project.</p>
-          : <div><h2>This machine</h2><p className="text-meta text-muted">Applies to every project in this Altitude installation.</p></div>}
+      </> : page === "voice" ? <>
+        <p className="text-meta text-muted">Choose how speech becomes text. Applies to every project.</p>
         {settings.isPending ? <p role="status">Loading settings…</p>
           : settings.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
-            : voice ? <VoiceForm key={reloadKey} saved={settings.data} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />
-              : <Link className="settings-row" to="/settings/voice" state={state}>
-                <span><strong>Voice input</strong>{" "}<small>{voiceSummary(settings.data)}</small></span><span aria-hidden>›</span>
-              </Link>}
-        {!voice ? <>
-          <Link className="settings-row" to="/settings/name" state={state}>
-            <span><strong>Your name</strong>{" "}<small>{machine.data ? machine.data.operator || "Not set · screens say “you”" : "Loading…"}</small></span><span aria-hidden>›</span>
-          </Link>
-          <Link className="settings-row" to="/settings/prerequisites" state={state}>
-            <span><strong>Prerequisites</strong>{" "}<small>GitHub CLI sign-in, coding agents and Git</small></span><span aria-hidden>›</span>
-          </Link>
-          <Link className="settings-row" to="/settings/incident-reports" state={state}>
-            <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
-          </Link>
-          <Link className="settings-row" to="/settings/devices" state={state}>
-            <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · remove one or pair another` : "Loading…"}</small></span><span aria-hidden>›</span>
-          </Link>
-          <MachineSwitches machine={machine.data} />
-          {overview.data?.update ? <VersionRows update={overview.data.update} /> : null}
-        </> : null}
-        {!voice ? <Link className="settings-row" to="/settings/projects-folder" state={state}>
-          <span><strong>Projects folder</strong>{" "}<small>{roots.join(" and ") || "Loading…"} · First run offers the folders directly inside it</small></span><span aria-hidden>›</span>
-        </Link> : null}
-        {!voice ? <section className="settings-card" aria-label="Network">
-          <h2>Network</h2><p className="text-meta text-muted">Connection details · view only</p>
-          <dl className="settings-network"><dt>Address</dt><dd>{window.location.origin}</dd><dt>HTTPS</dt><dd>{window.location.protocol === "https:" ? "On" : "Off"}</dd></dl>
-        </section> : null}
-        {!voice ? <ProjectRows from={state?.settingsFrom} state={state} /> : null}
-      </>}
+            : <VoiceForm key={reloadKey} saved={settings.data} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />}
+      </> : <div className="settings-columns">
+        <div className="settings-column">
+          <div className="settings-group">
+            <Link className="settings-row" to="/settings/name" state={state}>
+              <span><strong>{machine.data?.operator || "Your name"}</strong>{" "}<small>{machine.data ? machine.data.operator ? "Your name on every screen" : "Not set · screens say “you”" : "Loading…"}</small></span><span aria-hidden>›</span>
+            </Link>
+          </div>
+          {current ? <ThisProject name={current} state={state} /> : null}
+          <Group title="Models"><NewTasksRow project={current} /></Group>
+          <Group title="Projects">
+            <Link className="settings-row" to="/settings/projects" state={state}>
+              <span><strong>All projects</strong>{" "}<small>{overview.data ? `${managed.length} project${managed.length === 1 ? "" : "s"} · folder ${roots.join(" and ") || "not set"}` : "Loading…"}</small></span><span aria-hidden>›</span>
+            </Link>
+          </Group>
+        </div>
+        <div className="settings-column">
+          <Group title="Voice">{voiceRow}</Group>
+          <Group title="Devices and access">
+            <Link className="settings-row" to="/settings/devices" state={state}>
+              <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · pair another, certificate` : "Loading…"}</small></span><span aria-hidden>›</span>
+            </Link>
+            <TerminalSwitch machine={machine.data} />
+            <div className="settings-row" aria-label="Network">
+              <span><strong>Network</strong>{" "}<small>{window.location.origin} · HTTPS {window.location.protocol === "https:" ? "on" : "off"} · view only</small></span>
+            </div>
+          </Group>
+          <Group title="Coding agents">
+            <Link className="settings-row" to="/settings/prerequisites" state={state}>
+              <span><strong>Prerequisites</strong>{" "}<small>GitHub CLI sign-in, coding agents and Git</small></span><span aria-hidden>›</span>
+            </Link>
+            <ValidationSwitch machine={machine.data} />
+            <Link className="settings-row" to="/settings/incident-reports" state={state}>
+              <span><strong>Incident reports</strong>{" "}<small>{machine.data ? machine.data.incident_repository ? `Published to ${machine.data.incident_repository}` : "Kept on this computer" : "Loading…"}</small></span><span aria-hidden>›</span>
+            </Link>
+          </Group>
+          {overview.data?.update ? <Group title="About"><VersionRows update={overview.data.update} /></Group> : null}
+        </div>
+      </div>}
     </div>
   </>;
 }

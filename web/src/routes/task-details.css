@@ -24,3 +24,6 @@
 .phone-header .task-state-line { display: block; font-size: 12px; line-height: 16px; }
 .phone-header .task-state-line .dot { display: inline-block; width: 6px; height: 6px; }
 .phone-header .task-state-line [data-tone="held"] { color: var(--chip-claimed-text); white-space: nowrap; }
+.task-model { display: flex; flex-direction: column; margin: 0 0 8px; font-size: var(--text-meta); }
+.task-model > div { display: grid; grid-template-columns: 8rem 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--hairline); }
+.task-model dt { color: var(--text-muted); }

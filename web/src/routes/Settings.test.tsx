@@ -238,6 +238,7 @@ describe("Projects folder setting", () => {
   it("shows the folder on the overview and chooses another by browsing", async () => {
     const saves = folderFixture();
     const { user } = renderApp({ route: "/settings" });
+    await user.click(await screen.findByRole("link", { name: /All projects .*folder ~\/Projects/ }));
     await user.click(await screen.findByRole("link", { name: /Projects folder ~\/Projects/ }));
     const browser = await screen.findByRole("region", { name: "Choose a folder" });
     await user.click(await within(browser).findByRole("button", { name: /code/ }));

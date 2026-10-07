@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
@@ -337,6 +338,28 @@ export const EngineReadoutSchema = z
   .passthrough();
 
 /**
+ * A model choice tried ahead of routing (config.validate_choice): an engine with an optional model, an
+ * effort, or both. Null is Auto. New tasks holds one for every project; each project holds one for its L3.
+ */
+export const ChoiceSchema = z.object({
+  engine: z.string().nullish(), model: z.string().nullish(), effort: z.string().nullish(),
+}).nullable();
+export type Choice = z.infer<typeof ChoiceSchema>;
+/** config.choice_options(): what a choice offers, in the seam's words. */
+const ChoiceOptionsSchema = z.object({
+  models: z.array(z.object({ engine: z.string(), model: z.string().nullable(), label: z.string() })),
+  efforts: z.record(z.string(), z.array(z.object({ value: z.string(), label: z.string() }))),
+});
+export type ChoiceOptions = z.infer<typeof ChoiceOptionsSchema>;
+/** server.new_tasks_view(): the choice for every project's new tasks, why it cannot start now, and Only-engine projects. */
+export const NewTasksSchema = ChoiceOptionsSchema.extend({
+  value: ChoiceSchema,
+  unavailable: z.string().nullish(),
+  only: z.array(z.object({ project: z.string(), engine: z.string() })),
+});
+export type NewTasks = z.infer<typeof NewTasksSchema>;
+
+/**
  * An installed copy's version and the newer stable release its daemon last found (null for a source
  * deployment). `attempt` is an update started from the app that has not reached its version yet.
  */
@@ -366,6 +389,7 @@ export const OverviewSchema = z
     wip: WipSchema,
     quota: SeatQuotaSchema,
     engines: z.array(EngineReadoutSchema).default([]),
+    new_tasks: NewTasksSchema.nullish(),
     /** The folders First run scans, named relative to home. */
     roots: z.array(z.string()).default([]),
     /** The operator's name (saved, ALTITUDE_OPERATOR or Git's user.name), shown in the rail's operator row; absent reads “You”. */
@@ -909,12 +933,14 @@ export function usePrerequisites() {
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
 
+/** The one overview read every page shares; also read directly to confirm a removal whose response was lost. */
+export const overviewQuery = {
+  queryKey: ["overview"],
+  queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
+};
+
 export function useOverview() {
-  return useQuery({
-    queryKey: ["overview"],
-    queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
-    refetchInterval: pollInterval,
-  });
+  return useQuery({ ...overviewQuery, refetchInterval: pollInterval });
 }
 
 export function useProject(name: string, enabled = true) {
@@ -1320,21 +1346,24 @@ export function useProjectRemove() {
   const queryClient = useQueryClient();
   return useMutation<unknown, Error, { name: string }>({
     mutationFn: (input) => post("/api/project/remove", input),
-    onSuccess: async (_out, { name }) => {
-      await queryClient.cancelQueries({ queryKey: ["overview"] });
-      queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
-        ...cached,
-        projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
-        queue: cached.queue.filter((row) => row.project !== name),
-      });
-      for (const kind of ["project", "chat", "task", "transcript"]) {
-        await queryClient.cancelQueries({ queryKey: [kind, name] });
-        queryClient.removeQueries({ queryKey: [kind, name] });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
-      void queryClient.invalidateQueries({ queryKey: ["monitor"] });
-    },
+    onSuccess: (_out, { name }) => forgetProject(queryClient, name),
   });
+}
+
+/** Drop a removed project from the shared reads, so no page acts on it as still managed. */
+export async function forgetProject(queryClient: QueryClient, name: string) {
+  await queryClient.cancelQueries({ queryKey: ["overview"] });
+  queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
+    ...cached,
+    projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
+    queue: cached.queue.filter((row) => row.project !== name),
+  });
+  for (const kind of ["project", "chat", "task", "transcript"]) {
+    await queryClient.cancelQueries({ queryKey: [kind, name] });
+    queryClient.removeQueries({ queryKey: [kind, name] });
+  }
+  void queryClient.invalidateQueries({ queryKey: ["overview"] });
+  void queryClient.invalidateQueries({ queryKey: ["monitor"] });
 }
 
 export interface L2MessageInput {
@@ -1408,35 +1437,27 @@ export function useSendNow(project: string, slug?: string) {
   });
 }
 
-/**
- * Pin the project's L3 to one engine (a name from the overview's engine readout), or clear the pin
- * with null so the weekly quota decides. The pin covers chat and server-triggered turns alike and
- * stays until changed.
- */
-export function useL3Engine(project: string) {
+/** Save New tasks; `expected` is the value the dialog showed, so a change made elsewhere is refused, not overwritten. */
+export function useSaveNewTasks() {
   const client = useQueryClient();
-  return useOptimisticMutation<string | null, unknown, ChatView>({
-    mutationFn: async (engine) => {
-      const result = await post("/api/l3/engine", { project, engine });
-      await client.invalidateQueries({ queryKey: ["defaults", project] });
-      return result;
-    },
-    queryKey: ["chat", project],
-    update: (cached, engine) => cached && { ...cached, engine },
-    failureMessage: "Couldn't change the L3 engine.",
+  return useMutation({
+    mutationFn: async (input: { value: Choice; expected: Choice }) => NewTasksSchema.parse(await post("/api/new-tasks", input)),
+    onSuccess: (result) => client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }),
   });
 }
 
-/** config.defaults_view(): the project's requested model/effort per role and engine, in the seam's order. */
+/** config.defaults_view(): the project's pins, L3 choice, routing and requested model/effort per role and engine. */
 const DefaultFieldSchema = z.object({
   setting: z.string(), value: z.string().nullable(), default: z.string(),
 });
-const ProjectDefaultsSchema = z.object({
+const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
   l3_engine: z.string().nullish(),
-  l2_preference: z.object({
-    setting: z.string(), value: z.string().nullable(), pin: z.string().nullish(), routing: z.string().nullable(),
-    choices: z.array(z.object({ value: z.string(), label: z.string(), routed: z.boolean() })),
-  }),
+  l2_engine: z.string().nullish(),
+  l3_choice: ChoiceSchema.optional().transform((value) => value ?? null),
+  l3_unavailable: z.string().nullish(),
+  l2_preference: z.string().nullish(),
+  routing: z.string().nullish(),
+  engines: z.array(z.object({ value: z.string(), label: z.string(), routed: z.boolean(), efforts: z.array(z.string()) })),
   roles: z.array(z.object({
     role: z.enum(["l3", "l2"]),
     engines: z.array(z.object({
@@ -1452,22 +1473,30 @@ export function useProjectDefaults(project: string) {
   return useQuery({
     queryKey: ["defaults", project],
     queryFn: async () => ProjectDefaultsSchema.parse(await api(`/api/defaults/${project}`)),
+    enabled: Boolean(project),
     retry: false,
     refetchOnMount: "always",
   });
 }
 
-/** One saved default; each field owns its mutation so its Saving/Saved/error state stays beside it. */
+/** The project settings a page or dialog saves whole, outside the per-engine model/effort table. */
+const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_engine", "l3_choice"] as const;
+
+/**
+ * One saved project setting; each field owns its mutation so its Saving/Saved/error state stays beside it.
+ * `expected`, when given, is the value shown: a change made elsewhere meanwhile is refused with 409.
+ */
 export function useSetDefault(project: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { setting: string; value: string | null }) =>
+    mutationFn: async (input: { setting: string; value: string | Choice; expected?: string | Choice }) =>
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === result.l2_preference.setting) return { ...old, l2_preference: result.l2_preference };
+      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
+      if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
         ...e,

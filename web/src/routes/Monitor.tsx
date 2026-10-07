@@ -2,6 +2,8 @@ import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
 import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
+import { NewTasksButton } from "../components/Models";
+import { useViewport } from "../shell/breakpoints";
 import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
@@ -317,10 +319,12 @@ export default function Monitor() {
   const engines = overview.data?.engines ?? [];
   const labels = new Map(engines.map((row) => [row.engine, row.label]));
   const label = (engine: unknown) => labels.get(str(engine)) ?? str(engine);
+  const { phone } = useViewport();
 
   return (
     <div className="page">
       <h1 className="text-page-title font-semibold">Monitor</h1>
+      {phone ? <NewTasksButton overview={overview.data} wide /> : null}
       <section className="monitor-section" aria-labelledby="monitor-update">
         <h2 id="monitor-update" className="monitor-head">Altitude update</h2>
         {overview.isPending ? <p role="status">Loading update status…</p> : overview.isError ?
