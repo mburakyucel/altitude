@@ -664,7 +664,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
                 time.sleep(0.25)
             return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device (alt tls-share offers the certificate to a phone), comparing the CA name and fingerprint before installing, then open the URL and pair the browser with the code `alt pair` prints."}
+                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:
