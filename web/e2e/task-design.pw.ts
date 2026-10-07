@@ -17,6 +17,7 @@ const card = (page: Page, q: Question) => page.getByRole("region", { name: "Task
   .locator(`[data-question-id="${q.id}"][data-question-revision="${q.revision}"]`);
 
 test("project preview returns through its question to L3 without a history loop", async ({ page, request }, info) => {
+  expect((await request.post("/fixture/project-preview")).ok()).toBe(true);
   const initial = await task(request);
   const q = initial.question;
   await walkthrough(page, info).open("/projects/atlas");

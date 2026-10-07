@@ -55,12 +55,15 @@ def main():
 
     T.message("atlas", slug, "l2", "The screenshots show the proposed conversation layout on phone and desktop.")
     present()
-    saved = S.load_task("atlas", slug)
-    question = T.question_view("atlas", saved, saved["questions"][-1])
-    l3.chat_log("atlas", "assistant", f"[Review the layout]({question['design_url']})", trigger="chat")
 
     class Handler(server.Handler):
         def do_POST(self):
+            if self.path == "/fixture/project-preview":
+                saved = S.load_task("atlas", slug)
+                question = T.question_view("atlas", saved, saved["questions"][-1])
+                url = f"http://{self.headers['Host']}{question['design_url']}"
+                l3.chat_log("atlas", "assistant", f"[Review the layout]({url})", trigger="chat")
+                return self._json({"ok": True})
             if self.path == "/fixture/checkpoint":
                 question = S.load_task("atlas", slug)["questions"][-1]
                 response = question["response"]
