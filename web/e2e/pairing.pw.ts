@@ -70,17 +70,27 @@ test("a pairing link pairs the browser, and removing it in Settings returns it t
     action: () => page.getByRole("button", { name: "Make a pairing code" }).click(),
     visible: [pairAnother.getByLabel("Pairing code"), pairAnother.getByText(/\/pair\?code=/)], hidden: [],
   });
+  const remove = mine.getByRole("button", { name: "Remove", exact: true });
+  const confirm = mine.getByRole("group", { name: /^Remove .+\?$/ });
   await walk.state("04-confirm-removal", {
-    action: () => mine.getByRole("button", { name: "Remove" }).click(),
-    visible: [mine.getByText("This browser will need a new code to open Altitude again."), mine.getByRole("button", { name: "Cancel" })], hidden: [],
+    action: () => remove.click(),
+    visible: [mine.getByText("This browser will need a new code to open Altitude again."), confirm.getByRole("button", { name: "Remove device", exact: true })], hidden: [remove],
   });
+  // Cancel comes first and takes focus, so Enter never removes by accident.
+  await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await expect(confirm.getByRole("button")).toHaveText(["Cancel", "Remove device"]);
   await walk.state("05-cancelled", {
-    action: () => mine.getByRole("button", { name: "Cancel" }).click(),
-    visible: [mine.getByRole("button", { name: "Remove" })], hidden: [mine.getByText("This browser will need a new code")],
+    action: () => confirm.getByRole("button", { name: "Cancel", exact: true }).click(),
+    visible: [remove], hidden: [mine.getByText("This browser will need a new code"), confirm],
   });
-  await mine.getByRole("button", { name: "Remove" }).click();
+  await remove.click();
+  await walk.state("05b-escaped", {
+    action: () => page.keyboard.press("Escape"),
+    visible: [remove], hidden: [mine.getByText("This browser will need a new code"), confirm],
+  });
+  await remove.click();
   await walk.state("06-removed", {
-    action: () => mine.getByRole("button", { name: "Remove" }).click(),
+    action: () => confirm.getByRole("button", { name: "Remove device", exact: true }).click(),
     visible: [heading, removed], hidden: [list],
   });
   const devices = await (await request.get("/api/devices")).json();

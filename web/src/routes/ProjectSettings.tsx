@@ -67,6 +67,7 @@ function EffortField({ name, engine }: { name: string; engine: Engine }) {
 function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
   const [open, setOpen] = useState(false);
   const save = useSetDefault(name);
+  const client = useQueryClient();
   const project = useProject(name);
   const l3 = project.data?.l3 ?? {};
   const text = (key: string) => typeof l3[key] === "string" ? l3[key] as string : "";
@@ -84,7 +85,8 @@ function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
         </span>
         <span className="settings-actions">
           {data.l3_choice ? <button type="button" className="link" disabled={save.isPending}
-            onClick={() => save.mutate({ setting: "l3_choice", value: null, expected: data.l3_choice })}>{save.isPending ? "Saving…" : "Back to Auto"}</button> : null}
+            onClick={() => save.mutate({ setting: "l3_choice", value: null, expected: data.l3_choice },
+              { onError: () => void client.invalidateQueries({ queryKey: ["defaults", name] }) })}>{save.isPending ? "Saving…" : "Back to Auto"}</button> : null}
           <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Change…</button>
         </span>
       </div>
@@ -120,6 +122,7 @@ function DefaultsSection({ name, data }: { name: string; data: ProjectDefaults }
 /** Auto, Prefer or Only an engine for tasks; Auto or Only an engine for L3. */
 function RoutingSection({ name, data }: { name: string; data: ProjectDefaults }) {
   const save = useSetDefault(name);
+  const client = useQueryClient();
   const [error, setError] = useState<Error | null>(null);
   const label = (engine: string) => data.engines.find((e) => e.value === engine)?.label ?? engine;
   const tasks = data.l2_engine ? `only:${data.l2_engine}` : data.l2_preference ? `prefer:${data.l2_preference}` : "";
@@ -131,6 +134,8 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
         if (value !== (expected ?? null)) await save.mutateAsync({ setting, value, expected: expected ?? null });
     } catch (failure) {
       setError(failure as Error);
+      // A refused or half-applied change shows what is stored now, not the choice that was refused.
+      void client.invalidateQueries({ queryKey: ["defaults", name] });
     }
   };
   const chooseTasks = (value: string) => {

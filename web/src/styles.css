@@ -2563,6 +2563,8 @@
 .models-pill strong { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .models-pill:hover:not(:disabled) { border-color: var(--text-muted); }
 .shell[data-phone] .models-pill { min-height: 40px; }
+/* At 390px the waveform fills the row while recording (SPEC.md §3.6); the L3 button returns afterwards. */
+.shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-pill { display: none; }
 .new-tasks { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-size: var(--text-meta); text-align: left; cursor: pointer; }
 .new-tasks > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .new-tasks:hover:not(:disabled) { border-color: var(--accent); }

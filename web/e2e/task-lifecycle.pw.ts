@@ -98,8 +98,9 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   await walk.state("04-stopped", { visible: [field, reject], hidden: [] });
   await reject.click();
   const confirm = page.getByRole("group", { name: "Reject this task?", exact: true });
+  await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
   await confirm.getByRole("textbox", { name: "Reason (optional)", exact: true }).fill("The fixture exercise is complete.");
-  await confirm.getByRole("button", { name: "Reject", exact: true }).click();
+  await confirm.getByRole("button", { name: "Reject task", exact: true }).click();
   await expect.poll(async () => (await task()).state).toBe("rejected");
   await page.reload();
   await walk.state("05-rejected-read-only", {

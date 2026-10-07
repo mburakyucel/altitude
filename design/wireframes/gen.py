@@ -687,10 +687,10 @@ def vrow(label, note, draft, phase, hint="", danger=False):
     pill = f'<span class="l3pill">L3 · <b>Auto</b></span><span style="flex:1"></span>'
     if phase == "listening":
         desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded"') + '<span class="status">0:07</span>' + stop + arrow()
-        phone = pill + cancel + wave(W[:4]) + stop + arrow()
+        phone = cancel + wave(W[:6]) + '<span class="status">0:07</span>' + stop + arrow()
     elif phase == "transcribing":
         desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded frozen"') + '<span class="status">0:07</span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
-        phone = pill + cancel + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
+        phone = cancel + '<span class="gap"></span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
         hint = '<span class="spin"></span> ' + hint
     elif phase == "unavailable":
         desk = pill + arrow(not draft)

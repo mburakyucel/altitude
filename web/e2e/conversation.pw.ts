@@ -10,9 +10,9 @@ import { walkthrough } from "./walkthrough";
  * dividers, the folded and grouped system lines, and the expanded card. States the live service cannot
  * be asked to produce on demand (a turn in progress, a failed turn, an FYI, an empty or failed read, a
  * report prompt in the new label/value shape, a streamed or refused send, the queue, the voice states)
- * are overlaid on the real rows with page.route, named "-overlay". Every POST /api/chat, /api/chat/remove
- * and /api/l3/engine is intercepted, and voice runs against the fixture host (hostVoice.ts): nothing here
- * sends a message to L3, changes the engine pin, or runs a speech model.
+ * are overlaid on the real rows with page.route, named "-overlay". Every POST /api/chat and /api/chat/remove
+ * is intercepted, and voice runs against the fixture host (hostVoice.ts): nothing here sends a message to L3
+ * or runs a speech model. The L3 model button saves its choice through the disposable service.
  */
 
 type Row = Record<string, unknown> & { role: string; text: string; trigger?: string; turn_id?: string; at?: string };
@@ -78,7 +78,7 @@ function views(page: Page, info: TestInfo) {
     stop: main.getByRole("button", { name: "Stop voice input", exact: true }),
     cancel: main.getByRole("button", { name: "Cancel voice input", exact: true }),
     hint: main.locator(".composer-hint"),
-    pill: main.getByRole("combobox", { name: "L3 engine", exact: true }),
+    pill: main.getByRole("button", { name: /^L3 model: / }),
     loading: convo.getByLabel("Loading", { exact: true }),
     lines: convo.locator(".sys-line"),
     bubble: (text: string) => convo.locator(".bubble", { hasText: text }),
@@ -126,8 +126,8 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
   await walk.open(project.path);
   const lastRow = v.convo.locator(".msg-row").last();
   await walk.state("01-loaded", {
-    visible: [v.convo, v.convo.locator(".bubble").first(), v.convo.locator(".reply").first(), v.convo.getByRole("separator").first(), v.lines.first(), v.field, v.send, v.mic, ...(!v.phone ? [v.pill] : [])],
-    hidden: [v.loading, v.main.getByText("Say what you want done."), v.queue, ...(v.phone ? [v.pill, v.hint] : [])],
+    visible: [v.convo, v.convo.locator(".bubble").first(), v.convo.locator(".reply").first(), v.convo.getByRole("separator").first(), v.lines.first(), v.field, v.send, v.mic, v.pill],
+    hidden: [v.loading, v.main.getByText("Say what you want done."), v.queue, ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.send).toBeDisabled();
   await expect(v.send).toHaveText("");
@@ -512,36 +512,55 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
   expect(removed).toEqual(["ui-q1"]);
 });
 
-test("the engine pin: Auto and the engines the API names; the pin posts and is read back", async ({ page, request }, info) => {
-  test.skip(info.project.name === "phone", "The phone composer has no engine pill; project-settings.pw.ts walks the pin in Settings.");
+test("the L3 model button: Auto, the Models dialog on L3, the choice posts and is read back", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
-  const overview = await (await request.get("/api/overview")).json() as { engines: { engine: string; label: string }[] };
-  expect(overview.engines.length, "The walkthrough needs one configured engine").toBeGreaterThan(0);
-  const first = overview.engines[0]!;
-  let pinned: string | null = null;
-  const pins: (string | null)[] = [];
-  await page.route((url) => url.pathname === "/api/l3/engine", (route) => {
-    pinned = (route.request().postDataJSON() as { engine: string | null }).engine;
-    pins.push(pinned);
-    return route.fulfill({ json: { ok: true } });
-  });
-  await overlayChat(page, project.name, (live) => ({ ...live, engine: pinned }));
+  const read = async () => (await (await request.get(`/api/defaults/${project.name}`)).json()) as {
+    l3_choice: Record<string, string> | null; models: { engine: string; model: string | null; label: string }[];
+    efforts: Record<string, { value: string; label: string }[]>; engines: { value: string }[] };
+  const initial = await read();
+  // The engine the fixture can run, so the choice is in use rather than unavailable.
+  const model = initial.models.find((row) => row.engine === initial.engines[0]!.value && row.model)!;
+  const effort = initial.efforts[model.engine]!.at(-1)!;
+  const dialog = page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true });
+  const use = dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true });
+  const posts: unknown[] = [];
+  page.on("request", (req) => { if (new URL(req.url()).pathname === "/api/defaults" && req.method() === "POST") posts.push(req.postDataJSON()); });
 
   await walk.open(project.path);
-  await walk.state("01-auto", { visible: [v.pill], hidden: [] });
-  await expect(v.pill).toHaveValue("");
-  expect(await v.pill.locator("option").allTextContents()).toEqual(["Auto", ...overview.engines.map((e) => e.label)]);
-  await walk.state("02-pinned", {
-    action: () => v.pill.selectOption(first.engine),
-    visible: [v.pill],
-    hidden: [],
+  await walk.state("01-auto", { visible: [v.pill, v.field], hidden: [dialog] });
+  await expect(v.pill).toHaveAccessibleName("L3 model: Auto");
+  await expect(v.pill).toHaveText("L3 · Auto");
+  await walk.state("02-models-on-l3", {
+    action: () => v.pill.click(),
+    visible: [dialog, dialog.getByRole("tab", { name: /^L3/, selected: true }), dialog.getByRole("radio", { name: /^Auto/ })],
+    hidden: [dialog.getByRole("button", { name: "Back to Auto", exact: true })],
   });
-  await expect(v.pill).toHaveValue(first.engine);
-  await v.pill.selectOption("");
-  await expect(v.pill).toHaveValue("");
-  await expect.poll(() => pins).toEqual([first.engine, null]);
+  await expect(dialog.getByRole("radio", { name: /^Auto/ })).toBeChecked();
+  await expect(use).toBeDisabled();
+  await dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check();
+  await dialog.getByRole("radio", { name: effort.label, exact: true }).check();
+  await walk.state("03-chosen", {
+    action: () => use.click(), visible: [v.pill], hidden: [dialog],
+  });
+  await expect(v.pill).toHaveAccessibleName(`L3 model: ${model.label} · ${effort.label}`);
+  await expect(v.pill).toBeFocused();
+  expect((await read()).l3_choice).toEqual({ engine: model.engine, model: model.model, effort: effort.value });
+  await page.reload();
+  await expect(v.pill).toHaveAccessibleName(`L3 model: ${model.label} · ${effort.label}`);
+  await v.pill.click();
+  await expect(dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) })).toBeChecked();
+  await walk.state("04-back-to-auto", {
+    action: () => dialog.getByRole("button", { name: "Back to Auto", exact: true }).click(),
+    visible: [v.pill], hidden: [dialog],
+  });
+  await expect(v.pill).toHaveAccessibleName("L3 model: Auto");
+  expect((await read()).l3_choice).toBeNull();
+  expect(posts).toEqual([
+    { project: project.name, setting: "l3_choice", value: { engine: model.engine, model: model.model, effort: effort.value }, expected: null },
+    { project: project.name, setting: "l3_choice", value: null, expected: { engine: model.engine, model: model.model, effort: effort.value } },
+  ]);
 });
 
 /** Chromium's fake microphone, which the test can hold while it opens (`window.fixtureMicGate`). */

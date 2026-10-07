@@ -486,7 +486,8 @@ The same card is the row in the work panel and the card under an L3 reply that c
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
 "Message the L2"); on the project chat, the **L3** button on phone and desktop ("L3 · Auto",
-"L3 · Fable · Low"; none on the task conversation, because a started task keeps its model, §3.6.1); Add images button; microphone button; send control. The send control is the arrow in an accent circle
+"L3 · Fable · Low"; none on the task conversation, because a started task keeps its model, §3.6.1; on
+phone it steps aside while recording and transcribing so the waveform fills the row); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted on desktop. The structure is the same on both widths: the field spans the box on top
 and the controls (L3 button, Add images, microphone, send, and the recording cluster while listening or
@@ -1498,7 +1499,7 @@ sections, in the order a choice is applied:
   and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
   usable when the model settings cannot be read.
 
-**Remove…** opens a dialog, centered on desktop and a bottom sheet on phone: **Remove <name> from
+**Remove…** opens a centered dialog at both widths: **Remove <name> from
 Altitude?**, "L3 is detached and Altitude stops managing this folder.", then what stays on disk (the
 repository, worktrees, history and queued messages), what is not kept (its settings here, such as
 models and routing), how to undo (add the same folder as <name> again to reattach L3 with its
