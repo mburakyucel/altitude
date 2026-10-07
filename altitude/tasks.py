@@ -1825,7 +1825,8 @@ def open_questions(task: dict) -> str:
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
-            **({"design_url": design_url(project, task["slug"], question)} if question.get("design") else {}),
+            **({"design_url": design_url(project, task["slug"], question),
+                "design_title": question["design"]["title"]} if question.get("design") else {}),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],

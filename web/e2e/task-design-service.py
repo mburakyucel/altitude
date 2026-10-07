@@ -42,10 +42,10 @@ def main():
               "images": [{"title": "Phone conversation", "path": "design/wireframes/captures/phone.png"},
                          {"title": "Desktop conversation", "path": "design/wireframes/desktop.png"}]}
 
-    def present():
+    def present(title=design["title"]):
         T.block("atlas", slug, QUESTION, actor="l2", expected_attempt=1,
                 updates={"waiting_on": "burak"}, recommendation="Use the captured conversation layout.",
-                recommendation_label="Use this design", design=design)
+                recommendation_label="Use this design", design={**design, "title": title})
 
     def later_updates():
         for index in range(20):
@@ -114,6 +114,17 @@ def main():
                 T.resume("atlas", slug)
                 proposal.write_text("The revised proposal keeps replies together and moves the question below the explanation.")
                 present()
+                return self._json({"ok": True})
+            if self.path == "/fixture/proposal-v5":
+                T.resume("atlas", slug)
+                proposal.write_text("Proposal v5 uses tabs for settings, model choice and menus.")
+                T.block("atlas", slug, "Approve the tabbed design (v5)?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": "burak"}, recommendation="Build the v5 tabbed proposal.",
+                        recommendation_label="Build v5", design={**design, "title": "Proposal v5: settings, model choice and menus"})
+                return self._json({"ok": True})
+            if self.path == "/fixture/long-title":
+                T.resume("atlas", slug)
+                present("Settings" * 20)
                 return self._json({"ok": True})
             if self.path == "/fixture/damage-snapshot":
                 question = S.load_task("atlas", slug)["questions"][-1]
