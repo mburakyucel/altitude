@@ -286,6 +286,12 @@ pending flag establishes neither the cause of a prior bootstrap failure nor that
 
 ## Native browser runtime trial
 
+The fixed candidate includes contained-root metadata exclusions across roles; the selected runtime
+preserves explicit Git-operation writes. The trial repeats actual stock protected-input denies before installation
+and candidate metadata/alias/rename denies before browser acceptance. Stock restoration returns its
+known contained-metadata limitation as well as its package and service state; healthy restoration does
+not establish worker isolation or browser recovery. Required native checks remain adoption stops.
+
 `scripts/native_browser_trial.py` is the operator lifecycle command for the single reviewed
 [native browser candidate](DEVELOPMENT.md#native-mac-browser-runtime-candidate). Preparing source does
 not authorize its execution. The task needs the explicit protected-trial security decision and a separate
