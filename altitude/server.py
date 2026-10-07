@@ -2075,8 +2075,10 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command", "request"}:
                         raise ValueError("alt task run: unsupported fields")
-                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                          o.get("request")))
+                    peer, local = self.client_address, self.connection.getsockname()
+                    return self._json(run_machine_command(
+                        o["project"], o["slug"], o.get("attempt"), o.get("command"), o.get("request"),
+                        owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local)))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError) as exc:
@@ -2663,12 +2665,14 @@ def _machine_rows(runs: Path) -> list[dict]:
     return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
 
 
-def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object) -> dict:
+def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object, *,
+                        owner=lambda task: False) -> dict:
     """One command under the task's recorded operator grant, executed by altd outside the worker sandbox.
 
-    Only the running owner's current attempt may call it, and only while a grant is recorded. The command, unit,
-    exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task events and
-    the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
+    Only the running owner's current attempt may call it, from its own worker job (`owner(task)`), so another agent
+    holding this machine's key cannot run commands under this task's grant, and only while a grant is recorded. The
+    command, unit, exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task
+    events and the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
     command: calling again with it, after a restart ended the connection, waits for that command's result
     instead of running it again.
     """
@@ -2683,6 +2687,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         task = S.load_task(project, slug)
         if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
             raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
+        if not owner(task):
+            raise PermissionError("alt task run: only this task's owner may run its granted commands")
         rows = _machine_rows(runs)
         earlier = next((r for r in rows if r.get("request") == request), None)
         if earlier is not None and earlier.get("attempt") != task.get("attempt"):

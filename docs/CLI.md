@@ -1771,7 +1771,9 @@ only when the operator's answer sets one, because a single run is itself the ris
 different access, service change, spend or live-provider test still needs its own answer. Retain
 evidence and revoke the grant when done.
 
-`alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
+`alt task run` is the current owner's verb for its own task. altd accepts it only from a process in
+that owner's current worker job, as it does for `alt task validate`, so another agent holding the
+machine key cannot run commands under this task's grant. It records the run in `machine.jsonl`
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command

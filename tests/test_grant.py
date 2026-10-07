@@ -19,7 +19,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 from tests.support import REPO, AltitudeCase, add_worktree, git, make_repo
-from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal
 
 SHIM = r'''#!/usr/bin/env python3
 """systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
@@ -39,8 +39,9 @@ with open(log, "ab") as out:
 # The altd that a restart replaces: a real process that launches the unit, then is killed while it runs.
 EARLIER_ALTD = r'''
 import sys
-from altitude import access, platform, server
+from altitude import access, platform, server, terminal
 platform.SYSTEMD_RUN, platform.sys.platform, access.is_machine = sys.argv[1], "linux", lambda presented: True
+terminal.owner_connection = lambda peer, local, unit: True
 httpd = server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), server.Handler)
 print("ready", flush=True)
 httpd.serve_forever()
@@ -70,6 +71,7 @@ class TestOperatorGrant(AltitudeCase):
         self.active = set()  # units the fixture service manager still runs
         self.patch(platform, "job_active", side_effect=lambda name, env: name in self.active)
         self.patch(server, "MACHINE_POLL_SECONDS", .01)
+        self.owner = self.patch(terminal, "owner_connection", return_value=True)
         self.at = "2026-09-16T06:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
         self.patch(T, "_conversation_time", side_effect=lambda: self.at)
@@ -78,6 +80,9 @@ class TestOperatorGrant(AltitudeCase):
         self.slug = T.new(self.project, "Preserve the service configuration", "Keep TLS across the install.")["slug"]
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
                    worktree=str(self.worktree), branch="work")
+        root = dispatch.l2_job_root(self.project, self.slug)
+        root.mkdir(parents=True, exist_ok=True)
+        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines._claude_unit("agent")})
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
@@ -512,6 +517,15 @@ class TestOperatorGrant(AltitudeCase):
         self.assertIn("limit", result["error"])
         self.assertEqual(result["output"], "started\n")
         self.assertEqual([(e["exit"], e["timed_out"]) for e in self.events("machine-run")], [(None, True)])
+
+    def test_another_worker_holding_the_machine_key_cannot_run_under_this_tasks_grant(self):
+        self.granted()
+        self.owner.return_value = False
+        self.assertIn("only this task's owner", self.run_command("true", status=403)["error"])
+        self.assertEqual(self.owner.call_args.args[2],
+                         engines.worker_unit("agent", job_root=dispatch.l2_job_root(self.project, self.slug)))
+        self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
+        self.assertEqual(self.events("machine-run"), [])
 
     def test_stale_attempts_blocked_tasks_and_revocation_refuse(self):
         self.granted()
