@@ -166,6 +166,35 @@ class TestOperatorGrant(AltitudeCase):
         brief = self.alt("task", "status", self.slug, "--brief", env={"ALTITUDE_PROJECT": self.project})
         self.assertIn(f"operator grant: {question['detail']}", brief.stdout)
 
+    def test_l3_records_a_grant_the_operator_answered_in_project_chat_and_nothing_else(self):
+        question = self.ask("May I publish v0.1.0-rc.2 from ed09c86 with gh release create?")
+        chat = config.project_dir(self.project) / "chat.jsonl"
+        self.tick()
+        rows = [{"turn_id": "aaaaaaaaaaaa", "role": "assistant", "trigger": "chat", "at": self.at, "text": "Yes."},
+                {"turn_id": "bbbbbbbbbbbb", "role": "user", "by": "burak", "trigger": "chat", "at": self.at,
+                 "text": "Yes, publish it."}]
+        chat.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        self.tick()
+        T.resume(self.project, self.slug)
+        with self.assertRaises(T.TransitionError):  # L3's own chat row is no operator answer
+            T.resolve_question(self.project, self.slug, question["id"], question["revision"], "aaaaaaaaaaaa",
+                               disposition="answered", reason="r", expected_attempt=1, source="project")
+        self.tick()
+        T.resolve_question(self.project, self.slug, question["id"], question["revision"], "bbbbbbbbbbbb",
+                           disposition="answered", reason="Operator agreed.", expected_attempt=1, source="project")
+        other = T.new(self.project, "Another task", "Unrelated.")["slug"]
+        with self.assertRaises(T.TransitionError):  # the answer belongs to this task's question only
+            T.record_grant(self.project, other, "bbbbbbbbbbbb", question=question["id"],
+                           revision=question["revision"], reason="r", actor="l3", source="project")
+        with self.assertRaisesRegex(T.TransitionError, "current attempt"):  # the owner sends project answers to L3
+            T.record_grant(self.project, self.slug, "bbbbbbbbbbbb", question=question["id"],
+                           revision=question["revision"], reason="r", actor="l2", source="project", expected_attempt=1)
+        grant = T.record_grant(self.project, self.slug, "bbbbbbbbbbbb", question=question["id"],
+                               revision=question["revision"], reason="Purpose matches.", actor="l3", source="project")
+        self.assertEqual((grant["source"], grant["answer"], grant["purpose"]),
+                         ("project", "Yes, publish it.", question["detail"]))
+        self.assertEqual(self.run_command("echo published")["exit"], 0)
+
     def test_the_owner_records_its_grant_from_the_operators_task_chat_answer(self):
         question = self.ask()
         row = self.answer(question)
@@ -636,33 +665,64 @@ class TestOperatorGrant(AltitudeCase):
         # The rule admits the call; altd still refuses it without the task's current grant.
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
 
-    def test_revoking_the_grant_stops_the_command_it_is_running(self):
+    def test_a_grant_leaves_the_codex_sandbox_unchanged_and_its_bus_denied(self):
+        before = engines.codex_sandbox(self.worktree)
         self.granted()
+        self.assertEqual(engines.codex_sandbox(self.worktree), before)
+        for path in platform.job_control_paths():
+            self.assertIn(f'{json.dumps(str(path))}="deny"', next(a for a in before if ".filesystem=" in a))
+
+    def running(self, pool, started, release):
+        future = pool.submit(self.run_command, f"touch {started}; while [ ! -e {release} ]; do sleep .02; done; exit 3")
+        wait_for(started.exists, "the command to start")
+        return future
+
+    def test_revoking_the_grant_stops_the_command_it_is_running_even_when_regranted_at_once(self):
+        _, question, row = self.granted()
         started, release = self.tmp / "started", self.tmp / "release"
         stops = []
-        def job_stop(name, env, **kwargs):  # the fixture service manager ends the job when asked
+        def job_stop(name, env, **kwargs):  # the first request fails; the fixture service manager obeys the next
             stops.append(name)
+            if len(stops) == 1:
+                raise subprocess.TimeoutExpired("systemctl", 1)
             release.touch()
         self.patch(platform, "job_stop", side_effect=job_stop)
         with ThreadPoolExecutor(1) as pool:
-            running = pool.submit(self.run_command,
-                                  f"touch {started}; while [ ! -e {release} ]; do sleep .02; done; exit 3")
-            wait_for(started.exists, "the command to start")
-            self.tick()
+            running = self.running(pool, started, release)
             T.revoke_grant(self.project, self.slug, "Operator withdrew permission.", actor="l3")
+            # A new grant recorded in the same second is a different grant; the old command still stops.
+            T.record_grant(self.project, self.slug, row["id"], question=question["id"], revision=question["revision"],
+                           reason="Granted again.", actor="l3")
             result = running.result(timeout=30)
-        self.assertEqual(stops, [self.unit(1)])
+        self.assertGreaterEqual(len(stops), 2)
+        self.assertEqual(set(stops), {self.unit(1)})
         self.assertEqual(result["exit"], 3)
         self.assertIn("grant was revoked", result["error"])
         [row] = self.rows()
         self.assertIn("grant was revoked", row["error"])
+        T.revoke_grant(self.project, self.slug, "Done.", actor="l3")
         self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+
+    def test_recording_the_same_answer_again_keeps_the_grant_and_its_running_command(self):
+        grant, question, row = self.granted()
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.patch(platform, "job_stop", side_effect=AssertionError("nothing is revoked"))
+        with ThreadPoolExecutor(1) as pool:
+            running = self.running(pool, started, release)
+            self.tick()
+            again = T.record_grant(self.project, self.slug, row["id"], question=question["id"],
+                                   revision=question["revision"], reason="Purpose matches the answer.", actor="l3")
+            time.sleep(server.MACHINE_POLL_SECONDS * 5)
+            release.touch()
+            result = running.result(timeout=30)
+        self.assertEqual(again["id"], grant["id"])
+        self.assertEqual((result["exit"], result["error"]), (3, None))
 
     def test_a_command_interrupted_by_a_restart_is_stopped_when_its_grant_was_revoked_meanwhile(self):
         grant = self.granted()[0]
         folder = S.task_dir(self.project, self.slug)
         (folder / "machine.jsonl").write_text(json.dumps({
-            "n": 1, "purpose": "p", "granted": grant["at"], "command": "make deploy", "unit": self.unit(1),
+            "n": 1, "purpose": "p", "granted": grant["id"], "command": "make deploy", "unit": self.unit(1),
             "exit": None, "timed_out": False, "started": datetime.now(timezone.utc).isoformat(), "finished": None,
             "error": "still running or interrupted with altd"}) + "\n")
         self.active.add(self.unit(1))
@@ -681,7 +741,7 @@ class TestOperatorGrant(AltitudeCase):
         folder = S.task_dir(self.project, self.slug)
         runs = folder / "machine.jsonl"
         started = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-        interrupted = {"purpose": "p", "granted": S.load_task(self.project, self.slug)["grant"]["at"], "exit": None,
+        interrupted = {"purpose": "p", "granted": S.load_task(self.project, self.slug)["grant"]["id"], "exit": None,
                        "timed_out": False, "started": started, "finished": None,
                        "error": "still running or interrupted with altd"}
         runs.write_text(json.dumps({**interrupted, "n": 1, "command": "make gate", "unit": self.unit(1)}) + "\n")

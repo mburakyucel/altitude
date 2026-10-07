@@ -1731,11 +1731,13 @@ message after judging that the answer is a yes: the running owner for its own cu
 task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
 project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
-attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (purpose,
+attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (id, purpose,
 answer, approval, question/revision, attempt, actor, time) and a `grant` event; refusals
-record `grant-refused` and change nothing. Revocation records `grant-revoke`, refuses every later
-command and stops a command still running under that grant; whatever the command already did stays
-done, and its row says it was stopped because the grant was revoked.
+record `grant-refused` and change nothing. Each command's row names the grant id it ran under;
+recording the same answer again keeps that id. Revocation records `grant-revoke` and refuses every
+later command; altd asks the service manager to stop a command still running under the revoked grant
+on every poll until it has ended, including after a restart. Whatever the command already did stays
+done, and its row says the grant was revoked while it ran.
 
 For standing approval, the owner copies the complete paragraph under **Container operations on this
 machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`

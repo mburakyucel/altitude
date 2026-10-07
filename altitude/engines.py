@@ -883,13 +883,13 @@ def machine_command(command: str, *, cwd: Path, folder: Path, unit: str, identit
         return str(exc)[:300]
 
 
-def machine_stop(unit: str) -> bool:
-    """Stop a command's job; True once asked, whatever the service manager answered."""
+def machine_stop(unit: str) -> None:
+    """Ask the service manager to stop a command's job. Callers ask again on every poll until the job has ended,
+    so a job not yet created or a failed request is stopped on a later poll."""
     try:
         platform.job_stop(unit, codex_env(retain_user_bus=True))
     except (RuntimeError, OSError, subprocess.SubprocessError):
         pass
-    return True
 
 
 def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, timeout: int,
@@ -899,14 +899,15 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
 
     `watched` says this altd saw the job end, so a missing status after the limit is a timeout; a job that ended
     unseen, while Altitude restarted, without a status stays an explicit uncertainty. Neither is ever a success.
-    `revoked()` turning true stops the job: revoking the grant also ends the command it is running. `stopped` says
-    the caller already stopped it for that reason."""
+    `revoked()` turning true stops the job, asked again on every poll until it ends: revoking the grant also ends the
+    command it is running. `stopped` says the caller already saw the revocation while the command ran."""
     status = machine_files(folder, unit)[1]
     begun = datetime.fromisoformat(started)
     env = codex_env(retain_user_bus=True)
     while not status.exists():
-        if not stopped and revoked():
-            stopped = machine_stop(unit)
+        if stopped or revoked():
+            stopped = True
+            machine_stop(unit)
         try:  # the limit ends the job, so past it (and a little grace) nothing is still running
             ended = datetime.now(timezone.utc) >= begun + timedelta(seconds=timeout + 60) or \
                 not platform.job_active(unit, env)
@@ -928,7 +929,7 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
                            if watched else "no exit status recorded: the unit ended while altd restarted, "
                                            "so the result is uncertain")
     if stopped:
-        record["error"] = "stopped because the grant was revoked; effects it already had remain"
+        record["error"] = "the grant was revoked while this ran, so Altitude stopped it; effects it already had remain"
     return record
 
 

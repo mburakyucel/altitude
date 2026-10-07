@@ -2700,7 +2700,7 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
             sequence = len(rows) + 1
             row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
-                   "granted": grant["at"], "command": command,
+                   "granted": grant["id"], "command": command,
                    "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
                    "started": datetime.now(timezone.utc).isoformat(), "finished": None,
                    "error": "still running or interrupted with altd"}
@@ -2713,9 +2713,9 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
 
     def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation is watched beside it
         while not finished.wait(MACHINE_POLL_SECONDS):
-            if _grant_revoked(project, slug, row):
-                stopped.append(engines.machine_stop(row["unit"]))
-                return
+            if stopped or _grant_revoked(project, slug, row):
+                stopped.append(True)
+                engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
 
     threading.Thread(target=stop_when_revoked, daemon=True).start()
     try:  # a launch that fails still settles its row, so it never holds the next command
@@ -2735,7 +2735,7 @@ def _grant_revoked(project: str, slug: str, row: dict) -> bool:
         grant = S.load_task(project, slug).get("grant") or {}
     except (OSError, ValueError):
         return False
-    return grant.get("at") != row.get("granted")
+    return grant.get("id") != row.get("granted")
 
 
 def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,

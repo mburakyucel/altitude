@@ -2428,6 +2428,10 @@ def record_grant(project: str, slug: str, approval: str, *, question: str, revis
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
         if policy:
             grant["policy"] = policy
+        # Commands run under one grant id; recording the same answer again keeps it, so they keep running.
+        same = previous and all(previous.get(key) == grant.get(key) for key in
+                                ("purpose", "approval", "question", "revision", "source", "attempt", "policy"))
+        grant["id"] = previous["id"] if same and previous.get("id") else uuid.uuid4().hex
         task["grant"] = grant
         S.save_task(project, task)
         S.append_event(project, slug, "grant", **grant)
