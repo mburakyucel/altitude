@@ -71,7 +71,11 @@ checkout on either engine; source changes always belong to one L2 worktree and P
 
 The [L3 persona](../personas/l3.md) owns roadmap sequencing, targeted handoffs, durable feedback,
 capability-gap recommendations and authorized continuation. L3 judges who needs context and when
-based on its effect on their responsibilities, decisions or work.
+based on its effect on their responsibilities, decisions or work. Active follow-through is the
+default for unfinished authorized work: L3 checks ownership, readiness and dependencies, moves
+ready delivery through its owner and continues authorized dependent work through supported operations.
+Significant stalls receive a visible project-chat heads-up naming why and the next step/trigger
+or exact missing operator action; legitimate waits and running workers need no repeated nudges.
 Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
 brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
 approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
