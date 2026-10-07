@@ -2386,11 +2386,9 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
 
     text, truncated = stderr.render()
     if truncated:
-        # A credential can cross either raw cut. Omit those partial lines before redaction.
+        # #618: a dropped middle can contain a credential's opening marker. Never retain its ambiguous tail.
         head = bytes(stderr.head).decode("utf-8", errors="replace")
-        tail = bytes(stderr.tail).decode("utf-8", errors="replace")
-        text = (head.rsplit("\n", 1)[0] if "\n" in head else "") + "\n[capture limit]\n" + (
-            tail.split("\n", 1)[1] if "\n" in tail else "")
+        text = (head.rsplit("\n", 1)[0] if "\n" in head else "") + "\n[capture limit: stderr tail withheld]\n"
     if exception is not None:
         text += "\n" + str(exception)
     text = unquote(text)
@@ -2398,9 +2396,6 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
         text = "[diagnostic withheld: nested encoding]"
     text = re.sub(r"-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?(?:-----END [\w ]*PRIVATE KEY-----|$)",
                   "[REDACTED]", text)
-    if truncated:
-        # A multiline private key can end in the retained tail after its beginning was dropped.
-        text = re.sub(r"(?s)(\n\[capture limit\]\n).*?-----END [\w ]*PRIVATE KEY-----", r"\1[REDACTED]", text)
     # Diagnostic assignments can hold quoted values with spaces; discard the rest of that line.
     text = re.sub(r"(?im)((?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)[\"']?\s*[:=]).*$",
                   r"\1 [REDACTED]", text)

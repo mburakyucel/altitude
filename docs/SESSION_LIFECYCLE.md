@@ -257,11 +257,12 @@ Failed launch, service inspection, invocation, nonzero exit, capture overflow an
 retain `diagnostics` on that task's existing review record, readable through `alt task review status`
 by the owner and coordinator. Evidence names the launcher's exit status (null before launch), exception
 type/errno when available, sanitized stderr up to 8 KiB with head/tail retention, per-stream truncation
-and whether stream capture completed. Each raw stream is bounded to 2 MiB; stderr partial lines at raw
-cuts are omitted before redaction. Credential assignments, home paths and private operational identities
+and whether stream capture completed. Each raw stream is bounded to 2 MiB. Raw stderr overflow retains
+only complete lines in its leading half; its tail is withheld because the dropped middle can contain
+a credential's opening marker. Credential assignments, home paths and private operational identities
 are redacted using the existing incident privacy boundary; evidence that fails that check is withheld.
-Encoded text is decoded before redaction; nested encoding is withheld. Incomplete private-key blocks
-and key endings after a raw cut are redacted too.
+Encoded text is decoded before redaction; nested encoding is withheld and incomplete private-key blocks
+are redacted. Stderr captured in full retains sanitized head/tail evidence within the 8 KiB bound.
 Provider stdout is not copied into diagnostics. Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;

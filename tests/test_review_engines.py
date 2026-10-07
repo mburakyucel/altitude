@@ -222,7 +222,7 @@ class ReviewEngineTests(AltitudeCase):
         self.assertFalse(evidence["stderr_truncated"])
         self.assertFalse(evidence["stdout_truncated"])
 
-    def test_capture_overflow_names_stream_and_keeps_bounded_stderr_ends(self):
+    def test_capture_overflow_names_stream_and_withholds_ambiguous_stderr_tail(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c",
             "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT' * 1000); "
@@ -236,7 +236,8 @@ class ReviewEngineTests(AltitudeCase):
         self.assertTrue(evidence["stdout_truncated"])
         self.assertTrue(evidence["stderr_truncated"])
         self.assertIn("startup diagnostic", evidence["stderr"])
-        self.assertIn("last diagnostic", evidence["stderr"])
+        self.assertNotIn("last diagnostic", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
         self.assertNotIn("PRIVATE TRANSCRIPT", json.dumps(result))
         self.assertNotIn("fictional-secret-value", json.dumps(result))
         self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
@@ -245,7 +246,7 @@ class ReviewEngineTests(AltitudeCase):
         capture = engines._BoundedRawCapture(128)
         capture.add("useful start\napi_key=" + "s" * 400 + "\nuseful end\n")
         evidence = engines._review_diagnostics(capture)
-        self.assertEqual(evidence["stderr"], "useful start\n[capture limit]\nuseful end\n")
+        self.assertEqual(evidence["stderr"], "useful start\n[capture limit: stderr tail withheld]\n")
         self.assertTrue(evidence["stderr_truncated"])
         capture = engines._BoundedRawCapture(128)
         capture.add("useful start\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
@@ -254,7 +255,7 @@ class ReviewEngineTests(AltitudeCase):
         self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
         self.assertNotIn("PRIVATE KEY", evidence["stderr"])
         self.assertIn("useful start", evidence["stderr"])
-        self.assertIn("useful end", evidence["stderr"])
+        self.assertNotIn("useful end", evidence["stderr"], "raw truncation withholds the ambiguous tail")
         for private in ("prefix\n-----BEGIN PRIVATE KEY-----\nPRIVATE MATERIAL\n",
                         "prefix\n" + "x" * 200 + "\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
                         + "-----END PRIVATE KEY-----\nuseful end\n"):
@@ -263,6 +264,14 @@ class ReviewEngineTests(AltitudeCase):
             evidence = engines._review_diagnostics(capture)
             self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
             self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n" + "benign padding\n" * 100 + "-----BEGIN PRIVATE KEY-----\n"
+                    + "PRIVATE MATERIAL\n" * 100)
+        evidence = engines._review_diagnostics(capture)
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
         capture = engines._BoundedRawCapture()
         capture.add("useful start\n" + "é" * 10000 + "\nuseful end\n")
         evidence = engines._review_diagnostics(capture)
