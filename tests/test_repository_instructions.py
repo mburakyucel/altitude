@@ -4,6 +4,7 @@ These fixtures inspect real prompt construction and native import paths, not pro
 """
 import io
 import json
+import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO, git
@@ -85,7 +86,7 @@ class TestRepositoryInstructions(AltitudeCase):
                                             "chmod/chown a SUID helper", "block with --fault",
                                             "Explicitly authorized native runtime", "actual fresh intended confined",
                                             "effective role policy", "operating-system detection",
-                                            "outside-worker browser run"):
+                                            "outside-worker browser run", "launchOptions or sandbox flags"):
                             self.assertIn(requirement, prompt)
                         self.assertTrue(prompt.endswith("Continue task." if resume else "Start task."))
             self.assertEqual(before, {p.name: p.read_bytes() for p in self.repo.iterdir() if p.is_file()})
@@ -132,3 +133,14 @@ class TestRepositoryInstructions(AltitudeCase):
         shared = self.layout("shared")
         self.assertIn(str(shared), l3._header(self.project, "chat", False))
         self.assertNotIn(str(legacy), engines.repository_rule_prompt(self.repo))
+
+
+class TestBrowserSpecs(unittest.TestCase):
+    def test_e2e_specs_leave_launch_and_sandbox_options_to_the_shared_configs(self):
+        # PR #702: a spec's own chromiumSandbox override failed the required check's harness launch.
+        files = sorted((REPO / "web" / "e2e").rglob("*.ts"))
+        self.assertTrue(files)
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            for option in ("launchOptions", "chromiumSandbox"):
+                self.assertNotIn(option, text, f"{path.relative_to(REPO)}: web/playwright*.config.ts owns {option}")
