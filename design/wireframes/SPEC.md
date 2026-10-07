@@ -789,12 +789,16 @@ decision states are reused; the viewer has no microphone, composer or empty publ
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.
 
-Task details includes **Observed tokens** on phone and desktop,
-also present in the report view. The folded token row shows the cumulative observed total (unknown when
-unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
-session rows, or say **Provider total · helpers unsplit**, with inclusive input/output and available
-cache-read, cache-write and reasoning subsets. Cache/reasoning fields are parts of input/output,
-never additional totals. Attempts survive resume and engine handoff; project L3 work is excluded.
+Task details includes **Tokens processed** on phone and desktop,
+also present in the report view. Above it, Task details shows **Current context** (Context at last
+request once the task stops): tokens, share of the window and observation age, or "unavailable · no
+reliable reading for the current session". The folded token row shows the cumulative processed total
+(unknown when unavailable), model requests, coverage, and collector freshness. Expanded details first
+explain that each request re-sends the conversation, so processed input is mostly cached and is not
+a bill, quota use or the current context; then **Input processed**, its cache subsets, **Output
+generated**, reasoning and **Model requests**. Engine and owner/delegated session rows, or **Provider
+total · helpers unsplit**, follow. Cache/reasoning fields are parts of input/output, never additional
+totals. Attempts survive resume and engine handoff; project L3 work is excluded.
 The display is separate from the context line and quota readouts and makes no cost claim.
 
 Expanded details also show **L1 helpers observed**, the total unique observed count across recorded
@@ -823,7 +827,7 @@ Stop, Continue and Check status share one 104px-wide header button; its position
 fixed across state changes. Tabs retain an active underline to identify navigation.
 Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
-the header button). Task details contains the muted line "attempt 1 · started 32 min ago · 18% of its context used"
+the header button). Task details contains the muted line "attempt 1 · started 32 min ago"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
 and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository

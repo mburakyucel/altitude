@@ -37,7 +37,6 @@ class CountReaders(AltitudeCase):
         self.write_counts("unrelated-session", edits=7)
         self.patch(config, "load_projects", return_value={"demo": {"path": "."}})
         self.patch(S, "list_tasks", new=lambda project: tasks)
-        self.patch(monitor, "transcript_context_percent", return_value=None)
 
         rows = {row["slug"]: row for row in monitor.sessions() if row.get("kind") == "l2"}
 

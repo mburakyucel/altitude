@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 from . import engines, config, route, state as S
-from .engines import transcript_context_percent
 
 
 def sessions() -> list[dict]:
@@ -23,10 +22,7 @@ def sessions() -> list[dict]:
                 counts = (S.read_json(counts_p, {}) if counts_p else {}) or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 engine = t.get("l2_engine") or "claude"
-                if engine == "codex":
-                    cp = None  # Completed-turn consumption is not context-window occupancy.
-                else:
-                    cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
+                cp = ((t.get("token_usage") or {}).get("context") or {}).get("percent")
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
                             "token_usage": t.get("token_usage"),

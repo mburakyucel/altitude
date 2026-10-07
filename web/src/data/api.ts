@@ -467,7 +467,19 @@ const tokenCounters = {
   cache_read_tokens: z.number().nullish(),
   cache_write_tokens: z.number().nullish(),
   reasoning_tokens: z.number().nullish(),
+  /** Distinct model requests behind the counters; unknown for provider aggregates. */
+  requests: z.number().nullish(),
 };
+
+/** A session's newest own request input against its window; absent when no reliable reading exists. */
+export const TokenContextSchema = z.object({
+  tokens: z.number(),
+  window: z.number().nullish(),
+  percent: z.number().nullish(),
+  observed_at: z.string().nullish(),
+  engine: z.string().nullish(),
+  session_id: z.string().nullish(),
+});
 
 export const TokenSessionSchema = z.object({
   engine: z.string(),
@@ -503,6 +515,7 @@ export const HelperUsageSchema = z.object({
 export const TokenUsageSchema = z.object({
   status: z.string().default("unknown"),
   ...tokenCounters,
+  context: TokenContextSchema.nullish(),
   checked_at: z.string().nullish(),
   observed_at: z.string().nullish(),
   finalized_at: z.string().nullish(),
@@ -694,6 +707,7 @@ export type ProjectView = z.infer<typeof ProjectViewSchema>;
 export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TokenSession = z.infer<typeof TokenSessionSchema>;
 export type TaskTokenUsage = z.infer<typeof TokenUsageSchema>;
+export type TokenContext = z.infer<typeof TokenContextSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;

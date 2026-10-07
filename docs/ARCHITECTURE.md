@@ -1557,7 +1557,9 @@ resume or recovery replaces it, and asks `engines.py` for normalized local obser
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
 `status.json.token_usage` snapshot and do no provider-log scanning. Engine adapters increment byte
 cursors over complete JSONL records and retain numeric response/message identities for deduplication
-in task-local `token-usage.json`. Discovery reads bounded provider metadata behind the engine seam.
+in task-local `token-usage.json`. Each session row also counts its distinct requests and carries its
+newest own request's input as context; the snapshot's `context` is the current owner session's.
+Discovery reads bounded provider metadata behind the engine seam.
 Neither telemetry nor helper discovery creates managed sessions, model calls, incidents, holds, or
 routing decisions. L3's project conversation is outside task accounting.
 
@@ -2471,7 +2473,7 @@ skeleton in the page's shape, and a failed read is one sentence with Retry.
 The task page is the operator's conversation with the L2 beside the worker's live session
 (design spec §3.10). Its compact desktop header puts the crumb back to the project, wrapping title
 with its state dot, Reject with an inline confirm, details and live-panel controls in one row.
-Attempt, when the task started or finished, context used and token usage open in Task details at
+Attempt, when the task started or finished, current context and token usage open in Task details at
 both viewports. A second wrapping row keeps chips visible: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
