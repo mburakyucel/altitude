@@ -264,7 +264,15 @@ multiline or unterminated values; preceding diagnostics remain. Home paths and p
 identities use the existing incident privacy boundary; evidence that fails that check is withheld.
 Encoded text is decoded before redaction; nested encoding is withheld and incomplete private-key blocks
 are redacted. Stderr captured in full retains sanitized head/tail evidence within the 8 KiB bound.
-Provider stdout is not copied into diagnostics. Evidence survives cancellation, uncertain termination
+Structured stdout errors retain only fixed categories in `stdout_errors`: authentication, rate limit,
+connection, captured-input adapter, configuration, permission, context limit and turn limit. Categories
+describe recognized error vocabulary, not a verified execution cause. The engine seam selects error
+fields from its structured result or failure events; arbitrary prose, unknown codes, prompts and source
+are never retained. `stdout_state` distinguishes recognized and unrecognized errors, no structured error,
+empty output, unavailable capture, malformed output, incomplete capture and truncation. Incomplete or
+truncated stdout yields no categories; partial records are not parsed as complete evidence. The category
+list contains at most eight fixed values. Provider stdout is not copied into diagnostics.
+Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;
 the coordinator still requires verified recovery before an explicit retry.

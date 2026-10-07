@@ -15,9 +15,10 @@ RUN curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/$NODE/node-$NODE-linux
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz \
     && corepack enable
 
-# Chromium and its system libraries for the pinned Playwright; another Playwright version downloads its own browser.
+# Both required browser lanes and their system libraries for the pinned Playwright.
+# Keep this pin aligned with web/pnpm-lock.yaml; browser downloads alone do not supply system libraries.
 ARG PLAYWRIGHT=1.63.0
-RUN npx -y "playwright@$PLAYWRIGHT" install --with-deps chromium && chmod -R a+rX /opt/playwright \
+RUN npx -y "playwright@$PLAYWRIGHT" install --with-deps chromium webkit && chmod -R a+rX /opt/playwright \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Nested rootless Podman for the image's `ubuntu` user (1000), which the runner maps to the operator's account;
