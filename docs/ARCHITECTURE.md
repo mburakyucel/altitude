@@ -1081,16 +1081,21 @@ from the saved status, or as uncertain without one, and the owner's CLI reconnec
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
 not caller identity. Both engines share the verb; only the launcher is host-specific.
-Installation VMs, containers and sandboxed-browser checks need no grant: `POST /api/task/validate`
-lets the running owner's current attempt, from a process in its own worker job, run one command
-against its committed `HEAD` in a disposable rootless Podman container. altd starts that container
-from its own deployed image, with fixed flags and limits, and keeps the runner's storage beside
-Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+Candidate checks, installation VMs, containers and sandboxed-browser checks need no grant:
+`POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
+job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
+disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
+limits. On macOS it runs as a job under the platform's validation Seatbelt profile, stricter than a
+worker's: it writes and reads only its own folders in the run area, reads nothing else in the operator's
+home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets nor
+the keychain, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
 Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
 uses the supported runner without host package installation. Image corrections take effect after
 normal source activation and require a successful browser check through that effective runner;
 testing a nested candidate image alone does not establish recovery. The run is recorded like a machine run with
-purpose `validation`, and results reach the task folder without following links. The worker's own
+purpose `validation`, its commit and tree, host OS and architecture and isolation, and results reach the
+task folder without following links. Cleanup precedes the record, so a run whose cleanup did not finish
+is recorded as `cleanup failed`, never as a success. The worker's own
 confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
 storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted

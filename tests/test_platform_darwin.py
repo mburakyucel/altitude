@@ -354,6 +354,19 @@ class Jobs(DarwinCase):
         self.assertIn(["bootout", f"gui/{os.getuid()}/{label}"], self.launchd.commands)
         self.assertFalse((platform._jobs() / label).exists())
 
+    def test_a_pattern_stops_every_job_it_matches(self):
+        # Validation's startup cleanup stops whatever runs an earlier altd left, as systemctl stops a unit pattern.
+        labels = [f"dev.altitude.job.altitude-validation-{name}" for name in ("a1", "clean-b2")]
+        for label in (*labels, "dev.altitude.job.altitude-claude-c"):
+            (platform._jobs() / label).mkdir(parents=True)
+            (platform._jobs() / label / "coalition").write_text("31")
+        stopped = self.patch(platform, "_stop_members", return_value=True)
+        platform.job_stop("altitude-validation-*.service", {}, timeout=15)
+        self.assertEqual(stopped.call_count, 2)
+        self.assertEqual(sorted(c[1] for c in self.launchd.commands if c[0] == "bootout"),
+                         sorted(f"gui/{os.getuid()}/{label}" for label in labels))
+        self.assertEqual([path.name for path in platform._jobs().iterdir()], ["dev.altitude.job.altitude-claude-c"])
+
     def test_the_launcher_leaves_a_record_kept_for_survivors(self):
         job = platform._jobs() / "dev.altitude.job.altitude-machine-p-1"
         self.patch(platform, "_bsd", return_value=platform._BSDInfo(start_sec=1))

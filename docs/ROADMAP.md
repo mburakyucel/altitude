@@ -34,9 +34,14 @@ and visibility decisions remain separate. Private-trial readiness
 requires exact OS/architecture, application/engine versions and observed compatibility evidence;
 fixtures do not establish fresh-machine or live-provider success.
 
-Validation work favors reusable automated entry points that owners run against their candidates over
-steps the operator repeats by hand; each [validation environment](DEVELOPMENT.md#validation-environments)
-names what it does not establish, and remaining manual steps name their reason.
+Automated pre-merge candidate verification is the main priority (operator direction of October 7,
+2026): owners verify their own committed candidates before merging and iterate without the operator
+running validation or deploying each experiment. Validation work favors reusable automated entry
+points that owners run against their candidates over steps the operator repeats by hand; each
+[validation environment](DEVELOPMENT.md#validation-environments) names what it does not establish,
+and remaining manual steps name their reason. On the Mac, [validation runs](DEVELOPMENT.md#macos-validation-runs)
+cover candidate suites and fixture journeys; native launchd jobs and worker confinement, browsers
+with their own sandbox, and installation still have no automated Mac lane.
 
 ### Portable installation: delivered and remaining
 
@@ -94,8 +99,9 @@ Public-release/history-audit work and P1 backup/continuity remain separately seq
 
 macOS is a target alongside Linux: every change ships for both behind `altitude/platform.py`.
 Confirmation requires recorded evidence from a run on each platform; Linux delivery leaves macOS
-confirmation open until that evidence exists. Until the Mac validation sandbox (#556) makes runs
-routine, owners name the missing confirmation in their PR and report and send L3 a row for #643
+confirmation open until that evidence exists. Owners run their candidate's checks on the Mac with
+[`alt task validate`](DEVELOPMENT.md#macos-validation-runs). For what those runs do not establish,
+owners name the missing confirmation in their PR and report and send L3 a row for #643
 (containers), #225 (native runtime), or #551 (installation); L3 maintains those rows. Linux merge
 checks and holds stay unchanged (see [AGENTS.md](../AGENTS.md#seams)).
 #527 moved host mechanisms into the seam, and #570 put the

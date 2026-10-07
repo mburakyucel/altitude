@@ -18,7 +18,7 @@ test("validation runs switch on and off, keeps its place after a refused change 
     await route.fulfill({ response, json: { ...(await response.json()), validation_unavailable: unavailable } });
   });
   const toggle = page.getByRole("switch", { name: /Validation runs/ });
-  const detail = page.getByText(/throwaway containers on this computer/);
+  const detail = page.getByText(/throwaway, isolated runs on this computer/);
   const refused = page.getByRole("alert").filter({ hasText: "Validation settings are busy" });
 
   await walk.open("/settings");

@@ -11,7 +11,10 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
+import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -63,22 +66,15 @@ if args[:1] == ["run"]:
 '''
 
 
-class TestValidationRunner(AltitudeCase):
+class RunnerCase(AltitudeCase):
+    """A running task whose worker owns the request, and altd's HTTP door; each host's fixtures come from a subclass."""
+
     def setUp(self):
         super().setUp()
         make_repo(self.repo)
         self.private_ledgers()
-        bin_dir = self.tmp / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        shim = bin_dir / "systemd-run"
-        shim.write_text(SHIM)
-        shim.chmod(0o755)
-        self.record, built = self.tmp / "podman.jsonl", self.tmp / "built"
-        podman = bin_dir / "podman"
-        podman.write_text(PODMAN.replace("RECORD", repr(str(self.record)), 1).replace("BUILT", repr(str(built))))
-        podman.chmod(0o755)
-        self.patch(platform, "SYSTEMD_RUN", str(shim))
-        self.patch(validation, "podman", return_value=[str(podman)])
+        self.bin_dir = self.tmp / "bin"
+        self.bin_dir.mkdir(exist_ok=True)
         self.patch(platform, "validation_unavailable", return_value=None)
         self.patch(validation, "FREE_DISK", 0)   # the host's free disk is not the fixture's
         self.owner = self.patch(terminal, "owner_connection", return_value=True)
@@ -115,6 +111,26 @@ class TestValidationRunner(AltitudeCase):
         return self.request("/api/task/validate", {"project": self.project, "slug": self.slug, "attempt": attempt,
                                                    "command": command, **options}, status=status)
 
+    def rows(self):
+        return [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
+                .splitlines()]
+
+
+class TestValidationRunner(RunnerCase):
+    host = "linux"  # the fixtures are systemd-run and Podman
+
+    def setUp(self):
+        super().setUp()
+        shim = self.bin_dir / "systemd-run"
+        shim.write_text(SHIM)
+        shim.chmod(0o755)
+        self.record, built = self.tmp / "podman.jsonl", self.tmp / "built"
+        podman = self.bin_dir / "podman"
+        podman.write_text(PODMAN.replace("RECORD", repr(str(self.record)), 1).replace("BUILT", repr(str(built))))
+        podman.chmod(0o755)
+        self.patch(platform, "SYSTEMD_RUN", str(shim))
+        self.patch(validation, "podman", return_value=[str(podman)])
+
     def calls(self, verb):
         return [a for a in map(json.loads, self.record.read_text().splitlines()) if a[:1] == [verb]]
 
@@ -147,7 +163,8 @@ class TestValidationRunner(AltitudeCase):
         self.assertNotEqual(host, config.PORT)
         for fixed in ("--rm", "--pull=never", "--cgroups=disabled", "--userns=keep-id:uid=1000,gid=1000",
                       "--user=1000:1000", "--network=slirp4netns:allow_host_loopback=false",
-                      "--device=/dev/fuse", "--device=/dev/net/tun", f"--publish=127.0.0.1:{host}:8890"):
+                      "--device=/dev/fuse", "--device=/dev/net/tun", f"--publish=127.0.0.1:{host}:8890",
+                      "--env=VALIDATION_RESULTS=/results"):
             self.assertIn(fixed, options)
         self.assertNotIn("--device=/dev/kvm", options)
         self.assertEqual(sorted(a.split(":")[1] for a in options if a.startswith("--volume=")),
@@ -159,9 +176,15 @@ class TestValidationRunner(AltitudeCase):
 
         [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
                  .splitlines()]
-        self.assertEqual({k: row[k] for k in ("n", "purpose", "commit", "kvm", "exit", "ended", "image")},
-                         {"n": 1, "purpose": "validation", "commit": self.head, "kvm": False, "exit": 1,
-                          "ended": "exit", "image": validation.image_tag()})
+        tree = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD^{tree}"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        self.assertEqual({k: row[k] for k in ("n", "purpose", "commit", "tree", "kvm", "exit", "ended", "isolation",
+                                              "host", "cleanup")},
+                         {"n": 1, "purpose": "validation", "commit": self.head, "tree": tree, "kvm": False, "exit": 1,
+                          "ended": "exit", "isolation": validation.image_tag(), "host": platform.host_identity(),
+                          "cleanup": None})
+        self.assertEqual({k: result[k] for k in ("tree", "host", "isolation", "ended")},
+                         {k: row[k] for k in ("tree", "host", "isolation", "ended")})
         self.assertTrue(row["unit"].startswith("altitude-validation-"))
         [event] = [e for e in S.read_events(self.project, self.slug) if e["kind"] == "machine-run"]
         self.assertEqual((event["purpose"], event["exit"]), ("validation", 1))
@@ -294,7 +317,7 @@ class TestValidationRunner(AltitudeCase):
             [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl")
                      .read_text().splitlines()]
             self.assertEqual(row["ended"], "exit")
-            self.assertEqual(stages, ["clone", "job", "deliver", "record", "job"])
+            self.assertEqual(stages, ["clone", "job", "deliver", "job", "record"], "cleanup precedes the record")
             restart.assert_not_called()
             server.auto_restart()
             restart.assert_called_once()
@@ -471,3 +494,180 @@ class TestValidationRunner(AltitudeCase):
                    .splitlines()]
         self.assertEqual((saved["ended"], saved["exit"]), ("exit", 0))
         self.assertEqual(len([e for e in S.read_events(self.project, self.slug) if e["kind"] == "machine-run"]), 1)
+
+    def test_a_run_that_never_started_leaves_nothing_and_keeps_the_runner_open(self):
+        with mock.patch.object(validation, "_clone", side_effect=OSError("worktree unreadable")):
+            self.assertIn("worktree unreadable", self.validate(["true"], status=400)["error"])
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+        self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
+    def test_a_run_whose_cleanup_fails_is_never_a_success(self):
+        with mock.patch.object(validation, "cleanup_script", return_value="exit 3"):
+            result = self.validate(["true"])
+        self.assertEqual((result["exit"], result["ended"]), (0, "cleanup failed"))
+        self.assertIn("cleanup unit ended without success", result["cleanup"])
+        [row] = self.rows()
+        self.assertEqual((row["ended"], row["cleanup"]), ("cleanup failed", result["cleanup"]))
+        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
+        validation.reconcile()
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+        self.assertEqual(self.rows()[0]["ended"], "cleanup failed", "the next start keeps the recorded failure")
+        self.serving(self.httpd.server_address[1])
+        owner = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+                 "ALTITUDE_ATTEMPT": "1"}
+        with mock.patch.object(validation, "cleanup_script", return_value="exit 3"):
+            cli = self.alt("task", "validate", "--", "true", env=owner)
+        self.assertEqual(cli.returncode, 1, "exit 0 with a failed cleanup is a failure")
+        self.assertIn("exit 0; cleanup failed", cli.stdout)
+
+
+# sandbox-exec stand-in: record the profile, then run the command it confines.
+SANDBOX = r'''#!/bin/sh
+printf '%s' "$2" > PROFILE
+shift 2
+exec "$@"
+'''
+
+# A launchd job stand-in for logged_job_command: the command's output and exit status as the job writes them.
+LOGGED = 'bash -c "$1" >> "$3" 2>&1; status=$?; printf %s "$status" > "$2.tmp" && mv "$2.tmp" "$2"; exit "$status"'
+
+
+class TestMacValidationRunner(RunnerCase):
+    """macOS: the job launcher and sandbox-exec are fixtures; the script, profile, environment, records and cleanup
+    are real. scripts/platform_probe.py's validation-confinement row checks the profile itself on a Mac."""
+    host = "darwin"
+
+    def setUp(self):
+        super().setUp()
+        self.profile = self.tmp / "profile.sb"
+        sandbox = self.bin_dir / "sandbox-exec"
+        sandbox.write_text(SANDBOX.replace("PROFILE", shlex.quote(str(self.profile))))
+        sandbox.chmod(0o755)
+        self.patch(platform, "SANDBOX_EXEC", str(sandbox))
+        self.patch(platform, "logged_job_command", side_effect=lambda name, command, *, log, status, **kwargs:
+                   ["/bin/bash", "-c", LOGGED, "job", command, str(status), str(log)])
+        self.active = self.patch(platform, "job_active", return_value=False)
+        self.patch(platform, "validation_temp", side_effect=lambda run: self.tmp / f"av-{run}")
+        hidden = Path.home() / "bin"
+        self.setenv("PATH", f"{hidden}:{os.environ['PATH']}")
+
+    def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
+        (self.repo / "uncommitted.txt").write_text("not tested\n")
+        result = self.validate(["sh", "-c", 'git rev-parse HEAD > "$VALIDATION_RESULTS/head"; '
+                                            'env > "$VALIDATION_RESULTS/env"; echo done; test ! -e uncommitted.txt'])
+        self.assertEqual((result["exit"], result["ended"], result["commit"]), (0, "exit", self.head))
+        self.assertIn("done\n", result["output"])
+        results = Path(result["results"])
+        self.assertEqual((results / "head").read_text().strip(), self.head)
+        env = dict(line.split("=", 1) for line in (results / "env").read_text().splitlines())
+        area = Path(env["HOME"]).parent
+        self.assertEqual(area.parent, validation.home() / "runs")
+        self.assertEqual((env["TMPDIR"], env["VALIDATION_RESULTS"], env["ALTITUDE_VALIDATION"]),
+                         (str(self.tmp / f"av-{area.name}"), str(area / "results"), "1"))
+        self.assertFalse({key for key in env if key.startswith(("ALTITUDE_", "GIT_", "CLAUDE", "CODEX"))}
+                         - {"ALTITUDE_VALIDATION"}, "nothing of altd's environment crosses")
+        self.assertNotIn(str(Path.home() / "bin"), env["PATH"].split(":"), "folders the profile hides are dropped")
+        self.assertEqual(self.profile.read_text(), platform.validation_profile(
+            (area / "work", area / "results", area / "home", self.tmp / f"av-{area.name}"),
+            area / f"{result['unit']}.log",
+            config.PORT),
+            "the candidate's folders only: the runner's own files beside them stay out of its reach")
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
+        self.assertEqual(self.stops.call_args.args[0], result["unit"])
+        [row] = self.rows()
+        self.assertEqual({k: row[k] for k in ("commit", "ended", "cleanup", "kvm", "publish")},
+                         {"commit": self.head, "ended": "exit", "cleanup": None, "kvm": False, "publish": None})
+        self.assertTrue(row["isolation"].startswith("seatbelt:"))
+        self.assertEqual(row["isolation"], validation.isolation(), "the digest does not depend on the run's folder")
+        self.assertTrue(row["host"].startswith("macOS "))
+
+    def test_container_options_are_refused(self):
+        self.assertIn("Linux container runner", self.validate(["true"], kvm=True, status=400)["error"])
+        self.assertIn("Linux container runner", self.validate(["true"], publish=8000, status=400)["error"])
+        self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
+
+    def test_processes_left_running_fail_the_run_and_close_the_runner(self):
+        self.active.return_value = True
+        result = self.validate(["true"])
+        self.assertEqual((result["exit"], result["ended"]), (0, "cleanup failed"))
+        self.assertIn("still running", result["cleanup"])
+        [area] = list((validation.home() / "runs").iterdir())
+        self.assertTrue((area / "work").exists(), "the clone stays while the run's processes may still use it")
+        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
+        self.active.return_value = False
+        validation.reconcile()
+        self.assertEqual(self.stops.call_args_list[-1].args[0], "altitude-validation-*.service")
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
+
+    def test_a_link_left_in_place_of_the_temporary_folder_is_removed_without_following_it(self):
+        target = self.tmp / "operator-files"
+        target.mkdir()
+        (target / "keep").write_text("operator\n")
+        temp = lambda area: self.tmp / f"av-{area.name}"  # noqa: E731
+
+        def replace(*args, **kwargs):
+            [area] = list((validation.home() / "runs").iterdir())
+            shutil.rmtree(temp(area))
+            temp(area).symlink_to(target)
+            return original(*args, **kwargs)
+        original = validation.engines.machine_command
+        with mock.patch.object(validation.engines, "machine_command", side_effect=replace):
+            result = self.validate(["true"])
+        self.assertEqual((result["ended"], result["cleanup"]), ("exit", None))
+        self.assertEqual((target / "keep").read_text(), "operator\n", "the link's target is untouched")
+        self.assertFalse(list((validation.home() / "runs").iterdir()))
+
+    def test_a_temporary_folder_that_cannot_be_removed_keeps_the_run_area_and_the_runner_closed(self):
+        real = shutil.rmtree
+
+        def stuck(path, *args, **kwargs):
+            if Path(path).name.startswith("av-"):
+                return None
+            return real(path, *args, **kwargs)
+        with mock.patch.object(validation.shutil, "rmtree", side_effect=stuck):
+            result = self.validate(["true"])
+            self.assertEqual(result["ended"], "cleanup failed")
+            self.assertIn("could not remove", result["cleanup"])
+            [area] = list((validation.home() / "runs").iterdir())
+            validation.reconcile()
+            self.assertTrue(area.exists(), "the area stays as the marker while its temporary folder remains")
+            self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
+        validation.reconcile()
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
+
+class TestValidationProfile(TestCase):
+    def test_a_root_replaced_by_a_link_admits_the_link_never_its_target(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(platform.sys, "platform", "darwin"):
+            link = Path(folder) / "av-run"
+            link.symlink_to(Path.home())
+            profile = platform.validation_profile((link,), Path(folder) / "unit.log", 8890)
+        own = os.path.join(os.path.realpath(folder), "av-run")
+        self.assertIn(f'(allow file-read* (subpath "{own}"))', profile)
+        self.assertNotIn(f'(allow file-read* (subpath "{os.path.realpath(Path.home())}"))', profile)
+
+
+    def test_the_profile_confines_a_run_to_its_own_folders(self):
+        with mock.patch.object(platform.sys, "platform", "darwin"), \
+                mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
+            area = Path.home() / '.altitude-validation/runs/a"b'
+            profile = platform.validation_profile((area / "work", area / "results"), area / "unit.log", 8890)
+        home = os.path.realpath(Path.home())
+        own = str(Path(home) / '.altitude-validation/runs/a\\"b')
+        roots = f'(subpath "{own}/work") (subpath "{own}/results")'
+        shared = '(subpath "/private/var/folders/ab/cd") (subpath "/private/tmp") (subpath "/private/var/tmp")'
+        for clause in (f'(deny file-write*)(allow file-write* {roots} (subpath "/dev"))',
+                       f'(deny file-read* (subpath "{home}") {shared})(allow file-read* {roots})',
+                       f'(allow file-write-data file-read-metadata (literal "{own}/unit.log"))', f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
+                       '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
+                       f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
+                       '(path-literal "/private/var/run/mDNSResponder")',
+                       '(allow file-read* (literal "/private/var/folders/ab/cd/T/xcrun_db"))',
+                       '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))"):
+            self.assertIn(clause, profile)
+        self.assertNotIn(f'(subpath "{own}")', profile, "the runner's files beside the candidate's folders stay out")

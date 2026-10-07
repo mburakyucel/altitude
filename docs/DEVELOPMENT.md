@@ -350,18 +350,29 @@ actual deny checks before browser acceptance. Unknown launch-root evidence refus
 ## Validation runner
 
 `alt task validate [--kvm] [--publish PORT] -- COMMAND` runs one validation command for the calling
-task's owner in a disposable rootless Podman container on this computer. The owner needs no machine
-grant, and ordinary worker confinement stays unchanged: altd, not the worker, starts the container.
-altd accepts the request only from a process in the task's current worker job. `make installation-vm`
-and `make browser-sandbox` call it automatically inside a task.
+task's owner against its unmerged committed candidate, isolated from the operator's runtime: a
+disposable rootless Podman container on Linux, a job under the validation Seatbelt profile on macOS.
+The owner needs no machine grant, and ordinary worker confinement stays unchanged: altd, not the
+worker, starts the run. altd accepts the request only from a process in the task's current worker
+job. `make installation-vm` and `make browser-sandbox` call it automatically inside a task.
+
+Owners use it to check a candidate before merging and to iterate without the operator: commit,
+run, read the output and results, revise, commit and run again. Nothing is merged, deployed or
+selected as the operator's runtime. For example, the dispatch and review journeys with deterministic
+fixture engine processes, on either host:
+
+```sh
+alt task validate -- python3 -m unittest tests.test_container_workflow tests.test_direct_dispatch tests.test_review_engines
+```
 
 - **Image.** altd builds the only image from its own deployed `scripts/validation.Containerfile`
   (Ubuntu 24.04 with QEMU, nested Podman, Node and pinned Playwright Chromium and WebKit, including
   both browsers' system libraries). The image is tagged by the file's hash and is never built from
   a candidate. Keep the Playwright pin aligned with `web/pnpm-lock.yaml` when upgrading browsers.
-- **Candidate.** The container sees a throwaway clone of the worktree's committed `HEAD` at `/work`,
-  with the worktree's `origin/*` branches and tags. Uncommitted edits and the worktree itself stay
-  out, and Git hooks are not run.
+- **Candidate.** The run sees a throwaway clone of the worktree's committed `HEAD` (at `/work` in the
+  container), with the worktree's `origin/*` branches and tags. Uncommitted edits and the worktree
+  itself stay out, and Git hooks are not run. The command starts in the clone; `VALIDATION_RESULTS`
+  names its results folder and `ALTITUDE_VALIDATION=1` is set.
 - **Container.** Every run uses fixed flags. The command runs as the image's non-root user,
   mapped to the operator's account with `keep-id`. Networking uses `slirp4netns` with the host's
   loopback unreachable. The container gets `/dev/fuse` and `/dev/net/tun`, plus `/dev/kvm` with
@@ -374,14 +385,20 @@ and `make browser-sandbox` call it automatically inside a task.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
   home, and a path a worker replaced must not become a mount or a place the run writes.
-- **Results.** Regular files that the command writes to `/results` are copied to the task folder's
-  `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches that
-  folder from Altitude's home without following links. Links and oversized files are skipped and
-  listed. The run's container, clone and area are removed afterwards, including after a timeout or a stop.
+- **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
+  folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
+  that folder from Altitude's home without following links. Links and oversized files are skipped and
+  listed. The run's container or processes, clone and area are removed afterwards, including after a
+  timeout or a stop. Cleanup of the processes and of every folder the candidate could write comes
+  before the record: a run whose cleanup does not finish ends as `cleanup failed`, keeps its area and
+  closes the runner until the next start. The runner's own files in the area (the run's identity,
+  delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
   Activation waits through execution, evidence recording and cleanup; validation admission shares
   the restart fence and refuses runs once restart is requested.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
-  purpose `validation`, the command, commit, image, exit and how it ended. A run that altd did not
+  purpose `validation`, the command, commit and tree, the host's OS and architecture, what isolated it
+  (the image tag, or `seatbelt:` and the profile's digest), exit, how it ended and any cleanup failure.
+  Only `ended: exit` with exit 0 is a pass; the CLI prints these facts and exits 1 for any other ending. A run that altd did not
   see end, including an expired run left by a host reboot or unexpected daemon exit, is stopped and
   recorded as interrupted at the next start. Its log and results are copied before scratch files are
   removed. A completed evidence copy is reused if ledger recording was interrupted. If evidence cannot
@@ -392,11 +409,47 @@ and `make browser-sandbox` call it automatically inside a task.
   run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
   runner's storage, where a worker cannot turn it back on.
 
-The runner is available on Linux x86_64 with `podman` and `slirp4netns`. KVM needs the operator's
-account to hold `/dev/kvm`, as it does during a desktop login. The runner is not implemented on
-macOS, where Podman runs inside a virtual machine of its own and there is no KVM; there
-`alt task validate` reports it unavailable and the Settings switch says why. Options the fixed container does not offer still need a
-[operator grant](CLI.md#operator-grant).
+The container runner is available on Linux x86_64 with `podman` and `slirp4netns`. KVM needs the
+operator's account to hold `/dev/kvm`, as it does during a desktop login. Options the fixed container
+does not offer still need an [operator grant](CLI.md#operator-grant).
+
+### macOS validation runs
+
+On a Mac, where Podman would need a virtual machine of its own and there is no KVM, the same verb
+runs the command as a launchd job under `platform.validation_profile`, a Seatbelt profile stricter
+than a worker's:
+
+- **Writes** only the run's own folders (clone, results, a home, and a short temporary folder
+  `/private/tmp/av-<id>` that is its `TMPDIR`) and devices. The runner's files beside them in the area
+  stay out of reach, and a suite that creates files directly in `/tmp` must use `TMPDIR` instead.
+- **Reads** nothing in the operator's home or the shared temporary folders (`/private/tmp`,
+  `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
+  home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment
+  checkout, and other processes' temporary files and caches stay out; only xcrun's lookup cache is
+  readable, so `/usr/bin/git` stays fast. Toolchains outside the home (`/opt/homebrew`, `/usr`) stay
+  readable; `PATH` keeps altd's entries outside the home.
+- **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
+  sockets are reachable only in its own folders and for the system's name resolution and log, so
+  other processes' sockets, such as an SSH agent, stay out. The run shares the host's loopback, so a
+  server it starts binds a free port.
+- **Keychain** lookups are refused, and launchd refuses service control to every sandboxed process,
+  so a run cannot start, stop or change a service. It signals only its own processes.
+- **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
+  `VALIDATION_RESULTS`; nothing of altd's environment crosses.
+
+The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
+are shared with Linux; there is no memory, process or CPU limit. `--kvm` and `--publish` are refused.
+`python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
+fixture run in the home writes and reads only its own folder and is refused the home, the shared
+temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
+supervisor, while system files, name resolution, other loopback ports, its own sockets and Git work.
+
+A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
+validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
+Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
+suites' local-process job fixtures. A macOS run establishes the candidate's behavior on this Mac under
+those fixtures; it does not establish native launchd/Seatbelt worker behavior, browser behavior,
+installation or provider compatibility.
 
 ### Browser verification
 
@@ -466,8 +519,9 @@ blocks automating it.
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
+| macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
 | Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
-| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
+| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; no automated lane runs native jobs, browsers or installation on the Mac |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
 
 The container gate removes its verified private containers, volumes and images before asking Podman

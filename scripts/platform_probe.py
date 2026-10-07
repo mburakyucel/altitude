@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import subprocess
@@ -223,6 +224,118 @@ def confinement():
         check(result.stdout.split() == ["write-inside", "signal-own-child"] and not written,
               f"confinement: {result.stdout.split()} home written: {written}")
     return "writes under the roots only; the supervisor and launchd are out of reach; own children stay signalable"
+
+
+# Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
+ATTEMPTS = r"""
+import json, os, plistlib, socket, subprocess, sys
+area, outside, home, port, other, label, user_temp = sys.argv[1:8]
+port, other, seen = int(port), int(other), {}
+def attempt(name, action):
+    try:
+        action()
+        seen[name] = True
+    except Exception:
+        seen[name] = False
+def write(path):
+    with open(path, "w") as stream:
+        stream.write("x")
+def bind(number):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", number))
+def connect(number):
+    socket.create_connection(("127.0.0.1", number), timeout=5).close()
+def unix(path):
+    with socket.socket(socket.AF_UNIX) as probe:
+        probe.connect(path)
+def own_unix():
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(os.path.join(area, "own.sock"))
+        server.listen()
+        unix(os.path.join(area, "own.sock"))
+def run(*argv):
+    subprocess.run(argv, check=True, capture_output=True, timeout=30)
+def bootstrap():
+    plist = os.path.join(area, "job.plist")
+    with open(plist, "wb") as stream:
+        plistlib.dump({"Label": label, "ProgramArguments": ["/usr/bin/true"]}, stream)
+    run("launchctl", "bootstrap", f"gui/{os.getuid()}", plist)
+attempt("write-area", lambda: write(os.path.join(area, "inside")))
+attempt("write-home", lambda: write(os.path.join(outside, "written")))
+attempt("write-through-linked-root", lambda: write(os.path.join(outside, "linked", "written")))
+attempt("link-runner-file", lambda: os.symlink("/etc/hosts", os.path.join(outside, "run.exit.tmp")))
+attempt("read-runner-log", lambda: open(os.path.join(outside, "run.log")).read())
+attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
+attempt("list-home", lambda: os.listdir(home))
+attempt("read-system", lambda: open("/etc/hosts").read())
+attempt("list-shared-temp", lambda: os.listdir("/private/tmp"))
+attempt("list-user-temp", lambda: os.listdir(os.path.dirname(user_temp.rstrip("/"))))
+attempt("write-shared-temp", lambda: write(f"/private/tmp/{label}"))
+attempt("resolve", lambda: socket.getaddrinfo("localhost", 80))
+attempt("bind-reserved", lambda: bind(port))
+attempt("bind-other", lambda: bind(0))
+attempt("connect-reserved", lambda: connect(port))
+attempt("connect-other", lambda: connect(other))
+attempt("unix-home", lambda: unix(os.path.join(outside, "s.sock")))
+attempt("unix-area", own_unix)
+attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
+attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
+attempt("launchd-bootstrap", bootstrap)
+attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
+with open(os.path.join(area, "seen.json"), "w") as stream:
+    json.dump(seen, stream)
+print(json.dumps(seen))
+"""
+
+
+@row
+def validation_confinement():
+    """The validation profile against a run area in the home folder, with a stand-in for Altitude's port."""
+    if not DARWIN:
+        return None  # Linux validation runs are containers; scripts/container_vm.py covers them
+    outside = Path.home() / f".altitude-probe-{NONCE}"
+    area, label = outside / "run", f"dev.altitude.probe-validation-{NONCE}"
+    listeners = [socket.socket() for _ in range(2)]
+    try:
+        area.mkdir(parents=True)
+        (outside / "secret").write_text("fictional credential\n")
+        (outside / "linked").symlink_to(outside)  # a root a worker replaced with a link into the home
+        (outside / "s.sock").unlink(missing_ok=True)
+        home_socket = socket.socket(socket.AF_UNIX)
+        listeners.append(home_socket)
+        home_socket.bind(str(outside / "s.sock"))
+        for listener in listeners:
+            if listener.family != socket.AF_UNIX:
+                listener.bind(("127.0.0.1", 0))
+            listener.listen()
+        port, other = (listener.getsockname()[1] for listener in listeners[:2])
+        log, status = outside / "run.log", outside / "run.exit"
+        command = platform.validation_command((area, outside / "linked"), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+                                                              str(outside), str(Path.home()), str(port), str(other),
+                                                              label, platform._user_temp()],
+                                              {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
+        # As a validation run: a logged job whose output and status are the runner's, beside the candidate's folders.
+        subprocess.run(platform.logged_job_command(name("validation"), f"cd {shlex.quote(str(area))} && exec "
+                                                   + shlex.join(command), log=log, status=status, env=env(), timeout=60),
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+        output = log.read_text() if log.exists() else ""
+        lines = [line for line in output.splitlines() if line.startswith("{")]
+        seen = json.loads(lines[-1]) if lines else {}
+        saved = json.loads((area / "seen.json").read_text()) if (area / "seen.json").exists() else None
+        check(saved == seen, f"output reached the runner's log: {bool(lines)}; attempts saved in the area {saved}")
+        allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "git"}
+        check(seen and all(seen[key] == (key in allowed) for key in seen),
+              f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
+        check(not (outside / "written").exists(), "the home folder was written")
+    finally:
+        subprocess.run([platform.LAUNCHCTL, "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=60)
+        for listener in listeners:
+            listener.close()
+        shutil.rmtree(outside, ignore_errors=True)
+        Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
+    return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
+            "sockets, keychain, launchd and the supervisor are out of reach; system files, name resolution, other "
+            "loopback ports, own sockets and git work")
 
 
 @row

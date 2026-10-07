@@ -381,9 +381,9 @@ def main(argv=None) -> None:
     mc.add_argument("--attempt", type=int, help="L3: observed current attempt, required with --standing-policy or --from-task")
     rn = ts.add_parser("run", help="current L2: run one command under the task's operator grant, outside the worker sandbox")
     rn.add_argument("slug"); rn.add_argument("command")
-    vl = ts.add_parser("validate", help="current L2: run a command in a disposable validation container for its own task, no grant needed")
-    vl.add_argument("--kvm", action="store_true", help="add /dev/kvm for a virtual machine")
-    vl.add_argument("--publish", type=int, metavar="PORT", help="publish this container port on a free 127.0.0.1 port")
+    vl = ts.add_parser("validate", help="current L2: run a command against its own committed candidate in a disposable, isolated validation run, no grant needed")
+    vl.add_argument("--kvm", action="store_true", help="Linux: add /dev/kvm for a virtual machine")
+    vl.add_argument("--publish", type=int, metavar="PORT", help="Linux: publish this container port on a free 127.0.0.1 port")
     vl.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command and its arguments")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
@@ -561,12 +561,18 @@ def main(argv=None) -> None:
                         return
                     if machine_run or validation_run:
                         sys.stdout.write(result["output"])
+                        ended = result.get("ended", "exit")
                         print(f"[altitude] {result['unit']}: exit {result['exit']}"
+                              + (f"; {ended}" if ended != "exit" else "")
                               + (f"; {result['error']}" if result.get("error") else "")
+                              + (f"; {result['cleanup']}" if result.get("cleanup") else "")
                               + ("; output truncated, read the log" if result.get("output_truncated") else "")
                               + f"; log {result['log']}"
-                              + (f"; results {result['results']}" if validation_run else ""))
-                        sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
+                              + (f"; results {result['results']}; commit {result['commit']} tree {result['tree']}; "
+                                 f"{result['host']}; {result['isolation']}" if validation_run else ""))
+                        # Only a command that exited 0 and whose run ended cleanly is a success.
+                        code = 124 if result["timed_out"] else result["exit"] if ended == "exit" else 1
+                        sys.exit(1 if code is None else code)
                     out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
             except urllib.error.HTTPError as exc:
                 if exc.code == 401:

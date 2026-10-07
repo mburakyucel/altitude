@@ -254,7 +254,7 @@ function ValidationSwitch({ machine }: { machine: Machine | undefined }) {
   return <>
     <MachineSwitch id="validation-switch" title="Validation runs" enabled={machine?.validation}
       unavailable={machine?.validation_unavailable}
-      detail="Agents test installs, containers and browsers in throwaway containers on this computer, and each run is recorded on its task. Turning this off stops a running one."
+      detail="Agents test their unmerged changes in throwaway, isolated runs on this computer, and each run is recorded on its task. Turning this off stops a running one."
       save={async (on) => { client.setQueryData(["machine"], await saveValidationAccess(on)); }} />
   </>;
 }
