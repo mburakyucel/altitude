@@ -279,8 +279,9 @@ cleared environment leaves. The job's program is a supervisor outside any sandbo
 enforces the time limit, and when the command exits stops whatever remains in the coalition, records the
 status and removes its own job; while the command runs it holds an idle-sleep assertion (a closed lid
 still sleeps). A caller's input and output reach the job as `systemd-run --pipe` passes
-them: a regular file or device by path, a pipe through a relayed FIFO, and piped input (always a whole
-prompt) through a private file. Stop signals every coalition member, checking each one's start time and
+them: a regular file or device by path, output pipes through relayed FIFOs, and piped input (always a
+whole prompt) through a private file that the supervisor removes once read and hands to the command as a
+pipe, so a line one reader has taken cannot be read again. Stop signals every coalition member, checking each one's start time and
 coalition again right before the signal since macOS has no process handle, until none is left. A member
 that outlives the stop, or cannot be read, keeps the job's record, so the job stays active, as a unit whose
 processes have not ended does, until they have gone. The seam
@@ -1135,9 +1136,12 @@ other runtime-directory paths retain their policy. The generated profile also su
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
 bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
-which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The token never appears
-among the job's settings (they form its command line), in a file or in a log; a launcher without a
-sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The reader starts nothing
+unless its input is a pipe, so the engine reads only what follows the token line. Altitude never puts
+the token among the job's settings (they form its command line) or in a log, and writes it to disk only
+in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
+hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
+too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
 (the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
