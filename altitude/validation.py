@@ -313,8 +313,8 @@ def _own(name: str, dir_fd: int | None = None) -> None:
             return
         os.chmod(name, stat.S_IMODE(mode) | stat.S_IRWXU, dir_fd=dir_fd, follow_symlinks=False)
         fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-    except (OSError, NotImplementedError):
-        return  # removal names what stays
+    except (OSError, NotImplementedError, ValueError):
+        return  # removal names what stays; Linux refuses a no-follow change of a link with ValueError
     try:
         for entry in os.scandir(fd):
             _own(entry.name, fd)
