@@ -27,8 +27,11 @@ test("proposal v5 identifies its saved title across review entries at question r
   expect(q.design_title).toBe(title);
   expect((await request.post("/fixture/proposal-v5")).ok()).toBe(true);
   expect((await task(request)).question).toEqual(q);
-  for (const [state, path] of [["needs-you", "/"], ["project", "/projects/atlas"], ["task", atQuestion(q)]]) {
+  for (const [state, path] of [["needs-you", "/"], ["project-work", "/projects/atlas?tab=work"], ["task", atQuestion(q)]]) {
     await walk.open(path);
+    if (state === "project-work") {
+      await page.getByRole("region", { name: "Work", exact: true }).locator(`a[href="${atQuestion(q)}"]`).click();
+    }
     const link = page.getByRole("link", { name: `View preview · ${title}`, exact: true });
     await link.scrollIntoViewIfNeeded();
     await walk.state(`v5-revision-3-${state}`, {
