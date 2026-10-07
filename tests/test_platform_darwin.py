@@ -189,12 +189,50 @@ class Service(DarwinCase):
 
                     with mock.patch.object(platform.subprocess, "run", side_effect=blocked), \
                             mock.patch.object(platform, "_stop_members", return_value=True), \
-                            mock.patch.object(platform.time, "monotonic", side_effect=[0, 46]), \
+                            mock.patch.object(platform.time, "monotonic", side_effect=[0, 0, 46]), \
                             mock.patch.object(platform.time, "sleep"):
                         expected = "unreadable service" if unreadable else "not removed"
                         with self.assertRaisesRegex(RuntimeError, expected):
                             platform.control(action)
                     self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_slow_removal_reads_share_the_deadline_and_late_absence_does_not_bootstrap(self):
+        for read_times_out in (False, True):
+            with self.subTest(read_times_out=read_times_out):
+                self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                self.launchd.commands.clear()
+                now = 0
+                removing = False
+                budgets = []
+
+                def slow(argv, **kwargs):
+                    nonlocal now, removing
+                    if argv[1] == "bootout":
+                        removing = True
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+                    if argv[1] == "print" and removing:
+                        budgets.append(kwargs["timeout"])
+                        now += 29 if len(budgets) == 1 else 17
+                        if len(budgets) == 2:
+                            if read_times_out:
+                                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+                            self.launchd.jobs.pop(platform.LABEL)  # absence returned after the deadline
+                    return self.launchd(argv, **kwargs)
+
+                def sleep(seconds):
+                    nonlocal now
+                    now += seconds
+
+                with mock.patch.object(platform.subprocess, "run", side_effect=slow), \
+                        mock.patch.object(platform, "_stop_members", return_value=True), \
+                        mock.patch.object(platform.time, "monotonic", side_effect=lambda: now), \
+                        mock.patch.object(platform.time, "sleep", side_effect=sleep):
+                    with self.assertRaises(RuntimeError):
+                        platform.control("restart")
+                self.assertEqual(len(budgets), 2)
+                self.assertEqual(budgets[0], 30)
+                self.assertAlmostEqual(budgets[1], 15.9)
+                self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
 
     def test_linux_service_restart_keeps_the_systemd_contract(self):
         with mock.patch.object(platform.sys, "platform", "linux"), \
