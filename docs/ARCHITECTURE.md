@@ -600,6 +600,9 @@ instead of completing with no coverage. CLI-internal authentication uses
 the configured account. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
+Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
+evidence in the existing task-owned record; stdout transcripts are not copied into diagnostics.
+The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
