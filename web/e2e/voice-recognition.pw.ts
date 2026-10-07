@@ -86,7 +86,7 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   });
   const settings = async () => {
     await page.getByRole("button", { name: "More actions", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+    await page.getByRole("menuitem", { name: "All settings…", exact: true }).click();
     await page.getByRole("link", { name: "Voice input Browser recognition", exact: true }).click();
     await page.getByText("Voice troubleshooting", { exact: true }).click();
     await page.getByText("Collect microphone states, errors, timing and browser version", { exact: false }).scrollIntoViewIfNeeded();

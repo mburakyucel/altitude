@@ -329,7 +329,7 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
     expect(screen.getByText("L2 working")).toBeInTheDocument();
-    expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
+    expect(screen.getByText("Opus 5 on Claude")).toBeInTheDocument();
     expect(screen.queryByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeNull();
 
     const convo = screen.getByRole("region", { name: "Task conversation" });
@@ -422,10 +422,16 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reject" }));
-    const group = screen.getByRole("group", { name: "Reject this task?" });
+    let group = screen.getByRole("group", { name: "Reject this task?" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel", "Reject task"]);
+    expect(within(group).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "Reject this task?" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    group = screen.getByRole("group", { name: "Reject this task?" });
     expect(group).toHaveTextContent("Reject this task? Its worker ends and the task is archived.");
     await user.type(within(group).getByLabelText("Reason (optional)"), "waiting on the API");
-    await user.click(within(group).getByRole("button", { name: "Reject" }));
+    await user.click(within(group).getByRole("button", { name: "Reject task" }));
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
     expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({
       project: "altitude",

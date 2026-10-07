@@ -136,14 +136,24 @@ test("a running task: conversation, live session, Raw events, accessible Stop an
       v.rejectConfirm,
       v.rejectConfirm.getByText("Reject this task? Its worker ends and the task is archived."),
       v.rejectConfirm.getByRole("textbox", { name: "Reason (optional)", exact: true }),
+      v.rejectConfirm.getByRole("button", { name: "Reject task", exact: true }),
     ],
     hidden: [v.stopConfirm],
   });
+  // Cancel comes first and takes focus, so Enter never rejects by accident.
+  await expect(v.rejectConfirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await expect(v.rejectConfirm.getByRole("button")).toHaveText(["Cancel", "Reject task"]);
   await walk.state("10-reject-cancelled", {
     action: () => v.rejectConfirm.getByRole("button", { name: "Cancel", exact: true }).click(),
     visible: [v.reject],
     hidden: [v.rejectConfirm],
   });
+  await walk.state("10b-reject-escaped", {
+    action: async () => { await v.reject.click(); await expect(v.rejectConfirm).toBeVisible(); await page.keyboard.press("Escape"); },
+    visible: [v.reject],
+    hidden: [v.rejectConfirm],
+  });
+  expect((await (await request.get(`/api/task/${project.name}/${task.slug}`)).json()).state).toBe("running");
   await v.closeDetails();
   await expect(v.stop).toBeVisible();
 });

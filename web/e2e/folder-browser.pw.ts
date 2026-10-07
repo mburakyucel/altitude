@@ -79,7 +79,10 @@ test("the folder browser lists the computer running Altitude and adds a folder, 
 
   await walk.open("/settings");
   const folderRow = page.getByRole("link", { name: /Projects folder ~\/Projects/ });
-  await walk.state("10-settings-projects-folder-row", { visible: [folderRow], hidden: [browser] });
+  await walk.state("10-settings-projects-folder-row", {
+    action: () => page.getByRole("link", { name: /^All projects .* folder ~\/Projects$/ }).click(),
+    visible: [folderRow], hidden: [browser],
+  });
   await folderRow.click();
   await row("code").click();
   await walk.state("11-projects-folder-saved", {

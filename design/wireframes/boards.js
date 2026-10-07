@@ -28,6 +28,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Settings · Voice input', desktop: 'VoiceSettings.html', mobile: 'MobileVoiceSettings.html' },
   { label: 'Settings · This project', desktop: 'ProjectSettings.html', mobile: 'MobileProjectSettings.html' },
   { label: 'Settings states and entry points', desktop: 'SettingsStates.html', desktopSize: { w: 1200, h: 3460, name: 'Sheet' } },
+  { label: 'Models dialog states', desktop: 'ModelsStates.html', desktopSize: { w: 1200, h: 2340, name: 'Sheet' } },
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },

@@ -70,6 +70,9 @@ def _routed_models(engine: str) -> list[str]:
     names = []
     for project in config.load_projects().values():
         for role in ("l3", "l2"):
+            choice = config.role_choice(role, project) or {}
+            if choice.get("engine") == engine:
+                names.append(choice.get("model") or config.default_model(role, engine, project))
             for tier in config.role_routing(role, project):
                 for option in tier:
                     if option["engine"] == engine:
@@ -205,6 +208,20 @@ def note_limit(engine: str, limit: dict) -> None:
     note_rejection({"engine": engine, "model": limit.get("model")}, limit)
 
 
+def choice_unavailable(role: str, choice: dict | None, project: dict | None = None) -> str | None:
+    """Why a chosen engine/model cannot start now, so its control can say "Auto meanwhile"; None when it can."""
+    from . import engines
+    if not choice or not choice.get("engine"):
+        return None
+    option = {"engine": choice["engine"], "role": role,
+              "model": choice.get("model") or config.default_model(role, choice["engine"], project)}
+    installed = engines.installation(option["engine"])
+    if installed["available"] is False:
+        return installed["why"]
+    readings = _readings()
+    return _rejected(option) or _unavailable(*_usage(readings)[option["engine"]]) or _model_exhausted(option, readings)
+
+
 def resume_hold(engine: str, model: str | None) -> str | None:
     """Availability of a saved session, independent of fresh-task routing preferences."""
     from . import engines
@@ -232,7 +249,7 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
         except ValueError as exc:
             return {"engine": None, "model": None, "why": str(exc)}
     return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
-                       project=project, excluded=excluded, effort=task.get("effort"))
+                       project=project, excluded=excluded, effort=task.get("effort"), steer=not task.get("next_engine"))
 
 
 def pick_review(task: dict, project: dict, *, engine: str | None = None, model: str | None = None) -> dict:
@@ -252,7 +269,8 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
             # The project's L2 engine pin never completes a review selection; a bare model must name its engine.
             selected = config.pinned_option("l2", {k: v for k, v in project.items() if k != "l2_engine"},
                                             engine=engine, model=model)
-            choice = pick_engine("l2", forced=selected["engine"], model=selected["model"], project=project, effort="native")
+            choice = pick_engine("l2", forced=selected["engine"], model=selected["model"], project=project, effort="native",
+                                 steer=False)
             capability = engines.review_capability(choice["engine"]) if choice.get("engine") else {}
             if not capability.get("available"):
                 return {**empty, "why": "The selected reviewer is unavailable: " + (capability.get("why") or choice["why"])}
@@ -269,7 +287,7 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
             excluded = tuple(option for option in options if (option[0] == owner) != same_engine)
             failures = []
             while True:
-                choice = pick_engine("l2", project=project, excluded=excluded, effort="native")
+                choice = pick_engine("l2", project=project, excluded=excluded, effort="native", steer=False)
                 if not choice.get("engine"):
                     why = " ".join([*failures, choice["why"]])
                     break
@@ -289,17 +307,28 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
-                current_model: str | None = None, excluded: tuple = (), effort: str | None = None) -> dict:
+                current_model: str | None = None, excluded: tuple = (), effort: str | None = None,
+                steer: bool = True) -> dict:
     """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
 
-    An explicit launch ``effort`` wins over each option's per-role, per-engine project default.
+    An explicit task or turn engine/model wins outright. Otherwise the role's choice (New tasks for L2, the
+    project's L3 choice) is tried first, ahead of the routing tiers; a project's Only engine keeps its engine and
+    takes the choice's model and effort when they are on it. An explicit launch ``effort`` wins over the choice's,
+    which wins over each option's per-role, per-engine project default; an engine that rejects the chosen effort
+    uses its default. ``steer=False`` ignores the choice (reviewer selection, explicit engine handoff).
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
     known named weekly windows. Continuity retains the current option inside that tier.
     """
     from . import engines
     project = project or {}
+    choice = config.role_choice(role, project) if steer and not (forced or model) else None
     pin = config.pinned_option(role, project, engine=forced, model=model)
-    tiers = [[pin]] if pin else config.role_routing(role, project)
+    if pin and choice and choice.get("engine") not in (None, pin["engine"]):
+        choice = None
+    chosen_tier = bool(choice and choice.get("engine"))
+    first = [[{"engine": choice["engine"], "model": choice.get("model")}]] if chosen_tier else []
+    tiers = first + ([[pin]] if pin else config.role_routing(role, project))
+    chosen_effort = (choice or {}).get("effort")
     prefer = project.get(f"{role}_preference")
     readings = _readings()
     usage = _usage(readings)
@@ -313,8 +342,10 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                 continue  # a lower tier never repeats an option a higher tier already resolved
             considered.add(option_key(option))
             engine = option["engine"]
+            steered = chosen_effort in config.ENGINE_EFFORTS[engine] and (priority == 1 or not chosen_tier)
             try:
-                requested = effort if effort is not None else config.default_effort(role, engine, project)
+                requested = (effort if effort is not None else chosen_effort if steered
+                             else config.default_effort(role, engine, project))
                 option["effort"] = config.task_effort(engine, requested, role=role)
                 option["requested_effort"] = requested
             except ValueError as exc:
@@ -346,7 +377,9 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                        (f"{lead:.1f} points extra headroom is under the {SWITCH_MARGIN:.0f}-point switch margin"
                         if lead is not None else "weekly quotas are not comparable"))
                 chosen = previous
-        prefix = ("forced by task or project policy" if pin else f"Auto tier {priority}"
+        prefix = (("chosen for new tasks" if role == "l2" else "chosen for L3") if chosen_tier and priority == 1 else
+                  "forced by task or project policy" if pin else
+                  f"Auto tier {priority - chosen_tier}"
                   + (f" (prefers {config.ENGINE_LABELS[prefer]})" if prefer in config.ENGINES else ""))
         return {**chosen, "pinned": bool(pin), "why": f"{prefix}: {option_label(chosen)}; {why}; "
                 + "installation found; model access unverified" + ("; skipped " + "; ".join(skipped) if skipped else "")}

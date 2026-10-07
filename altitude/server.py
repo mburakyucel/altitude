@@ -2119,14 +2119,29 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 409)
             if parts == ["api", "defaults"]:
                 try:
-                    if o.get("setting") not in (*config.DEFAULT_SETTINGS, "l2_preference"):
+                    if o.get("setting") not in set(config.PROJECT_SETTINGS) - {"routing"}:
                         raise ValueError("unknown project default")
-                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
                     result = dispatch._run_setting(o["project"], o["setting"])
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "new-tasks"]:
+                try:
+                    dispatch.request_setting(None, "new_tasks", o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
+                    result = dispatch._run_setting(None, "new_tasks")
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
+                    if result["status"] != "done":
+                        raise ValueError(result["note"])
+                    return self._json(new_tasks_view())
+                except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "projects-folder"]:
                 try:
@@ -2263,15 +2278,6 @@ class Handler(BaseHTTPRequestHandler):
             if api == "l3" and len(parts) > 2 and parts[2] == "start":
                 name = config.project(o["project"]) and o["project"]
                 return self._json({"ok": True, "started": spawn(f"start:{name}", start_l3, name)})
-            if api == "l3" and len(parts) > 2 and parts[2] == "engine":
-                engine = o.get("engine") or None
-                if engine and engine not in config.ENGINES:
-                    return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
-                try:
-                    config.set_l3_engine(o["project"], engine)
-                except ValueError as exc:
-                    return self._json({"error": str(exc)}, 400)
-                return self._json({"ok": True, "engine": engine})
             if api == "chat" and len(parts) > 2 and parts[2] == "send-now":
                 project = o["project"]
                 try:
@@ -2539,9 +2545,23 @@ def overview() -> dict:
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
             "lifecycle": platform.container_lifecycle(),
             "deployment": "container" if platform.containerized() else "native",
-            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
+            "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
+            "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
             "update": installation.update_status(), "now": S.now()}
+
+
+CHANGED_ELSEWHERE = "Changed in another window."
+
+
+def new_tasks_view() -> dict:
+    """The New tasks choice beside the quota: its value, why it cannot start now, and the projects whose
+    Only engine keeps their tasks elsewhere."""
+    choice = config.machine_settings().get("new_tasks")
+    return {"value": choice, "unavailable": route.choice_unavailable("l2", choice),
+            "only": [{"project": name, "engine": entry["l2_engine"]}
+                     for name, entry in sorted(config.load_projects().items()) if entry.get("l2_engine")],
+            **config.choice_options()}
 
 
 def home_relative(path: Path) -> str:

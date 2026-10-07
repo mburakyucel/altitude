@@ -121,8 +121,17 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       expect(voice.backend).toBe("host");
       const summary = voice.host.state === "ready" ? "This computer" : "This computer · not set up";
       await expect(main.getByRole("link", { name: `Voice input ${summary}`, exact: true })).toBeVisible();
-      await expect(main.getByRole("region", { name: "Network", exact: true })).toBeVisible();
-      await expect(main.getByRole("link", { name: /^Projects folder / })).toHaveAttribute("href", "/settings/projects-folder");
+      // A direct visit has no project it was opened from; the groups follow SPEC §3.15.
+      for (const group of ["Models", "Projects", "Voice", "Devices and access", "Coding agents"]) {
+        await expect(main.getByRole("region", { name: group, exact: true })).toBeVisible();
+      }
+      // About holds the version rows, shown once the overview reports an update state.
+      const { update } = await (await request.get("/api/overview")).json();
+      await expect(main.getByRole("region", { name: "About", exact: true })).toHaveCount(update ? 1 : 0);
+      await expect(main.getByRole("region", { name: "This project", exact: true })).toHaveCount(0);
+      await expect(main.getByRole("button", { name: "New tasks Auto · each project's own defaults", exact: true })).toBeEnabled();
+      await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
+      await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off · view only`, { exact: true })).toBeVisible();
       await expect(main.getByRole("radio")).toHaveCount(0);
       await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
@@ -135,6 +144,12 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       if (host.state === "unavailable") await expect(main.getByText(`Not available on this computer: ${host.reason}.`, { exact: true })).toBeVisible();
       else if (host.state === "absent") await expect(main.getByRole("button", { name: "Set up voice", exact: true })).toBeEnabled();
       await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
+    } else if (route === "/settings/projects") {
+      await expect(main.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: project.name, exact: true })).toHaveAttribute("href", `/settings/projects/${project.name}`);
+      await expect(main.getByRole("link", { name: /^Projects folder / })).toHaveAttribute("href", "/settings/projects-folder");
+      await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+      await expect(main.getByText("Loading projects…", { exact: true })).toHaveCount(0);
     } else if (route === "/settings/projects-folder") {
       await expect(main.getByRole("heading", { name: "Projects folder", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Choose a folder", exact: true })).toBeVisible();
@@ -158,8 +173,13 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("button", { name: "Make a pairing code" })).toBeEnabled();
     } else if (route === "/settings/projects/:name") {
       await expect(main.getByRole("heading", { name: project.name, exact: true })).toBeVisible();
-      await expect(main.getByRole("combobox", { name: "L3 engine" })).toBeVisible();
-      await expect(main.getByRole("region", { name: "L2 · task owners", exact: true })).toBeVisible();
+      for (const section of ["L3", "Auto defaults", "Routing", "Project"]) {
+        await expect(main.getByRole("region", { name: section, exact: true })).toBeVisible();
+      }
+      await expect(main.getByRole("button", { name: "Change…", exact: true })).toBeEnabled();
+      await expect(main.getByRole("combobox", { name: "Tasks routing" })).toHaveValue("");
+      await expect(main.getByRole("combobox", { name: "L3 routing" })).toHaveValue("");
+      await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {

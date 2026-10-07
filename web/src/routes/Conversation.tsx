@@ -5,15 +5,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
 import { SendNow } from "../components/SendNow";
-import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
-import { L3EngineSelect } from "../components/L3EngineSelect";
-import { useViewport } from "../shell/breakpoints";
+import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
@@ -164,12 +163,10 @@ export default function Conversation({
   name,
   chat,
   project,
-  engines,
 }: {
   name: string;
   chat: UseQueryResult<ChatView>;
   project: UseQueryResult<ProjectView>;
-  engines: EngineReadout[];
 }) {
   const queryClient = useQueryClient();
   const scroller = useRef<HTMLDivElement>(null);
@@ -184,7 +181,6 @@ export default function Conversation({
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
   const sendNow = useSendNow(name);
-  const { phone } = useViewport();
   const navigate = useNavigate();
   const location = useLocation();
   // A `run` block in project chat opens the project folder's terminal with its command typed (SPEC.md §3.3).
@@ -429,7 +425,7 @@ export default function Conversation({
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}
-          pill={phone ? undefined : <L3EngineSelect name={name} engine={view?.engine ?? ""} engines={engines} />}
+          pill={<L3ModelButton project={name} />}
           hint="L3 answers or creates one task. Shift + Enter for a new line."
         />
       </div>

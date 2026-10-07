@@ -520,11 +520,18 @@ def _run_send_now(project: str, slug: str, *, admission_held: str | None = None)
         return _resume(project, slug)
 
 
-MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check")
+MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
+                    "new_tasks")
 
 
-def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
-    """2026-09-07 WIP incident: persist an operational change without needing a free task slot."""
+UNSET = object()
+
+
+def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str, expected=UNSET) -> dict:
+    """2026-09-07 WIP incident: persist an operational change without needing a free task slot.
+
+    ``expected`` is the value the requester saw; applying refuses with ``changed`` when the stored value differs,
+    so two windows saving at once cannot overwrite each other unseen."""
     reason = str(reason or "").strip()
     scope = "machine" if project is None else "project"
     if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
@@ -552,6 +559,11 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_project_default(setting, value)
         elif setting == "l2_preference":
             config.validate_preference(value)
+        elif setting in ("l2_engine", "l3_engine"):
+            config.validate_engine_pin(value)
+        elif setting in config.CHOICE_SETTINGS.values():
+            value = config.parse_choice(value) if isinstance(value, str) else value
+            config.validate_choice(value)
     except ValueError as exc:
         raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
@@ -569,6 +581,8 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             raise T.TransitionError(f"{scope} set already pending in altd")
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": f"{scope}-set", "project": project,
                    "actor": actor, "reason": reason, setting: value, "status": "pending"}
+        if expected is not UNSET:
+            request["expected"] = expected
         S.write_json(path, request)
         return {"idempotent": False, "request": request}
 
@@ -602,6 +616,8 @@ def _run_setting(project: str | None, setting: str) -> dict:
                 request.update(status="refused", note=str(exc))
         if entry is None:
             request.update(status="refused", note="project is not registered")
+        elif "expected" in request and request["status"] == "pending" and entry.get(setting) != request["expected"]:
+            request.update(status="refused", note="the stored value changed after it was read", changed=True)
         elif request["status"] == "pending":
             if request[setting] is None:
                 entry.pop(setting, None)

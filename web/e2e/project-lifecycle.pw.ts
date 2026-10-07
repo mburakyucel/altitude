@@ -4,38 +4,65 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ scenario: "lifecycle" });
 
-test("removal detaches L3: confirm, cancel, denied, error, pending, navigation", async ({ page, request, service }, info) => {
+test("removal detaches L3 from project settings: confirm, cancel, denied, error, pending, navigation", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const more = page.getByRole("button", { name: "More actions" });
-  const item = page.getByRole("menuitem", { name: "Remove project", exact: true });
-  await walk.open(`${service}/projects/busy-project`);
-  await more.click();
-  await item.click();
-  const denied = page.getByRole("group", { name: "Remove busy-project from Altitude?" });
-  await denied.getByRole("button", { name: "Remove", exact: true }).click();
-  await walk.state("01-denied", { visible: [denied, page.getByRole("alert").filter({ hasText: /Finish or reject.*existing-work/ })], hidden: [] });
+  const remove = page.getByRole("main").getByRole("region", { name: "Project", exact: true }).getByRole("button", { name: "Remove…", exact: true });
+  const dialog = (name: string) => page.getByRole("dialog", { name: `Remove ${name} from Altitude?`, exact: true });
+  await walk.open(`${service}/settings/projects/busy-project`);
+  await remove.click();
+  const denied = dialog("busy-project");
+  await denied.getByRole("button", { name: "Remove busy-project", exact: true }).click();
+  await walk.state("01-denied", {
+    visible: [denied, denied.getByRole("alert").filter({ hasText: /Finish or reject.*existing-work/ }), denied.getByRole("button", { name: "Remove busy-project", exact: true })],
+    hidden: [denied.getByRole("status")],
+  });
   expect((await (await request.get(`${service}/api/project/busy-project`)).json()).tasks[0].state).toBe("queued");
   await walk.open(`${service}/projects/sample-project`);
-  await walk.state("02-closed", { visible: [more], hidden: [item] });
-  await walk.state("03-discoverable", { action: () => more.click(), visible: [item], hidden: [] });
-  await item.click();
-  const confirm = page.getByRole("group", { name: "Remove sample-project from Altitude?" });
-  await walk.state("04-confirmation", { visible: [confirm, confirm.getByText(/detaches L3/)], hidden: [item] });
-  await walk.state("05-cancel", { action: () => confirm.getByRole("button", { name: "Cancel" }).click(), visible: [item], hidden: [confirm] });
-  await item.click();
-  await walk.state("06-dismiss", { action: () => page.keyboard.press("Escape"), visible: [more], hidden: [confirm, item] });
+  await walk.state("02-closed", { visible: [more], hidden: [remove, page.getByRole("dialog")] });
   await more.click();
-  await item.click();
+  await expect(page.getByRole("menu", { name: "Project actions" }).getByText(/Remove/)).toHaveCount(0);
+  await walk.state("03-discoverable", {
+    action: () => page.getByRole("menuitem", { name: "Project settings…", exact: true }).click(),
+    visible: [remove], hidden: [page.getByRole("menu")],
+  });
+  const confirm = dialog("sample-project");
+  const confirmButton = confirm.getByRole("button", { name: "Remove sample-project", exact: true });
+  const cancel = confirm.getByRole("button", { name: "Cancel", exact: true });
+  await walk.state("04-confirmation", {
+    action: () => remove.click(),
+    visible: [confirm, confirm.getByText(/L3 is detached/), confirm.getByText(/Stays on disk: the repository/), confirmButton], hidden: [confirm.getByRole("alert")],
+  });
+  // Cancel comes first and takes focus, so Enter never removes by accident.
+  await expect(cancel).toBeFocused();
+  await expect(confirm.getByRole("button")).toHaveText(["Cancel", "Remove sample-project"]);
+  await walk.state("05-cancel", { action: () => cancel.click(), visible: [remove], hidden: [confirm] });
+  await remove.click();
+  await walk.state("06-dismiss", { action: () => page.keyboard.press("Escape"), visible: [remove], hidden: [confirm] });
+  await remove.click();
   await page.route("**/api/project/remove", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Could not remove the project. Try again." }) }), { times: 1 });
-  await confirm.getByRole("button", { name: "Remove", exact: true }).click();
-  await walk.state("07-error", { visible: [confirm, page.getByRole("alert").filter({ hasText: "Could not remove" })], hidden: [] });
+  await confirmButton.click();
+  // The lost response rereads the project list before saying anything.
+  await walk.state("07-error", {
+    visible: [confirm, confirm.getByRole("alert").filter({ hasText: "Couldn't confirm removal; sample-project is still in Altitude." }), confirm.getByRole("button", { name: "Retry", exact: true })],
+    hidden: [confirm.getByRole("status")],
+  });
   let release!: () => void;
   const wait = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/project/remove", async (route) => { await wait; await route.continue(); }, { times: 1 });
-  await confirm.getByRole("button", { name: "Remove", exact: true }).click();
-  await walk.state("08-pending", { visible: [page.getByRole("button", { name: "Removing…" })], hidden: [page.getByRole("alert")] });
-  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  await expect(more).toBeDisabled();
+  // The removal happens, but its response is lost on the way back.
+  await page.route("**/api/project/remove", async (route) => {
+    await wait;
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "Bad gateway" }) });
+  }, { times: 1 });
+  await confirm.getByRole("button", { name: "Retry", exact: true }).click();
+  await walk.state("08-pending", {
+    visible: [confirm.getByRole("status").filter({ hasText: "Removing… Closing doesn't cancel removal." }), confirm.getByRole("button", { name: "Removing…", exact: true })],
+    hidden: [confirm.getByRole("alert")],
+  });
+  await expect(cancel).toBeDisabled();
+  await expect(confirm.getByRole("button", { name: "Removing…", exact: true })).toBeDisabled();
   release();
   await expect(page).toHaveURL(`${service}/`);
   await walk.state("09-removed-navigation", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [confirm] });
@@ -63,10 +90,10 @@ test.describe("last project", () => {
   test.use({ single: true });
   test("First run attaches L3 again and restores history, queue and session", async ({ page, request, service }, info) => {
     const walk = walkthrough(page, info);
-    await walk.open(`${service}/projects/sample-project`);
-    await page.getByRole("button", { name: "More actions" }).click();
-    await page.getByRole("menuitem", { name: "Remove project", exact: true }).click();
-    await page.getByRole("group", { name: "Remove sample-project from Altitude?" }).getByRole("button", { name: "Remove", exact: true }).click();
+    await walk.open(`${service}/settings/projects/sample-project`);
+    await page.getByRole("button", { name: "Remove…", exact: true }).click();
+    await page.getByRole("dialog", { name: "Remove sample-project from Altitude?", exact: true }).getByRole("button", { name: "Remove sample-project", exact: true }).click();
+    await expect(page).toHaveURL(`${service}/projects`);
     const firstRun = page.getByRole("region", { name: "First run", exact: true });
     // With nothing managed, First run starts again at its first step; each step is skippable.
     await expect(firstRun.getByRole("heading", { name: "Welcome to Altitude" })).toBeVisible();
