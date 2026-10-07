@@ -262,6 +262,8 @@ def bootstrap():
     run("launchctl", "bootstrap", f"gui/{os.getuid()}", plist)
 attempt("write-area", lambda: write(os.path.join(area, "inside")))
 attempt("write-home", lambda: write(os.path.join(outside, "written")))
+attempt("link-runner-file", lambda: os.symlink("/etc/hosts", os.path.join(outside, "run.exit.tmp")))
+attempt("read-runner-log", lambda: open(os.path.join(outside, "run.log")).read())
 attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
 attempt("list-home", lambda: os.listdir(home))
 attempt("read-system", lambda: open("/etc/hosts").read())
@@ -303,12 +305,12 @@ def validation_confinement():
                 listener.bind(("127.0.0.1", 0))
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
-        command = platform.validation_command((area,), port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+        log, status = outside / "run.log", outside / "run.exit"
+        command = platform.validation_command((area,), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
                                                               str(outside), str(Path.home()), str(port), str(other),
                                                               label, platform._user_temp()],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
         # As a validation run: a logged job whose output and status are the runner's, beside the candidate's folders.
-        log, status = outside / "run.log", outside / "run.exit"
         subprocess.run(platform.logged_job_command(name("validation"), f"cd {shlex.quote(str(area))} && exec "
                                                    + shlex.join(command), log=log, status=status, env=env(), timeout=60),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)

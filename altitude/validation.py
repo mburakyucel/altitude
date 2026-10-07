@@ -123,7 +123,7 @@ def candidate_dirs(run: Path) -> list[Path]:
     return [run / name for name in ("work", "results", *names)]
 
 
-def native_script(run: Path, argv: list[str]) -> str:
+def native_script(run: Path, argv: list[str], output: Path) -> str:
     """macOS: the owner's command in the run's clone under the validation profile, which admits only the run's
     candidate folders. Its environment is only this: a home and temporary folder of its own, and altd's PATH without
     folders the profile hides."""
@@ -134,15 +134,17 @@ def native_script(run: Path, argv: list[str]) -> str:
            "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
-                      "exec " + shlex.join(platform.validation_command(tuple(candidate_dirs(run)), config.PORT, argv,
-                                                                        env))])
+                      "exec " + shlex.join(platform.validation_command(
+                          tuple(candidate_dirs(run)), output, config.PORT, argv, env))])
 
 
 def isolation() -> str:
     """What isolated a run, for its record: the image tag, or the digest of the profile for a run area."""
     if platform.validation_in_container():
         return image_tag()
-    profile = platform.validation_profile(tuple(candidate_dirs(home() / "runs" / "run")), config.PORT)
+    run = home() / "runs" / "run"
+    profile = platform.validation_profile(tuple(candidate_dirs(run)), engines.machine_files(run, "unit.service")[0],
+                                          config.PORT)
     return "seatbelt:" + hashlib.sha256(profile.encode()).hexdigest()[:16]
 
 
@@ -150,7 +152,7 @@ def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tup
     """The unit's shell script: build the image when its Containerfile changed, refresh the verified cloud image
     for a VM run with the deployed runner's own code, then run the owner's command."""
     if not platform.validation_in_container():
-        return native_script(run, argv)
+        return native_script(run, argv, engines.machine_files(run, f"{name}.service")[0])
     tag, pod = image_tag(), shlex.join(podman())
     lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
              f"{pod} image exists {tag} || {pod} build --quiet --tag={tag} "

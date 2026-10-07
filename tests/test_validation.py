@@ -566,7 +566,8 @@ class TestMacValidationRunner(RunnerCase):
                          - {"ALTITUDE_VALIDATION"}, "nothing of altd's environment crosses")
         self.assertNotIn(str(Path.home() / "bin"), env["PATH"].split(":"), "folders the profile hides are dropped")
         self.assertEqual(self.profile.read_text(), platform.validation_profile(
-            (area / "work", area / "results", area / "home", area / "tmp"), config.PORT),
+            (area / "work", area / "results", area / "home", area / "tmp"), area / f"{result['unit']}.log",
+            config.PORT),
             "the candidate's folders only: the runner's own files beside them stay out of its reach")
         self.assertFalse(area.exists())
         self.assertEqual(self.stops.call_args.args[0], result["unit"])
@@ -602,14 +603,14 @@ class TestValidationProfile(TestCase):
         with mock.patch.object(platform.sys, "platform", "darwin"), \
                 mock.patch.object(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/"):
             area = Path.home() / '.altitude-validation/runs/a"b'
-            profile = platform.validation_profile((area / "work", area / "results"), 8890)
+            profile = platform.validation_profile((area / "work", area / "results"), area / "unit.log", 8890)
         home = os.path.realpath(Path.home())
         own = str(Path(home) / '.altitude-validation/runs/a\\"b')
         roots = f'(subpath "{own}/work") (subpath "{own}/results")'
         shared = '(subpath "/private/var/folders/ab/cd") (subpath "/private/tmp") (subpath "/private/var/tmp")'
         for clause in (f'(deny file-write*)(allow file-write* {roots} (subpath "/dev"))',
                        f'(deny file-read* (subpath "{home}") {shared})(allow file-read* {roots})',
-                       f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
+                       f'(allow file-write-data (literal "{own}/unit.log"))', f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
                        '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
                        f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
                        '(path-literal "/private/var/run/mDNSResponder")',
