@@ -222,6 +222,62 @@ class ReviewEngineTests(AltitudeCase):
         self.assertFalse(evidence["stderr_truncated"])
         self.assertFalse(evidence["stdout_truncated"])
 
+    def test_stdout_only_structured_errors_are_fixed_categories_for_both_engines(self):
+        private = 'PRIVATE SOURCE password=fictional-secret /Users/fictional/private'
+        outputs = {
+            "claude": json.dumps({"is_error": True, "errors": ["MCP connection refused " + private],
+                                  "result": private, "usage": {"private": private}}),
+            "codex": '\n'.join(map(json.dumps, [
+                {"type": "item.completed", "item": {"type": "agent_message", "text": private}},
+                {"type": "turn.failed", "error": {"message": "MCP connection refused " + private}}])),
+        }
+        for engine, stdout in outputs.items():
+            for exitcode in (1, 0):
+                with self.subTest(engine=engine, exitcode=exitcode):
+                    service = self.fixture(served=False)
+                    service.return_value = [sys.executable, "-I", "-c",
+                        f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit({exitcode})"]
+                    result = engines.review("PRIVATE PROMPT", engine=engine,
+                                            snapshot=self.snapshot, runtime=self.runtime)
+                    evidence = result["diagnostics"]
+                    self.assertTrue(result["error"])
+                    self.assertEqual(result["findings"], [])
+                    self.assertEqual(evidence["exit_status"], exitcode)
+                    self.assertEqual(evidence["stderr"], "")
+                    self.assertEqual(evidence["stdout_state"], "recognized_error")
+                    self.assertEqual(evidence["stdout_errors"], ["connection", "captured_input"])
+                    self.assertNotIn("PRIVATE", json.dumps(result))
+                    self.assertNotIn("fictional", json.dumps(result))
+
+    def test_stdout_diagnostic_states_never_retain_unknown_or_partial_output(self):
+        cases = [
+            ("", "empty"), ('{"is_error":true', "malformed"),
+            ('[]', "malformed"), ('{"is_error":true,"errors":["PRIVATE SOURCE"]}', "unrecognized_error"),
+            ('[' * 2000 + ']' * 2000, "malformed"),
+            ('{"result":"MCP PRIVATE SOURCE","is_error":false}', "no_structured_error"),
+            ('{"is_error":true,"errors":{"message":"PRIVATE SOURCE"}}', "unrecognized_error"),
+        ]
+        for stdout, expected in cases:
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+            self.assertEqual(evidence["stdout_state"], expected)
+            self.assertEqual(evidence["stdout_errors"], [])
+            self.assertNotIn("PRIVATE", json.dumps(evidence))
+        stdout = json.dumps({"is_error": True, "errors": ["MCP connection refused"]})
+        for flags, expected in (({"stdout_truncated": True}, "truncated"),
+                                ({"capture_complete": False}, "incomplete")):
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+                                                   engine="claude", **flags)
+            self.assertEqual(evidence["stdout_state"], expected)
+            self.assertEqual(evidence["stdout_errors"], [])
+        for stdout in ('{"type":"error","message":"permission denied PRIVATE"}\nnot json',
+                       '{"type":"turn.failed","error":"PRIVATE"}'):
+            state, labels = engines._review_stdout_errors("codex", stdout)
+            self.assertIn(state, ("malformed", "unrecognized_error"))
+            self.assertEqual(labels, [])
+        state, labels = engines._review_stdout_errors("codex", json.dumps(
+            {"type": "error", "message": "authentication failed " + "PRIVATE" * 10000}))
+        self.assertEqual((state, labels), ("recognized_error", ["authentication"]))
+
     def test_capture_overflow_names_stream_and_withholds_ambiguous_stderr_tail(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c",

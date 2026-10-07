@@ -621,7 +621,9 @@ the configured account. Deterministic fixtures verify application behavior and a
 live-provider compatibility remains unverified under the standing testing decision.
 
 Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
-evidence in the existing task-owned record; stdout transcripts are not copied into diagnostics.
+evidence in the existing task-owned record. Recognized structured stdout error fields yield fixed
+diagnostic categories; stdout transcripts and arbitrary error prose are not copied into diagnostics.
+Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
 The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final

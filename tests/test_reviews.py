@@ -98,6 +98,37 @@ class TestReviews(AltitudeCase):
         self.assertNotIn("diagnostics", completed)
         self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
 
+    def test_stdout_only_error_receipt_is_owner_readable_after_explicit_retry(self):
+        self.engine.side_effect = run_engine_review
+        self.patch(engines, "review_capability", return_value={"available": True})
+        self.patch(engines, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.platform, "job_active", return_value=False)
+        records = [
+            {"is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
+            {"type": "turn.failed", "error": {"message": "captured adapter connection refused PRIVATE SOURCE"}},
+        ]
+        # Both configured engine fixtures share the same real process/task receipt path.
+        previous = None
+        for engine, record in zip(config.ENGINES, records):
+            with self.subTest(engine=engine):
+                self.pick.return_value = {**self.choice, "engine": engine}
+                self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+                    f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
+                failed = self.run_review(self.request(previous=previous))
+                self.assertEqual(failed["state"], "failed")
+                evidence = failed["diagnostics"]
+                self.assertEqual(evidence["stderr"], "")
+                self.assertEqual(evidence["stdout_state"], "recognized_error")
+                self.assertEqual(evidence["stdout_errors"], ["connection", "captured_input"])
+                self.assertEqual(reviews.view(self.project, self.slug)["latest"]["diagnostics"], evidence)
+                self.assertNotIn("PRIVATE SOURCE", json.dumps(S.load_task(self.project, self.slug)))
+                self.engine.side_effect = self.success
+                completed = self.run_review(self.request(previous=failed["id"]))
+                self.assertEqual(completed["state"], "completed")
+                self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+                previous = completed["id"]
+                self.engine.side_effect = run_engine_review
+
     def test_failure_diagnostics_survive_unconfirmed_termination_and_owner_change(self):
         evidence = {"exit_status": 9, "stderr": "adapter failed", "stderr_truncated": False,
                     "stdout_truncated": False, "capture_complete": True}
