@@ -274,7 +274,7 @@ function DevicesPage() {
   </>;
 }
 
-/** The CA devices trust (SPEC.md §3.15): Add a phone's QR code, and what a phone must match before installing it. */
+/** The CA devices trust (SPEC.md §3.15): Set up a device's QR code, and what a device must match before installing it. */
 function CertificateCard({ certificate }: { certificate: Certificate }) {
   if ("error" in certificate) {
     return <section className="settings-card device-certificate" aria-label="Certificate">
@@ -286,9 +286,9 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
   const rows = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
   return <section className="settings-card device-certificate" aria-label="Certificate">
     <h2>Certificate</h2>
-    <p className="text-meta text-muted">Each device trusts Altitude through this certificate once. Add a phone shows a setup link and QR code, or run <code>alt tls-share</code> on the computer running Altitude.</p>
-    <AddPhone />
-    <p className="text-meta text-muted">Before installing it on the phone, check that its name and SHA-256 match these.</p>
+    <p className="text-meta text-muted">Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android. Open a setup link and QR code here, or run <code>alt tls-share</code> on the computer running Altitude.</p>
+    <DeviceSetup />
+    <p className="text-meta text-muted">Before trusting the downloaded certificate, check that its name and SHA-256 match these.</p>
     <dl className="settings-network">
       <dt>Name</dt><dd>{certificate.name}</dd>
       <dt>SHA-256</dt><dd className="certificate-fingerprint">{rows.join("\n")}</dd>
@@ -301,10 +301,10 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
 type ShareState = { status: "idle" | "opening" | "closed" } | { status: "failed"; error: Error }
   | { status: "open" | "closing"; share: PhoneShare; until: number; error?: Error };
 
-/** Add a phone: the service's ten-minute share window as a QR code with its time left. Close confirms
+/** Set up a device: the service's ten-minute share window as a QR code with its time left. Close confirms
  * only once the service has closed the link; the end of the ten minutes closes it on the service, and
  * leaving the page closes it too, even while it is still opening. */
-function AddPhone() {
+function DeviceSetup() {
   const [state, setState] = useState<ShareState>({ status: "idle" });
   const [now, setNow] = useState(() => Date.now());
   const live = useRef<{ mounted: boolean; link: string | null }>({ mounted: true, link: null });
@@ -360,7 +360,7 @@ function AddPhone() {
     const minutes = Math.floor(left / 60), seconds = String(left % 60).padStart(2, "0");
     return <div className="phone-share">
       <QRCode rows={state.share.qr} label={`QR code for ${state.share.link}`} />
-      <p className="text-meta">Scan it with another phone’s camera, or open setup on this device in a new tab.</p>
+      <p className="text-meta">Open setup on this device, enter the link on another computer, or scan the QR with a phone. Keep this Settings page open while downloading.</p>
       {state.status === "open" && <a className="btn btn-primary" href={state.share.link} target="_blank" rel="noopener noreferrer">Open setup page</a>}
       <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
       <div className="phone-share-time">
@@ -371,7 +371,7 @@ function AddPhone() {
     </div>;
   }
   return <>
-    <button type="button" className="btn btn-primary" disabled={state.status === "opening"} onClick={() => void open()}>{state.status === "opening" ? "Opening…" : "Add a phone"}</button>
+    <button type="button" className="btn btn-primary" disabled={state.status === "opening"} onClick={() => void open()}>{state.status === "opening" ? "Opening…" : "Set up a device"}</button>
     {state.status === "closed" ? <p role="status" className="text-meta text-muted">The link is closed.</p> : null}
     {state.status === "failed" ? <p role="alert" className="text-meta text-danger">{state.error.message}</p> : null}
   </>;

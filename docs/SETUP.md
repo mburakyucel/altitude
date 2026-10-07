@@ -151,14 +151,14 @@ The [README prompt](../README.md#get-started) provides a short starting point fo
 
 ### Trust HTTPS on each device
 
-Trusting Altitude's own certificate authority (CA) once on each device removes the browser warning
-for good: the device then treats Altitude like any trusted site. `alt doctor` shows the URL, the
+Trust Altitude's own certificate authority (CA) in each browser you use, including on the computer
+hosting Altitude. `alt doctor` shows the URL, public `ca.crt` path, the
 CA's name, expiry, SHA-256 fingerprint and what trusting it allows, all read from the certificate
 itself, with these steps in short form (`trust_steps`); **Settings → Devices** shows the same
 certificate facts on a device that already trusts Altitude.
 
 Only `ca.crt` goes to a device, over any channel: cable, AirDrop, your own email or cloud, or
-`alt tls-share` for a phone. Never transfer `ca.key` or `server.key`. The channel does not have to
+`alt tls-share` for a desktop or phone. Never transfer `ca.key` or `server.key`. The channel does not have to
 be trusted; the check before installing is what counts. Confirm the file holds only that certificate,
 with the expected name and SHA-256 fingerprint, and delete it if anything differs. Never click through
 a browser warning to reach Altitude. Trust grants the CA authority to identify sites, and its name is
@@ -172,9 +172,21 @@ created without these limits, or supplied externally, keeps its original scope. 
 scope as read from the certificate: "No limits" when it has none, and "Any website name" or "any IP
 address" for a type of name its limits leave open.
 
-#### Set up a phone
+#### Get the public certificate
 
-On a device that already trusts Altitude, open **Settings → Devices** and tap **Add a phone** in the
+**On the computer hosting Altitude:** run `alt doctor` in your terminal and use the public `ca.crt`
+at the path it reports. Copy just that file to a convenient folder if your browser's file picker
+cannot reach it. This works with the default loopback-only installation: sharing is unnecessary,
+and there is no need to expose Altitude to the network. Continue with [Linux](#linux-desktop) or
+[macOS](#macos-desktop) below.
+
+**On another computer or a phone:** the service must already have a reachable private-network
+HTTPS address configured. Use the sharing window below or transfer only `ca.crt` by another channel.
+Keep `alt doctor` or an already-trusted Settings page available as the independent identity reference.
+
+#### Share with a desktop or phone
+
+On a device that already trusts Altitude, open **Settings → Devices** and choose **Set up a device** in the
 Certificate card. Or, on the computer running Altitude, locally or over SSH, run:
 
 ```sh
@@ -182,35 +194,99 @@ alt tls-share
 ```
 
 Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
-and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
-fingerprint, an iPhone profile download, a plain certificate download for Android and other
-devices, and the steps below. On the same device, tap **Open setup page** in Settings; it opens a
+and SHA-256 fingerprint. Open the printed link on the destination desktop, or scan its QR code with
+a phone. The page offers separate Linux, macOS, iPhone/iPad and Android instructions, an iPhone
+profile download and a plain public certificate download. On the same device, choose **Open setup page** in Settings; it opens a
 new tab while the original tab keeps the QR code, certificate details and sharing timer. Keep that
 original Settings page open during setup. Close and expiry remove the setup link as well as the QR.
 The link serves only that page and the public CA certificate, as a
 configuration profile holding only the certificate or as the certificate file; it never serves a
 key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
 the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new
-**Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
+**Set up a device** replaces an earlier one. A firewall on that computer can block the link's port;
 then use another channel.
 
 `alt tls-share` reads the address, port and certificate folder the running Altitude service
 recorded when it started, so the shell's own `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` and
 `ALTITUDE_TLS_DIR` play no part. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
-service's address, and offers only a certificate the service proves it serves under. **Add a phone**
+service's address, and offers only a certificate the service proves it serves under. **Set up a device**
 is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
 in any terminal, including Altitude's own.
 
 Both stop with the reason when the service serves plain HTTP or listens only on loopback
-(`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
+(`ALTITUDE_HOST` must be the private-network address the destination device opens, which takes effect when the
 service restarts). `alt tls-share` also stops when no service has recorded its address, or the
 service does not answer or answers without proving that certificate. On a Mac, the source
 service's LaunchAgent takes its address from `ALTITUDE_HOST` when it is installed:
 `ALTITUDE_HOST=<address> make install-service`.
 
-The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
-iPad:
+#### Check the desktop download before trusting it
+
+Choose **Download the certificate** on the setup page and save `ca.crt`. On either Linux or macOS,
+inspect the file before importing it. From the folder containing the file, run:
+
+```sh
+openssl x509 -in ca.crt -noout -subject -fingerprint -sha256
+```
+
+Compare the subject's name and the entire SHA-256 fingerprint with `alt doctor` on the hosting
+computer or **Settings → Devices** in an already-trusted browser. The setup page is unauthenticated;
+matching its own displayed fingerprint alone does not establish identity. The command reads the
+certificate and installs nothing. Inspect `ca.crt` in a text editor as well: it must contain exactly
+one `BEGIN CERTIFICATE` / `END CERTIFICATE` block and no other payload. A file checksum is not the
+certificate fingerprint. If the name, fingerprint or contents differ, delete the download and stop.
+[OpenSSL certificate inspection](https://docs.openssl.org/3.0/man1/openssl-x509/).
+
+#### Linux desktop
+
+After [checking the file](#check-the-desktop-download-before-trusting-it), import it in the browser
+you will use:
+
+- **Chrome/Chromium:** open `chrome://certificate-manager`, choose **Local certificates**, then
+  **Custom → Installed by you**. Under **Trusted Certificates**, choose **Import** and select
+  `ca.crt`. On builds with the older manager, open `chrome://settings/certificates` and use
+  **Authorities → Import**, enabling trust for identifying websites. Do not use **Your certificates**,
+  which is for client identities. Browser versions and distribution packaging can change labels;
+  [Chrome's certificate manager](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md)
+  and [Chromium's Linux guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md)
+  describe the available managers; the [current manager's navigation](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/resources/certificate_manager/local_certs_section.html.ts)
+  and [control labels](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/app/certificate_manager.grdp)
+  identify the import route.
+- **Firefox:** open **Settings → Privacy & Security → Certificates → View Certificates →
+  Authorities → Import**, select `ca.crt`, and enable **Trust this CA to identify websites**.
+  Confirm with **OK**. Firefox on Linux can need this separate import even when another browser
+  or the OS already trusts the CA. [Mozilla's manual import instructions](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
+
+Quit and reopen the browser, then [verify HTTPS before pairing](#verify-https-before-pairing).
+Repeat for each browser/profile you intend to use; importing in one browser does not prove trust
+in another. These steps do not require a system-wide Linux trust-store change.
+
+#### macOS desktop
+
+1. Download the plain `ca.crt` file, then [check its name, fingerprint and contents](#check-the-desktop-download-before-trusting-it).
+2. Open **Keychain Access** using Spotlight. Select the **login** keychain for your account and
+   drag `ca.crt` into it. Use **System** only if you deliberately want trust for all users and can
+   authorize the Mac's administrator prompt. [Apple's import instructions](https://support.apple.com/guide/keychain-access/kyca2431/mac).
+3. Double-click the imported certificate, expand **Trust**, and set **Secure Sockets Layer (SSL)**
+   to **Always Trust**. Leave other uses at their defaults. Close the certificate window and
+   authorize saving if macOS prompts. Safari and Chrome use this explicit SSL trust.
+   [Apple's trust controls](https://support.apple.com/guide/keychain-access/kyca11871/mac) and
+   [Chrome's macOS trust behavior](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md).
+4. Quit and reopen Safari or Chrome, then [verify HTTPS before pairing](#verify-https-before-pairing).
+
+For **Firefox**, use the **Authorities → Import** steps in the Linux section with the same verified
+file if it does not already trust the CA. Firefox normally recognizes roots from the **System**
+keychain when **Allow Firefox to automatically trust third-party root certificates you install**
+is enabled in Privacy & Security; do not assume a login-keychain import reaches Firefox.
+[Mozilla's platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+
+#### Set up a phone
+
+Open the [sharing window](#share-with-a-desktop-or-phone), then follow the device steps. The link
+is unauthenticated, so compare with the trusted terminal or Settings screen before installing.
+
+**iPhone or iPad:**
 
 1. Open the share link in **Safari**, even if scanning the QR code opened another browser.
    Tap **Download the profile**, then **Allow**. After the download completes, open Settings →
@@ -237,33 +313,35 @@ Safari may remember an earlier "visit this website" exception, which can hide mi
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
 every site and unpairs Safari.
 
-On Android, tap **Download the certificate** in Chrome and install the file under Settings → Security → Encryption &
+On Android, tap **Download the Android certificate** in Chrome and install the file under Settings → Security → Encryption &
 credentials → Install a certificate → **CA certificate** (names vary by device), comparing the
-fingerprint where the device shows it. Firefox for Android also needs its third-party CA setting.
+name and full fingerprint with the trusted terminal or Settings screen before trusting it; stop if you
+cannot inspect them. Firefox for Android also needs its third-party CA setting.
 [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
 
-#### Other devices
+#### Verify HTTPS before pairing
 
-- **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
-  certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →
-  Privacy & Security → Certificates → View Certificates → Authorities → Import; enable website
-  trust. Firefox on Linux may need this separate import even when the OS already trusts the CA.
-  [Chromium guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md),
-  [Firefox guidance](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
-- **Mac clients:** import the CA in Keychain Access and set its SSL trust explicitly. Safari and
-  Chrome honor that setting; Firefox normally imports trusted roots from the System keychain,
-  otherwise use its Authorities import.
-  [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
-  [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+Open the exact HTTPS URL reported by `alt doctor` or the trusted Settings screen in a new private
+or Incognito window in the browser you will use, and reload it. Check the scheme, address and port;
+a second computer or phone needs the configured network address, not `localhost` or `127.0.0.1`.
+The Altitude page must load without any certificate warning. Only then [pair the browser](#pair-each-device).
+Verify the regular window as well before pairing there for everyday use; a private window's pairing
+does not persist after it closes.
+
+If a warning remains, stop before pairing. Check that this browser trusts the verified CA, the URL
+matches the running service, the device clock is correct, and the CA has not expired or changed.
+Record the OS/browser versions and exact warning for diagnosis; do not bypass it or disable checks.
 
 The CA is valid for ten years; Altitude renews its one-year server certificate automatically and
 reissues it when the listening address changes, so devices keep their trust. A device trusts again
 only when the CA expires or is replaced, for example after a new installation or a lost key.
 
 Open the exact HTTPS URL without a warning, in a new private window, and reload it before adding a home-screen app. Check
-the installed app separately: a shortcut or cached page does not prove TLS works. A phone needs
-the explicitly configured remote address, not `localhost`. Device/browser acceptance remains
-pending until observed. Remove this CA in the same browser/OS certificate manager when retiring
+the installed app separately: a shortcut or cached page does not prove TLS works. Native Linux,
+macOS and phone browser acceptance remains pending until observed on each platform; fixture and
+emulated browser checks establish application behavior only. The independent macOS/iOS trust and
+Home Screen acceptance in [#645](https://github.com/mburakyucel/altitude/issues/645) remains pending.
+Remove this CA in the same browser/OS certificate manager when retiring
 the installation; on iOS remove its profile under General → VPN & Device Management. Do not
 clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 

@@ -57,6 +57,7 @@ class TestContainerBoundary(AltitudeCase):
                    for action in ("open", "input", "command", "resize", "close")]
         routes += [("POST", path) for path in ("/api/terminal-access", "/api/update", "/api/update-check",
                    "/api/voice/host", "/api/voice/live", "/api/voice/live/x/audio", "/api/voice/live/x/cancel")]
+        routes += [("POST", f"/api/devices/{action}") for action in ("share", "share-close")]
         with mock.patch.object(terminal, "agent_connection", side_effect=AssertionError("must not infer origin")):
             for forwarded in (False, True):
                 for method, path in routes:
@@ -71,6 +72,8 @@ class TestContainerBoundary(AltitudeCase):
                             body = json.loads(response.read())
                             self.assertEqual(response.status, 403, body)
                             self.assertRegex(body["error"], "container|image-managed")
+                            if path.startswith("/api/devices/share"):
+                                self.assertIn("host container command's certificate action", body["error"])
                         finally:
                             connection.close()
 

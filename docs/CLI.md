@@ -625,12 +625,17 @@ Every other `alt` command that calls altd sends the machine key from the same st
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
 from the record the service wrote when it started, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
-phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
+desktop or phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
 link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and
-SHA-256 fingerprint that the phone checks before installing it. The link serves only a guided page,
+SHA-256 fingerprint to compare with the downloaded certificate before installing it. The link serves only a guided page,
 an iPhone configuration profile holding only the certificate, and the certificate file; it closes
-when the time is up or on Ctrl-C. Settings → Devices → **Add a phone** opens the same kind of link
-from the service. See [set up a phone](SETUP.md#set-up-a-phone).
+when the time is up or on Ctrl-C. Settings → Devices → **Set up a device** opens the same kind of link
+from the service, with **Open setup page** for the current device and a QR/link for another one.
+The page guides Linux browser imports, macOS Keychain trust, iPhone/iPad profiles and Android trust.
+Both sharing routes refuse loopback-only service addresses; on the hosting computer, use the public
+`ca.crt` path reported by `alt doctor` directly. Neither route installs trust or changes network
+exposure. Verify the exact HTTPS URL without a warning before pairing.
+See [certificate setup](SETUP.md#trust-https-on-each-device).
 
 ## Project lifecycle
 
