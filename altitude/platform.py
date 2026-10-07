@@ -1492,11 +1492,11 @@ def _domain() -> str:
     return f"gui/{os.getuid()}"
 
 
-def _print(label: str) -> dict | None:
+def _print(label: str, *, timeout: float = 30) -> dict | None:
     """launchd's view of a job in the user's domain: its top-level fields and its resource coalition, or None when
     the domain has no such job. Anything else unreadable raises RuntimeError."""
     try:
-        p = subprocess.run([LAUNCHCTL, "print", f"{_domain()}/{label}"], capture_output=True, text=True, timeout=30)
+        p = subprocess.run([LAUNCHCTL, "print", f"{_domain()}/{label}"], capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Native user service unavailable: {exc}") from exc
     if p.returncode == NOT_FOUND:
@@ -1550,6 +1550,19 @@ def _launchd_control(action: str) -> str:
         run(LAUNCHCTL, "bootout", target)
         if job["coalition"] and not _confirm_stopped(job["coalition"]):
             raise RuntimeError("Native user service failed: processes the service started are still running")
+        # I-20260929-182608: ended processes do not establish that launchd removed the label for bootstrap.
+        deadline = time.monotonic() + 45
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            removed = _print(LABEL, timeout=min(30, remaining)) is None
+            remaining = deadline - time.monotonic()
+            if removed or remaining <= 0:
+                break
+            time.sleep(min(0.1, remaining))
+        if remaining <= 0:
+            raise RuntimeError("Native user service failed: service label was not removed within 45s")
     if action == "stop":
         return ""
     logs_dir().mkdir(parents=True, exist_ok=True)

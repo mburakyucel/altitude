@@ -268,9 +268,20 @@ so workers survive and are adopted after restart. Dispatch and
 L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
-web page to answer from a new process. The prior bundle is restored if verification fails. There is
+web page to answer from a new process. On macOS, Stop and restart confirm that the service's processes
+end and its launchd label disappears before completing Stop or bootstrapping a replacement; removal
+has a 45-second limit and unreadable state fails explicitly. Independent worker jobs retain their
+own coalitions. The prior bundle is restored if verification fails, then recovery restarts the service
+and verifies API and UI health from another new process. The failure retains the activation error
+and states whether recovery is verified or fails; restored files alone do not establish healthy
+recovery. Without a prior bundle, it reports that recovery is unavailable. There is
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
+
+Deterministic restart fixtures establish removal ordering, worker isolation and activation/rollback
+health handling. Native prevention acceptance separately requires a successful guarded activation
+with a new service PID, API/UI health and worker/session survival. A running service or an absent
+pending flag establishes neither the cause of a prior bootstrap failure nor that acceptance.
 
 ## Preserve source TLS before upgrading
 
