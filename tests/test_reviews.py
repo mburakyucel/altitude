@@ -130,6 +130,29 @@ class TestReviews(AltitudeCase):
                 previous = completed["id"]
                 self.engine.side_effect = run_engine_review
 
+    def test_unrecognized_claude_failure_receipt_names_fixed_facts(self):
+        self.engine.side_effect = run_engine_review
+        self.patch(engines, "review_capability", return_value={"available": True})
+        self.patch(engines, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.platform, "job_active", return_value=False)
+        self.pick.return_value = {**self.choice, "engine": "claude"}
+        record = {"type": "result", "subtype": "success", "is_error": True, "result": "PRIVATE SOURCE",
+                  "terminal_reason": "api_error", "api_error_status": 401, "num_turns": 1, "duration_api_ms": 90}
+        self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
+        failed = self.run_review(self.request())
+        self.assertEqual(failed["state"], "failed")
+        evidence = reviews.view(self.project, self.slug)["latest"]["diagnostics"]
+        self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"]), ("unrecognized_error", []))
+        self.assertEqual(evidence["stdout_facts"], {"subtype": "success", "terminal_reason": "api_error",
+                                                    "api_error_status": 401, "num_turns": 1, "api_contacted": True})
+        self.assertNotIn("PRIVATE SOURCE", json.dumps(S.load_task(self.project, self.slug)))
+        self.engine.side_effect = self.success
+        completed = self.run_review(self.request(previous=failed["id"]))
+        self.assertEqual(completed["state"], "completed")
+        self.assertNotIn("diagnostics", completed)
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+
     def test_failure_diagnostics_survive_unconfirmed_termination_and_owner_change(self):
         evidence = {"exit_status": 9, "stderr": "adapter failed", "stderr_truncated": False,
                     "stdout_truncated": False, "capture_complete": True}
