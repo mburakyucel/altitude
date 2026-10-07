@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, project_setup, route, state as S, tasks as T
+from . import config, engines, git_policy, images, platform, project_setup, route, state as S, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -70,11 +70,7 @@ def _stop_replacement(engine: str, worker_id: str, job_root: Path) -> str | None
 
 def _claim_owner_live(claim: dict) -> bool:
     """Whether the daemon process which owns a durable resume claim still exists."""
-    try:
-        os.kill(int(claim.get("owner_pid")), 0)
-        return True
-    except (OSError, TypeError, ValueError):
-        return False
+    return platform.process_identity_live(claim.get("owner_process"))
 
 
 def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request_id: str | None = None,
@@ -317,7 +313,7 @@ def handoff(project: str, slug: str, request: dict) -> dict:
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
                            engine: str | None = None, expected_attempt: int | None = None,
                            generation: object = T._UNSET, stop_id: object = T._UNSET,
-                           deliver_reason: bool = True) -> dict:
+                           deliver_reason: bool = True, send_now: str | None = None) -> dict:
     """Persist one L3/operator request for altd; this process never touches Git or a worker.
 
     A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
@@ -335,6 +331,11 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
     contract = DAEMON_TASK_OPERATIONS[operation]
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if send_now:
+            receipt = _send_now_admission(project, slug, task, send_now)
+            if receipt is not None:
+                return receipt
+        continuing_send_now = operation == "stop" and task.get("state") == "blocked" and task.get("send_now")
         if operation == "stop" and generation is not T._UNSET and generation != task.get("agent_id"):
             raise T.TransitionError("The worker changed. Refresh before stopping it.")
         if operation == "resume" and stop_id is not T._UNSET:
@@ -347,15 +348,15 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         previous = task.get("daemon_request") or {}
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
                 previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
-                previous.get("deliver_reason") if operation == "resume" else None) == (
-            operation, reason, actor, engine, expected_attempt, deliver_reason if operation == "resume" else None)
+                previous.get("deliver_reason") if operation == "resume" else None, previous.get("send_now")) == (
+            operation, reason, actor, engine, expected_attempt, deliver_reason if operation == "resume" else None, send_now)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}
             raise T.TransitionError(
                 f"{slug}: {previous.get('operation')} is already queued for altd as {previous.get('id')}"
             )
-        if previous.get("status") in ("done", "refused", "failed") and same:
+        if previous.get("status") in ("done", "refused", "failed") and same and not send_now:
             receipt = (previous.get("result_state"), previous.get("result_agent_id"),
                        previous.get("result_session_id"), previous.get("result_block_id"))
             current = (task.get("state"), task.get("agent_id"), task.get("session_id"), task.get("block_id"))
@@ -364,7 +365,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             if (previous.get("result_state") is None or receipt == current) and (
                     operation != "resume" or previous.get("block_id") == task.get("block_id")):
                 return {"queued": False, "idempotent": True, "request": previous}
-        if task.get("state") not in contract["from"] and not (operation == "resume" and task.get("state") == "reported"):
+        if (task.get("state") not in contract["from"] and not continuing_send_now
+                and not (operation == "resume" and task.get("state") == "reported")):
             raise T.TransitionError(
                 f"{slug}: cannot {operation} from {task.get('state')}; expected {' or '.join(contract['from'])}"
             )
@@ -372,11 +374,15 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             _require_handoff(project, task, engine, expected_attempt)
         if operation == "resume" and task.get("state") == "reported":
             task = T.continue_report(project, task, actor=actor, reason=reason)
+        if continuing_send_now:
+            T._supersede_resume(task)
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
                    "actor": actor, "status": "pending", "expected_state": task.get("state"),
                    "block_id": task.get("block_id"),
                    "resume_request": task.get("resume_request"),
                    "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
+        if send_now:
+            request["send_now"] = send_now
         if operation == "resume":
             request["deliver_reason"] = deliver_reason
         if operation == "handoff":
@@ -393,6 +399,127 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
+def send_now_unavailable(project: str, task: dict, *, own_request: str | None = None) -> str | None:
+    """Project saved eligibility without acquiring transient launch or admission locks."""
+    request = task.get("daemon_request") or {}
+    if task.get("fault"):
+        return "The owner is faulted; verified recovery must resume it first."
+    if task.get("waiting_on"):
+        return "The owner is waiting for an answer. Reply to its question first."
+    if task.get("stop_id") and task.get("stop_id") != own_request:
+        return "The owner is stopped or stopping. Continue its session first."
+    if task.get("state") != "running":
+        return "Send now needs a running owner."
+    if not task.get("agent_id") or not task.get("session_id"):
+        return "The owner has no saved session to continue."
+    if task.get("resume_claim") or task.get("dispatching") or (request.get("status") in ("pending", "executing")
+                                                              and request.get("id") != own_request):
+        return "Another owner action is in progress."
+    if config.restart_in_progress():
+        return "Altitude is restarting; retry shortly."
+    if hold := resume_engine_hold(task) or wip_hold(project, task):
+        return hold
+    return None
+
+
+def _send_now_launch_hold(project: str, *, check_launch: bool = True) -> str | None:
+    """Check transient admission only when requesting or executing an interruption."""
+    with config.provider_admission() as held:
+        if held:
+            return held
+    with project_setup.operation_lock(project) as ready:
+        if not ready:
+            return "Project setup is in progress; retry shortly."
+    if check_launch:
+        with launch_lock(wait=False) as ready:
+            if not ready:
+                return "Another session is starting; retry shortly."
+    return None
+
+
+def request_send_now(project: str, slug: str, message_id: str) -> dict:
+    """Claim an existing operator row for Stop and saved-session continuation, without resending it."""
+    if not message_id:
+        raise T.TransitionError("Choose a queued operator message.")
+    return request_task_operation(project, slug, "stop", "Deliver the selected queued message now",
+                                  actor=T.OPERATOR_MESSAGE_ROLE, deliver_reason=False, send_now=message_id)
+
+
+def _send_now_admission(project: str, slug: str, task: dict, message_id: str) -> dict | None:
+    """Called under the operation's writer lock, shared with inbox pickup and Remove."""
+    row = next((row for row in T.task_messages(project, slug) if row["id"] == message_id), None)
+    if row is None or row.get("role") != row.get("by") or row.get("role") != T.OPERATOR_MESSAGE_ROLE:
+        raise T.TransitionError("Only queued operator messages can be sent now.")
+    receipt = (task.get("message_deliveries") or {}).get(message_id) or {}
+    if receipt.get("state") == "removed":
+        raise T.TransitionError("This message was removed.")
+    request = task.get("daemon_request") or {}
+    if (request.get("send_now") == message_id and request.get("status") in ("pending", "executing")
+            or task.get("send_now") == message_id):
+        return {"queued": True, "idempotent": True, "request": request}
+    claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    if (receipt or message_id in claimed
+            or message_id not in {row["id"] for row in T.pending(project, slug)}):
+        return {"queued": False, "idempotent": True}
+    if message_id not in T.removable_messages(project, slug, task):
+        raise T.TransitionError("This message is already owned by a decision or delivery.")
+    if reason := send_now_unavailable(project, task) or _send_now_launch_hold(project):
+        raise T.TransitionError(reason)
+    return None
+
+
+def _run_send_now(project: str, slug: str, *, admission_held: str | None = None) -> dict:
+    """Stop and claim share machine capacity; held continuation uses the ordinary resume timer."""
+    with launch_lock(), config.restart_lock() as ready:
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            request = task.get("daemon_request") or {}
+            identity = request.get("id")
+            if not request.get("send_now") or request.get("status") not in ("pending", "executing"):
+                return {"idempotent": True, "request": request}
+            changed = any(request.get(key) != task.get(key) for key in ("block_id", "agent_id", "session_id"))
+            reason = "The owner changed before delivery; refresh its status." if changed else None
+            if not reason and task.get("state") == "running":
+                reason = (admission_held or ("Altitude is restarting; retry shortly." if not ready else None)
+                          or send_now_unavailable(project, task, own_request=identity)
+                          or _send_now_launch_hold(project, check_launch=False))
+            elif not reason and (task.get("state") != "blocked" or task.get("send_now") != request["send_now"]):
+                reason = "A newer owner wait superseded this delivery request."
+            if reason:
+                if task.get("stop_id") == identity:
+                    task.pop("stop_id", None)
+                    S.save_task(project, task)
+                return _finish_task_operation_locked(project, task, identity, "refused", reason)
+            request.update(status="executing", started_at=request.get("started_at") or S.now())
+            S.save_task(project, task)
+        try:
+            stop(project, slug, by=request["actor"], reason=request["reason"],
+                 daemon_request_id=identity, expected_agent_id=request.get("agent_id"),
+                 expected_session_id=request.get("session_id"))
+            with S.project_lock(project):
+                task = S.load_task(project, slug)
+                stop_block = (task.get("daemon_request") or {}).get("block_id")
+                T._require_daemon_fence(task, slug, expected_daemon_request=identity,
+                                        expected_agent_id=request.get("agent_id"),
+                                        expected_session_id=request.get("session_id"),
+                                        expected_block_id=stop_block)
+                if task.get("send_now") != request["send_now"]:
+                    raise T.TransitionError("A newer owner wait superseded this delivery request.")
+                task.update(resume_after=S.now(), resume_request=request["send_now"])
+                _finish_task_operation_locked(project, task, identity, "done", "Stopped for selected message delivery")
+        except (T.TransitionError, git_policy.GitPolicyError) as exc:
+            return _finish_task_operation(project, slug, identity, "refused", str(exc))
+        except Exception as exc:
+            _finish_task_operation(project, slug, identity, "failed", str(exc))
+            raise
+        # Stop is complete. Resume owns its claim, failures and selected input from this point.
+        if admission_held or not ready or config.restart_in_progress():
+            hold = admission_held or "Altitude is restarting; delivery continues after restart."
+            T.mark_resume_held(project, slug, hold, expected_block_id=stop_block)
+            return {"held": hold}
+        return _resume(project, slug)
+
+
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check")
 
 
@@ -406,6 +533,9 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
     if setting not in (MACHINE_SETTINGS if project is None else config.PROJECT_SETTINGS):
         raise T.TransitionError(f"unknown {scope} setting")
     try:
+        unavailable = platform.container_setting_error(setting, value) if project is None else None
+        if unavailable:
+            raise ValueError(unavailable)
         if setting == "wip":
             config.validate_wip(value)
         elif setting == "voice":
@@ -462,6 +592,9 @@ def _run_setting(project: str | None, setting: str) -> dict:
             return request
         projects = config._load_projects() if project is not None else None
         entry = projects.get(project) if projects is not None else config.machine_settings()
+        unavailable = platform.container_setting_error(setting, request.get(setting)) if project is None else None
+        if unavailable:
+            request.update(status="refused", note=unavailable)
         if setting == "projects_folder":  # the folder can vanish or lose access before altd drains the CLI request
             try:
                 config.validate_projects_folder(request[setting])
@@ -534,32 +667,48 @@ def _handoff_requeued(task: dict, request: dict) -> bool:
 def _finish_task_operation(project: str, slug: str, request_id: str | None, status: str,
                            note: str = "") -> dict:
     with S.project_lock(project):
-        task = S.load_task(project, slug)
-        request = task.get("daemon_request") or {}
-        if request.get("id") != request_id:
-            return {"stale": True}
-        if request.get("operation") == "handoff" and request.get("status") == "done":
-            return {"request": request, "state": task.get("state"), "idempotent": True}
-        if _handoff_requeued(task, request):
-            status, note = "done", "handoff requeued the observed attempt"
-        request.update({"status": status, "completed_at": S.now(), "note": str(note or "")[:300],
-                        "result_state": task.get("state"), "result_agent_id": task.get("agent_id"),
-                        "result_block_id": task.get("block_id"),
-                        "result_session_id": task.get("session_id")})
-        task["daemon_request"] = request
-        if request.get("operation") == "resume" and status not in ("pending", "executing") and all(
-                request.get(key) == task.get(key) for key in ("block_id", "resume_request")):
-            task.pop("resume_after", None)
-        S.save_task(project, task)
-        return {"request": request, "state": task.get("state")}
+        return _finish_task_operation_locked(project, S.load_task(project, slug), request_id, status, note)
+
+
+def _finish_task_operation_locked(project: str, task: dict, request_id: str | None, status: str,
+                                  note: str = "") -> dict:
+    request = task.get("daemon_request") or {}
+    if request.get("id") != request_id:
+        return {"stale": True}
+    if request.get("operation") == "handoff" and request.get("status") == "done":
+        return {"request": request, "state": task.get("state"), "idempotent": True}
+    if _handoff_requeued(task, request):
+        status, note = "done", "handoff requeued the observed attempt"
+    request.update({"status": status, "completed_at": S.now(), "note": str(note or "")[:300],
+                    "result_state": task.get("state"), "result_agent_id": task.get("agent_id"),
+                    "result_block_id": task.get("block_id"), "result_session_id": task.get("session_id")})
+    task["daemon_request"] = request
+    if request.get("send_now") and status in ("failed", "refused"):
+        if task.get("send_now") == request["send_now"]:
+            task.pop("send_now", None)
+        if task.get("block_id") != request.get("block_id") and task.get("stop_id") == request_id:
+            task.pop("stop_id", None)
+    if request.get("operation") == "resume" and status not in ("pending", "executing") and all(
+            request.get(key) == task.get(key) for key in ("block_id", "resume_request")):
+        task.pop("resume_after", None)
+    S.save_task(project, task)
+    return {"request": request, "state": task.get("state")}
 
 
 def run_task_operation(project: str, slug: str) -> dict:
+    with config.provider_admission() as held:
+        return _run_task_operation(project, slug, admission_held=held)
+
+
+def _run_task_operation(project: str, slug: str, *, admission_held: str | None = None) -> dict:
     """Execute one durable request in altd, once, against the worker identity the caller observed.
 
     I-20260904-062512: ``executing`` is a durable fence. Task transitions re-check its id, state,
     and worker identity while holding the same project lock, so a delayed operation cannot affect a replacement.
     """
+    request = S.load_task(project, slug).get("daemon_request") or {}
+    if request.get("send_now") and request.get("status") in ("pending", "executing"):
+        return _run_send_now(project, slug, admission_held=admission_held)
     with S.project_lock(project):
         task = S.load_task(project, slug)
         request = dict(task.get("daemon_request") or {})
@@ -596,6 +745,8 @@ def run_task_operation(project: str, slug: str) -> dict:
                 terminal = ("refused", f"task changed to {state}")
             else:
                 terminal = None
+                if admission_held and operation in ("resume", "handoff") and not task.get("resume_claim"):
+                    return {"pending": True, "request": request, "held": admission_held}
                 if status == "pending":
                     request.update({"status": "executing", "started_at": S.now()})
                     task["daemon_request"] = request
@@ -827,6 +978,7 @@ def build_brief(project: str, slug: str) -> str:
 def session_settings(project: str, slug: str, session_key: str) -> Path:
     """Per-attempt settings: edit telemetry and the inbox hook that hands the operator's queued messages to the
     worker after a tool call or when it is about to stop."""
+    from . import releases
     hooks = config.HOOKS
     inbox = [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "inbox.py")]), "timeout": 10}]
     settings = {"hooks": {
@@ -836,13 +988,19 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
+    task = S.load_task(project, slug)
+    if (session_key == S.session_key(project, slug, task.get("attempt", 0))
+            and releases.active_grant(task)):
+        settings.update(engines.release_permissions(l2_engine(task), slug))
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
-    with launch_lock(), config.restart_lock() as ready:
+    with config.provider_admission() as held, launch_lock(), config.restart_lock() as ready:
+        if held:
+            raise T.TransitionError(held)
         if not ready or config.restart_in_progress():
             raise T.TransitionError("Altitude is restarting; retry shortly")
         return _run(project, slug, model)
@@ -1003,16 +1161,20 @@ def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> 
     claim = S.load_task(project, slug).get("resume_claim") or {}
     if claim and _claim_owner_live(claim):
         return {"already_resuming": True}
-    with launch_lock(), config.restart_lock() as ready:
+    with config.provider_admission() as held, launch_lock(), config.restart_lock() as ready:
+        if held and not S.load_task(project, slug).get("resume_claim"):
+            return {"held": held}
         if not ready or config.restart_in_progress():
             return {"held": "Altitude is restarting; retry shortly"}
         try:
-            return _resume(project, slug, daemon_request_id=daemon_request_id)
+            return _resume(project, slug, daemon_request_id=daemon_request_id,
+                           **({"admission_held": held} if held else {}))
         except T.TransitionError as exc:
             raise ResumeFailure(str(exc)) from exc  # lifecycle cancellation must not become workflow:resume
 
 
-def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
+def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
+            admission_held: str | None = None) -> dict:
     """Start a blocked task's provider session again in its worktree, with whatever waits in its inbox.
 
     This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
@@ -1040,6 +1202,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
                                       daemon_fence=daemon_fence)
     if recovered is not None:
         return recovered
+    if admission_held:
+        return {"held": admission_held}  # Reconcile the old claim without claiming or launching new work.
     task = S.load_task(project, slug)
     if task.get("stop_id") and not task.get("resume_after") and daemon_request_id is None:
         return {"waiting": True}
@@ -1397,12 +1561,16 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
 
 
 @contextmanager
-def launch_lock():
+def launch_lock(*, wait: bool = True):
     """Serialize machine capacity admission through worker binding, across threads and processes."""
     with open(config.ROOT / ".launch.lock", "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
         try:
-            yield
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
@@ -1534,6 +1702,8 @@ def activation_component(path: str) -> str | None:
 
 
 def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
+    if platform.containerized():
+        return []  # A project merge cannot activate code in the immutable application image.
     # Activation: a finishing worker must not clear requested_at or change build inputs during activation.
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():

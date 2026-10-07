@@ -45,6 +45,7 @@ function PairScreen({ removed, onPaired }: { removed: boolean; onPaired: () => v
       {removed ? <p role="status" className="pair-removed">This device is no longer paired. Pair it again to continue.</p> : null}
       <p className="pair-lead">Altitude opens only on devices you pair. On the computer running Altitude, in a terminal or over SSH, run:</p>
       <Command text="alt pair" />
+      <p className="text-meta text-muted">For a container deployment, run this inside the container shell. Host tools and sign-ins do not configure the container.</p>
       <p className="pair-lead">Then type the code it shows. A device that is already paired can also make a code in Settings › Devices.</p>
       <label className="pair-field">Pairing code
         <input value={code} onChange={(event) => { setCode(event.target.value); if (state.status === "failed") setState({ status: "idle" }); }}
@@ -56,7 +57,7 @@ function PairScreen({ removed, onPaired }: { removed: boolean; onPaired: () => v
         {state.status === "pairing" ? "Pairing…" : "Pair"}
       </button>
       <p className="text-meta text-muted">Each code works once, for 10 minutes. This device stays paired until you remove it in Settings.</p>
-      <p className="text-meta text-muted">Did the browser warn about the certificate before showing this page? Pair only after it opens without a warning. To set up a phone, use Add a phone in Settings › Devices on a paired device, or run <code>alt tls-share</code> on that computer.</p>
+      <p className="text-meta text-muted">Did the browser warn about the certificate before showing this page? Pair only after it opens without a warning. For a container, export its public certificate with the host launcher's certificate command. For a native installation, use Add a phone in Settings › Devices on a paired device, or run <code>alt tls-share</code> on that computer.</p>
     </form>
   </main>;
 }

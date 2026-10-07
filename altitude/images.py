@@ -70,8 +70,21 @@ def _invalid() -> ImageError:
     return ImageError("This image could not be read. Export a PNG, JPEG or static WebP and try again.")
 
 
-def _color_profile() -> ImageError:
-    return ImageError("This image's color profile is unsupported. Export an sRGB image without an embedded color profile.", 415)
+# PNG cICP codes (ITU-T H.273) with their xy chromaticities (white, red, green, blue) and parametric tone curves
+# in Little CMS's notation; HDR transfers (PQ, HLG) have no SDR conversion and keep their decoded pixels.
+_SRGB_CURVE = (4, (2.4, 1 / 1.055, 0.055 / 1.055, 1 / 12.92, 0.04045))
+_PRIMARIES = {1: (0.3127, 0.3290, 0.64, 0.33, 0.30, 0.60, 0.15, 0.06),
+              9: (0.3127, 0.3290, 0.708, 0.292, 0.170, 0.797, 0.131, 0.046),
+              12: (0.3127, 0.3290, 0.680, 0.320, 0.265, 0.690, 0.150, 0.060)}
+_TRANSFERS = {13: _SRGB_CURVE, 4: (1, (2.2,)), 5: (1, (2.8,)), 8: (1, (1.0,)),
+              **dict.fromkeys((1, 6, 14, 15), (4, (1 / 0.45, 1 / 1.099, 0.099 / 1.099, 1 / 4.5, 0.081)))}
+
+
+def _rgb(white_and_primaries, curve) -> dict | None:
+    """A synthesized RGB source description, or None when it already is sRGB."""
+    if tuple(white_and_primaries) == _PRIMARIES[1] and curve == _SRGB_CURVE:
+        return None
+    return {"chromaticities": list(white_and_primaries), "curve": [curve[0], list(curve[1])]}
 
 
 def _orientation(raw: bytes) -> int:
@@ -96,12 +109,15 @@ def _orientation(raw: bytes) -> int:
     return 1
 
 
-def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes]:
-    """Bound dimensions and reject animation/truncation before invoking a raster decoder."""
+def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes | dict | None]:
+    """Bound dimensions and reject animation/truncation before invoking a raster decoder.
+
+    The last value describes the source colors: ICC profile bytes, a synthesized RGB description, or None for
+    sRGB and for color information without a conversion, whose pixels are kept as decoded."""
     width = height = 0
     orientation = 1
     profile, profile_parts, profile_count = b"", {}, 0
-    needs_profile = False
+    signalled, srgb, gamma, chromaticities = None, False, None, None
     if raw.startswith(_PNG):
         mime, offset, seen = "image/png", 8, []
         while offset + 12 <= len(raw):
@@ -121,14 +137,18 @@ def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes]:
                     decoder = zlib.decompressobj()
                     profile = decoder.decompress(compressed[1:], MAX_PROFILE_BYTES + 1)
                     if len(profile) > MAX_PROFILE_BYTES or not decoder.eof or decoder.unused_data:
-                        raise _color_profile()
+                        profile = b"\0"  # Present but unusable: kept from overriding later chunks, then ignored.
                 except zlib.error as exc:
-                    raise _invalid() from exc
-            if ((kind == b"gAMA" and data != struct.pack(">I", 45455))
-                    or (kind == b"cHRM" and data != struct.pack(">8I", 31270, 32900, 64000, 33000, 30000, 60000, 15000, 6000))):
-                needs_profile = True
-            if kind in (b"mDCv", b"cLLi") or (kind == b"cICP" and data != bytes((1, 13, 0, 1))):
-                raise _color_profile()
+                    raise _invalid() from exc  # The converter's strict decoder refuses corrupt compressed data too.
+            # PNG precedence: cICP, then iCCP, then sRGB, then gAMA/cHRM. A cICP without an SDR conversion defers to
+            # the rest, as for a decoder that does not read it; mDCv and cLLi describe a mastering display.
+            if kind == b"cICP" and len(data) == 4 and data[2:] == b"\0\1" and data[0] in _PRIMARIES and data[1] in _TRANSFERS:
+                signalled = _rgb(_PRIMARIES[data[0]], _TRANSFERS[data[1]]) or b""
+            srgb = srgb or kind == b"sRGB"
+            if kind == b"gAMA" and size == 4 and (value := int.from_bytes(data, "big")):
+                gamma = value
+            if kind == b"cHRM" and size == 32:
+                chromaticities = tuple(n / 100000 for n in struct.unpack(">8I", data))
             if kind == b"IHDR":
                 if seen or size != 13:
                     raise _invalid()
@@ -143,6 +163,10 @@ def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes]:
                 break
         if not seen or seen[0] != b"IHDR" or seen[-1] != b"IEND" or b"IDAT" not in seen:
             raise _invalid()
+        if not profile and not srgb and (gamma not in (None, 45455) or chromaticities not in (None, _PRIMARIES[1])):
+            profile = _rgb(chromaticities or _PRIMARIES[1], (1, (100000 / gamma,)) if gamma else _SRGB_CURVE)
+        if signalled is not None:
+            profile = signalled
     elif raw.startswith(b"\xff\xd8"):
         mime, offset, ended, scans = "image/jpeg", 2, False, 0
         while offset < len(raw):
@@ -233,17 +257,17 @@ def _inspect(raw: bytes) -> tuple[str, int, int, int, bytes]:
         raise _invalid()
     if max(width, height) > MAX_SIDE or width * height > MAX_PIXELS:
         raise ImageError("Images must be at most 25 megapixels and 8192 pixels per side. Choose a smaller image.", 413)
-    if (needs_profile and not profile) or len(profile) > MAX_PROFILE_BYTES:
-        raise _color_profile()
-    if profile and (len(profile) < 128 or profile[16:20] != b"RGB " or profile[36:40] != b"acsp"):
-        raise _color_profile()
-    return mime, width, height, orientation, profile
+    if isinstance(profile, bytes) and (len(profile) > MAX_PROFILE_BYTES or len(profile) < 128
+                                       or profile[16:20] not in (b"RGB ", b"GRAY") or profile[36:40] != b"acsp"):
+        profile = None
+    return mime, width, height, orientation, profile or None
 
 
-# The native API is used only by an isolated, bounded process, never the server's address space.
-# RGBA8 and COPY_ALPHA follow https://github.com/mm2/Little-CMS/blob/master/include/lcms2.h.
-_ICC_EXEC = """import ctypes as C, pathlib, sys
-library, profile_path, pixel_path = sys.argv[1:]
+# The native API is used only by an isolated, bounded process, never the server's address space. Formats follow
+# https://github.com/mm2/Little-CMS/blob/master/include/lcms2.h: RGBA8 with COPY_ALPHA, GRAY8 and RGB8.
+# Exit 2 means Little CMS builds no transform for this description; the pixels file is then left as decoded.
+_ICC_EXEC = """import ctypes as C, json, pathlib, sys
+library, kind, color_path, pixel_path = sys.argv[1:]
 try:
     lib = C.CDLL(library)
 except OSError:
@@ -252,28 +276,48 @@ pointer, integer = C.c_void_p, C.c_uint32
 for name, result, arguments in (
     ('cmsOpenProfileFromMem', pointer, [pointer, integer]),
     ('cmsCreate_sRGBProfile', pointer, []),
+    ('cmsBuildParametricToneCurve', pointer, [pointer, C.c_int, C.POINTER(C.c_double)]),
+    ('cmsCreateRGBProfile', pointer, [pointer, pointer, pointer]),
+    ('cmsGetColorSpace', integer, [pointer]),
     ('cmsCreateTransform', pointer, [pointer, integer, pointer, integer, integer, integer]),
     ('cmsDoTransform', None, [pointer, pointer, pointer, integer]),
-    ('cmsDeleteTransform', None, [pointer]),
-    ('cmsCloseProfile', C.c_int, [pointer]),
 ):
     function = getattr(lib, name)
     function.restype, function.argtypes = result, arguments
-profile_bytes = pathlib.Path(profile_path).read_bytes()
-buffer = C.create_string_buffer(profile_bytes)
-source = lib.cmsOpenProfileFromMem(buffer, len(profile_bytes))
+color = pathlib.Path(color_path).read_bytes()
+if kind == 'icc':
+    buffer = C.create_string_buffer(color)
+    source = lib.cmsOpenProfileFromMem(buffer, len(color))
+else:
+    description = json.loads(color)
+    xy = description['chromaticities']
+    white = (C.c_double * 3)(xy[0], xy[1], 1.0)
+    primaries = (C.c_double * 9)(xy[2], xy[3], 1.0, xy[4], xy[5], 1.0, xy[6], xy[7], 1.0)
+    curve_type, parameters = description['curve']
+    curve = lib.cmsBuildParametricToneCurve(None, curve_type, (C.c_double * 10)(*parameters))
+    source = lib.cmsCreateRGBProfile(white, primaries, (pointer * 3)(curve, curve, curve)) if curve else None
 target = lib.cmsCreate_sRGBProfile()
-rgba8 = (4 << 16) | (1 << 7) | (3 << 3) | 1
-transform = lib.cmsCreateTransform(source, rgba8, target, rgba8, 0, 0x04000000) if source and target else None
+gray = bool(source) and lib.cmsGetColorSpace(source) == 0x47524159
+rgba8, gray8, rgb8 = (4 << 16) | (1 << 7) | (3 << 3) | 1, (3 << 16) | (1 << 3) | 1, (4 << 16) | (3 << 3) | 1
+transform = None
+if source and target:
+    transform = (lib.cmsCreateTransform(source, gray8, target, rgb8, 0, 0) if gray
+                 else lib.cmsCreateTransform(source, rgba8, target, rgba8, 0, 0x04000000))
 if not transform:
     sys.exit(2)
 pixels = bytearray(pathlib.Path(pixel_path).read_bytes())
-array = (C.c_ubyte * len(pixels)).from_buffer(pixels)
-lib.cmsDoTransform(transform, array, array, len(pixels) // 4)
+if gray:
+    # The decoder expands gray to equal channels; one 256-entry table maps each channel to sRGB's neutral axis.
+    table = C.create_string_buffer(768)
+    lib.cmsDoTransform(transform, bytes(range(256)), table, 256)
+    table = table.raw[1::3]
+    for channel in range(3):
+        pixels[channel::4] = pixels[channel::4].translate(table)
+else:
+    array = (C.c_ubyte * len(pixels)).from_buffer(pixels)
+    lib.cmsDoTransform(transform, array, array, len(pixels) // 4)
+    del array
 pathlib.Path(pixel_path).write_bytes(pixels)
-lib.cmsDeleteTransform(transform)
-lib.cmsCloseProfile(source)
-lib.cmsCloseProfile(target)
 """
 
 
@@ -309,26 +353,31 @@ def _normalize(raw: bytes, directory: Path) -> tuple[bytes, str, int, int]:
     encoding += ["-f", "image2", "-update", "1", str(target)]
     expected = (height, width) if orientation >= 5 else (width, height)
     deadline = time.monotonic() + PROCESS_TIMEOUT
+    # Every image is re-encoded from its raw pixels, so no metadata or color tag reaches the canonical sRGB file.
+    pixels, color = directory / "pixels.rgba", directory / "color"
+    pixel_bytes = width * height * 4
     try:
+        library = None
         if profile:
             library = platform.find_library("lcms2")
             if not library:
                 raise ImageError("Image input unavailable for this color profile: the local color converter is unavailable.", 422)
-            pixels, icc = directory / "pixels.rgba", directory / "profile.icc"
-            icc.write_bytes(profile)
-            pixel_bytes = width * height * 4
-            if (_process(command + ["-pix_fmt", "rgba", "-f", "rawvideo", str(pixels)], directory, deadline, pixel_bytes + 1)
-                    or not pixels.is_file() or pixels.stat().st_size != pixel_bytes):
-                raise _invalid()
-            result = _process([sys.executable, "-c", _ICC_EXEC, library, str(icc), str(pixels)], directory, deadline, pixel_bytes + 1)
+        if (_process(command + ["-pix_fmt", "rgba", "-f", "rawvideo", str(pixels)], directory, deadline, pixel_bytes + 1)
+                or not pixels.is_file() or pixels.stat().st_size != pixel_bytes):
+            raise _invalid()
+        if library:
+            color.write_bytes(profile if isinstance(profile, bytes) else json.dumps(profile).encode())
+            kind = "icc" if isinstance(profile, bytes) else "rgb"
+            result = _process([sys.executable, "-c", _ICC_EXEC, library, kind, str(color), str(pixels)],
+                              directory, deadline, pixel_bytes + 1)
             if result == 3:
                 raise ImageError("Image input unavailable for this color profile: the local color converter is unavailable.", 422)
-            if result:
-                raise _color_profile()
-            command = [binary, "-nostdin", "-loglevel", "error", "-y", "-threads", "1", "-filter_threads", "1",
-                       "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{expected[0]}x{expected[1]}",
-                       "-i", str(pixels), "-frames:v", "1", "-threads", "1", "-flags:v", "+bitexact",
-                       "-fflags", "+bitexact", "-map_metadata", "-1"]
+            if result not in (0, 2) or pixels.stat().st_size != pixel_bytes:
+                raise ImageError("This image needs more memory or time to prepare than allowed. Choose a smaller image.", 413)
+        command = [binary, "-nostdin", "-loglevel", "error", "-y", "-threads", "1", "-filter_threads", "1",
+                   "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", f"{expected[0]}x{expected[1]}",
+                   "-i", str(pixels), "-frames:v", "1", "-threads", "1", "-flags:v", "+bitexact",
+                   "-fflags", "+bitexact", "-map_metadata", "-1"]
         result = _process(command + encoding, directory, deadline, MAX_BYTES + 1)
         if target.exists() and target.stat().st_size > MAX_BYTES:
             raise ImageError("The prepared image exceeds 10 MiB. Choose a smaller image.", 413)
@@ -344,7 +393,7 @@ def _normalize(raw: bytes, directory: Path) -> tuple[bytes, str, int, int]:
     except subprocess.TimeoutExpired as exc:
         raise ImageError("This image took too long to prepare. Choose a smaller image.", 422) from exc
     finally:
-        for name in ("source", "pixels.rgba", "profile.icc"):
+        for name in ("source", "pixels.rgba", "color"):
             (directory / name).unlink(missing_ok=True)
 
 

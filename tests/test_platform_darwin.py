@@ -120,7 +120,7 @@ class Service(DarwinCase):
         platform.control("start")
         self.assertEqual(self.launchd.commands[-1], ["kickstart", target])
         platform.control("restart")
-        self.assertEqual(self.launchd.commands[-2:], [["bootout", target],
+        self.assertEqual(self.launchd.commands[-3:], [["bootout", target], ["print", target],
                                                       ["bootstrap", domain, str(platform.service_path())]])
         stopped.assert_called_once_with(900)
         self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
@@ -129,7 +129,7 @@ class Service(DarwinCase):
         platform.control("stop")  # already stopped: nothing to do
         platform.control("reload")  # launchd reads the definition when bootstrapping
         platform.control("disable")
-        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target],
+        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target], ["print", target],
                                                  ["disable", target]])
         with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
@@ -139,6 +139,108 @@ class Service(DarwinCase):
         self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
         with self.assertRaisesRegex(RuntimeError, "still running"):
             platform.control("stop")
+
+    def test_restart_waits_for_label_removal_after_the_processes_end_and_preserves_worker_jobs(self):
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+        worker = "dev.altitude.job.worker"
+        self.launchd.jobs[worker] = described(worker, coalition=901)
+        stopped = self.patch(platform, "_stop_members", return_value=True)
+        sleep = self.patch(platform.time, "sleep")
+        removing = False
+        reads = 0
+
+        def delayed(argv, **kwargs):
+            nonlocal removing, reads
+            if argv[1] == "bootout":
+                removing = True  # acknowledgement precedes removal; no service processes remain
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if argv[1] == "print" and removing:
+                reads += 1
+                if reads == 3:
+                    self.launchd.jobs.pop(platform.LABEL)
+            if argv[1] == "bootstrap" and platform.LABEL in self.launchd.jobs:
+                return subprocess.CompletedProcess(argv, 5, "", "Bootstrap failed: 5: Input/output error")
+            return self.launchd(argv, **kwargs)
+
+        platform.subprocess.run.side_effect = delayed
+        platform.control("restart")
+        self.assertEqual(reads, 3)
+        self.assertEqual(sleep.call_count, 2)
+        stopped.assert_called_once_with(900)
+        self.assertEqual(self.launchd.jobs[worker], described(worker, coalition=901))
+        self.assertEqual(self.launchd.commands[-1][0], "bootstrap")
+
+    def test_stalled_or_unreadable_label_removal_refuses_restart_and_stop(self):
+        for action in ("restart", "stop"):
+            for unreadable in (False, True):
+                with self.subTest(action=action, unreadable=unreadable):
+                    self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                    self.launchd.commands.clear()
+                    removing = False
+
+                    def blocked(argv, **kwargs):
+                        nonlocal removing
+                        if argv[1] == "bootout":
+                            removing = True
+                            return subprocess.CompletedProcess(argv, 0, "", "")
+                        if argv[1] == "print" and removing and unreadable:
+                            return subprocess.CompletedProcess(argv, 5, "", "unreadable service")
+                        return self.launchd(argv, **kwargs)
+
+                    with mock.patch.object(platform.subprocess, "run", side_effect=blocked), \
+                            mock.patch.object(platform, "_stop_members", return_value=True), \
+                            mock.patch.object(platform.time, "monotonic", side_effect=[0, 0, 46]), \
+                            mock.patch.object(platform.time, "sleep"):
+                        expected = "unreadable service" if unreadable else "not removed"
+                        with self.assertRaisesRegex(RuntimeError, expected):
+                            platform.control(action)
+                    self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_slow_removal_reads_share_the_deadline_and_late_absence_does_not_bootstrap(self):
+        for read_times_out in (False, True):
+            with self.subTest(read_times_out=read_times_out):
+                self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                self.launchd.commands.clear()
+                now = 0
+                removing = False
+                budgets = []
+
+                def slow(argv, **kwargs):
+                    nonlocal now, removing
+                    if argv[1] == "bootout":
+                        removing = True
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+                    if argv[1] == "print" and removing:
+                        budgets.append(kwargs["timeout"])
+                        now += 29 if len(budgets) == 1 else 17
+                        if len(budgets) == 2:
+                            if read_times_out:
+                                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+                            self.launchd.jobs.pop(platform.LABEL)  # absence returned after the deadline
+                    return self.launchd(argv, **kwargs)
+
+                def sleep(seconds):
+                    nonlocal now
+                    now += seconds
+
+                with mock.patch.object(platform.subprocess, "run", side_effect=slow), \
+                        mock.patch.object(platform, "_stop_members", return_value=True), \
+                        mock.patch.object(platform.time, "monotonic", side_effect=lambda: now), \
+                        mock.patch.object(platform.time, "sleep", side_effect=sleep):
+                    with self.assertRaises(RuntimeError):
+                        platform.control("restart")
+                self.assertEqual(len(budgets), 2)
+                self.assertEqual(budgets[0], 30)
+                self.assertAlmostEqual(budgets[1], 15.9)
+                self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_linux_service_restart_keeps_the_systemd_contract(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), \
+                mock.patch.object(platform.host_platform, "machine", return_value="x86_64"), \
+                mock.patch.object(platform.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            platform.control("restart")
+        self.assertEqual(run.call_args.args[0], ["systemctl", "--user", "restart", "altitude.service"])
 
     def test_logs_read_the_service_log(self):
         self.assertEqual(platform.logs(), "")
@@ -322,9 +424,21 @@ class Processes(DarwinCase):
             del self.table[pid]
 
     def test_identity_liveness_and_name(self):
+        # PID 1 is intentionally absent/unreadable to this ordinary account.
+        boot = "83297b09-775d-427b-8f7c-bda8d0a8c5dd"
+        query = self.patch(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, boot + '\n'))
         self.add(40, start=7, name=b"zsh")
         self.assertEqual(platform.process_start(40), "7000000")
         self.assertTrue(platform.process_running(40, "7000000"))
+        identity = platform.process_identity(40)
+        self.assertEqual(identity['boot'], 'darwin:' + boot)
+        query.assert_called_with(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'],
+                                 capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(identity['namespace'], 'darwin')
+        self.assertTrue(platform.process_identity_live(identity))
+        self.assertFalse(platform.process_identity_live({**identity, 'start': '8000000'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'boot': 'darwin:old-boot'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'namespace': 'pid:[linux]'}))
         self.assertFalse(platform.process_running(40, "8000000"))  # the pid was reused
         self.assertIsNone(platform.process_running(40, "unknown"))
         self.add(41, zombie=True)
@@ -333,6 +447,16 @@ class Processes(DarwinCase):
         self.assertIsNone(platform.process_name(99))
         with self.assertRaises(FileNotFoundError):
             platform.process_start(99)
+
+    def test_boot_identity_never_invents_a_value_when_kernel_query_fails(self):
+        for outcome in ('not-a-uuid', subprocess.CalledProcessError(1, 'sysctl')):
+            with self.subTest(outcome=outcome), mock.patch.object(platform.subprocess, 'run') as query:
+                if isinstance(outcome, Exception):
+                    query.side_effect = outcome
+                else:
+                    query.return_value = subprocess.CompletedProcess([], 0, outcome)
+                with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                    platform._process_boot()
 
     def test_stop_signals_every_member_checked_again_and_escalates_after_the_grace(self):
         self.add(1)  # launchd: another coalition

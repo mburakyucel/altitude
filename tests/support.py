@@ -16,8 +16,29 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+
+
+@contextmanager
+def container_namespace_metadata(root: Path):
+    """Model image UID/GID 1000 without requiring CI's host account to have those IDs.
+
+    Real filesystem content/type/mode/link/time observations remain intact. Native
+    VM lanes separately verify actual user-namespace mapping and ownership changes.
+    """
+    original = Path.lstat
+    def observed(path):
+        value = original(path)
+        if not path.is_relative_to(root):
+            return value
+        fields = {name: getattr(value, name) for name in dir(value) if name.startswith('st_')}
+        fields.update(st_uid=1000, st_gid=1000)
+        return SimpleNamespace(**fields)
+    with mock.patch.object(Path, 'lstat', new=observed):
+        yield
 
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
@@ -28,7 +49,7 @@ SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir="/tmp")).resolve()
 tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
-OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
+OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget", "podman")
 
 
 def install_offline_guards() -> None:
@@ -267,6 +288,17 @@ elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
 elif cmd == ("run", "view"):
     print(read("run.json", '{"status": "completed", "conclusion": "success"}'))
+elif cmd == ("auth", "token"):
+    # The keyring answers only where the session bus is reachable.
+    if read("token.txt") is None or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        fail("no oauth token found for github.com")
+    print(read("token.txt"))
+elif cmd == ("api", "user"):
+    # Signed in through the keyring on the session bus or an exported token; otherwise unauthenticated.
+    token = (read("token.txt") or "").strip()
+    if not token or not (os.environ.get("DBUS_SESSION_BUS_ADDRESS") or os.environ.get("GH_TOKEN") == token):
+        fail("HTTP 401: Requires authentication (https://api.github.com/graphql)")
+    print('{"login": "fixture-operator"}')
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''
@@ -313,10 +345,12 @@ def add_worktree(repo: Path, slug: str) -> Path:
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
-    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`. A worker
+    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture."""
 
     gated = False
     host: str | None = None
+    github = False
 
     def setUp(self) -> None:
         super().setUp()
@@ -325,6 +359,8 @@ class AltitudeCase(unittest.TestCase):
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
+        if not self.github:
+            self.patch(engines, "github_token", return_value="")
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = self.tmp / "repo"

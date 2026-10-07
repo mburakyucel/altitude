@@ -1,5 +1,12 @@
 # Engine and session lifecycle
 
+Durable resume claims record their owner's PID, start time, boot identity and PID namespace through
+`platform.py`. Reused process numbers after restart or container recreation do not keep an old claim
+live. Existing claim reconciliation retains the reserved messages and worker identity; missing process
+identity is stale. Boot/start mismatches establish a stale owner before reading its protected
+namespace link; a permission error when the lifetime still matches remains unavailable evidence. Linux is
+implemented; native macOS process-identity evidence remains part of that platform's open runtime gap.
+
 ## Conversation-audit pilot
 
 The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable
@@ -407,6 +414,31 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
+### Release permission on resume
+
+A recorded [release grant](CLI.md#release-publication) supplies exact native allow rules for that
+task's `alt task publish <slug>` and `alt task publish <slug> --check` forms through the engine seam.
+The grant result shows the exact commands with the literal slug; shell-variable or quoted forms
+are not promised to match the native rule.
+Launch/resume regenerates task settings; recording a grant does not reload a running engine.
+After a mid-turn grant the owner checkpoints and parks for L3 to resume the same attempt. Project-chat
+approval is recorded by L3 before that resume. Neither operation grants merge approval or changes
+inherited engine policy or user settings.
+
+The resumed owner first runs `--check` without GitHub writes, then publishes through the same
+daemon authority contract on either engine. Check acceptance does not prove the distinct publish
+invocation is admitted. A native refusal is reported without bypassing it. Live publish acceptance
+and GitHub ordering remain first-use evidence, as recorded in the [release guide](RELEASING.md#publish-a-release).
+
+Normal resume retains the grant. A new attempt expires it; a still-valid, unrevoked original
+approval may support a replacement grant for the same target/files, preserving its historical
+identity and original deadline. Revocation, task completion,
+deadline or consumed publication blocks further writes even if a running engine retains an allow
+rule. An interrupted publication keeps its task-owned draft and phase evidence for read-back
+reconciliation; it never blindly repeats an uncertain write or deletes remote state. An uncertain
+draft creation can retry after successful reads establish that both tag and release are absent,
+with reconciliation recorded before a fresh create and no manual ledger edit.
+
 ### Image delivery and recovery
 
 Project and task messages may contain managed `images` references with an opaque ID, display name,
@@ -475,7 +507,7 @@ conversation and to its inbox. Each file is published atomically under the proje
 concurrent reads see complete messages. The owner receives the exact text with its sender and
 message ID, plus the answered question's ID for a Needs you answer; it already holds the brief,
 persona and its own questions, so no question state or procedure is attached. Hooks fired inside a
-helper subagent leave the inbox to the owner. Nothing is killed. The engine seam supplies the inbox at a native hook
+helper subagent leave the inbox to the owner. Ordinary sends do not interrupt work. The engine seam supplies the inbox at a native hook
 checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
 worker retains the fault path even with pending steering. For a blocked task the same locked append
 records a due `resume_after` request, except when Stop holds the inbox. The L3
@@ -490,6 +522,20 @@ Quick-choice receipts and messages already used by recorded decisions cannot be 
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
 retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
+**Send now** is available for an inbox-owned operator message while its saved-session owner is running
+and eligible to resume. Admission shares the inbox writer lock and records the existing Stop fence
+before hook pickup can take the row. If pickup already owns it, the action returns its receipt without
+another interruption. The daemon stops the observed worker through the engine seam and resumes the
+same session, attempt, model and worktree with only the selected message; siblings stay in the inbox
+for later checkpoints. The request supplies no synthetic conversation message. Like Stop, Send now
+cancels attached reviews and may interrupt publication; completed effects remain completed.
+The normal handoff retains launch ownership across Stop and resume. Confirmed Stop and the due
+continuation are durable, including across daemon recovery; a later launch hold keeps the message
+waiting to resume without monopolizing the task's operation slot. Stop and Reject remain available.
+New questions and faults supersede the requested wake. Explicitly stopped owners require Continue;
+question waits require an answer; faulted tasks require recovery. Missing sessions or unavailable
+engines explain why Send now is unavailable. Pending delivery, handoff uncertainty and confirmed
+delivery use the existing receipts; no browser action infers delivery from inbox absence.
 A successful stdin handoff, matching session initialization
 and bound replacement record delivery for that exact batch. A correlated native hook attachment also
 proves handoff; inbox absence or new assistant output does not. Missing evidence says Delivery
@@ -1028,8 +1074,8 @@ Claude's confinement, while Codex retains its native filesystem sandbox.
 
 Neither L2 launch carries the user service bus, so a worker cannot reload or restart a user service, and a
 Codex L2 cannot write outside its writable roots. A task that needs such a change asks the operator for
-machine access for one purpose; the owner resolves the answer, and L3 or the operator records the grant
-(`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
+machine access for one purpose; the owner resolves the answer and records the grant from a task-chat yes,
+or L3 or the operator records it (`alt task machine --grant`), which altd accepts only when the cited message is the operator's own answer to
 that current question revision. `alt task run` then writes the run's row and executes each command as the
 operator in a transient user unit outside the worker sandbox, with the bus reachable, in the task worktree,
 carrying the owner's task identity, one at a time, under `MACHINE_COMMAND_TIMEOUT`. The unit writes its output
@@ -1100,7 +1146,8 @@ L3 runs headless, so its only checkpoint is the turn boundary: a message the ope
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
-and other conversations separate. Each waiting chat row remains individually removable until claim;
+and other conversations separate. Each waiting chat row remains individually removable until claim,
+including after an accepted Send now;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
 while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
@@ -1109,6 +1156,19 @@ waits 1, 5, 15, then 60 minutes (`retry_at`) while later messages proceed; it is
 available. A turn with provider output is never replayed, and a refused operator message keeps its
 Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
+
+An operator queue row's **Send now** promotes it ahead of other rows and runs it alone as the next
+turn; the remaining rows retain their relative order and normal folding. The accepted priority stays
+in the queue file until claim, and Remove remains available while the queue owns the row. Removal
+cannot undo an interruption already requested. An active chat still starting explains why Send now
+is unavailable until the engine reports its launch. The daemon sets only the
+captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
+confirms its termination before the L3 lock is released. Partial output and session identity remain,
+and the turn says **Interrupted for a queued message**. That turn is never replayed. Active system
+turns finish normally to preserve their existing notification and report receipts; a promoted row
+says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
+turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with
+an explanation. The priority marker adds no quiet-point restart hold.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A
@@ -1184,13 +1244,21 @@ consumption, steering, resume and explicit exits; they do not establish live-pro
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
-marker or resume claim, L3 turn, adversarial review, or report verification in flight. Running and blocked workers do not
+marker or resume claim, L3 turn, adversarial review, validation run, or report verification in flight.
+Validation holds through bounded execution, evidence recording and cleanup. Running and blocked workers themselves do not
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
 fault releases a window whose unit died silently. altd runs the guarded build-and-restart
-script itself.
+script itself. On macOS, service Stop/restart confirms its coalition cleanup and label removal before
+returning Stop or bootstrapping the replacement, with a 45-second removal limit. Independent workers
+remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
+recovery service's API/UI health from a new process; its error retains both activation failure and
+recovery outcome. An absent prior bundle is explicit, and no recovery is attempted without one.
+Validation also refuses new runs during that window. Unexpected daemon exit or host
+reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
+delivery keeps the original run area for recovery.
 The web update notice is dismissible per browser for the pending update and failure identity.
 Ordinary polling, navigation, refresh and quiet-point changes preserve dismissal; a new update
 or new activation failure can notify again. Monitor retains the overview's update status and
@@ -1292,7 +1360,29 @@ worker records travel with it. Task state changes and stop/resume records are th
 parser error or incomplete final JSONL record is displayed as viewer evidence and retried on the next poll; it
 never changes task or worker state.
 
+## Container continuation
+
+The [image lifecycle](CONTAINERS.md#lifecycle-and-recovery) pauses new provider work after container
+replacement until the operator runs the host launcher's Continue. Restarting the same container
+preserves its prior admission. Fresh empty home and project volumes initialize once before the
+application starts; imported, restored or incomplete state never silently becomes fresh.
+
+Task dispatch/resume, coordinator chat/report turns, independent reviews, setup connection and
+conversation audit enter the same admission lease before taking their work. Engine primitives
+check that lease too. A later Pause permits an already admitted call to finish but rejects new
+ones. Queued messages, review requests and resume generations remain unconsumed on refusal;
+report refusals do not consume failure backoff. Stop and report bookkeeping do not need admission.
+Old resume claims still reconcile while paused: known workers can be adopted, prelaunch claims
+released, and genuinely uncertain launches reported through existing recovery. Global Continue
+does not clear a task Stop, question, usage limit or merge/review hold. Native behavior is unchanged;
+Mac container lifecycle evidence remains pending.
+
 ## Operator terminal
+
+The container deployment explicitly refuses terminal routes and owner transcript reads for every
+connection. Its user interface offers the host-side container shell command instead. Container
+application activation uses image replacement, not source restart receipts; native worker lifecycle
+and the full final-image acceptance still follow the [container validation boundary](CONTAINERS.md).
 
 The operator's terminal sits beside a task's sessions without joining them. When the operator opens
 it, altd starts a shell in the task's worktree. No agent session starts, and the worker's

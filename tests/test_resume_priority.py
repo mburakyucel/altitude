@@ -283,7 +283,7 @@ class TestResumePriority(AltitudeCase):
         worker = self.fake.resume_l2(original["l2_engine"], "recovered-worker", original["session_id"], "Continue")["agent"]
         T.update_resume_claim(self.project, original["slug"], claim["id"], phase="launched", worker=worker)
         task = S.load_task(self.project, original["slug"])
-        task["resume_claim"]["owner_pid"] = 999999999
+        task["resume_claim"]["owner_process"]["pid"] = 999999999
         S.save_task(self.project, task)
         fresh = self.new("Fresh after daemon crash", "other")
 

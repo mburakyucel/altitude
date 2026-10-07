@@ -85,7 +85,7 @@ def require_deployed_checkout() -> None:
 
 
 def require_idle() -> None:
-    # 2026-09-07 queue starvation: detached workers survive; only launch/bind, L3 and report windows hold.
+    # Detached workers survive; validation holds through its bounded execution and evidence recording (#649).
     # Ask the live daemon too: its L3 turns and verification are process-local, unlike task markers.
     if unit_properties().get("ActiveState") == "active":
         try:
@@ -98,7 +98,7 @@ def require_idle() -> None:
         active = [f"{p}/{t['slug']}" for p in config.load_projects() for t in S.list_tasks(p)
                   if t.get("dispatching") or t.get("resume_claim")]
         if not quiet or active:
-            raise RestartError("restart refused while dispatch, L3 or report verification is active: " + ", ".join(active))
+            raise RestartError("restart refused while dispatch, L3, validation or report verification is active: " + ", ".join(active))
         # The operator command also closes entry until the replacement daemon answers.
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pending = S.read_json(flag, {}) or {}
@@ -208,12 +208,17 @@ def publish_and_restart(staging: Path) -> None:
             DIST.rename(staging)
         if had_previous and backup.exists():
             backup.rename(DIST)
-        try:
-            restart_unit()
-        except RestartError:
-            pass
+        recovery = "no prior web bundle was available; recovery not attempted"
+        if had_previous:
+            try:
+                recovery_pid = int(unit_properties().get("MainPID", "0") or 0)
+                restart_unit()
+                wait_healthy(recovery_pid)
+                recovery = "restored the prior web bundle; recovery API/UI health verified"
+            except (RestartError, ValueError) as recovery_error:
+                recovery = f"restored the prior web bundle; recovery failed: {recovery_error}"
         diagnostics()
-        raise RestartError(f"restart verification failed; restored the prior web bundle: {exc}") from exc
+        raise RestartError(f"restart verification failed: {exc}; {recovery}") from exc
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
@@ -242,6 +247,7 @@ def record_failure(attempt: str | None, error: str) -> None:
 
 
 def main() -> int:
+    platform.require_native_application()
     staging: Path | None = None
     attempt = requested_at()
     try:

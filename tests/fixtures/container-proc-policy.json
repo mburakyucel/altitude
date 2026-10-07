@@ -1,0 +1,59 @@
+{
+  "basis": "Approved v5 whole-container exposure; validation/129 enumerates eleven ACPI/SCSI descendant read predicates for both UIDs, with no content reads or extra writes. Independently reviewed reconciliation retains exact matches. This measured tuple must not be inherited by Mac/ARM64 or other runtimes; re-derive and review the complete inventory there.",
+  "tuple": {
+    "distribution": "ubuntu",
+    "release": "24.04",
+    "architecture": "amd64",
+    "kernel": "6.8.0-142-generic",
+    "podman": "4.9.3",
+    "crun": "crun version 1.14.1",
+    "network": "slirp4netns"
+  },
+  "readable": [
+    "/proc/acpi",
+    "/proc/acpi/wakeup",
+    "/proc/asound",
+    "/proc/bus",
+    "/proc/fs",
+    "/proc/irq",
+    "/proc/kallsyms",
+    "/proc/keys",
+    "/proc/latency_stats",
+    "/proc/scsi",
+    "/proc/scsi/device_info",
+    "/proc/scsi/scsi",
+    "/proc/scsi/sg",
+    "/proc/scsi/sg/allow_dio",
+    "/proc/scsi/sg/debug",
+    "/proc/scsi/sg/def_reserved_size",
+    "/proc/scsi/sg/device_hdr",
+    "/proc/scsi/sg/device_strs",
+    "/proc/scsi/sg/devices",
+    "/proc/scsi/sg/version",
+    "/proc/sys"
+  ],
+  "writable": {
+    "0": [
+      "/proc/sys/fs/mqueue/msg_default",
+      "/proc/sys/fs/mqueue/msg_max",
+      "/proc/sys/fs/mqueue/msgsize_default",
+      "/proc/sys/fs/mqueue/msgsize_max",
+      "/proc/sys/fs/mqueue/queues_max",
+      "/proc/sys/kernel/auto_msgmni",
+      "/proc/sys/kernel/cad_pid",
+      "/proc/sys/kernel/msgmax",
+      "/proc/sys/kernel/msgmnb",
+      "/proc/sys/kernel/msgmni",
+      "/proc/sys/kernel/ns_last_pid",
+      "/proc/sys/kernel/pid_max",
+      "/proc/sys/kernel/sem",
+      "/proc/sys/kernel/shm_rmid_forced",
+      "/proc/sys/kernel/shmall",
+      "/proc/sys/kernel/shmmax",
+      "/proc/sys/kernel/shmmni"
+    ],
+    "1000": [
+      "/proc/sys/kernel/ns_last_pid"
+    ]
+  }
+}

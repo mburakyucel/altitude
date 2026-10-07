@@ -1,0 +1,355 @@
+"""Private two-volume backups, executed only by the Linux image's explicit helper.
+
+This is a bounded PAX archive of trusted, self-created data, not an authenticity
+format. The final member authenticates neither the operator nor executable data:
+it detects incomplete/corrupt transport before a restore can be marked complete.
+Host runtime, volume locking and helper confinement belong to platform.py.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import stat
+import struct
+import sys
+import tarfile
+
+MARKER = ".altitude-restore.json"
+END = "ALTITUDE-COMPLETE.json"
+MAX_HEADER = 1024 * 1024
+MAX_ENTRIES = 1_000_000
+MAX_BYTES = 64 * 1024**3
+CHUNK = 1024 * 1024
+XATTR = "ALTITUDE.xattrs"
+
+
+class PolicyError(ValueError):
+    """Content-free operator category; file names/data never reach helper logs."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code=code
+
+
+def _attribute(key: str, value: bytes):
+    if key.startswith('user.'):
+        return
+    if key not in ('system.posix_acl_access','system.posix_acl_default'):
+        raise PolicyError(83,'Unsupported file attribute; security labels are not supported')
+    if len(value)<4 or (len(value)-4)%8 or struct.unpack_from('<I',value)[0]!=2:
+        raise PolicyError(84,'Unsupported POSIX ACL encoding')
+    entries=[struct.unpack_from('<HHI',value,offset) for offset in range(4,len(value),8)]
+    tags=[tag for tag,_,_ in entries]
+    if any(tags.count(tag)!=1 for tag in (1,4,32)) or tags.count(16)>1 or ((2 in tags or 8 in tags) and 16 not in tags):
+        raise PolicyError(84,'Unsupported POSIX ACL structure')
+    identities=set()
+    previous=(0,0)
+    for tag,permissions,identity in entries:
+        order=(tag,identity)
+        if (tag not in (1,2,4,8,16,32) or permissions>7 or order<=previous or order in identities
+                or identity not in ((0,1000) if tag in (2,8) else (0xffffffff,))):
+            raise PolicyError(84,'POSIX ACL identifiers must use namespace IDs 0 or 1000')
+        identities.add(order); previous=order
+
+
+def _json(value) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+class BoundedInfo(tarfile.TarInfo):
+    # tarfile reads PAX/longname payloads before yielding a member. Bound those
+    # allocations too, not just the sizes seen by the extractor (issue543/F8).
+    def _proc_pax(self, archive):
+        if self.size > MAX_HEADER:
+            raise ValueError("Backup metadata exceeds its limit")
+        return super()._proc_pax(archive)
+
+    def _proc_gnulong(self, archive):
+        raise ValueError("Only the backup's PAX format is supported")
+
+    def _proc_sparse(self, archive):
+        raise ValueError("Sparse archive records are unsupported")
+
+
+def _attributes(path: Path) -> dict[str, str]:
+    result = {}
+    for key in os.listxattr(path, follow_symlinks=False):
+        value=os.getxattr(path,key,follow_symlinks=False)
+        _attribute(key,value)
+        result[key] = base64.b64encode(value).decode()
+    return result
+
+
+def _metadata(info: tarfile.TarInfo) -> dict:
+    return {"name": info.name, "kind": info.type.decode("ascii"), "size": info.size,
+            "mode": info.mode, "uid": info.uid, "gid": info.gid,
+            "mtime_ns": info.pax_headers.get("ALTITUDE.mtime_ns"),
+            "atime_ns": info.pax_headers.get("ALTITUDE.atime_ns"),
+            "link": info.linkname, "attrs": info.pax_headers.get(XATTR, "{}")}
+
+
+class Contents:
+    def __init__(self, max_bytes: int, max_entries: int):
+        self.digest = hashlib.sha256()
+        self.bytes = 0
+        self.entries = 0
+        self.max_bytes = max_bytes
+        self.max_entries = max_entries
+
+    def member(self, info):
+        self.entries += 1
+        self.bytes += info.size
+        if self.entries > self.max_entries or self.bytes > self.max_bytes:
+            raise ValueError("Backup exceeds its file or byte limit")
+        value = _json(_metadata(info))
+        if len(value) > MAX_HEADER:
+            raise ValueError("Backup metadata exceeds its limit")
+        self.digest.update(len(value).to_bytes(8, "big"))
+        self.digest.update(value)
+
+    def result(self):
+        return {"format": 1, "entries": self.entries, "bytes": self.bytes,
+                "sha256": self.digest.hexdigest()}
+
+
+class DigestReader:
+    def __init__(self, stream, digest):
+        self.stream, self.digest = stream, digest
+
+    def read(self, size):
+        value = self.stream.read(size)
+        self.digest.update(value)
+        return value
+
+
+def export(stream, home: Path, projects: Path, *, max_bytes=MAX_BYTES, max_entries=MAX_ENTRIES) -> dict:
+    """Caller holds both directory locks and has proved the controller stopped."""
+    contents = Contents(max_bytes, max_entries)
+    seen={}
+    with tarfile.open(fileobj=stream, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+        for root_name, root in (("home", home), ("projects", projects)):
+            links = {}
+
+            def visit(path, relative):
+                current = path.lstat()
+                mode = current.st_mode
+                info = tarfile.TarInfo(relative)
+                info.mode = stat.S_IMODE(mode)
+                info.uid, info.gid = current.st_uid, current.st_gid
+                info.mtime = current.st_mtime_ns // 1_000_000_000
+                info.pax_headers = {"ALTITUDE.mtime_ns": str(current.st_mtime_ns),
+                    "ALTITUDE.atime_ns": str(current.st_atime_ns), XATTR: _json(_attributes(path)).decode()}
+                if stat.S_ISDIR(mode):
+                    info.type = tarfile.DIRTYPE
+                elif stat.S_ISLNK(mode):
+                    info.type, info.linkname = tarfile.SYMTYPE, os.readlink(path)
+                elif stat.S_ISREG(mode):
+                    identity = (current.st_dev, current.st_ino)
+                    if identity in links:
+                        info.type, info.linkname = tarfile.LNKTYPE, links[identity]
+                    else:
+                        links[identity] = relative
+                        info.size = current.st_size
+                else:
+                    raise PolicyError(82,'Unsupported file type: sockets, devices and FIFOs cannot be backed up')
+                _validate(info,seen)  # identical path, ownership and metadata policy before reading data
+                contents.member(info)
+                if info.isreg():
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os,'O_NOATIME',0))
+                    with os.fdopen(fd, "rb") as source:
+                        observed = os.fstat(source.fileno())
+                        if (observed.st_dev, observed.st_ino, observed.st_size) != (current.st_dev, current.st_ino, current.st_size):
+                            raise ValueError("Backup source changed while reading")
+                        archive.addfile(info, DigestReader(source, contents.digest))
+                else:
+                    archive.addfile(info)
+                if info.isdir():
+                    children = sorted(path.iterdir())
+                    # Home contains a nested mountpoint in a running controller, but
+                    # these helpers mount the two volumes at SEPARATE paths. Hidden
+                    # content must not be silently lost or duplicated (review F3).
+                    if relative == "home/Projects" and children:
+                        raise PolicyError(85,"Home volume contains hidden Projects data; backup refused")
+                    for child in children:
+                        if child.name == MARKER and path == root:
+                            continue  # restore authority is never inherited from archive contents
+                        visit(child, relative + "/" + child.name)
+
+            visit(root, root_name)
+        payload = _json(contents.result())
+        final = tarfile.TarInfo(END)
+        final.size, final.mode = len(payload), 0o600
+        archive.addfile(final, io.BytesIO(payload))
+    return contents.result()
+
+
+def _validate(info: tarfile.TarInfo, seen: dict[str, bytes]):
+    parts = PurePosixPath(info.name).parts
+    if (not parts or parts[0] not in ("home", "projects") or info.name != "/".join(parts)
+            or any(part in (".", "..", "") for part in parts) or "\0" in info.name
+            or info.name in seen or len(parts)==2 and parts[-1] == MARKER):
+        raise ValueError("Invalid, duplicate or reserved backup path")
+    if len(parts)>128:
+        raise PolicyError(85,'Backup paths cannot exceed 128 components')
+    if len(parts) > 1 and seen.get("/".join(parts[:-1])) != tarfile.DIRTYPE:
+        raise ValueError("Backup parent must be an earlier directory")
+    if info.uid not in (0,1000) or info.gid not in (0,1000):
+        raise PolicyError(80,'Unsupported namespace ownership; use IDs 0 or 1000')
+    if info.mode & ~0o1777:
+        raise PolicyError(81,'Set-ID metadata is unsupported')
+    if info.type not in (tarfile.REGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE, tarfile.LNKTYPE) or info.sparse:
+        raise PolicyError(82,"Unsupported archive file type")
+    if info.size < 0 or (not info.isreg() and info.size):
+        raise ValueError("Invalid archive size")
+    if len(parts) == 1 and not info.isdir():
+        raise ValueError("Volume root must be a directory")
+    if info.name == "home/Projects" and not info.isdir() or info.name.startswith("home/Projects/"):
+        raise PolicyError(85,"Home Projects mountpoint must be an empty directory; nested data is not part of the home archive")
+    if info.islnk() and (info.linkname.split("/")[0] != parts[0] or seen.get(info.linkname) != tarfile.REGTYPE):
+        raise ValueError("Hardlinks require an earlier regular file in the same volume")
+    if "\0" in info.linkname or len(info.linkname) > 4096:
+        raise ValueError("Invalid link target")
+    expected = {"ALTITUDE.mtime_ns", "ALTITUDE.atime_ns", XATTR}
+    if (not expected <= info.pax_headers.keys() or info.pax_headers.keys() - expected - {"path", "linkpath", "size", "mtime", "hdrcharset"}
+            or info.pax_headers.get('hdrcharset','BINARY') != 'BINARY'):
+        raise ValueError("Unknown or missing backup metadata")
+    attrs = json.loads(info.pax_headers[XATTR])
+    if not isinstance(attrs, dict):
+        raise ValueError("Invalid file attributes")
+    decoded = {}
+    for key, value in attrs.items():
+        decoded[key] = base64.b64decode(value, validate=True)
+        _attribute(key,decoded[key])
+    times = tuple(int(info.pax_headers["ALTITUDE." + key + "_ns"]) for key in ("atime", "mtime"))
+    if any(abs(value) >= 2**63 for value in times):
+        raise ValueError("Timestamp is outside the supported range")
+    seen[info.name] = info.type
+    return parts, decoded, times
+
+
+def _apply(path: Path, info, attrs, times):
+    os.chown(path, info.uid, info.gid, follow_symlinks=False)
+    if not info.issym():
+        os.chmod(path, info.mode, follow_symlinks=False)
+    for key, value in attrs.items():
+        os.setxattr(path, key, value, follow_symlinks=False)
+    os.utime(path, ns=times, follow_symlinks=False)
+
+
+def restore(stream, home: Path | None = None, projects: Path | None = None, *, max_bytes=MAX_BYTES, max_entries=MAX_ENTRIES) -> dict:
+    """Validate completely; with both paths, extract into fresh locked image volumes."""
+    if (home is None)!=(projects is None):
+        raise ValueError('Supply both restore roots or neither for validation')
+    roots = {"home": home, "projects": projects} if home is not None else {}
+    for root in roots.values():
+        if not stat.S_ISDIR(root.lstat().st_mode) or any(root.iterdir()):
+            raise ValueError("Restore requires empty volume directories")
+    contents = Contents(max_bytes, max_entries)
+    seen, directories, links = {}, [], []
+    completed = False
+    with tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedInfo) as archive:
+        for info in archive:
+            if completed:
+                raise ValueError("Data follows the completion record")
+            if info.name == END:
+                if not info.isreg() or not 0 < info.size <= MAX_HEADER:
+                    raise ValueError("Invalid completion record")
+                if json.load(archive.extractfile(info)) != contents.result():
+                    raise ValueError("Backup content digest or counts do not match")
+                completed = True
+                continue
+            parts, attrs, times = _validate(info, seen)
+            contents.member(info)
+            if not roots:
+                if info.isreg():
+                    source = archive.extractfile(info)
+                    while value := source.read(CHUNK):
+                        contents.digest.update(value)
+                continue
+            target = roots[parts[0]].joinpath(*parts[1:])
+            if info.isdir():
+                if len(parts) > 1:
+                    target.mkdir(mode=0o700)
+                directories.append((target, info, attrs, times))
+            elif info.issym() or info.islnk():
+                links.append((target, info, attrs, times))
+            else:
+                with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as output:
+                    source = archive.extractfile(info)
+                    while value := source.read(CHUNK):
+                        contents.digest.update(value)
+                        output.write(value)
+                    output.flush()
+                    os.fsync(output.fileno())
+                _apply(target, info, attrs, times)
+        if not completed or seen.get("home") != tarfile.DIRTYPE or seen.get("projects") != tarfile.DIRTYPE:
+            raise ValueError("Backup stream is incomplete")
+        # Tar stops at its end marker. Consume and bound the remaining zero padding
+        # from its buffered stream, refusing hidden/concatenated archive contents.
+        tail = archive.fileobj.read(tarfile.RECORDSIZE * 2)
+        if any(tail) or len(tail) >= tarfile.RECORDSIZE * 2:
+            raise ValueError("Unexpected data after the backup archive")
+    # No symlink exists while regular paths are written. Parents must have been
+    # declared directories; hardlinks point only to existing same-volume files.
+    for target, info, attrs, times in links:
+        if info.islnk():
+            parts = PurePosixPath(info.linkname).parts
+            os.link(roots[parts[0]].joinpath(*parts[1:]), target, follow_symlinks=False)
+        else:
+            target.symlink_to(info.linkname)
+        _apply(target, info, attrs, times)
+    for arguments in reversed(directories):
+        _apply(*arguments)
+    return contents.result()
+
+
+def helper(action: str, descriptor: dict):
+    """Fixed image entrypoint; stdout is binary for export and silent for restore."""
+    from altitude import platform
+    import re
+    if action not in ('export', 'restore'):
+        raise ValueError('Invalid backup helper operation')
+    for key, length in (('lineage', 32), ('pair', 32), ('archive', 64)):
+        if not re.fullmatch('[0-9a-f]{'+str(length)+'}', descriptor.get(key, '')):
+            raise ValueError('Invalid backup operation identity')
+    home, projects = platform.container_archive_environment()
+    with platform.container_volume_locks(home, projects):
+        if action == 'export':
+            export(sys.stdout.buffer, home, projects)
+            sys.stdout.buffer.flush()
+        else:
+            digest = hashlib.sha256()
+            result = restore(DigestReader(sys.stdin.buffer, digest), home, projects)
+            if digest.hexdigest() != descriptor['archive']:
+                raise ValueError('The complete input archive differs from its manifest')
+            marker = _json({'format': 1, **descriptor})
+            for root in (home, projects):
+                with (root/MARKER).open('xb') as target:
+                    os.fchmod(target.fileno(), 0o600)
+                    target.write(marker); target.flush(); os.fsync(target.fileno())
+                fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+                try: os.fsync(fd)
+                finally: os.close(fd)
+
+
+def entrypoint(action: str, descriptor: dict):
+    """Content-free, actionable failure categories; no exception text crosses the helper."""
+    try:
+        helper(action, descriptor)
+    except OSError:
+        raise SystemExit(70) from None
+    except PolicyError as error:
+        raise SystemExit(error.code) from None
+    except (ValueError, tarfile.TarError):
+        raise SystemExit(72) from None
+    except RuntimeError as error:
+        raise SystemExit(71 if str(error).startswith('Another Altitude container owns') else 73) from None
+    except Exception:
+        raise SystemExit(74) from None
+
+
+if __name__ == '__main__':
+    entrypoint(sys.argv[1], json.loads(sys.argv[2]))

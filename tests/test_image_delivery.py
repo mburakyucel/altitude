@@ -139,7 +139,9 @@ class TestNativeImages(ImageDeliveryCase):
                 if engine == "codex":
                     self.assertIn('model_reasoning_effort="xhigh"', command)
                 self.assertIn("ALTITUDE_TASK=owner", command)
-                self.assert_input(engine, command, processes[-1].stdin.getvalue(), resume=resume)
+                token, payload = processes[-1].stdin.getvalue().decode().split("\n", 1)
+                self.assertEqual(token, "", "the job's first input line carries the GitHub token")
+                self.assert_input(engine, command, payload, resume=resume)
 
     def test_larger_inbox_batch_keeps_every_image_visually_inspectable(self):
         batch = [{**self.image, "id": str(index) * 32, "source_message_id": f"message-{index}"} for index in range(5)]

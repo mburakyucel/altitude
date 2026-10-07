@@ -30,8 +30,9 @@ Do not bind an existing service's reserved port or use its runtime state for a p
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build,
 full Chromium browser suite and headless-shell recovery lane. Each phase retains
-`/usr/bin/time -p` wall/user/system output, written
-as one block so the parallel branches never interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
+wall/user/system timing through the standard-library `scripts/time_command.py`,
+without GNU-specific `time` options. Each summary is written as one block so parallel
+branches do not interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
 budget from Node's `availableParallelism()` for both languages: container CPU quotas may be
@@ -268,8 +269,12 @@ workspace version is reset to `0.0.0` to match its unchanged Cargo lockfile; ext
 versions, checksums and Git revisions stay pinned. Rust uses the upstream `1.95.0` toolchain.
 Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
 `just test -p codex-sandboxing --lib --locked --target aarch64-apple-darwin --cargo-profile dev-small`.
-The added policy tests cover effective worker roots, read-only/reviewer, network-disabled/L3,
-filesystem-helper and narrowed custom profiles, plus whole-name matching. Native nested-sandbox
+The patch admits only a network-enabled process policy semantically equal to canonical
+workspace-write plus both `/run/user/<real UID>/bus` and `/run/user/<real UID>/systemd` denies.
+It preserves the original emitted filesystem policy. Plain workspace-write is excluded, as are
+other narrower policies. Identical effective permissions share eligibility regardless of profile name.
+The added policy tests cover effective worker roots, current role combinations, missing or wrong-UID
+denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
 tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
 
 Build the CLI and its code-mode host together using upstream's package builder's verified V8
@@ -327,12 +332,17 @@ and `make browser-sandbox` call it automatically inside a task.
 - **Results.** Regular files that the command writes to `/results` are copied to the task folder's
   `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches that
   folder from Altitude's home without following links. Links and oversized files are skipped and
-  listed. The run's container, clone and area are removed afterwards, including after a timeout, a stop
-  or an altd restart.
+  listed. The run's container, clone and area are removed afterwards, including after a timeout or a stop.
+  Activation waits through execution, evidence recording and cleanup; validation admission shares
+  the restart fence and refuses runs once restart is requested.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#machine-access), with
   purpose `validation`, the command, commit, image, exit and how it ended. A run that altd did not
-  see end is recorded as interrupted at the next start. The runner admits no run until that start has
-  removed everything earlier runs left, and stays closed, with the reason in altd's log, if it cannot.
+  see end, including an expired run left by a host reboot or unexpected daemon exit, is stopped and
+  recorded as interrupted at the next start. Its log and results are copied before scratch files are
+  removed. A completed evidence copy is reused if ledger recording was interrupted. If evidence cannot
+  be copied, the record names its original paths and the run area is retained for recovery. The runner
+  admits no run until earlier areas are removed, and stays closed, with the reason in altd's log, if
+  evidence recording or cleanup cannot finish.
 - **Switch.** Settings → **Validation runs** is on after install. Turning it off stops a running
   run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
   runner's storage, where a worker cannot turn it back on.
@@ -364,6 +374,20 @@ unavailable, or the browser refuses its sandbox inside it, checkpoint the eviden
 `--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
 Altitude's local fictional harness exception grants no authority for another project's verification.
 
+The queued-message **Send now** walkthrough uses real queue and task storage with deterministic
+engine interruption in `web/e2e/send-now.pw.ts`. `web/playwright.validation.config.ts` keeps the
+fixture viewports and enables Chromium's sandbox in the validation container. After committing
+the candidate, run the focused walkthrough with:
+
+```sh
+alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && pnpm build && pnpm exec playwright test --config playwright.validation.config.ts send-now.pw.ts; result=$?; cp -r ui-artifacts /results/ui-artifacts; exit "$result"'
+```
+
+Named states cover loading, queued controls, interruption pending, delivered and removed rows,
+denied and unconfirmed requests, unavailable delivery and waiting for system work. Unit and Python
+fixtures additionally cover selected-message ordering, concurrent pickup, question/fault supersession,
+Stop recovery and engine job termination. The emulated iPhone lane remains separate evidence.
+
 ## Validation environments
 
 Each environment establishes one kind of evidence; running more of them does not widen what any one
@@ -379,9 +403,38 @@ blocks automating it.
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
-| Container deployment | Owned by the container runtime work | Running Altitude itself in a container | Native installation | Not an entry point yet |
+| Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; remote runs from Linux wait on verified native support |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
+
+The container gate removes its verified private containers, volumes and images before asking Podman
+to retire that store's pause process with `system migrate`. It never applies this operation to a
+shared store. Cleanup failure retains the runtime directory and fails the gate; the helper does not
+identify pause processes by executable name, which differs between Podman installations.
+
+Container admission regressions run with
+`python3 -m unittest tests.test_container_admission tests.test_installed_runtime tests.test_resume_priority`.
+They cover receipt/instance recovery, pause/launch races, lease release after process exit, caller
+refusals and retained task Stop/holds using real storage/Git and fixture engines. `container.pw.ts`
+walks the read-only recovery notice through admitted, replacement-paused, continued and unavailable
+identity states using fictional API/storage. Neither suite establishes native image or deployment
+browser acceptance; rerun the image gate on the exact candidate under authorized runtime access.
+Its `--lifecycle` option adds finite native job/descendant, daemon restart, same-container restart
+and retained-volume replacement checks. It uses fictional data and never invokes an engine.
+The `--workflow` lane uses a deterministic CLI at the engine seam and real platform jobs,
+project registration, coordinator conversation, Git guards/worktrees and task records. It checks
+Stop, queued steering, replacement admission and continuation of the same saved session and draft.
+Its synchronous application driver owns a separate fictional state directory inside the persistent
+home; the image daemon serves readiness with its default fresh state. This lane does not establish
+daemon scheduling, browser onboarding, interrupted-launch recovery or real provider compatibility.
+Run `python3 -m unittest tests.test_container_workflow` before the authorized image gate: it runs
+the same workflow and CLI with a local-process platform adapter, without host services. Workspace
+results do not establish native systemd or image support; those require the gate's retained results.
+The `--recovery` lane injects resume claims through the real claim API, exits their owning process,
+then replaces the container. A prelaunch claim restores its message before explicit continuation;
+an uncertain launch records a recovery fault without replay. Workspace tests simulate the lost
+process lifetime; the native lane reads actual lifetime evidence. Neither simulates a real provider
+having acted before the interruption, nor establishes automatic recovery of a running task.
 
 ## Device evidence
 
@@ -474,12 +527,13 @@ behavior in the task report. The native sandbox probe in `test_l3_privilege.py` 
 explicit host-capability check with no model request; it is outside default test applicability.
 
 Image integration fixtures require the detected local `ffmpeg` converter (`ffmpeg` on Debian/Ubuntu).
-RGB ICC tests use the detected system `liblcms2` library (`liblcms2-2` on Debian/Ubuntu) for bounded
+Color tests use the detected system `liblcms2` library (`liblcms2-2` on Debian/Ubuntu) for bounded
 color conversion; production reports unavailable profile conversion explicitly when it is absent.
-Inputs are limited to ordinary static raster images. HDR declarations, non-RGB ICC profiles,
-profiles over 4 MiB and non-sRGB gamma/chromaticity
-without an ICC profile require an exported sRGB copy. Decoder wall/CPU/memory/output bounds,
-orientation, alpha/color parity and intermediate cleanup have real conversion fixtures. The service
+Inputs are limited to ordinary static raster images. Synthetic fixtures cover each color description
+(RGB and gray ICC, `cICP`, `sRGB`, `gAMA`/`cHRM` and their precedence) and the unconvertible ones that
+keep decoded pixels. A 12-megapixel Display P3 photo converts under the real process limits. Decoder
+wall/CPU/memory/output bounds, orientation, alpha/color parity and intermediate cleanup have real
+conversion fixtures. The service
 and Python harnesses replace image capability checks and native execution at the engine seam.
 
 ## Installation lifecycle acceptance

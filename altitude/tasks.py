@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import config, github_intake, images as image_store, state as S, usage
+from . import config, github_intake, images as image_store, platform, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -657,6 +657,10 @@ def removable_messages(project: str, slug: str, task: dict) -> set[str]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return set()
     protected = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    request = task.get("daemon_request") or {}
+    if request.get("status") in ("pending", "executing"):
+        protected.add(request.get("send_now"))
+    protected.add(task.get("send_now"))
     protected.update(task.get("message_deliveries") or {})
     for question in task.get("questions", []):
         protected.add((question.get("acceptance_message") or {}).get("id"))
@@ -695,6 +699,11 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
     queued = {row["id"] for row in pending(project, slug)}
     claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
     removable = removable_messages(project, slug, task) - receipts.keys()
+    request = task.get("daemon_request") or {}
+    selected = (request.get("send_now") if request.get("status") in ("pending", "executing")
+                else task.get("send_now"))
+    from . import dispatch
+    unavailable = dispatch.send_now_unavailable(project, task) if removable else None
     rows = task_messages(project, slug)
     for row in rows:
         if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
@@ -704,6 +713,12 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
                  else receipt.get("state", "delivered") if receipt else "queued" if row["id"] in queued else "unconfirmed")
         row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
                            "removable": row["id"] in removable}
+        if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and state in ("queued", "sending"):
+            sending_now = row["id"] == selected
+            reason = (task.get("blocked_reason") if sending_now and task.get("resume_after")
+                      else unavailable if row["id"] in removable else "This message is already being delivered.")
+            row["delivery"].update(send_now=row["id"] in removable and not unavailable,
+                                   send_now_reason=reason, send_now_pending=sending_now)
     return rows
 
 
@@ -768,7 +783,12 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         if task.get("state") != "blocked" or task.get("resume_claim"):
             return None
         _ensure_question(project, task)
-        rows = _pending_rows(task, path)
+        pending_rows = _pending_rows(task, path)
+        selected = task.get("send_now")
+        rows = [row for row in pending_rows if not selected or row["id"] == selected]
+        if selected and not rows:
+            raise TransitionError("The selected message is no longer queued.")
+        left = [row for row in pending_rows if row not in rows]
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
         request = task.get("daemon_request") or {}
         if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
@@ -781,13 +801,16 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
             _append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", reason)
             request["message_id"] = reason["id"]
             rows.append(reason)
-        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
+        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_process": platform.process_identity(os.getpid()), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
         task.update({"resume_claim": claim, "dispatching": claim["at"]})
         task.pop("verified", None)  # A resumed owner must report its current work before completion.
         _save_claim_task(project, task)
-        path.unlink(missing_ok=True)
+        if left:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+        else:
+            path.unlink(missing_ok=True)
         return claim
 
 
@@ -860,6 +883,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         if suppress_retry and claim.get("block_id") == task.get("block_id"):
             task.pop("resume_after", None)
             task.pop("resume_request", None)
+            task.pop("send_now", None)
             task["resume_failed"] = claim_id
         elif consume_request:
             same_request = (claim.get("request") is not None
@@ -869,6 +893,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
             if same_request or same_timer:
                 task.pop("resume_after", None)
                 task.pop("resume_request", None)
+                task.pop("send_now", None)
                 task["resume_failed"] = claim_id
         _save_claim_task(project, task)
         S.regen_state_md(project)
@@ -916,7 +941,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "send_now"):
         task.pop(key, None)
 
 
@@ -932,9 +957,13 @@ def _take_turn(task: dict) -> None:
 
 def _supersede_resume(task: dict) -> None:
     # I-20260908-045037: a new question/block supersedes earlier wake requests and launch claims.
+    request = task.get("daemon_request") or {}
+    if request.get("send_now") and task.get("stop_id") == request.get("id"):
+        task.pop("stop_id", None)
     task["block_id"] = uuid.uuid4().hex
     task.pop("resume_after", None)
     task.pop("resume_request", None)
+    task.pop("send_now", None)
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
@@ -1191,6 +1220,11 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
+        request = task.get("daemon_request") or {}
+        if expected_daemon_request and request.get("operation") == "stop" and request.get("send_now"):
+            # Send now's Stop owns this new block; a later question still supersedes its continuation.
+            request["block_id"] = task["block_id"]
+            task["send_now"] = request["send_now"]
         if resume_pending:
             # #302: select the final-turn inbox under the same lock as the block; a later Send
             # sees a blocked task and schedules its own wake without losing an earlier message.
@@ -2312,37 +2346,88 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
-def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
-                         actor: str, source: str = "task") -> dict:
-    """The operator's answer to the owner's purpose question is the only authority that opens the machine to a task.
+def _standing_machine_policy(project: str, heading: str, approval: str) -> dict:
+    """Capture one approved purpose from main, never a task's editable policy."""
+    root = config.project_path(project)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main^{commit}"], cwd=root,
+                                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+        document = subprocess.run(["git", "show", f"{commit}:AGENTS.md"], cwd=root,
+                                  check=True, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("standing policy requires AGENTS.md committed on the registered project's main") from exc
+    headings = list(re.finditer(r"^#{1,6} ([^\n]+)$", document, re.MULTILINE))
+    matches = [i for i, match in enumerate(headings) if match.group(1) == heading]
+    if len(matches) != 1:
+        raise ValueError("standing policy heading must identify exactly one section in AGENTS.md")
+    index = matches[0]
+    end = headings[index + 1].start() if index + 1 < len(headings) else len(document)
+    text = document[headings[index].end():end].strip()
+    if not text or re.search(r"\n\s*\n", text) or f"`{approval}`" not in text:
+        raise ValueError("standing policy must be one paragraph citing the backtick-quoted operator approval ID")
+    return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
-    The check is mechanical: the cited operator message resolved that exact current question revision as answered
-    with no remainder, so the recorded purpose is the question the operator actually read. L3 or the operator
-    records it after judging that the answer is a yes to that purpose; the owner cannot record its own grant,
-    and nobody can widen one. The grant binds to the current attempt.
+
+def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
+                         actor: str, source: str = "task", expected_attempt: int | None = None,
+                         standing_policy: str | None = None) -> dict:
+    """Record an exact operator answer, or L3's application of an approved project-policy purpose.
+
+    The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
+    question and attempt. An owner self-records only from the operator's task-chat answer.
     """
-    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("a machine grant needs the coordinator or the operator and a reason")
+    if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("a machine grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         try:
             if task["state"] not in ("running", "blocked", "reported"):
                 raise ValueError("task is not active")
+            if actor == "l2" and (task["state"] != "running" or expected_attempt != task.get("attempt")
+                                  or source != "task"):
+                raise ValueError("the owner records a grant only while running its current attempt, "
+                                 "from the operator's task-chat answer")
             decision = _question_target(task, question, revision)
+            policy = None
             saved = decision.get("resolution") or {}
-            if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
-                    or decision["status"] != "resolved" or decision["audience"] != "operator"
-                    or saved.get("disposition") != "answered" or saved.get("remaining")
-                    or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
-                raise ValueError("cite the operator message that answered the current operator question revision")
-            operator = _decision_source(project, slug, decision, approval, source, exact=True)
+            current = next(q for q in reversed(task["questions"]) if q["id"] == question)
+            if standing_policy is not None:
+                if actor != "l3" or source != "project":
+                    raise ValueError("only L3 records a standing project approval")
+                if expected_attempt != task.get("attempt"):
+                    raise ValueError("standing grant must name the current task attempt")
+                if (decision != current or decision["status"] != "open" or decision["audience"] != "l3"
+                        or decision["asked_by"] != "l2" or decision.get("design") or decision.get("response")):
+                    raise ValueError("standing grant needs the owner's current open L3 purpose question")
+                operator = next((row for row in _decision_messages(project, slug, "project")
+                                 if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
+                                 and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
+                if not operator:
+                    raise ValueError("standing approval must cite an original operator message in this project's chat")
+                policy = _standing_machine_policy(project, standing_policy, approval)
+                if decision["detail"].split() != policy["text"].split():
+                    raise ValueError("requested purpose must exactly match the standing policy scope")
+            else:
+                if (decision != current or decision["status"] != "resolved" or decision["audience"] != "operator"
+                        or saved.get("disposition") != "answered" or saved.get("remaining")
+                        or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
+                    raise ValueError("cite the operator message that answered the current operator question revision")
+                operator = _decision_source(project, slug, decision, approval, source, exact=True)
+            previous = task.get("machine_access")
+            if previous and (policy or previous.get("policy")) and any((
+                    previous.get("purpose", "").split() != decision["detail"].split(),
+                    previous.get("approval") != approval, previous.get("source") != source,
+                    previous.get("attempt") != task.get("attempt"), previous.get("policy") != policy)):
+                raise ValueError("revoke the existing machine grant before switching its purpose or standing policy")
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
             S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
-                           revision=revision, reason=reason, error=str(exc))
+                           revision=revision, reason=reason, standing_policy=standing_policy, error=str(exc))
             raise TransitionError(f"machine grant refused: {exc}") from exc
         grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
+        if policy:
+            grant["policy"] = policy
         task["machine_access"] = grant
         S.save_task(project, task)
         S.append_event(project, slug, "machine-grant", **grant)
@@ -2380,10 +2465,10 @@ def start_machine_run(project: str, slug: str, fields) -> dict:
     return row
 
 
-def finish_machine_run(project: str, slug: str, row: dict) -> None:
+def finish_machine_run(project: str, slug: str, row: dict) -> dict:
     """Add the run's task and project events once, then replace its row with the outcome. The row is written last,
     so an interruption between the writes leaves it unfinished to finish again, and a second finish keeps the
-    outcome the first one recorded."""
+    outcome the first one recorded. Return that persisted outcome so evidence cleanup uses its paths."""
     runs = S.task_dir(project, slug) / "machine.jsonl"
     with S.project_lock(project):
         recorded = next((e for e in S.read_events(project, slug)
@@ -2397,6 +2482,7 @@ def finish_machine_run(project: str, slug: str, row: dict) -> None:
         rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
         S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
                                      for r in rows))
+        return row
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,

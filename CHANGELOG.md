@@ -5,6 +5,24 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A task owner can publish the exact repository, version and commit the operator approves through
+  a recorded release grant. Publication checks its five captured assets, creates and verifies a
+  draft before publishing, and records attempts and recovery phases. Grants are revocable and
+  expire with their task attempt; they cannot move tags or change another release. The manual
+  build path supplies integrity checks, not independent build attestation. Native publish acceptance
+  awaits first use, and macOS confirmation remains pending.
+- Chat accepts images tagged with `cICP` for Display P3 or BT.2020 colors, grayscale
+  profiles and PNG gamma/primaries; it converts them to sRGB. Images whose color information has no
+  conversion, such as HDR, upload with their colors as decoded instead of being refused.
+- The Linux container candidate packages the verified release with rootless Podman, real user
+  services and persistent home/project volumes. Image mode refuses browser terminal, host voice
+  and native application updates, and labels setup commands and paths by their container context.
+  Replacement pauses new AI work until host-side Continue; ordinary restarts preserve admission,
+  messages stay queued while paused, and task Stop/review holds remain in force.
+  Linux launcher lifecycle, private backup and phone/desktop onboarding pass with fixtures.
+  Registered-project backup and matching-image recovery pass with same-schema fixture versions;
+  Mac and final delivery acceptance remain pending. See
+  [the container boundary and validation limits](docs/CONTAINERS.md).
 - Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
   rights: `make install-service` makes it a background service of your login (it starts when you log in and
   keeps running with the screen locked). Each agent job runs as its own background job that Stop ends

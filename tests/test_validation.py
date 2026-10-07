@@ -12,6 +12,8 @@ import json
 import os
 import subprocess
 import threading
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
@@ -244,7 +246,56 @@ class TestValidationRunner(AltitudeCase):
                  .splitlines()]
         self.assertEqual((row["ended"], row["exit"]), ("failed", 0))
         self.assertTrue(row["error"])
-        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+        [area] = list((validation.home() / "runs").iterdir())
+        self.assertEqual(Path(row["results"]), area / "results")
+        self.assertEqual((area / "results" / "x").read_text(), "x\n")
+        validation.reconcile()
+        self.assertTrue(area.exists(), "failed delivery never deletes the original evidence")
+        self.assertFalse(validation._ready.is_set())
+
+    def test_activation_waits_for_validation_and_its_evidence_then_restarts(self):
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        stages = []
+
+        def during(name, action):
+            def checked(*args, **kwargs):
+                stages.append(name)
+                # A merge arrives while this validation is admitted, including before its unit starts.
+                S.write_json(flag, {"since": S.now(), "head": "candidate", "files": ["altitude/validation.py"]})
+                self.assertTrue(server.restart_status()["waiting_for"])
+                server.auto_restart()
+                with self.assertRaises(server.RestartBusy):
+                    server.restart_service()
+                return action(*args, **kwargs)
+            return checked
+
+        with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "restart"}) as restart, \
+                mock.patch.object(validation, "_clone", side_effect=during("clone", validation._clone)), \
+                mock.patch.object(validation, "_job", side_effect=during("job", validation._job)), \
+                mock.patch.object(validation, "_deliver", side_effect=during("deliver", validation._deliver)), \
+                mock.patch.object(T, "finish_machine_run", side_effect=during("record", T.finish_machine_run)):
+            result = self.validate(["sh", "-c", "echo retained; echo evidence > /results/check"])
+            self.assertEqual(result["exit"], 0)
+            self.assertEqual(Path(result["log"]).read_text(), "retained\n")
+            self.assertEqual((Path(result["results"]) / "check").read_text(), "evidence\n")
+            [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl")
+                     .read_text().splitlines()]
+            self.assertEqual(row["ended"], "exit")
+            self.assertEqual(stages, ["clone", "job", "deliver", "record", "job"])
+            restart.assert_not_called()
+            server.auto_restart()
+            restart.assert_called_once()
+            self.assertEqual(server.restart_status()["waiting_for"], [])
+
+    def test_restart_request_fences_validation_admission_without_leaving_a_run(self):
+        with config.restart_lock(exclusive=True):
+            self.assertIn("restarting", self.validate(["true"], status=400)["error"])
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        S.write_json(flag, {"requested_at": S.now(), "unit": "restart"})
+        self.assertIn("restarting", self.validate(["true"], status=400)["error"])
+        self.assertFalse(self.runner.exists())
+        flag.unlink()
+        self.assertEqual(self.validate(["true"])["exit"], 0)
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False
@@ -266,7 +317,7 @@ class TestValidationRunner(AltitudeCase):
                 .splitlines()]
         self.assertEqual([r["ended"] for r in rows], ["turned off", "turned off"])
 
-    def test_startup_finishes_and_removes_an_interrupted_run_before_admitting_any(self):
+    def test_restart_stops_an_expired_run_and_retains_its_interrupted_record_and_evidence(self):
         areas = {}
         for name in ("old", "finished", "unrecorded"):
             areas[name] = validation.home() / "runs" / name
@@ -274,8 +325,12 @@ class TestValidationRunner(AltitudeCase):
             (areas[name] / "run.json").write_text(json.dumps({"project": self.project, "slug": self.slug,
                                                               "unit": f"altitude-validation-{name}.service"}))
             if name != "unrecorded":
-                row = T.start_machine_run(self.project, self.slug, lambda n: {
-                    "purpose": "validation", "command": "true", "unit": f"altitude-validation-{name}.service"})
+                expired = (datetime.now(timezone.utc) - timedelta(seconds=validation.TIMEOUT + 60)).isoformat()
+                with mock.patch.object(S, "now", return_value=expired):
+                    row = T.start_machine_run(self.project, self.slug, lambda n: {
+                        "purpose": "validation", "command": "true", "unit": f"altitude-validation-{name}.service"})
+            (areas[name] / "results" / "check").write_text("partial evidence\n")
+            engines.machine_files(areas[name], f"altitude-validation-{name}.service")[0].write_text("before restart\n")
         T.finish_machine_run(self.project, self.slug, {**row, "exit": 0, "finished": S.now(), "ended": "exit"})
         validation._ready.clear()
         self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
@@ -293,7 +348,33 @@ class TestValidationRunner(AltitudeCase):
         self.assertEqual([(r["ended"], r["exit"]) for r in saved], [("interrupted", None), ("exit", 0)],
                          "a row finished before its area was removed stays as it ended")
         self.assertIn("altd stopped during the run", saved[0]["error"])
+        self.assertGreater((datetime.now(timezone.utc) - datetime.fromisoformat(saved[0]["started"]))
+                           .total_seconds(), validation.TIMEOUT)
+        self.assertIn("retained", saved[0]["error"])
+        self.assertEqual(Path(saved[0]["log"]).read_text(), "before restart\n")
+        self.assertEqual((Path(saved[0]["results"]) / "check").read_text(), "partial evidence\n")
         self.assertTrue(any(e["kind"] == "machine-run" for e in S.read_events(self.project, self.slug)))
+
+    def test_startup_keeps_originals_when_interrupted_delivery_cannot_finish(self):
+        area = validation.home() / "runs" / "interrupted"
+        (area / "results").mkdir(parents=True)
+        unit = "altitude-validation-interrupted.service"
+        S.write_json(area / "run.json", {"project": self.project, "slug": self.slug, "unit": unit})
+        (area / "results" / "check").write_text("partial evidence")
+        engines.machine_files(area, unit)[0].write_text("partial log")
+        T.start_machine_run(self.project, self.slug, lambda n: {"purpose": "validation", "unit": unit, "command": "check"})
+        validation._ready.clear()
+        with mock.patch.object(validation, "_deliver", side_effect=OSError("disk full")):
+            validation.reconcile()
+        [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl")
+                 .read_text().splitlines()]
+        self.assertEqual(row["ended"], "interrupted")
+        self.assertIn("disk full", row["error"])
+        self.assertEqual(Path(row["log"]).read_text(), "partial log")
+        self.assertEqual((Path(row["results"]) / "check").read_text(), "partial evidence")
+        validation.reconcile()
+        self.assertTrue(area.exists())
+        self.assertFalse(validation._ready.is_set())
 
     def test_cli_door(self):
         self.serving(self.httpd.server_address[1])
@@ -330,6 +411,31 @@ class TestValidationRunner(AltitudeCase):
         T.start_machine_run(self.project, self.slug, lambda n: {
             "purpose": "validation", "command": "true", "unit": "altitude-validation-old.service"})
         self.assertEqual(server.settle_interrupted_machine_commands(), [])
+
+    def test_recovery_keeps_original_evidence_when_a_prior_terminal_event_names_it(self):
+        write = S.atomic_write
+
+        def interrupted_write(path, *args, **kwargs):
+            if path.name == "machine.jsonl" and any(e["kind"] == "machine-run"
+                                                   for e in S.read_events(self.project, self.slug)):
+                raise OSError("interrupted ledger replacement")
+            return write(path, *args, **kwargs)
+
+        with mock.patch.object(validation, "_deliver", side_effect=OSError("temporary copy failure")), \
+                mock.patch.object(S, "atomic_write", side_effect=interrupted_write):
+            result = self.validate(["sh", "-c", "echo original-log; echo original-result > /results/check"], status=400)
+        self.assertIn("interrupted ledger", result["error"])
+        [area] = list((validation.home() / "runs").iterdir())
+        validation.reconcile()
+        [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl")
+                 .read_text().splitlines()]
+        self.assertEqual(row["ended"], "failed", "the first terminal event remains authoritative")
+        self.assertEqual(Path(row["results"]), area / "results")
+        self.assertEqual(Path(row["log"]).read_text(), "original-log\n")
+        self.assertEqual((Path(row["results"]) / "check").read_text(), "original-result\n")
+        self.assertFalse(validation._ready.is_set())
+        validation.reconcile()
+        self.assertTrue(area.exists(), "repeated startup never deletes the ledger's evidence")
 
     def test_an_ordinary_grant_named_validation_is_still_settled_at_startup(self):
         T.start_machine_run(self.project, self.slug, lambda n: {

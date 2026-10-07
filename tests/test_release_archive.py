@@ -65,7 +65,7 @@ class ReleaseArchive(AltitudeCase):
 
     def test_builder_packages_committed_cli_daemon_resources_and_built_ui(self):
         make_repo(self.repo)
-        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates"):
+        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates", "container"):
             shutil.copytree(REPO / name, self.repo / name,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         (self.repo / "web").mkdir()
@@ -102,6 +102,8 @@ class ReleaseArchive(AltitudeCase):
         package.mkdir()
         release = installation.extract(archive, checksum, package)
         self.assertEqual((release["commit"], release["repository"]), (expected, "https://github.com/example/altitude"))
+        self.assertIn("container/Containerfile", release["files"])
+        self.assertIn("container/altitude.service", release["files"])
         self.assertEqual(builds, [["install", "--frozen-lockfile"], ["build"]])
         self.assertEqual((output / "install.py").read_bytes(), (package / "altitude/installation.py").read_bytes())
         installer = hashlib.sha256((output / "install.py").read_bytes()).hexdigest()

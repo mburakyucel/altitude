@@ -1,0 +1,85 @@
+"""Approved v5 exposure gate: metadata/access predicates only, never kernel contents or writes."""
+import errno
+import json
+import os
+from pathlib import Path
+import stat
+import time
+
+TOP = ('acpi','asound','bus','fs','irq','kallsyms','kcore','keys','latency_stats',
+       'sched_debug','scsi','sys','sysrq-trigger','timer_list','timer_stats')
+
+
+def require_tuple(info, network, policy):
+    host=info['host']
+    observed={'distribution':host['distribution']['distribution'],
+        'release':host['distribution']['version'], 'architecture':host['arch'],
+        'kernel':host['kernel'], 'podman':info['version']['Version'],
+        'crun':host['ociRuntime']['version'].splitlines()[0], 'network':network}
+    if observed!=policy['tuple']:
+        raise RuntimeError('Unreviewed proc inventory tuple; record and review its full exposure: '+str(observed))
+    return observed
+
+
+def inspect():
+    started=time.monotonic()
+    paths={Path('/proc')/name for name in TOP}
+    mounts=[]
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        fields=line.split()
+        if fields[4]=='/proc' or fields[4].startswith('/proc/'):
+            mounts.append({'path':fields[4],'options':fields[5],'filesystem':fields[fields.index('-')+1:]})
+            if fields[4]!='/proc':
+                paths.add(Path(fields[4]))
+    def refused(error): raise error
+    for directory in sorted(paths):
+        if directory.is_dir() and not directory.is_symlink():
+            for base,dirs,files in os.walk(directory,followlinks=False,onerror=refused):
+                for name in sorted(dirs+files):
+                    if len(paths)>=4096 or time.monotonic()-started>25:
+                        raise RuntimeError('Proc metadata inventory exceeded its bound')
+                    paths.add(Path(base)/name)
+    rows=[]
+    for path in sorted(paths):
+        row={'path':str(path)}
+        try:
+            info=path.lstat()
+            row.update(mode=stat.filemode(info.st_mode),uid=info.st_uid,gid=info.st_gid,
+                       readable=os.access(path,os.R_OK,effective_ids=True),
+                       writable=os.access(path,os.W_OK,effective_ids=True),
+                       executable=os.access(path,os.X_OK,effective_ids=True))
+        except OSError as error:
+            if error.errno!=errno.ENOENT: raise
+            row['absent']=True
+        rows.append(row)
+    return {'uid':os.getuid(),'rows':rows,'mounts':mounts,
+            'warning':'Access predicates only; no kernel contents read or tunables written.'}
+
+
+def differences(result,policy,baseline=None):
+    uid=str(result['uid'])
+    if uid not in policy['writable']: return ['Unexpected probe principal']
+    readable=set(policy['readable'])
+    failures=[]
+    if baseline is not None:
+        if baseline['uid']!=result['uid']: return ['Default-protection principal differs']
+        default={row['path']:row for row in baseline['rows']}
+        inventoried={row['path'] for row in result['rows']}
+        for mount in baseline.get('mounts',[]):
+            if mount['path']!='/proc' and mount['path'] not in inventoried:
+                failures.append(mount['path']+':uninventoried default protection')
+        # A descendant read already available through a default-protected directory
+        # is not exposure added by unmask. Never apply this to top-level masked device
+        # placeholders (kcore/keys/etc.), or to any writable predicate.
+        readable.update(row['path'] for row in result['rows'] if
+            any(row['path'].startswith('/proc/'+name+'/') for name in TOP)
+            and row.get('mode') and default.get(row['path'],{}).get('mode','')[0:1]==row['mode'][0]
+            and default.get(row['path'],{}).get('readable'))
+    writable=set(policy['writable'][uid])
+    return failures+[row['path']+':'+access for row in result['rows'] for access,allowed in
+            (('readable',readable),('writable',writable)) if row.get(access) and row['path'] not in allowed]
+
+
+if __name__=='__main__':
+    result=inspect()
+    print(json.dumps(result))

@@ -849,6 +849,7 @@ alt task escalate <slug> --question <question> [--recommendation <approach> --la
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
+alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
@@ -1685,29 +1686,124 @@ Failed reconciliation follows L3's recovery path.
 Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
 operator-only; approval mode cannot combine with it or `--why`.
 
+### Release publication
+
+```text
+alt task publish <slug> --grant --approval <message-id> --version <version> --sha <commit> --files <directory> --reason <why> [--source task|project] [--question <id> --revision <n>] [--expires <ISO-time>]
+alt task publish <slug> --revoke --reason <why>
+alt task publish <slug> --check
+alt task publish <slug>
+```
+
+The fixed publish operation creates only the approved repository/version/commit release. It accepts
+no arbitrary command, remote or release settings. The task's registered repository supplies the
+destination. The running owner records its own task-chat approval; L3 or the operator records an
+original project-chat approval with `--source project`. The recorder reads the original answer,
+conditions and later corrections and supplies its scope judgment in `--reason`. A relay cannot grant
+permission. Direct approval names the version and SHA; an answer without that scope needs
+`--question` and `--revision` selecting the exact historical question that supplied it. The SHA may
+be an unambiguous prefix, resolved once to its full value. Removed approval, wrong task, missing
+scope or mismatching version/commit refuses the grant.
+
+`--files` selects a subdirectory inside the task folder or its worktree containing exactly the five
+files produced by `scripts/build_release.py --source <approved SHA>`:
+`altitude-<version>.tar.gz`, its `.sha256`, `install.py`, `install.sh` and `SHA256SUMS`.
+Only regular files without symlink traversal qualify. The grant records validated paths and hashes, checks
+archive identity, manifest, installer and checksums, and takes notes from the approved commit's
+dated changelog section. Publication captures unchanged bytes for upload; the grant stores no asset
+bytes. Keep notes and build evidence outside that directory. Hashes establish
+integrity, not independent build attestation; publication retains the manual path's trust in the
+approved owner. Publication appends the fixed manual-build disclosure documented in the
+[release guide](RELEASING.md#approved-task-owner) to the dated notes. Keep that limit in the readiness record.
+
+`alt task status <slug>` exposes `release_grant`; `alt task events <slug> --json` shows `release-*`
+grant, refusal, attempt and external-phase records. The grant binds task, attempt, repository,
+version, full SHA, assets and original approval. An optional `--expires` supplies the operator's
+deadline. Normal resume retains the grant; a new attempt, task completion or completed publication
+ends it. Revocation is available to owner, L3 and operator. A revoked or consumed approval cannot
+mint another grant. A new attempt may replace an expired attempt's grant under still-valid original
+approval, with the same target/files, and recover only this task's recorded draft. Replacement
+preserves the approval's historical identity and cannot remove or extend its original deadline.
+
+An active grant generates exact native allow rules for the publish command and its `--check` form
+on normal launch/resume. Use the literal task slug in the exact commands shown by the grant result;
+shell-variable or quoted forms are not promised to match. After a mid-turn grant, checkpoint and park
+for L3 to resume the same attempt. User settings, inherited denies and managed policy remain in force. The resumed owner
+runs `--check` first: it checks transport, scope and prerequisites without GitHub writes. Admission
+of that read-only command does not establish admission of the separate publish invocation; report
+any native refusal without bypassing it.
+
+Publishing requires the running owner's connection to originate in its current worker job, together
+with matching project/task/attempt/state. L3 cannot publish, and a task slug or shared machine key
+alone supplies no publication authority. The release commit must be on main with a successful
+push-event `check` job for that exact SHA and its dated changelog notes. A prerelease is never latest.
+The operation creates a draft targeting the approved SHA, uploads and verifies captured assets,
+then publishes and reads back the tag and assets. It never pushes a tag first, moves/deletes tags,
+replaces assets, adopts a foreign draft or changes immutable-release settings.
+
+Every external write rechecks the current grant and deadline. Revocation cannot recall an in-flight
+request. A global repository/version ledger under Altitude's `releases` directory serializes
+publication across daemon restarts. Only a definite create refusal with no remote side effect clears
+ownership; uncertain outcomes remain task-owned and require read-back reconciliation before retry.
+After uncertain draft creation, successful reads must establish that neither the tag nor release
+exists before a recorded reconciliation permits a fresh create; no manual ledger edit is needed.
+An existing tag must match the approved commit, with no unfinished `release.yml` push run for that
+exact commit. This check repeats before publication, allowing completion of a matching operator tag
+after its hosted job finishes or is refused. Conflicting tags/releases refuse. No remote cleanup is automatic.
+The [release guide](RELEASING.md#publish-a-release) covers build provenance, manual publication,
+native first-use evidence and platform limits. Merge approval remains separate.
+
 ### Machine access
 
 A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
 or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant. Installation VMs, containers and sandboxed-browser checks run through
-[validation runs](#validation-runs) instead, with no grant:
+under a machine grant. Disposable installation VMs, containers and sandboxed-browser checks run
+through [validation runs](#validation-runs) instead, with no grant. Host container deployment work
+uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
 
 ```text
 alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
 alt task machine <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
 
-The owner asks the operator once per purpose, in a plain question naming the purpose and its bounds
+Without applicable standing project approval, the owner asks the operator once per purpose,
+in a plain question naming the purpose and its bounds
 (what may run and what may not, limits, cleanup, verification and when the purpose ends), and
-resolves the operator's answer with `alt task resolve`. L3 or the operator then records the grant
-citing that same message after judging that the answer is a yes, and L3 resumes the owner; the owner
-cannot record its own. L3's resume reason can settle the owner's L3-audience wait for the grant. The rest is
-mechanical: the cited message must be the operator's own and must have answered the current
+resolves the operator's answer with `alt task resolve`. Whoever records the grant cites that same
+message after judging that the answer is a yes: the running owner for its own current attempt from a
+task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
+project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
 attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
 answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
 record `machine-grant-refused` and change nothing.
+
+For standing approval, the owner copies the complete paragraph under **Container operations on this
+machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
+(without `--for-operator`). Task-specific steps, cleanup and verification belong in the preceding
+reply. L3 reads the original approval and later corrections, then records the grant with
+`--standing-policy 'Container operations on this machine'`, the paragraph's approval ID, the current
+question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
+a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
+from L3's message using the ordinary question flow.
+
+The grant reads only `refs/heads/main:AGENTS.md` in the registered project checkout, pinned to a
+commit. The heading must be unique and contain exactly one paragraph citing the backtick-quoted
+approval ID. That ID must name an original operator message in the same project's chat. The current
+open question must be owner-authored, directed to L3 and match the paragraph's raw Markdown apart
+from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
+and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
+commit and full text alongside the original operator approval, exact question and L3 rationale.
+This checks the recorded purpose; it does not classify shell commands or infer consent from prose.
+
+One grant occupies the task's grant slot. Revoke it before switching to or from a different standing
+purpose; the standing grant grants the entire policy scope, while its `--reason` retains the task's
+plan and limits. L3 stops applying a revoked approval immediately, revokes active grants with
+`--revoke`, and assigns removal of the policy paragraph. Existing grants do not automatically reread
+policy or interpret later chat. Widening a standing policy is a security decision under the project's
+review rules; another project needs its own operator approval and committed policy.
 
 The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
 including after a failed attempt, without approval for each command or attempt. One command at a time

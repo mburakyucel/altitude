@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, releases, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -47,7 +47,7 @@ L3_GH_READS = {
     ("run", "list"), ("run", "view"), ("run", "watch"),
 }
 L3_TASK_TARGETS = {
-    "handoff", "release",
+    "handoff", "release", "publish",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
@@ -581,6 +581,14 @@ def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
 
 
 def start_l3(project: str) -> None:
+    with config.provider_admission() as held:
+        if held:
+            project_setup.save(project, start_requested=True)
+            return  # Setup maintenance retries this unclaimed first turn after host continuation.
+        _start_l3(project)
+
+
+def _start_l3(project: str) -> None:
     if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
         if l3.queue_path(project).exists():
@@ -608,6 +616,8 @@ def request_project_setup(project: str, action: str, *, actor: str, expected: st
 
 def restart_notice() -> None:
     """Give L3 the active tasks and their explicit waits after a restart."""
+    if platform.containerized():
+        return  # #543: daemon startup neither activates main nor authorizes an image recovery turn.
     for project in config.load_projects():
         if not config.is_managed(project):
             continue
@@ -961,6 +971,9 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
 
 def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    lifecycle = platform.container_lifecycle()
+    if lifecycle is not None and not lifecycle['ready']:
+        return  # Keep reports due, without spawning/logging a refused turn every tick (#543).
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
@@ -1002,7 +1015,10 @@ def resume_stranded_reports(project: str) -> None:
 
 
 def dispatch_waiting(project: str) -> None:
-    if config.restart_in_progress():
+    # Keep a replacement's queued work untouched without logging a refused
+    # launch per task on every timer tick. Dispatch still rechecks under its lease.
+    lifecycle = platform.container_lifecycle()
+    if config.restart_in_progress() or lifecycle is not None and not lifecycle['ready']:
         return
     queued = [T.release_dependency(project, t["slug"]) if t.get("planned_wait") else t
               for t in S.list_tasks(project) if t["state"] == "queued"]
@@ -1632,6 +1648,9 @@ class Handler(BaseHTTPRequestHandler):
     def _terminal_denied(self, *, json_body: bool, subject: str = "Terminal") -> str | None:
         """Why a terminal or update request is refused: a cross-site page (both run commands, so a page
         elsewhere must not be able to start them) or one of Altitude's own agents."""
+        unavailable = platform.container_unavailable(subject)
+        if unavailable:
+            return unavailable
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
             return f"{subject} requests must come from Altitude's own page."
         # One connection keeps one client socket, so its first terminal or update request decides for the rest.
@@ -2038,6 +2057,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "task", "publish"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "check"} or not isinstance(o.get("check", False), bool):
+                        raise ValueError("alt task publish: unsupported fields")
+                    if not isinstance(o.get("project"), str) or not isinstance(o.get("slug"), str):
+                        raise ValueError("alt task publish: project and slug must be names")
+                    peer, local = self.client_address, self.connection.getsockname()
+                    with config.restart_lock() as ready:
+                        if not ready or config.restart_in_progress():
+                            raise ValueError("Altitude is restarting; retry publication after activation")
+                        result = releases.run(o["project"], o["slug"], o.get("attempt"), check=o.get("check", False),
+                            owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local))
+                    return self._json(result)
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
@@ -2177,6 +2213,18 @@ class Handler(BaseHTTPRequestHandler):
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+            if api == "l2" and len(parts) > 2 and parts[2] == "send-now":
+                project, slug = o["project"], o["slug"]
+                try:
+                    result = dispatch.request_send_now(project, slug, str(o.get("id") or ""))
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                if result.get("queued"):
+                    try:
+                        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+                    except Exception as exc:
+                        log(f"[{project}/{slug}] Send now saved; immediate wake failed: {exc}")
+                return self._json(result)
             if api == "l2" and len(parts) > 2 and parts[2] == "remove":
                 try:
                     T.remove_message(o["project"], o["slug"], str(o.get("id") or ""))
@@ -2233,6 +2281,14 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 return self._json({"ok": True, "engine": engine})
+            if api == "chat" and len(parts) > 2 and parts[2] == "send-now":
+                project = o["project"]
+                try:
+                    result = l3.send_now(project, str(o.get("id") or ""))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                request_l3_drain(project)
+                return self._json(result)
             if api == "chat" and len(parts) > 2 and parts[2] == "remove":
                 project = o["project"]
                 if not l3.drop_queued(project, str(o.get("id") or "")):
@@ -2326,6 +2382,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_close()
                 return
             if api == "restart":
+                if platform.containerized():
+                    return self._json({"error": platform.IMAGE_MANAGED}, 409)
                 status = restart_status()
                 if not status:
                     return self._json({"error": "no restart is pending"}, 409)
@@ -2351,7 +2409,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def restart_status() -> dict | None:
     """Pending backend/web activation plus what the page's early Restart button waits for."""
-    if config.RELEASE is not None:
+    if platform.containerized() or config.RELEASE is not None:
         return None  # Installed archives activate only through the explicit update transaction.
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
@@ -2369,7 +2427,7 @@ def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     if check_activity:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
-                waiting.append("dispatch, L3 turn or report verification in flight")
+                waiting.append("dispatch, L3 turn, validation or report verification in flight")
     return waiting
 
 
@@ -2378,7 +2436,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (operator, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Activation: dispatch, L3, review and report handling
+    until the deployed service and bundle contain it). Activation: dispatch, L3, review, validation and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
     if not status or status.get("failed"):
@@ -2417,11 +2475,12 @@ class RestartBusy(RuntimeError):
 
 
 def restart_service() -> dict:
+    platform.require_native_application()
     if config.RELEASE is not None:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
-            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review or report verification")
+            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review, validation or report verification")
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pend = S.read_json(flag, {}) or {}
         if pend.get("requested_at") and not pend.get("failed"):
@@ -2487,6 +2546,8 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
+            "lifecycle": platform.container_lifecycle(),
+            "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
             "update": installation.update_status(), "now": S.now()}
@@ -2512,16 +2573,18 @@ def folders(raw: str | None) -> dict:
 
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
-    home = config.HOME.resolve()
+    home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
     target = Path(raw).expanduser() if raw else home
     if not target.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
     target = target.resolve()
     if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
-        raise FolderError("Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+        raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
+                          else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
     if not target.is_dir():
         raise FolderError("This folder no longer exists.", 404)
-    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": []}
+    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
+            **({"location": "container"} if platform.containerized() else {})}
     try:
         entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -2551,12 +2614,15 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name, incident publication, the terminal, validation and update-check switches, as First run
-    and Settings show them."""
-    return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
+    """The operator's name, incident publication, the terminal, validation and update-check switches, as First run and
+    Settings show them."""
+    return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
+            "terminal_unavailable": platform.container_unavailable("Terminal"),
+            "container_shell": platform.container_shell_command(),
             "validation": validation.enabled(), "validation_unavailable": platform.validation_unavailable(),
-            "update_check": config.machine_settings().get("update_check") is not False}
+            "deployment": "container" if platform.containerized() else "native",
+            "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:
@@ -2642,7 +2708,7 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             grant = task.get("machine_access")
             if not grant:
                 raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for "
-                                      "a concrete purpose, resolve their answer, then have L3 record it with "
+                                      "a concrete purpose, resolve their answer, then record it with "
                                       "alt task machine --grant")
             if grant.get("attempt") != task.get("attempt"):
                 raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
@@ -2736,6 +2802,9 @@ def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, loca
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
     """The task terminal's output for the task's running owner: read-only, and only to a connection from a process in
     that owner's current worker job, so another agent holding this machine's key cannot read it."""
+    unavailable = platform.container_unavailable("Terminal")
+    if unavailable:
+        raise PermissionError(unavailable)
     S.require_task_slug(slug)
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
@@ -2974,7 +3043,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot prepare the private access store ({exc}); refusing to start")
         raise SystemExit(1) from exc
     try:
-        context = tls.check(host) if config.TLS else None
+        certificate_host = config.PUBLIC_HOST if platform.containerized() else host
+        context = tls.check(certificate_host) if config.TLS else None
     except (tls.TLSFailure, OSError) as exc:
         log(f"HTTPS startup refused: {exc}")
         raise SystemExit(1) from exc
@@ -2992,7 +3062,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)
         if os.environ.get("ALTITUDE_SERVICE"):  # clients reach the service it records, not their launch settings
-            tls.publish({"host": host, "port": srv.server_port, "tls": context is not None, "tls_dir": config.TLS_DIR})
+            tls.publish({"host": host, "public_host": certificate_host, "port": srv.server_port,
+                         "tls": context is not None, "tls_dir": config.TLS_DIR})
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()
@@ -3005,7 +3076,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         restart_notice()
         settle_interrupted_machine_commands()
-        threading.Thread(target=timer_loop, args=(context, host), name="timers", daemon=True).start()
+        threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
         threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")

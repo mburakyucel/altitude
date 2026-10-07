@@ -1,5 +1,14 @@
 # Altitude UI specification
 
+Container deployment retains the existing First run and Settings layouts. It labels folder paths
+as container-volume paths and distinguishes host shell commands from tools/sign-ins inside the
+container. Terminal and image-managed version rows explain unavailability without enable/update
+switches; the host-voice choice is unavailable with its reason. Browser and external-service voice
+remain available. Empty folders, outside-volume refusal, retry and reload use the existing form
+states. Actual-daemon Linux phone/desktop onboarding passes with fictional external engines;
+Mac and real-device acceptance remain open. Walkthroughs live in `web/e2e/container.pw.ts`,
+`scripts/container_browser.mjs` and ignored runner artifacts.
+
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
@@ -70,6 +79,14 @@ Apply these expectations with the specified component states (§3) and existing 
 requirements, including accessible control names, minimum targets, and contrast (§6).
 
 ## 2. Information architecture
+
+The container recovery notice uses the shell's existing status-banner treatment on phone and
+desktop. While globally paused it says new AI work is paused, messages/task requests stay queued,
+and Stop remains available. It labels the displayed Continue command as a host action and offers
+no browser mutation button. An unavailable instance shows repair guidance instead of a command.
+The notice is absent while loading, in native mode, and after the overview reports admitted work;
+no dismissal or additional browser storage is introduced. Container deployment walkthroughs remain
+distinct from the fictional local UI harness.
 
 ### 2.1 Routes
 
@@ -491,7 +508,7 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); the task page's receipt line reads "Sending…" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
-| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
+| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with **Send now** beside **Remove**, both 44px targets on phone |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
 | Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. With either backend, new words flow in letter by letter at a steady pace timed to finish as the next update arrives (about speaking pace, faster while catching up); a revised word changes in place without the text backing up, and under reduced motion each update appears at once. Stop, Send and a recording that stops early use every recognized word, including any still flowing in. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once |
 | Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Host voice finishes its last words here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
@@ -939,17 +956,25 @@ Accepted messages stay sent through wake or refresh errors. The composer appears
 blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
-evidence is missing. Each eligible queued operator bubble has **Remove**; quick-choice receipts and
+evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
+Send now explains **Stops work and reviews to deliver now.** It requests the
+existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success replaces only that bubble's text with **Message removed** and **Removed · not
 sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
-loading reads disable removal. The empty queue has no removal control; listening and transcription
+loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
+request or server delivery is pending. The server's receipt establishes delivery; the UI does not move
+the message optimistically. Stopped, question-waiting, faulted or unavailable owners show the server's
+reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
+their inline explanation. Claimed, delivered and removed messages have no Send now control.
+The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
 `web/e2e/queued-messages.pw.ts` walks queue, removal, handoff, recovery and failure states on phone and
-desktop; `l2-progress.pw.ts` covers listening, denied microphone and Stop states.
+desktop; `send-now.pw.ts` walks immediate delivery, ordering and its row states;
+`l2-progress.pw.ts` covers listening, denied microphone and Stop states.
 Delivery does not claim understanding or action. Finished conversations remain
 readable with the activity area, composer and Stop gone.
 
@@ -1445,7 +1470,18 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
-inside the message area until they run, with Remove available while permitted. A running turn shows
+inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
+Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
+selected message next. System work finishes before the selected message runs. Pending rows say
+**Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
+appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
+available after acceptance until claim, even when an engine becomes unavailable. Removal does not
+undo an interruption already requested. An unavailable engine, active chat still starting or operator
+wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+and show their own inline error after refreshing canonical state. The row becomes its turn bubble
+only when the server admits it; claimed, delivered or removed rows have no queued actions.
+Both controls have 44px phone targets and wrap with their explanations on narrow screens.
+A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.

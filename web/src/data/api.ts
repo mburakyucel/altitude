@@ -343,13 +343,23 @@ export const UpdateSchema = z.object({
   current: z.string(),
   available: z.object({ version: z.string(), notes: z.string() }).nullish(),
   check: z.boolean(),
-  command: z.string(),
+  command: z.string().nullable(),
+  managed: z.literal("image").optional(),
+  reason: z.string().optional(),
   checked: z.string().nullish(),
   attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
 });
 
+const ContainerLifecycleSchema = z.object({
+  ready: z.boolean(), reason: z.string().nullable(), instance: z.string().nullable(),
+  continue_command: z.string().optional(), admitted_calls_active: z.boolean().optional(),
+});
+export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
+
 export const OverviewSchema = z
   .object({
+    deployment: z.enum(["native", "container"]).optional(),
+    lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
     wip: WipSchema,
@@ -443,7 +453,7 @@ export const TaskMessageSchema = z
     text: z.string(),
     summary: z.string().nullish(),
     review_id: z.string().nullish(),
-    delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
+    delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional(), send_now: z.boolean().optional(), send_now_reason: z.string().nullish(), send_now_pending: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
   })
   .passthrough();
@@ -636,6 +646,8 @@ export const QueuedMessageSchema = z
     images: z.array(MessageImageSchema).nullish(),
     /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
     position: z.number().nullish(),
+    send_now: z.boolean().optional(),
+    send_now_reason: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
   })
@@ -659,6 +671,7 @@ export const ChatViewSchema = z
     busy: z.boolean(),
     /** Messages queued while L3 was busy, oldest first; they run in order at the next turn boundary. */
     queued: z.array(QueuedMessageSchema).nullish(),
+    send_now_reason: z.string().nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
     /** The project's L3 engine pin, one of the overview's engine names; null or absent means the
      * weekly quota decides. */
@@ -717,6 +730,7 @@ export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettin
 
 const FoldersSchema = z.object({
   path: z.string(), parts: z.array(z.string()), readable: z.boolean(),
+  location: z.enum(["native", "container"]).optional(),
   folders: z.array(z.object({ name: z.string(), path: z.string(), project: z.string().nullish(), git: z.boolean() })),
 });
 export type Folders = z.infer<typeof FoldersSchema>;
@@ -738,8 +752,11 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 }
 
 const MachineSchema = z.object({
+  lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true),
+  terminal_unavailable: z.string().nullish(), deployment: z.enum(["native", "container"]).optional(),
+  container_shell: z.string().nullish(),
   validation: z.boolean().default(true), validation_unavailable: z.string().nullish(),
 });
 export type Machine = z.infer<typeof MachineSchema>;
@@ -1176,13 +1193,22 @@ export function useL3Reset(project: string) {
   });
 }
 
-/** Drop a message that has not started yet — the only edit a queued message allows. */
+/** Drop a message that has not started yet. */
 export function useChatDequeue(project: string) {
   return useOptimisticMutation<string, unknown, ChatView>({
     mutationFn: (id) => post("/api/chat/remove", { project, id }),
     queryKey: ["chat", project],
     update: () => undefined,
     failureMessage: "Couldn't remove the queued message.",
+  });
+}
+
+/** Request immediate delivery; only the next canonical read establishes its outcome. */
+export function useSendNow(project: string, slug?: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => post(slug ? "/api/l2/send-now" : "/api/chat/send-now", { project, ...(slug ? { slug } : {}), id }),
+    onSettled: () => client.invalidateQueries({ queryKey: slug ? ["task", project, slug] : ["chat", project] }),
   });
 }
 

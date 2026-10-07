@@ -159,6 +159,11 @@ def installation(engine: str) -> dict:
 #: The command that installs each engine CLI, shown by First run while it is missing.
 INSTALL = {"claude": "npm install -g @anthropic-ai/claude-code", "codex": "npm install -g @openai/codex"}
 
+
+def install_command(engine: str) -> str:
+    command = INSTALL[engine]
+    return command.replace("npm install -g", "npm install --prefix ~/.local -g") if platform.containerized() else command
+
 #: The engine CLI's local sign-in status and the command the operator runs in their own terminal to sign in.
 SIGN_IN = {"claude": (("auth", "status"), "claude auth login"), "codex": (("login", "status"), "codex login")}
 
@@ -178,6 +183,7 @@ def session_timeout(engine: str) -> int:
     return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
 
 
+@config.admitted_provider
 def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
     """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
 
@@ -523,11 +529,28 @@ def clean_env() -> dict:
     env = {k: v for k, v in config.subprocess_env().items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
-                if config.RELEASE is not None else config.SOURCE / "bin")
+                if config.RELEASE is not None and not platform.containerized() else config.SOURCE / "bin")
     env["PATH"] = str(commands) + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     if config.RELEASE is not None:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
+
+
+#: Job settings appear on the job's command line, so a worker's GitHub token travels on its first input line instead.
+GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
+GITHUB_INPUT = 'IFS= read -r GH_TOKEN && [ -n "$GH_TOKEN" ] && export GH_TOKEN || unset GH_TOKEN; exec "$@"'
+
+
+def github_token(env: dict) -> str:
+    """The GitHub CLI's current sign-in, read by the launcher for a task worker. On Linux the CLI keeps it in the
+    desktop keyring, which answers on the session bus a job is denied, so a worker's own lookup sends unauthenticated
+    requests (I-20261006-183126). The worker receives this one token, not the keyring; empty when there is none."""
+    try:
+        p = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    token = p.stdout.strip()
+    return token if p.returncode == 0 and token.isprintable() and " " not in token else ""
 
 
 def service_status(unit: str = "altitude.service") -> dict:
@@ -575,6 +598,66 @@ def claude_settings() -> Path:
     return p
 
 
+def _chat_interrupted(resume: str | None) -> dict:
+    return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0,
+            "cost": 0.0, "turns": 0, "structured": None, "tools": [],
+            "interrupted": True, "error": "Interrupted for a queued message", "safe_to_retry": False,
+            "rejection": None, "raw_stdout": "", "raw_stderr": "",
+            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+
+
+def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished: threading.Event,
+                          result: dict, env: dict, on_interrupt_error=None) -> None:
+    """Stop only this chat job, retaining serialization until its launcher and descendants finish.
+
+    An absent unit while the launcher is starting is not termination evidence. A failed stop or an
+    unavailable status leaves the turn waiting for natural completion, including its job runtime limit.
+    """
+    while not interrupt.is_set():
+        if finished.wait(0.05):
+            if not interrupt.is_set():
+                return
+    attempted = False
+    notified_error = None
+    while True:
+        try:
+            active = platform.job_active(unit, env)
+            if active and not attempted:
+                attempted = True
+                platform.job_stop(unit, env)
+                continue
+            if active and attempted:
+                result.setdefault("interrupt_error", "Immediate stop unconfirmed; waiting for job termination")
+            if not active and proc.poll() is not None and not platform.job_active(unit, env):
+                result.update(interrupted=True, error="Interrupted for a queued message", safe_to_retry=False)
+                return
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            result["interrupt_error"] = f"Immediate stop unconfirmed; waiting for job termination: {exc}"
+        error = result.get("interrupt_error")
+        if error and error != notified_error:
+            notified_error = error
+            if on_interrupt_error:
+                try:
+                    on_interrupt_error(error)
+                except Exception:
+                    logger.exception("Could not publish chat interruption status; retaining termination wait")
+        time.sleep(0.25)
+
+
+def release_permissions(engine: str, slug: str) -> dict:
+    """Native allowance for the daemon's fixed publish operation, never raw GitHub commands.
+
+    Claude loads these exact rules on launch/resume; inherited denies and managed policy remain
+    authoritative. Codex already admits the command in its ordinary task sandbox. The daemon
+    checks the recorded grant again on every invocation, including after its deadline or revocation.
+    """
+    if engine != "claude":
+        return {}
+    command = f"alt task publish {S.require_task_slug(slug)}"
+    return {"permissions": {"allow": [f"Bash({command})", f"Bash({command} --check)"]}}
+
+
+@config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
@@ -582,13 +665,17 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
-                 durable_timeout: bool = False, images: list[dict] | tuple = ()) -> dict:
+                 durable_timeout: bool = False, images: list[dict] | tuple = (),
+                 interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
-    made while a hold is in force.
+    made while a hold is in force. `interrupt` stops this chat's owned job and preserves partial output;
+    `interrupted` is returned only after termination is confirmed.
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
     restarted server distinguish an in-flight turn from a dead one."""
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     config.task_effort("claude", effort, role="l3")
     image_args, prompt = _image_input("claude", prompt, images)
     held = usage_hold()
@@ -627,15 +714,24 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if effort is not None:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     writable = _claude_writable(Path(cwd), config.ROOT)
-    if durable_timeout:
-        cmd = platform.job_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout,
+    unit = _claude_unit(f"sync-{uuid.uuid4().hex}")
+    if durable_timeout or interrupt is not None:
+        cmd = platform.job_command(unit, cmd, codex_env(env), runtime_max=timeout,
                                    writable=writable)
         env = codex_env(env, retain_user_bus=True)
     else:
         cmd = platform.confined(cmd, writable)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
+    interrupted, finished = {}, threading.Event()
+    watcher = None
+    if interrupt is not None:
+        watcher = threading.Thread(target=_watch_chat_interrupt,
+                                   args=(proc, unit, interrupt, finished, interrupted, env, on_interrupt_error), daemon=True)
+        watcher.start()
     if on_start:
         on_start(proc.pid)
     try:
@@ -651,8 +747,9 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
-    killer = threading.Timer(timeout, proc.kill)
-    killer.start()
+    killer = threading.Timer(timeout, proc.kill) if interrupt is None else None
+    if killer:
+        killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
@@ -713,7 +810,11 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         failure = exc
         raise
     finally:
-        killer.cancel()
+        if killer:
+            killer.cancel()
+        finished.set()
+        if watcher:
+            watcher.join()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()
@@ -734,6 +835,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     out.update(safe_to_retry=safe_to_retry, rejection=rejected or rejection("claude", out, model))
+    out.update(interrupted)
     if schema and out["structured"] is None and out["text"]:
         try:
             out["structured"] = json.loads(out["text"])
@@ -1532,17 +1634,23 @@ def _worktree_git_dirs(cwd: Path) -> list[Path]:
 
 
 def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
-    """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
+    """The task's native permissions, shared by launch and the provider-free sandbox diagnostic.
 
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
-    reports. Everything else is readable. Network stays on for `git push`, `gh`, and the repository's own tests.
-    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
+    reports. The workspace base retains protected configuration paths and temporary directories.
+    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets stay denied.
+    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
+    GitHub token (`github_token`) reaches `gh` unchanged.
     """
-    roots = [Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()]
-    return ['sandbox_mode="workspace-write"',
-            "sandbox_workspace_write.writable_roots=" + json.dumps([str(root) for root in roots]),
-            "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
+    roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
+    profile = "altitude-task"
+    workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
+    denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in platform.job_control_paths())
+    return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
+            f"permissions.{profile}.workspace_roots={workspace_roots}",
+            f'permissions.{profile}.filesystem={{":root"="read",{denied}}}',
+            f"permissions.{profile}.network.enabled=true", 'approval_policy="never"']
 
 
 def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
@@ -1553,11 +1661,11 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     use authenticated GitHub directly, connect to the user bus, or write a checkout.
     """
     profile = "altitude-l3"
-    bus = f"/run/user/{os.getuid()}/bus"
     from .l3 import verb_socket_path
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read", bus: "deny"}
+             str(config.project_path(project).resolve()): "read",
+             **{str(path): "deny" for path in platform.job_control_paths()}}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
@@ -1697,6 +1805,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
                          persona=persona, model=model, extra_env=extra_env, start_timeout=start_timeout)
 
 
+@config.admitted_provider
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None,
@@ -1754,15 +1863,17 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     worker_env = codex_env(extra_env, retain_user_bus=True)
     if engine == "claude" and effort is not None:
         worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    job_env = {key: value for key, value in codex_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
             writable = _claude_writable(Path(cwd), *_worktree_git_dirs(cwd), config.ROOT) if engine == "claude" else None
-            proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(worker_env), writable=writable), cwd=str(cwd),
+            proc = subprocess.Popen(platform.job_command(unit, ["/bin/sh", "-c", GITHUB_INPUT, "altitude-worker", *cmd],
+                                                         job_env, writable=writable), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
         try:
-            data = text.encode("utf-8")
+            data = (github_token(worker_env) + "\n" + text).encode("utf-8")
             written = proc.stdin.write(data)
             proc.stdin.close()
             input_written = written == len(data)
@@ -1943,13 +2054,18 @@ def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
     return bool(row and row.get("state") == "working")
 
 
+@config.admitted_provider
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
                sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
-               durable_timeout: bool = False, images: list[dict] | tuple = ()) -> dict:
+               durable_timeout: bool = False, images: list[dict] | tuple = (),
+               interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
-    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
+    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
+    `interrupt` stops this chat's job; partial output and session metadata survive confirmed interruption."""
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     image_args, prompt = _image_input("codex", prompt, images)
     cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), *image_args, "--json", "--strict-config",
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
@@ -1964,10 +2080,19 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
+    if interrupt is not None and interrupt.is_set():
+        return _chat_interrupted(resume)
     proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
-                            **({"runtime_max": timeout} if durable_timeout else {})), cwd=str(cwd),
+                            **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})), cwd=str(cwd),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    interrupted, finished = {}, threading.Event()
+    watcher = None
+    if interrupt is not None:
+        watcher = threading.Thread(target=_watch_chat_interrupt,
+                                   args=(proc, unit, interrupt, finished, interrupted,
+                                         codex_env(extra_env, retain_user_bus=True), on_interrupt_error), daemon=True)
+        watcher.start()
     if on_start:
         on_start(proc.pid)
     metadata = {}
@@ -1983,10 +2108,11 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         while True:
             remaining = deadline - time.monotonic()
             try:
-                stdout, stderr = proc.communicate(pending_input, timeout=remaining if metadata else min(0.5, remaining))
+                stdout, stderr = proc.communicate(pending_input, timeout=0.5 if interrupt is not None else
+                                                 remaining if metadata else min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired as exc:
-                if time.monotonic() >= deadline:
+                if interrupt is None and time.monotonic() >= deadline:
                     raise
                 pending_input = None
                 observe((exc.output or b"").decode("utf-8", errors="replace"))
@@ -1995,6 +2121,10 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         proc.kill()
         proc.communicate()
         raise
+    finally:
+        finished.set()
+        if watcher:
+            watcher.join()
     if not metadata:
         observe(stdout)
     events = _codex_parse(stdout or "")
@@ -2015,6 +2145,7 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
             "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
     result.update(safe_to_retry=_safe_output("codex", stdout or ""), rejection=rejection("codex", result, model))
+    result.update(interrupted)
     limited = usage_limit_in(result.get("error"))
     if limited:
         result["limited"] = limited
@@ -2243,6 +2374,7 @@ def _review_object(text: str) -> dict:
     raise ValueError("The review answer holds no JSON object.")
 
 
+@config.admitted_provider
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
            on_start=None, on_wait=None) -> dict:
     """One focused review without a duration cutoff; callbacks retain owner/caller cancellation."""

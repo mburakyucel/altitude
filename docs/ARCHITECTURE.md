@@ -1,5 +1,37 @@
 # Altitude architecture
 
+## Container deployment boundary
+
+The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
+Disposable fixture runtimes retain private storage/process metadata and link only that same user
+bus into their runtime directory. The host controller selects cgroupfs and distribution crun;
+its system-bus address names an unavailable fictional endpoint. A delegated user service owns each
+application lifetime. Disposable VM acceptance independently observes service-manager calls and
+their senders, including forced cleanup. It allows systemd's verified same-user delegated process
+attachment, which does not use polkit, and fails on unexpected management attempts. This is
+validation of the selected runtime clients, not hostile-process confinement. The
+[container evidence](CONTAINERS.md#evidence) records the tested boundaries.
+
+The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
+inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
+runtime/bootstrap operations. Browser terminal, host speech and native activation/update routes
+refuse every peer in that deployment. Source merges remain ordinary project delivery; application
+activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
+manager. Immutable resources and persistent home/projects have separate lifetimes. The reusable
+Linux image/launcher lanes establish startup, published local HTTPS, elevation-file inventory,
+the native diagnostic permission matrix, restart/replacement/descendant cleanup and private
+backup/restore. [Container evidence](CONTAINERS.md#evidence) names the tested runtime and limits.
+The actual daemon's phone/desktop onboarding and queued task continuation pass with fictional
+external engines. Provider-session confinement parity, real-device access and Mac runtime evidence
+remain pending. Resume-claim ownership
+uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
+Container admission has one persistent receipt and a root-owned container-instance identity.
+The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
+gate every provider launch, with early checks before queue/claim consumption. A replacement waits
+for host-side Continue. Same-container restarts retain admission. Existing task holds, Stop and
+reconciliation remain independent of this global gate. The read-only browser notice uses the
+existing overview poll; it adds no retained browser state or host command route.
+
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
 and receives their questions and reports needing follow-up. Several tasks can proceed in isolated
@@ -47,7 +79,9 @@ remain governed by the existing boundaries.
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
+worker at its next checkpoint; an explicit Stop ends a worker. **Send now** on an inbox-owned operator
+message interrupts current work through the same Stop path and resumes the saved session with that
+message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -451,9 +485,12 @@ to preserve its native behavior rather than treating today's two launchers as a 
 The [native browser runtime candidate](DEVELOPMENT.md#native-mac-browser-runtime-candidate) keeps
 the existing execution contract. Its pinned Seatbelt patch adds only registration and lookup of
 whole Chromium rendezvous service names with a positive decimal PID, for effective network-enabled
-workspace-write process policies. All eligible commands share that allowance; it is neither
-browser identity nor task isolation. The guard excludes read-only, network-disabled, filesystem
-helper and narrower custom policies by comparing filesystem semantics to canonical workspace-write.
+workspace-write process policies with both current-account user-manager path denies. All eligible
+commands share that allowance; it is neither browser identity nor task isolation.
+The guard excludes read-only, network-disabled, filesystem
+helper and other narrower custom policies by comparing filesystem semantics to canonical
+workspace-write plus the exact bus and systemd denies derived from the real account UID.
+Plain workspace-write without those denies has no added allowance.
 A named custom profile with identical effective permissions has the same allowance. Existing file
 roots, metadata protections, process/signal restrictions and service denies remain in force.
 This is an unadopted preparation artifact, with separate installation, isolation acceptance and
@@ -978,12 +1015,53 @@ The [recovery procedure](CLI.md#dirty-checkout-recovery) leaves resumption expli
 task with a saved `main-unpushed` fault can requeue on explicit resume independently of deployment
 recovery; its fresh dispatch still requires a fetched current base and a valid isolated worktree.
 
+Release publication uses one task-bound grant and one fixed `alt task publish` operation. The grant
+retains the original operator message, repository/version/full commit, validated asset paths and
+hashes, committed notes, attempt and optional deadline. Upload captures unchanged bytes at run time;
+the grant stores no asset bytes. Direct approval names version/commit; a
+contextual answer retains its exact historical question revision. L2 records its own task-chat
+answer; L3 records project-chat approval. The recorder judges consent and later corrections;
+the daemon checks provenance and scope. Revoked or consumed approval cannot mint another grant.
+
+Publishing admits only a connection from the current owner's worker job, with matching
+project/task/attempt/state. The fixed daemon operation checks the approved commit's main ancestry,
+exact-SHA push `check` job, dated notes and unchanged validated assets. It creates the task's draft,
+uploads and verifies assets, then publishes and reads back the tag and files. It creates no tag
+before the draft is ready, adopts no foreign draft and permits no tag movement/deletion, asset
+replacement or immutable-setting change. Durable phase records and a global repository/version
+ledger under Altitude's `releases` directory retain task ownership across restart; retries reconcile
+remote state first. Only a definite create refusal without a remote side effect clears ownership.
+An uncertain draft create permits a fresh create only after successful tag and release reads prove
+both absent and reconciliation is recorded. A prior matching operator tag is admitted only when no
+unfinished `release.yml` push run remains for the approved commit, checked again before publication.
+Each write checks revocation/deadline, and every attempt has task audit evidence. Revocation cannot
+recall a request already sent. Completion consumes the grant; task completion or a new attempt
+expires it. Resume preserves it. A replacement grant under still-valid approval may recover only
+that task's recorded draft with the same target/files, preserving the original approval's historical
+identity and deadline.
+
+The engine seam generates exact publish/check allowances at launch/resume. A mid-turn grant needs
+an ordinary same-attempt resume to load them. Stale native permission cannot override daemon
+revocation; inherited policy is unchanged. This controls Altitude's supported command, not every raw
+GitHub call made with the operator's account. Recorded hashes prove asset integrity, not independent
+build provenance; publication appends a fixed disclosure of that limit to the dated notes.
+[Release publication](RELEASING.md#publish-a-release) records native first-use and
+macOS evidence gaps; [the CLI](CLI.md#release-publication) defines the grant and recovery interface.
+
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
 project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
-workspace runs only under a recorded machine grant: the operator's answer to the owner's purpose
-question, recorded by L3 or the operator and verified mechanically against that question revision,
-opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
+workspace runs only under a recorded machine grant. An operator's answer to the owner's purpose
+question is recorded by the running owner from its task chat or by L3 or the operator and verified
+against that question revision. Alternatively, L3 applies an original operator approval from the
+same project's chat to an exact policy-purpose request: a unique, single-paragraph heading in the
+registered checkout's `refs/heads/main:AGENTS.md`, pinned to its commit, must cite the approval and
+match the current open owner-authored L3 question apart from whitespace. The standing path fences
+the observed attempt and stores the original approval, policy text/commit and question revision;
+task branches and dirty policy files supply no authority. L3 judges later corrections and revocations,
+revokes active grants and assigns policy removal; neither shell commands nor chat consent are
+classified automatically. Switching standing purposes requires revocation of the existing grant.
+Either grant opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
 executes the command in a job of its own through `engines.machine_command`, with the service manager
 reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
 the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches
@@ -1003,16 +1081,26 @@ Altitude's home, outside every worker's writable roots. The run is recorded like
 purpose `validation`, and results reach the task folder without following links. The worker's own
 confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
 storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
-admitting a run, altd records interrupted runs and removes what they left. See the
+admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
+and removes their scratch files. Failed evidence delivery retains the original area and keeps the
+runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
+evidence recording and cleanup, and refuses admission once restart is requested. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
 temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
-runs as altd's child rather than as a job starts under the same profile. Codex keeps its native
-workspace-write sandbox inside the same job boundary (the two Seatbelt profiles cannot nest) and uses the
-same door; private worker records and output identify both engines' sessions
+runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+roots. The session bus and manager runtime directory (including its direct private socket) are denied;
+other runtime-directory paths retain their policy. The generated profile also supplies provider-free
+confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
+CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
+bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
+which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The token never appears
+among the job's settings (they form its command line), in a file or in a log; a launcher without a
+sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+(the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts
@@ -1351,19 +1439,24 @@ coalition, so stopping a worker takes all its descendants. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
-while activation is pending. When those short windows are quiet, altd runs
+while activation is pending. When dispatch/resume claims, L3 turns, adversarial reviews, report
+verification and bounded validation runs (including evidence recording and cleanup) are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
-restores the prior bundle. Monitor's Restart button runs the same path sooner by hand: it appears
+restores the prior bundle and verifies recovery API/UI health from another new process, retaining
+both the activation failure and recovery outcome. With no prior bundle, recovery is unavailable.
+On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
+to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
+Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
 the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
 system fault naming its reason at once and, while its request is still pending, marks the record `failed`
 with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
-also waits, leaving reports durable for the next tick. A shared activity lock fences these short
-operations against the exclusive restart request, including the launch-to-binding race. Ordinary source changes never
+also waits, leaving reports durable for the next tick. A shared activity lock fences these
+operations and validation against the exclusive restart request, including admission races. Ordinary source changes never
 start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
 authorization and post-change health verification.
 
@@ -1412,9 +1505,15 @@ deterministic fixtures establish application behavior only.
 
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
-into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the
-local color library and runs in the same bounded child process. Unsupported color encodings fail
-with an exported-sRGB recovery instruction. The shared limits are four images, 10 MiB each,
+into metadata-free PNG/JPEG using the optional local converter. Color conversion to sRGB detects
+the local color library and runs in the same bounded child process. It reads RGB and grayscale ICC
+profiles, PNG `cICP` tags for sRGB, Display P3 and BT.2020 colors with SDR transfers, and PNG gamma and
+primaries, following PNG's precedence (`cICP`, `iCCP`, `sRGB`, then `gAMA`/`cHRM`); a `cICP` without an SDR
+conversion defers to the next description, as for a decoder that does not read it. Color information
+without an SDR conversion (HDR transfers, CMYK or Lab profiles, unreadable or oversized profiles) is
+ignored: the image keeps its decoded pixels, whose colors may be approximate. A conversion stopped by
+its memory, CPU or output bounds asks for a smaller image. Every canonical file is re-encoded from
+raw pixels, so it carries no metadata or color tag and reads as sRGB. The shared limits are four images, 10 MiB each,
 20 MiB total, 25 megapixels, 8192 pixels per side and a 28 MiB JSON request envelope.
 Completed codec checks are cached by converter path and modification time. Probe timeouts, OS errors
 and nonzero exits report unavailable for that attempt without caching the failure; later operations
@@ -1537,7 +1636,9 @@ Chromium keeps. See [browser verification](DEVELOPMENT.md#browser-verification).
 published private-preview version and release notes. Pushing the approved tag runs the release
 workflow, which checks that commit's main `check` run, builds and attests the archive, `install.py`
 and the generated `install.sh`, and publishes them as the GitHub release that the one-command install
-fetches. They add no runtime lifecycle state and do not gate automatic activation of merged changes. The UI and testing rules remain in the
+fetches. An approved task owner can instead publish captured manual-build assets through the
+task's release grant, without hosted build attestation. Publication does not gate automatic
+activation of merged changes. The UI and testing rules remain in the
 project instructions file, which both worker personas direct the task owner to read first.
 
 ### Web delivery
@@ -1763,7 +1864,7 @@ tab preserves the source conversation and draft. This feature introduces no prov
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
-its run order and Remove until
+its run order, **Send now** and **Remove** until
 its turn starts, when the row becomes the turn's bubble and typing indicator. Queue claim writes the
 user history row and publishes the active record under the same lifecycle guard used by the API's
 history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
@@ -1774,6 +1875,27 @@ file in the project directory, so a reload, another device and a restart all see
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
+
+**Send now** promotes only the selected operator row and gives it its own next turn. Other queued
+rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
+writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
+removable until claim, including when no engine is available after admission. Removal does not undo
+an interruption already requested. The daemon requests interruption
+of the captured active chat turn through the engine seam, retains partial output and session identity,
+and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
+its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
+CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
+cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
+explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
+restart. The browser requests this action by message ID; it never interrupts an engine itself.
+
+In the task chat, the same control uses the existing durable Stop and resume operation, fences hook
+pickup before interruption, and delivers only the selected inbox row through the usual resume claim
+and handoff receipt. Like Stop, it cancels attached reviews and does not undo completed external
+effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
+with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
+question wait, fault recovery or unavailable saved-session engine explains the required continuation,
+answer or recovery instead of interrupting. Machine grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

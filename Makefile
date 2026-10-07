@@ -5,9 +5,8 @@ test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
 	env -u ALTITUDE_ACTOR python3 -m unittest discover tests
 check:          ## all deterministic checks, timed (install frozen dependencies and Chromium first)
 	+$(MAKE) --no-print-directory -j2 -k check-python check-web
-# GNU time writes its summary one character per write to stderr; its buffered -o stream writes it
-# whole, so the two parallel branches cannot interleave their timings.
-TIME = /usr/bin/time -p -a -o /dev/stderr
+# One timing write keeps parallel summaries together on both supported hosts.
+TIME = python3 "$(CURDIR)/scripts/time_command.py"
 check-python:
 	env -u ALTITUDE_ACTOR $(TIME) python3 tests/run_parallel.py --workers "$$(node -p 'Math.max(1, Math.floor(require("node:os").availableParallelism() / 2))')"
 check-web:
@@ -29,6 +28,13 @@ ifdef ALTITUDE_TASK
 else
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
 	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery)
+endif
+container-vm: ## actual container image/launcher lifecycle and authorization checks in a disposable Ubuntu KVM VM (RESULTS=dir)
+ifdef ALTITUDE_TASK
+	alt task validate --kvm -- make container-vm RESULTS=/results/container-vm
+else
+	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the evidence))
+	timeout 1800s python3 scripts/container_vm.py "$(RESULTS)"
 endif
 browser-sandbox: ## Playwright's Chromium with its own sandbox against a local fictional page, recording the protections it keeps (RESULT=file); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
