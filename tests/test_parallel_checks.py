@@ -134,7 +134,7 @@ class TestParallelChecks(AltitudeCase):
                 os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
             root = pathlib.Path(os.environ["CHECK_FIXTURE"])
             phase = "python" if pathlib.Path(sys.argv[0]).name == "python3" else sys.argv[1]
-            assert phase in ("python", "test", "build", "ui")
+            assert phase in ("python", "test", "build", "ui", "ui:shell")
             (root / phase).touch()
             if phase == "python": assert sys.argv[-2:] == ["--workers", "2"]
             if phase in ("python", "test"):
@@ -145,15 +145,17 @@ class TestParallelChecks(AltitudeCase):
                     time.sleep(.01)
             if phase == "build": assert (root / "test").exists()
             if phase == "ui": assert (root / "build").exists()
+            if phase == "ui:shell": assert (root / "ui").exists()
             sys.exit(int(phase == os.environ["FAIL_PHASE"]))
         ''')
         for command in ("python3", "pnpm"):
             path = bindir / command
             path.write_text(shim)
             path.chmod(0o755)
-        for failed in ("", "python", "test", "build", "ui"):
+        phases = ("python", "test", "build", "ui", "ui:shell")
+        for failed in ("", *phases):
             with self.subTest(failed=failed):
-                for phase in ("python", "test", "build", "ui"):
+                for phase in phases:
                     (self.tmp / phase).unlink(missing_ok=True)
                 result = subprocess.run(
                     ["make", "check"], cwd=self.tmp,
@@ -165,8 +167,9 @@ class TestParallelChecks(AltitudeCase):
                 self.assertTrue((self.tmp / "test").exists())
                 self.assertEqual((self.tmp / "build").exists(), failed != "test")
                 self.assertEqual((self.tmp / "ui").exists(), failed not in ("test", "build"))
+                self.assertEqual((self.tmp / "ui:shell").exists(), failed not in ("test", "build", "ui"))
                 # Each phase that ran reports one intact timing summary.
-                timed = sum((self.tmp / phase).exists() for phase in ("python", "test", "build", "ui"))
+                timed = sum((self.tmp / phase).exists() for phase in phases)
                 summaries = re.findall(r"^real [\d.]+\nuser [\d.]+\nsys [\d.]+$", result.stderr, re.M)
                 self.assertEqual(len(summaries), timed, result.stderr)
 
