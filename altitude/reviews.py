@@ -558,6 +558,8 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             current = S.load_task(project, slug)
             live = _find(current, review_id)
             result = result or {"error": "Review execution interrupted.", "termination_confirmed": False}
+            if result.get("diagnostics") is not None:
+                live["diagnostics"] = result["diagnostics"]
             confirmed = result.get("termination_confirmed", False)
             if not confirmed:
                 live.update(error="Reviewer termination is unconfirmed; capacity remains reserved.", cancel_requested=True)
