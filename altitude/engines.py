@@ -2388,7 +2388,7 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
     if truncated:
         # #618: a dropped middle can contain a credential's opening marker. Never retain its ambiguous tail.
         head = bytes(stderr.head).decode("utf-8", errors="replace")
-        text = (head.rsplit("\n", 1)[0] if "\n" in head else "") + "\n[capture limit: stderr tail withheld]\n"
+        text = head.rsplit("\n", 1)[0] if "\n" in head else ""
     if exception is not None:
         text += "\n" + str(exception)
     text = unquote(text)
@@ -2396,14 +2396,16 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
         text = "[diagnostic withheld: nested encoding]"
     text = re.sub(r"-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?(?:-----END [\w ]*PRIVATE KEY-----|$)",
                   "[REDACTED]", text)
-    # Diagnostic assignments can hold quoted values with spaces; discard the rest of that line.
-    text = re.sub(r"(?im)((?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)[\"']?\s*[:=]).*$",
+    # Values can span lines or be unterminated. Keep preceding diagnostics and redact the remaining capture.
+    text = re.sub(r"(?is)((?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)[\"']?\s*[:=]).*$",
                   r"\1 [REDACTED]", text)
     text = incidents.sanitize(text)
     try:
         incidents.check_public(text)
     except ValueError:
         text = "[diagnostic withheld by privacy check]"
+    if truncated:
+        text += "\n[capture limit: stderr tail withheld]\n"
     bounded, shortened = cap_raw(text.encode("utf-8"), 8192)
     evidence = {"exit_status": exit_status, "stderr": bounded.decode("utf-8", errors="ignore"),
                 "stderr_truncated": truncated or shortened,

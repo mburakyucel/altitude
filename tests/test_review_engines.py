@@ -207,14 +207,14 @@ class ReviewEngineTests(AltitudeCase):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c",
             "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT'); "
-            "sys.stderr.buffer.write(b'cannot connect captured adapter\\napi_key=fictional-secret-value\\n'"
-            "b'/Users/fictional/private/tool\\ninvalid byte: \\xff\\n'); sys.exit(23)"]
+            "sys.stderr.buffer.write(b'cannot connect captured adapter\\ninvalid byte: \\xff\\n'"
+            "b'api_key=fictional-secret-value\\n/Users/fictional/private/tool\\n'); sys.exit(23)"]
         result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         evidence = result["diagnostics"]
         self.assertEqual(evidence["exit_status"], 23)
         self.assertIn("status 23", result["error"])
         self.assertIn("cannot connect captured adapter", evidence["stderr"])
-        self.assertIn("invalid byte:", evidence["stderr"])
+        self.assertIn("invalid byte: \ufffd", evidence["stderr"])
         self.assertIn("[REDACTED]", evidence["stderr"])
         for private in ("PRIVATE TRANSCRIPT", "Private assignment", "fictional-secret-value", "/Users/fictional"):
             self.assertNotIn(private, json.dumps(result))
@@ -285,7 +285,35 @@ class ReviewEngineTests(AltitudeCase):
         evidence = engines._review_diagnostics(capture)
         self.assertIn("connection refused", evidence["stderr"])
         self.assertNotIn("fictional", evidence["stderr"])
-        self.assertEqual(evidence["stderr"].count("[REDACTED]"), 3)
+        self.assertEqual(evidence["stderr"].count("[REDACTED]"), 1)
+
+    def test_multiline_credentials_and_remaining_capture_are_withheld(self):
+        assignments = ['"password":\n"fictional secret with spaces"',
+                       'api_key="fictional\nsecret\nwith spaces"',
+                       'cookie=\nfictional-secret', 'Authorization: Bearer\nfictional-secret',
+                       '"secret": "unterminated\nfictional-secret']
+        for assignment in assignments:
+            for encoded in (False, True):
+                with self.subTest(assignment=assignment, encoded=encoded):
+                    stderr = "adapter startup failed\n" + assignment + "\nfollowing diagnostic\n"
+                    if encoded:
+                        stderr = quote(stderr, safe="")
+                    service = self.fixture()
+                    service.return_value = [sys.executable, "-I", "-c",
+                        f"import sys; sys.stdin.read(); sys.stderr.write({stderr!r}); sys.exit(12)"]
+                    result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    evidence = result["diagnostics"]
+                    self.assertEqual(evidence["exit_status"], 12)
+                    self.assertIn("adapter startup failed", evidence["stderr"])
+                    self.assertIn("[REDACTED]", evidence["stderr"])
+                    for private in ("fictional", "with spaces", "unterminated", "following diagnostic"):
+                        self.assertNotIn(private, evidence["stderr"])
+                    with patch.object(engines.subprocess, "Popen", side_effect=OSError(2, stderr)):
+                        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    self.assertEqual(result["diagnostics"]["errno"], 2)
+                    self.assertIn("adapter startup failed", result["diagnostics"]["stderr"])
+                    self.assertNotIn("fictional", json.dumps(result))
+                    self.assertNotIn("with spaces", json.dumps(result))
 
     def test_incomplete_stderr_capture_is_named_in_failure_evidence(self):
         self.fixture(exitcode=4)
