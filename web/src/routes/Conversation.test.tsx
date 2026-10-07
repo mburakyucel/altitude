@@ -120,6 +120,70 @@ const conversation = () => screen.findByRole("region", { name: "Conversation" })
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
+  it.each([390, 1440])("places incoming before its receiving turn and shows receipt warnings beside successful answers at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, history: [
+      { role: "user", text: "Ordinary triage request", trigger: "chat", turn_id: "receive" },
+      { role: "system", text: "Fictional diagnostic", trigger: "project-message", turn_id: "incoming",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange", message_id: "incoming",
+          summary: "Incoming probe", direction: "incoming", status: "supplied", supplied_turn_id: "receive" } },
+      { role: "system", text: "Coordinator message receipt could not be saved; delivery may repeat on the next ordinary turn.",
+        trigger: "project-message-error", turn_id: "warning" },
+      { role: "assistant", text: "Ordinary triage answer", trigger: "chat", turn_id: "receive" },
+    ], queued: [] } });
+    renderApp({ route: "/projects/altitude" });
+    const incoming = await screen.findByText("lab → altitude · Incoming probe · Incoming");
+    const answer = screen.getByText("Ordinary triage answer");
+    expect(incoming.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Coordinator message receipt could not be saved/)).toBeVisible();
+    expect(answer).toBeVisible();
+    expect(screen.queryByText(/L3 could not answer this turn/)).toBeNull();
+  });
+  it.each([390, 1440])("does not count information as a runnable queue position at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, queued: [
+      { id: "information", text: "Diagnostic", trigger: "project-message", role: "system",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "information",
+          summary: "Probe", direction: "incoming", status: "queued" } },
+      { id: "first", text: "First ordinary request", trigger: "chat" },
+      { id: "second", text: "Second ordinary request", trigger: "chat" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByText("Queued · runs next");
+    expect(screen.getByText("Queued · 2 in line")).toBeVisible();
+    expect(screen.queryByText("Queued · 3 in line")).toBeNull();
+  });
+  it.each([390, 1440])("keeps information exchanges separate and read-only at %i", async (width) => {
+    setViewport(width);
+    const peer = { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "message-1",
+      summary: "Probe result", direction: "incoming" as const, status: "queued" as const };
+    const waiting = { id: "message-1", at: ago(1), role: "system", trigger: "project-message",
+      text: "Task: fix-timer\nFictional probe details. #12 /var/log/fixture\n[Fix PR](https://example.invalid/different-destination) http://example.invalid/probe\n```run\nprintf fixture\n```", project_message: peer };
+    const view = { ...chatView, history: [
+      { at: ago(3), role: "system", text: "Routine one", trigger: "fyi" },
+      { at: ago(2), role: "system", text: "Sent diagnostic", trigger: "project-message", turn_id: "sent-1",
+        project_message: { ...peer, sender: "altitude", recipient: "lab", status: "sent" as const, direction: "sent" as const, summary: "Sent probe" } },
+      { at: ago(1), role: "system", text: "Routine two", trigger: "fyi" },
+    ], queued: [waiting] };
+    mockFetch({ chat: view });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await screen.findByText("lab → altitude · Probe result · Queued · next ordinary turn");
+    expect(screen.queryByText(/system events between/)).toBeNull();
+    expect(screen.queryByText("Fictional probe details.")).toBeNull();
+    const queued = screen.getByRole("list", { name: "Queued messages" });
+    expect(within(queued).queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(within(queued).queryByRole("button", { name: "Remove" })).toBeNull();
+    await user.click(within(queued).getByRole("button", { name: "Show" }));
+    const card = screen.getByRole("article", { name: /^Coordinator message/ });
+    expect(within(card).getByText("Information only · Exchange exchange-1")).toBeVisible();
+    expect(within(card).queryByRole("link", { name: "Open task" })).toBeNull();
+    expect(within(card).queryByRole("button", { name: /terminal/i })).toBeNull();
+    expect(within(card).getByRole("link", { name: "Fix PR (https://example.invalid/different-destination)" })).toHaveAttribute("href", "https://example.invalid/different-destination");
+    expect(within(card).getByRole("link", { name: "http://example.invalid/probe" })).toHaveAttribute("href", "http://example.invalid/probe");
+    expect(within(card).queryAllByRole("link")).toHaveLength(2);
+    await user.click(within(card).getByRole("button", { name: "Hide" }));
+    expect(screen.queryByRole("article", { name: /^Coordinator message/ })).toBeNull();
+  });
   it("keeps accepted priority removable when the engine becomes unavailable before claim", async () => {
     let view: ChatView = { ...chatView, send_now_reason: "No engine is available", queued: [{ id: "q-now", text: "Remove before claim", trigger: "chat", send_now: true, send_now_reason: "Runs next after system work" }] };
     const fetchMock = mockFetch({ chatFn: () => jsonResponse(view) });

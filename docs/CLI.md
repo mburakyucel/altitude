@@ -291,6 +291,45 @@ restores the compact line. Other FYIs and historical rows without selection rema
 grouping. This command changes no task state and creates no operator decision.
 The [L3 persona](../personas/l3.md) defines when and how the coordinator uses this mechanism.
 
+## Coordinator information messages
+
+Inside a registered project's coordinator, send deliberately written local diagnostic information:
+
+```sh
+alt project message peer 'The local probe failed before provider execution; review fixture-review.' --summary 'Local probe result' --request-id probe-1
+alt project message source 'The fix is merged; activation is still pending.' --summary 'Fix status' --request-id reply-1 --reply-to <exchange-id>
+```
+
+The coordinator socket fixes the sender. The ordinary CLI, task owners and HTTP clients cannot send
+these messages. `--request-id` is a stable identifier per sender/recipient pair (1–100 letters,
+digits, dots, underscores or hyphens); retry an interrupted acknowledgement with the same identifier
+and identical arguments.
+The acknowledgement supplies the exchange identifier for a reply. A reply must address the other
+participant of an incoming exchange. Both projects must remain registered to the same resolved
+checkouts; changed registration refuses reuse and leaves pending information unsupplied. These rows
+stay visible without expiration or a removal control; reattaching the same checkout permits supply.
+For diagnostic text beginning with a dash, put options before `--`, then the literal text:
+`alt project message peer --summary 'Flag refusal' --request-id probe-2 -- '-p flag rejected'`.
+
+Text is limited to 4 KiB and the summary to one plain line of 100 characters. Local incident IDs,
+task slugs, review IDs and public issue/PR URLs may cross. Files, attachments, private record/home
+paths, recognized credentials and recognizable conversation transcripts are refused. Diagnostic
+code excerpts are allowed. Unknown secrets and prose transcripts cannot be classified universally:
+the coordinator writes and checks the sanitized text. The recipient's configured provider processes
+it. No new access to another project's records is granted.
+
+Sent means accepted into the recipient's inbox. Delivery waits for its next ordinary coordinator
+turn; an idle project waits and no additional AI turn launches. Messages create no task, grant no
+authority, resume or steer no owner and change no task state. They appear as separate folded
+information rows in both chats; Show reveals text and the exchange reference, Hide folds it.
+Pending information has no Send now, Remove or approval control. `alt l3 search` finds supplied
+and sent information with peer attribution; it does not turn it into operator evidence.
+Delivery is at least once: a provider failure or daemon crash before receipt proof is saved can repeat information.
+Use the retained message identity when triaging and the same stable request identity for a repeated
+reply. Receipt failures show a separate warning and preserve the ordinary coordinator turn.
+Expanded links display their actual HTTP/HTTPS destination, including next to a Markdown label.
+The coordinator includes public URLs deliberately; clickable text does not certify a destination as public or trustworthy.
+
 ## Superseded PR closure
 
 ```text

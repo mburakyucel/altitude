@@ -1149,6 +1149,31 @@ blocks the task with a system fault and incident carrying the engine's result er
 
 ## L3 sessions and provider changes
 
+Same-installation coordinator messages are information-only inbox rows. Acceptance records one
+recipient queue entry and a separate Sent row in the source chat. A stable caller request identity
+deduplicates retries against the queue or retained project-log receipt and repairs an interrupted
+source acknowledgement. Opposite-direction sends never hold both project locks. The resolved
+checkout identities bind each exchange; removal or changed registration prevents supplying the
+pending text or replying to a different checkout.
+
+These rows never make the autonomous queue ready. An already admitted ordinary turn with an
+eligible engine supplies pending text through the shared coordinator prompt path, writes one
+incoming system chat row and retains its receipt before removing it from the queue on a completed
+provider turn, actual assistant/tool output or a participant-bound reply during that turn. The incoming
+row is associated with the receiving turn and appears before it and the coordinator's reply. Routing holds, launch failures, input refusal and
+provider refusal without output keep the inbox pending for another ordinary turn. A failed
+turn does not imply successful triage or activation;
+inspect the actual response. Interrupted receipt/queue removal is reconciled from the proven incoming
+chat row on the next ordinary turn, without another visible inbox row or forwarding it twice.
+A receipt write/read/reconciliation failure preserves the ordinary turn and reports a separate visible information warning. If no incoming
+receipt was saved, the information remains pending and may repeat; this is not a failed AI turn.
+Text and non-reply tool output prove supply when the provider returns. A provider failure or daemon crash before saving
+that proof can repeat information on the next ordinary turn. This is at-least-once delivery; coordinators
+use the message identity and stable reply request identity to avoid repeating actions.
+Information rows stay outside operator decision sources and historical human handoffs.
+Replies use the same exchange and the same next-ordinary-turn delivery. No task transition,
+owner wake, approval, grant or extra provider turn follows from messaging itself.
+
 The project header's **Remove project** action and `alt project remove <name>` detach L3 by
 unregistering the project. Removal is permitted only after all tasks finish or are rejected and
 their workers and operations have ended. An active L3 turn or report/timer operation must finish

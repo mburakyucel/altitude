@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useTask } from "../data/api";
 import type { ChatMessage } from "../data/api";
 import { stampText } from "../data/observed";
-import { InlineProse, Prose, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
 import { Stamp } from "./Stamp";
 
 /*
@@ -28,9 +28,10 @@ export interface SystemTurn {
   slug: string | null;
   fyi: boolean;
   headsUp: boolean;
+  projectMessage?: ChatMessage["project_message"];
 }
 
-const DANGER = new Set(["incident", "system-recovery"]);
+const DANGER = new Set(["incident", "system-recovery", "project-message-error"]);
 
 export function dangerTrigger(trigger: string): boolean {
   return DANGER.has(trigger) || trigger.includes("fault");
@@ -62,6 +63,10 @@ export function handling(trigger: string, task?: string | null): string {
 /** The card header's first word for a trigger. */
 export function kindLabel(trigger: string): string {
   switch (trigger) {
+    case "project-message":
+      return "Coordinator message";
+    case "project-message-error":
+      return "Coordinator message receipt";
     case "report-landed":
       return "Report landed";
     case "block":
@@ -122,6 +127,12 @@ export function fieldsOf(prompt: string): { label: string; value: string }[] | n
 
 /** The folded line's text (SPEC.md §4.1). */
 export function lineText(turn: SystemTurn, task: string | null): string {
+  if (turn.projectMessage) {
+    const message = turn.projectMessage;
+    const state = message.status === "sent" ? "Sent" : message.status === "queued" ? "Queued · next ordinary turn"
+      : message.status === "registration-changed" ? "Registration changed · not supplied" : "Incoming";
+    return `${message.sender} → ${message.recipient} · ${message.summary} · ${state}`;
+  }
   if (turn.headsUp) return turn.prompt;
   if (turn.fyi) return lastParagraph(turn.prompt) || turn.prompt;
   if (turn.inProgress) return `L3 is handling ${handling(turn.trigger, task)}`;
@@ -165,7 +176,15 @@ function SystemCard({
           Hide
         </button>
       </header>
-      {turn.fyi ? (
+      {turn.projectMessage ? (
+        <div className="sys-card-body">
+          <p>{lineText(turn, null)}</p>
+          <p className="text-muted">Information only · Exchange {turn.projectMessage.exchange_id}</p>
+          <ProseProject value={undefined}><ProseRepository value={null}>
+            <Prose text={turn.prompt} document showLinkTargets />
+          </ProseRepository></ProseProject>
+        </div>
+      ) : turn.fyi ? (
         <div className="sys-card-body">
           <Prose text={turn.prompt} />
         </div>
@@ -231,7 +250,7 @@ export function SystemLine({
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
-        <InlineProse text={text} />
+        {turn.projectMessage ? text : <InlineProse text={text} />}
       </span>
       {turn.inProgress ? null : (
         <button type="button" className="link" onClick={() => setOpen(true)}>

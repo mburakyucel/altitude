@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, project_setup, state as S, tasks as T  # noqa: E402
+from altitude import config, l3, project_setup, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
@@ -274,6 +274,7 @@ def main(argv=None) -> None:
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default")
     a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
+    ps.add_parser("message", parents=[l3.project_message_parser()], help="coordinator socket: send information to a registered project")
     ps.add_parser("setup", parents=[project_setup.parser()], help="inspect configuration; --repair requests supported daemon setup")
     r = ps.add_parser("remove"); r.add_argument("name")
     x = ps.add_parser("set"); x.add_argument("name"); x.add_argument("--reason", required=True)
@@ -474,6 +475,8 @@ def main(argv=None) -> None:
     if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
         config.ensure_root()
     c = args.cmd
+    if c == "project" and args.pcmd == "message":
+        sys.exit("alt project message is available only through the project's coordinator socket")
     closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "acmd", None) if c == "audit" else
@@ -740,7 +743,6 @@ def main(argv=None) -> None:
                         out(blocked)
                     if any(q["status"] == "open" and (q["id"], q["revision"]) not in previous_questions
                            for q in blocked.get("questions", [])):
-                        from altitude import l3
                         l3.queue_message(p, T.block_question(blocked), trigger="block", slug=args.slug)
             elif not args.fault:
                 out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
@@ -872,7 +874,6 @@ def main(argv=None) -> None:
             ap.error("alt pr requires one positive PR number, or close NUMBER")
         record = status.pr(_project(args), int(args.target)); out(record) if args.as_json else print(_pr_text(record)); return
     if c == "l3":
-        from altitude import l3
         if args.l3cmd == "search":
             try:
                 record = l3.search(_project(args), args.query, args.limit)
@@ -898,11 +899,10 @@ def main(argv=None) -> None:
             sys.exit(f"alt land: {e}")
         return
     if c == "chat":
-        from altitude import l3
         res = l3.turn(_project(args), _stdin_or_file(args), trigger=args.trigger, engine=args.engine, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
         print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}); return
     if c == "l3-reset":
-        from altitude import l3; l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
+        l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
     if c == "incident":
         from altitude import incidents; p = _project(args)
         if args.icmd == "new":

@@ -255,6 +255,13 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 or any(not isinstance(arg, str) or len(arg) > 16384 for arg in args)
                 or not isinstance(stdin, str) or len(stdin.encode()) > L3_VERB_MAX_REQUEST):
             raise ValueError("invalid alt verb arguments")
+        if args[:2] == ["project", "message"]:
+            if stdin:
+                raise ValueError("project messages accept deliberately written literal text, not stdin")
+            options = l3.project_message_parser().parse_args(args[2:])
+            result = l3.project_message(project, options.target, options.text, summary=options.summary,
+                                        request_id=options.request_id, reply_to=options.reply_to)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         project_options = {"--p", "--pr", "--pro", "--proj", "--proje", "--projec", "--project"}
         file_options = {"--f", "--fi", "--fil", "--file"}
         if any(arg.split("=", 1)[0] in project_options | file_options
@@ -597,7 +604,7 @@ def start_l3(project: str) -> None:
 def _start_l3(project: str) -> None:
     if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
-        if l3.queue_path(project).exists():
+        if l3.has_queued_turn(project):
             request_l3_drain(project)
         return
     # The start reply belongs to the operator's conversation.
@@ -3035,7 +3042,8 @@ def project_view(name: str) -> dict:
             "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
                               key=lambda t: t["updated"], reverse=True),
-            "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
+            "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
+                                                  if event.get("kind") != "project-message-received"],
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 

@@ -399,6 +399,31 @@ timer or notification surface appears.
 `web/e2e/heads-up.pw.ts` walks the heads-up states, task navigation and scroll preservation at both
 viewports; `conversation.pw.ts` covers the unchanged listening/denied composer states.
 
+Coordinator information messages use separate system lines outside routine groups: **sender →
+recipient · summary · Sent/Incoming**, plus **Show**. Sent acknowledges inbox acceptance; pending
+information says **Queued · next ordinary turn**. Show replaces the line with a Coordinator message
+card containing direction, summary, the exchange reference and full diagnostic text; Hide restores
+the line. Diagnostic code stays read-only; link destinations appear literally, including beside
+Markdown labels, without inferred
+task, file, issue or terminal actions. Reply rows reverse direction on the same exchange. No send,
+reply, approval or removal control is added to this information surface.
+
+| Information state | What appears and disappears |
+| --- | --- |
+| Empty / initial loading | Existing empty text / skeleton; no placeholder exchange. |
+| Accepted | Source Sent row and one folded recipient inbox row appear. |
+| Show / Hide | Full text and exchange reference appear / disappear. |
+| Supplied on an ordinary turn | Inbox row leaves; one incoming history row appears before its receiving turn and reply. |
+| Receipt failure | Separate visible warning; the ordinary answer remains. Information without saved proof may repeat. |
+| Reply | A separately folded reverse-direction row joins the same exchange. |
+| Sensitive text refused | No message or inbox row appears. |
+| Registration changed | Pending line says Registration changed · not supplied; no action is offered. |
+| Read error | Existing error and Retry; already loaded rows retain their existing read-state behavior. |
+| Listening / denied | Existing composer behavior in §3.6; information rows request no permission. |
+
+`web/e2e/project-messages.pw.ts` specifies phone/desktop and emulated iPhone states. The unchanged
+listening/denied behavior remains covered by `conversation.pw.ts`; these messages have no composer.
+
 The report view has a back link to the task and a "Report" title. It reads the task's report and
 shows plain sections when present: Landed (PRs, main checks and deploy), Review, Blocked, Decisions,
 FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and the digest are prose;
