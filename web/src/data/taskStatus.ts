@@ -22,11 +22,10 @@ export function statusExcerpt(value: unknown): string {
   return short.replace(/[.!;:]$/, "");
 }
 
-function currentQuestions(task: TaskRow): Record<string, unknown>[] {
+function questionRecords(task: TaskRow): Record<string, unknown>[] {
   const group = record(task["question_group"]);
   const rows = group["questions"] ?? task["questions"];
-  return (Array.isArray(rows) ? rows : []).map(record).filter((q) => q["status"] === "open"
-    && (q["audience"] === "l3" || !task["handed_back"] || text(q["asked"]) > text(task["handed_back"])));
+  return (Array.isArray(rows) ? rows : []).map(record);
 }
 
 /** Read-only wording shared by task rows and pages. It creates no action, recovery or timer. */
@@ -35,8 +34,11 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
   if (state === "done" || state === "rejected") return null;
   const steering = record(task["steering"])["state"];
   if (state === "running" && !task["stop_id"] && steering !== "stopping" && steering !== "stop_unconfirmed") return null;
-  const questions = currentQuestions(task);
-  const hasQuestionRecords = Array.isArray(task["questions"]) || Array.isArray(record(task["question_group"])["questions"]);
+  const records = questionRecords(task);
+  const questions = records.filter((q) => q["status"] === "open"
+    && (q["audience"] === "l3" || !task["handed_back"] || text(q["asked"]) > text(task["handed_back"])));
+  const incomingQuestion = decision?.id && !records.some((q) => q["id"] === decision.id)
+    && (!task["handed_back"] || text(decision.asked) > text(task["handed_back"]));
   const coordinator = questions.find((q) => q["audience"] === "l3" && !q["response"]);
   const question = statusExcerpt(coordinator?.["detail"] ?? coordinator?.["question"]);
   const fault = text(task["fault"]);
@@ -61,7 +63,7 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
   if (state === "queued") return "Waiting for Altitude to start the task.";
   if (state === "blocked" || state === "reported") {
     if (decision?.kind === "review") return "Waiting for your review before merge.";
-    if (questions.some((q) => q["audience"] === "operator" && !q["response"]) || (!hasQuestionRecords && decision?.id)) {
+    if (questions.some((q) => q["audience"] === "operator" && !q["response"]) || incomingQuestion) {
       return "Waiting for your answer to the task’s question.";
     }
     if (coordinator || task["waiting_on"] === "l3") {

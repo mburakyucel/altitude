@@ -100,6 +100,12 @@ describe("task explanations", () => {
       .not.toMatch(/your answer/i);
   });
 
+  it("shows a new overview question before the project read observes it", () => {
+    const decision: Decision = { project: "atlas", slug: blocked.slug, id: "new-question", kind: "asks", asked: "2026-10-07T04:05:00Z" };
+    expect(taskExplanation({ ...blocked, questions: [], handed_back: "2026-10-07T04:04:00Z" }, decision))
+      .toMatch(/your answer/i);
+  });
+
   it("ignores resolved coordinator questions", () => {
     const explanation = taskExplanation({ ...blocked, fault: "l2-died", questions: [question("l3", { status: "resolved" })] });
     expect(explanation).not.toMatch(/approved machine access/i);
