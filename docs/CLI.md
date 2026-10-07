@@ -324,6 +324,9 @@ authority, resume or steer no owner and change no task state. They appear as sep
 information rows in both chats; Show reveals text and the exchange reference, Hide folds it.
 Pending information has no Send now, Remove or approval control. `alt l3 search` finds supplied
 and sent information with peer attribution; it does not turn it into operator evidence.
+Delivery is at least once: a daemon crash before receipt proof is saved can repeat information.
+Use the retained message identity when triaging and the same stable request identity for a repeated
+reply. Receipt failures show a separate warning and preserve the ordinary coordinator turn.
 
 ## Superseded PR closure
 

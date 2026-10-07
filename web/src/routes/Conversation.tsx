@@ -52,6 +52,12 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
     if (row.role === "system") {
       const turn = fresh(id || `row-${index}`, row, true);
       turn.user = row;
+      const suppliedTo = row.project_message?.supplied_turn_id;
+      const receiving = suppliedTo ? byId.get(suppliedTo) : undefined;
+      if (receiving) {
+        turns.pop();
+        turns.splice(turns.indexOf(receiving), 0, turn);
+      }
       open = null;
       return;
     }
@@ -82,7 +88,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
     slug: row && !row.project_message ? subjectOf(row, project) : null,
     fyi: turn.fyi,
-    headsUp: turn.fyi && turn.trigger === "fyi" && turn.user?.heads_up === true,
+    headsUp: turn.fyi && (turn.trigger === "project-message-error" || (turn.trigger === "fyi" && turn.user?.heads_up === true)),
     projectMessage: row?.project_message,
   };
 }

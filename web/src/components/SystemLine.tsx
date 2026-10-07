@@ -31,7 +31,7 @@ export interface SystemTurn {
   projectMessage?: ChatMessage["project_message"];
 }
 
-const DANGER = new Set(["incident", "system-recovery"]);
+const DANGER = new Set(["incident", "system-recovery", "project-message-error"]);
 
 export function dangerTrigger(trigger: string): boolean {
   return DANGER.has(trigger) || trigger.includes("fault");
@@ -65,6 +65,8 @@ export function kindLabel(trigger: string): string {
   switch (trigger) {
     case "project-message":
       return "Coordinator message";
+    case "project-message-error":
+      return "Coordinator message receipt";
     case "report-landed":
       return "Report landed";
     case "block":

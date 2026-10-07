@@ -412,7 +412,8 @@ reply, approval or removal control is added to this information surface.
 | Empty / initial loading | Existing empty text / skeleton; no placeholder exchange. |
 | Accepted | Source Sent row and one folded recipient inbox row appear. |
 | Show / Hide | Full text and exchange reference appear / disappear. |
-| Supplied on an ordinary turn | Inbox row leaves; one incoming history row remains. |
+| Supplied on an ordinary turn | Inbox row leaves; one incoming history row appears before its receiving turn and reply. |
+| Receipt failure | Separate visible warning; the ordinary answer remains. Information without saved proof may repeat. |
 | Reply | A separately folded reverse-direction row joins the same exchange. |
 | Sensitive text refused | No message or inbox row appears. |
 | Registration changed | Pending line says Registration changed · not supplied; no action is offered. |

@@ -37,6 +37,9 @@ test("coordinator exchanges stay folded, move from inbox to history and preserve
   await walk.state("05-supplied", { visible: [line("Local probe result")], hidden: [page.getByRole("list", { name: "Queued messages" }), card] });
   await expect(line("Local probe result")).toHaveCount(1);
   await expect(line("Local probe result")).toContainText("Incoming");
+  expect(await line("Local probe result").evaluate((node) => Boolean(node.compareDocumentPosition(
+    [...document.querySelectorAll(".turn")].find(turn => turn.textContent?.includes("Fictional reconciliation complete"))!
+  ) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await action("reply");
   await walk.open("/projects/atlas");
   await walk.state("06-source-and-reply-inbox", { visible: [line("Local probe result"), line("Fix status")], hidden: [card] });
@@ -50,10 +53,14 @@ test("coordinator exchanges stay folded, move from inbox to history and preserve
   expect((await rejected.json()).error).toContain("recognized credentials");
   await page.reload();
   await walk.state("08-refused-no-row", { visible: [line("Local probe result"), line("Fix status")], hidden: [line("Refused diagnostic"), card] });
+  await action("receipt-failure");
+  await walk.open("/projects/lab");
+  await walk.state("09-receipt-warning", { visible: [page.getByText("Coordinator message receipt could not be saved; delivery may repeat on the next ordinary turn."),
+    page.getByText("Fictional ordinary answer survives receipt failure."), line("Receipt warning probe")], hidden: [card] });
   await action("change-registration");
   await walk.open("/projects/lab");
-  await walk.state("09-registration-changed", { visible: [line("Another probe"), page.getByText("Registration changed · not supplied", { exact: false })], hidden: [card] });
+  await walk.state("10-registration-changed", { visible: [line("Another probe"), line("Another probe").getByText("Registration changed · not supplied", { exact: false })], hidden: [card] });
   await page.route("**/api/chat/lab*", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Fictional read unavailable"}' }));
   await page.reload();
-  await walk.state("10-read-error", { visible: [page.getByText("Could not load the conversation.", { exact: false })], hidden: [line("Another probe"), card] });
+  await walk.state("11-read-error", { visible: [page.getByText("Could not load the conversation.", { exact: false })], hidden: [line("Another probe"), card] });
 });

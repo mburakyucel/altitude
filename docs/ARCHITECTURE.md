@@ -1355,9 +1355,11 @@ incoming history when supplied on an ordinary turn. Each information row stays s
 outside routine system groups, with only Show/Hide. Existing literal history search attributes it
 as information; decision readers and human conversation handoffs exclude it.
 Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
-CLI launch alone does not. Incoming precedes the reply/final answer. Receipt write failure reports
-an error while preserving the provider result; a saved incoming row reconciles interrupted queue
+CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
+a separate visible warning while preserving the ordinary turn; a saved incoming row reconciles interrupted queue
 removal, while information without a saved receipt remains pending and may repeat.
+Non-reply text/tool output is acknowledged after provider return; a daemon crash before saving proof
+can repeat information. Delivery is at least once, and message/reply identities support careful triage.
 Expanded diagnostic code is read-only; message prose does not inherit the receiving project's
 terminal actions, file links or implicit issue-number links. Explicit public URLs remain clickable.
 

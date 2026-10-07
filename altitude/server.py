@@ -3042,7 +3042,8 @@ def project_view(name: str) -> dict:
             "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
                               key=lambda t: t["updated"], reverse=True),
-            "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
+            "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
+                                                  if event.get("kind") != "project-message-received"],
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 

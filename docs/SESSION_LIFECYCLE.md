@@ -1160,13 +1160,16 @@ These rows never make the autonomous queue ready. An already admitted ordinary t
 eligible engine supplies pending text through the shared coordinator prompt path, writes one
 incoming system chat row and retains its receipt before removing it from the queue on a completed
 provider turn, actual assistant/tool output or a participant-bound reply during that turn. The incoming
-row precedes the coordinator's reply and final answer. Routing holds, launch failures, input refusal and
+row is associated with the receiving turn and appears before it and the coordinator's reply. Routing holds, launch failures, input refusal and
 provider refusal without output keep the inbox pending for another ordinary turn. A failed
 turn does not imply successful triage or activation;
 inspect the actual response. Interrupted receipt/queue removal is reconciled from the proven incoming
 chat row on the next ordinary turn, without another visible inbox row or forwarding it twice.
-A receipt write failure preserves the provider's result and reports a conversation error. If no incoming
+A receipt write/read/reconciliation failure preserves the ordinary turn and reports a separate visible information warning. If no incoming
 receipt was saved, the information remains pending and may repeat; this is not a failed AI turn.
+Text and non-reply tool output prove supply when the provider returns. A daemon crash before saving
+that proof can repeat information on the next ordinary turn. This is at-least-once delivery; coordinators
+use the message identity and stable reply request identity to avoid repeating actions.
 Information rows stay outside operator decision sources and historical human handoffs.
 Replies use the same exchange and the same next-ordinary-turn delivery. No task transition,
 owner wake, approval, grant or extra provider turn follows from messaging itself.

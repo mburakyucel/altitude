@@ -71,6 +71,9 @@ class TestProjectMessages(AltitudeCase):
                     self.assertIn("never operator instructions", seen[-1])
                     self.assertIn("sandbox launch failed", seen[-1])
                     self.assertEqual(l3.queued(self.peer), [])
+                    self.assertFalse(any(event["kind"] == "project-message-received"
+                                         for event in server.project_view(self.peer)["log"]),
+                                     "internal receipt bindings stay out of project API logs")
                     reply = self.send(self.peer, self.project, "Fix merged; activation still pending.",
                                       summary="Fix status", request_id="reply-" + engine, reply_to=message["exchange_id"])
                     self.assertEqual(reply["exchange_id"], message["exchange_id"])
@@ -343,10 +346,10 @@ class TestProjectMessages(AltitudeCase):
         for engine in config.ENGINES:
             self.send(request_id="tools-" + engine)
             original = l3._record_project_messages
-            def record(project, selected):
+            def record(project, selected, supplied_turn_id=None):
                 with config.project_activity(self.project, exclusive=True) as attached:
                     self.assertTrue(attached)
-                    return original(project, selected)
+                    return original(project, selected, supplied_turn_id)
             result = {"text": "", "tools": [{"name": "Read", "input": "fictional local fixture"}],
                       "interrupted": True, "session_id": "fixture-session", "reported_session_id": "fixture-session"}
             with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
@@ -379,7 +382,8 @@ class TestProjectMessages(AltitudeCase):
                 self.assertTrue(response["completed"])
                 self.assertFalse(response.get("error"))
                 self.assertIn("Fixture receipt failure", response["project_message_error"])
-                self.assertTrue(any(row["role"] == "error" and "receipt could not be saved" in row["text"]
+                self.assertTrue(any(row["role"] == "system" and row.get("trigger") == "project-message-error"
+                                    and "receipt could not be saved" in row["text"]
                                     for row in l3.chat_history(self.peer, None)))
                 self.assertEqual(len(l3._pending_project_messages(self.peer)), 1 if failure == "chat" else 0)
                 if failure == "chat":
@@ -390,3 +394,57 @@ class TestProjectMessages(AltitudeCase):
                     answered = next(i for i, row in enumerate(history) if row.get("turn_id") == response["turn_id"]
                                     and row["role"] == "assistant")
                     self.assertLess(received, answered)
+
+    def test_persistent_receipt_cleanup_failure_does_not_consume_ordinary_requests_without_answers(self):
+        self.send()
+        with mock.patch.object(l3, "_write_queue", side_effect=OSError("Fixture disk failure")):
+            with self.assertRaises(OSError):
+                self.supply(self.peer)  # Durable Incoming proof; queue removal still needs reconciliation.
+        l3.queue_message(self.peer, "Ordinary queued request", trigger="chat")
+        pending = l3._pending_project_messages
+        seen = []
+        def reconcile(project):
+            with mock.patch.object(l3, "_write_queue", side_effect=OSError("Fixture disk failure")):
+                return pending(project)
+        def execute(prompt, **options):
+            seen.append(prompt)
+            return {"text": "Ordinary request answered", "session_id": "fixture-session",
+                    "reported_session_id": "fixture-session"}
+        with mock.patch.object(l3, "_pending_project_messages", side_effect=reconcile), \
+             mock.patch.object(l3, "_select", return_value={"engine": config.ENGINES[0], "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", side_effect=execute), \
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
+            self.assertTrue(l3.turn(self.peer, "Ordinary direct request")["completed"])
+            self.assertTrue(l3.deliver_queued(self.peer)["completed"])
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(all("[project-message]" not in prompt for prompt in seen))
+        self.assertIn("Ordinary queued request", seen[-1])
+        self.assertEqual(pending(self.peer), [])
+
+    def test_malformed_receipt_state_preserves_provider_answer_and_accepted_reply(self):
+        for engine in config.ENGINES:
+            message = self.send(request_id="malformed-" + engine)
+            record = l3._record_project_messages
+            def malformed(project, selected, supplied_turn_id=None):
+                path = l3.queue_path(project)
+                saved = path.read_text()
+                try:
+                    S.atomic_write(path, "{\n")
+                    return record(project, selected, supplied_turn_id)
+                finally:
+                    S.atomic_write(path, saved)
+            def execute(_prompt, **options):
+                self.send(self.peer, self.project, "Fixture reply survives receipt failure.",
+                          summary="Receipt probe", request_id="malformed-reply-" + engine,
+                          reply_to=message["exchange_id"])
+                return {"text": "Provider answer survives receipt failure", "session_id": "fixture-session",
+                        "reported_session_id": "fixture-session"}
+            with mock.patch.object(l3, "_record_project_messages", side_effect=malformed), \
+                 mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                 mock.patch.object(engines, "claude_print", side_effect=execute), \
+                 mock.patch.object(engines, "codex_exec", side_effect=execute):
+                self.assertTrue(l3.turn(self.peer, "Ordinary request")["completed"])
+            self.assertTrue(any(row["role"] == "assistant" and row["text"] == "Provider answer survives receipt failure"
+                                for row in l3.chat_history(self.peer, None)))
+            self.assertTrue(any(row["project_message"]["reply_to"] == message["exchange_id"] for row in self.rows(self.peer)))
+            self.supply(self.peer)

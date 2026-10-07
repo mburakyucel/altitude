@@ -1,5 +1,6 @@
 """Real information-message storage/broker, fictional projects and provider I/O only."""
 import json
+from unittest import mock
 
 from service_support import configure, serve
 from tests.support import make_repo
@@ -13,7 +14,9 @@ def main():
         with config.add_project(project, path=repo, l3_engine=config.ENGINES[0]):
             pass
     def execute(_prompt, **options):
-        return {"text": "Fictional reconciliation complete; no task action.", "session_id": "fixture-message-session",
+        text = ("Fictional ordinary answer survives receipt failure." if _prompt.endswith("Receipt failure probe")
+                else "Fictional reconciliation complete; no task action.")
+        return {"text": text, "session_id": "fixture-message-session",
                 "reported_session_id": "fixture-message-session", "usage": {}}
     engines.claude_print = execute
     engines.codex_exec = execute
@@ -38,13 +41,17 @@ def main():
                                   "Local probe result", "probe-1")
                     exchange = result["project_message"]["exchange_id"]
                 elif action == "supply":
-                    result = l3.turn("lab", "Ordinary reconciliation", trigger="restart")
+                    result = l3.turn("lab", "Ordinary reconciliation")
                 elif action == "reply":
                     result = send("lab", "atlas", "Fix merged; local activation remains pending.", "Fix status", "reply-1", exchange)
                 elif action == "supply-reply":
                     result = l3.turn("atlas", "Ordinary status request")
                 elif action == "refuse":
                     result = send("atlas", "lab", "password=fictional-sensitive", "Refused diagnostic", "refused-1")
+                elif action == "receipt-failure":
+                    send("atlas", "lab", "Fictional receipt failure probe.", "Receipt warning probe", "warning-1")
+                    with mock.patch.object(l3, "_record_project_messages", side_effect=OSError("Fictional receipt write failure")):
+                        result = l3.turn("lab", "Receipt failure probe")
                 elif action == "change-registration":
                     send("atlas", "lab", "Second fictional diagnostic.", "Another probe", "probe-2")
                     projects = config.load_projects()

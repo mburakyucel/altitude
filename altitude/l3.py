@@ -286,11 +286,12 @@ def _message_current(row):
                for key in ("sender", "recipient"))
 
 
-def _message_chat(project, row, status):
+def _message_chat(project, row, status, supplied_turn_id=None):
     if not any(item.get("trigger") == "project-message" and item.get("turn_id") == row["id"]
                for item in chat_history(project, None)):
         chat_log(project, "system", row["text"], trigger="project-message", turn_id=row["id"],
-                 project_message=_message_public(row, project, status))
+                 project_message={**_message_public(row, project, status),
+                                  **({"supplied_turn_id": supplied_turn_id} if supplied_turn_id else {})})
 
 
 def project_message(sender, target, text, *, summary, request_id, reply_to=None):
@@ -380,7 +381,7 @@ def _supplied_message_ids(project):
             if row.get("trigger") == "project-message" and row.get("project_message", {}).get("status") == "supplied"}
 
 
-def _record_project_messages(project, selected):
+def _record_project_messages(project, selected, supplied_turn_id=None):
     """Persist proven supply; registration was checked before providing the input."""
     identities = {row["id"] for row in selected}
     if not identities:
@@ -394,7 +395,7 @@ def _record_project_messages(project, selected):
             if row.get("trigger") != "project-message" or row["id"] not in identities:
                 remaining.append(row)
                 continue
-            _message_chat(project, row, "supplied")
+            _message_chat(project, row, "supplied", supplied_turn_id)
             if row["id"] not in receipts:
                 S.project_log(project, "project-message-received", message=row)
         _write_queue(queue_path(project), remaining)
@@ -1251,10 +1252,22 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
                      turn_id=turn_id, **_slug_meta(slug), **({key: image_message[key]
                      for key in ("images", "request_id", "request_digest") if key in image_message} if image_message else {}))
-        information = _pending_project_messages(project) if choice.get("engine") else []
+        receipt_errors = []
+        def receipt_error(exc):
+            receipt_errors.append(str(exc))
+            try:
+                chat_log(project, "system", "Coordinator message receipt could not be saved; "
+                         "delivery may repeat on the next ordinary turn.", trigger="project-message-error",
+                         turn_id=uuid.uuid4().hex)
+            except OSError:
+                print("Coordinator message receipt could not be saved", file=sys.stderr)
+        try:
+            information = _pending_project_messages(project) if choice.get("engine") else []
+        except (OSError, ValueError) as exc:
+            information = []
+            receipt_error(exc)
         prompt = _project_message_prompt(information) + prompt
         receipt_lock = threading.Lock()
-        receipt_errors = []
         def acknowledge(result=None):
             nonlocal information
             if result is not None and not (result.get("text") or result.get("tools") or
@@ -1263,16 +1276,11 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             with receipt_lock:
                 supplied, information = information, []
                 try:
-                    _record_project_messages(project, supplied)
-                except OSError as exc:
+                    _record_project_messages(project, supplied, turn_id)
+                except (OSError, ValueError) as exc:
                     # Preserve provider success. A retained chat receipt reconciles queue removal;
                     # failure before that proof remains visible and may repeat on the next turn.
-                    receipt_errors.append(str(exc))
-                    try:
-                        chat_log(project, "error", "Coordinator message receipt could not be saved; "
-                                 "delivery may repeat on the next ordinary turn.", trigger=trigger, turn_id=turn_id)
-                    except OSError:
-                        print("Coordinator message receipt could not be saved", file=sys.stderr)
+                    receipt_error(exc)
         with _lifecycle_guard(project):
             active_turn.update(project_message_receipt=acknowledge,
                                project_message_ids={row["id"] for row in information})

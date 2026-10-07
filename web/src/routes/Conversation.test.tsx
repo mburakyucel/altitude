@@ -120,6 +120,25 @@ const conversation = () => screen.findByRole("region", { name: "Conversation" })
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
+  it.each([390, 1440])("places incoming before its receiving turn and shows receipt warnings beside successful answers at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, history: [
+      { role: "user", text: "Ordinary triage request", trigger: "chat", turn_id: "receive" },
+      { role: "system", text: "Fictional diagnostic", trigger: "project-message", turn_id: "incoming",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange", message_id: "incoming",
+          summary: "Incoming probe", direction: "incoming", status: "supplied", supplied_turn_id: "receive" } },
+      { role: "system", text: "Coordinator message receipt could not be saved; delivery may repeat on the next ordinary turn.",
+        trigger: "project-message-error", turn_id: "warning" },
+      { role: "assistant", text: "Ordinary triage answer", trigger: "chat", turn_id: "receive" },
+    ], queued: [] } });
+    renderApp({ route: "/projects/altitude" });
+    const incoming = await screen.findByText("lab → altitude · Incoming probe · Incoming");
+    const answer = screen.getByText("Ordinary triage answer");
+    expect(incoming.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Coordinator message receipt could not be saved/)).toBeVisible();
+    expect(answer).toBeVisible();
+    expect(screen.queryByText(/L3 could not answer this turn/)).toBeNull();
+  });
   it.each([390, 1440])("does not count information as a runnable queue position at %i", async (width) => {
     setViewport(width);
     mockFetch({ chat: { ...chatView, queued: [

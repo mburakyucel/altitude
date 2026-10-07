@@ -660,6 +660,7 @@ export const DigestSchema = z
 const ProjectMessageSchema = z.object({
   sender: z.string(), recipient: z.string(), exchange_id: z.string(), message_id: z.string(),
   summary: z.string(), reply_to: z.string().nullish(),
+  supplied_turn_id: z.string().optional(),
   direction: z.enum(["sent", "incoming"]),
   status: z.enum(["sent", "queued", "supplied", "registration-changed"]),
 });
