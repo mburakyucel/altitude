@@ -545,7 +545,11 @@ complete package, effective policy, write roots and native job identity, as desc
 preparation delivery and installation alone do not establish native eligibility. Launch with
 [`chromiumSandbox: true`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox),
 because Playwright defaults it to false. Use blank or local fictional content, a finite timeout, and a
-disposable profile.
+disposable profile. E2e specs never set their own `launchOptions` or sandbox flags:
+`web/playwright.config.ts` owns the harness launch that `make check` runs, and
+`web/playwright.validation.config.ts` adds `chromiumSandbox: true` under `alt task validate`, so a spec's
+sandbox evidence comes from running it there. `tests/test_repository_instructions.py` rejects either
+option in `web/e2e`.
 
 `make browser-sandbox` is the check. It launches Chromium this way against a local fictional page and
 writes `browser-sandbox.json` to the run's results: browser version, launch options,
