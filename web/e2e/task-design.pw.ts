@@ -16,6 +16,30 @@ const park = async (request: APIRequestContext) => expect((await request.post("/
 const card = (page: Page, q: Question) => page.getByRole("region", { name: "Task conversation", exact: true })
   .locator(`[data-question-id="${q.id}"][data-question-revision="${q.revision}"]`);
 
+test("project preview returns through its question to L3 without a history loop", async ({ page, request }, info) => {
+  const initial = await task(request);
+  const q = initial.question;
+  await walkthrough(page, info).open("/projects/atlas");
+  const opened = page.waitForEvent("popup");
+  await page.getByRole("link", { name: "Review the layout", exact: true }).click();
+  const preview = await opened;
+  await expect(preview).toHaveURL(q.design_url);
+  await preview.reload();
+  await preview.getByRole("link", { name: "← Back to question", exact: true }).click();
+  await expect(preview).toHaveURL(atQuestion(q));
+  await expect(card(preview, q)).toBeInViewport();
+  await preview.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(preview).toHaveURL("/projects/atlas");
+  await walkthrough(preview, info).state("navigation-project-return", {
+    visible: [preview.getByRole("link", { name: "Review the layout", exact: true })],
+    hidden: [preview.getByRole("link", { name: "← Back to question", exact: true }), card(preview, q)],
+  });
+  await expect(page).toHaveURL("/projects/atlas");
+  expect((await task(request)).question.status).toBe("open");
+  expect((await task(request)).hold_merge).toBe(initial.hold_merge);
+  await preview.close();
+});
+
 test("a saved proposal opens from chat, full size and back; a follow-up hands the turn back, is not approval, and approval retains the hold", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const initial = await task(request);

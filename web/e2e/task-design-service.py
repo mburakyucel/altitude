@@ -4,7 +4,7 @@ import shutil
 from service_support import configure, serve
 from tests.support import REPO, add_worktree, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, server, state as S, tasks as T
+from altitude import config, engines, l3, server, state as S, tasks as T
 
 
 QUESTION = "May I implement this conversation layout?"
@@ -55,6 +55,9 @@ def main():
 
     T.message("atlas", slug, "l2", "The screenshots show the proposed conversation layout on phone and desktop.")
     present()
+    saved = S.load_task("atlas", slug)
+    question = T.question_view("atlas", saved, saved["questions"][-1])
+    l3.chat_log("atlas", "assistant", f"[Review the layout]({question['design_url']})", trigger="chat")
 
     class Handler(server.Handler):
         def do_POST(self):
