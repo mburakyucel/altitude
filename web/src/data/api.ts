@@ -1037,6 +1037,12 @@ export function useTranscript(
         if (page.reset) {
           beginSync();
           again = true;
+        } else if (mode === "initial" && reader.data && !follows.current) {
+          // Pause can arrive while a following-tail refresh is in flight. Preserve the
+          // reading window and reconcile it instead of replacing its visible anchor.
+          reader.tail = false;
+          beginSync();
+          again = true;
         } else if (sync) {
           if (!sync.cursor) sync.cursor = page.cursor;
           for (const row of page.events) sync.rows.set(row.id, row);

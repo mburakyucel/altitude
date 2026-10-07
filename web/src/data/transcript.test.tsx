@@ -167,4 +167,33 @@ describe("mounted transcript reader", () => {
     expect(modes).toEqual(cause === "long absence" ? ["initial", "initial"] : ["initial", "delta", "initial"]);
     expect(result.current.data?.has_earlier).toBe(true);
   });
+
+  it("keeps the reading window when Pause arrives during a recent-tail refresh", async () => {
+    let initial = 0;
+    let releaseTail!: (value: Response) => void;
+    let releaseHistory!: (value: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const mode = new URL(url, "http://local").searchParams.get("mode");
+      if (mode === "initial") {
+        if (++initial === 1) return response(page());
+        return new Promise<Response>(resolve => { releaseTail = resolve; });
+      }
+      if (mode === "reconcile") return new Promise<Response>(resolve => { releaseHistory = resolve; });
+      return response(page({ cursor: "new:901", events: [] }));
+    }));
+    const { result, rerender } = renderHook(({ following }) =>
+      useTranscript("atlas", "work", "fixture", "session", false, true, true, 0, following),
+    { initialProps: { following: true } });
+    await waitFor(() => expect(result.current.data?.events[0]?.id).toBe("recent"));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    focus();
+    await waitFor(() => expect(releaseTail).toBeDefined());
+    rerender({ following: false });
+    await act(async () => releaseTail(response(page({ cursor: "new:900", lower: "80", events: [row("latest", "90", 900)] }))));
+    expect(result.current.data?.events.map(e => e.id)).toEqual(["recent"]);
+    await waitFor(() => expect(releaseHistory).toBeDefined());
+    await act(async () => releaseHistory(response(page({ cursor: "new:901", events: [row("recent", "20", 1), row("latest", "90", 900)] }))));
+    await waitFor(() => expect(result.current.reconnecting).toBe(false));
+    expect(result.current.data?.events.map(e => e.id)).toEqual(["recent", "latest"]);
+  });
 });
