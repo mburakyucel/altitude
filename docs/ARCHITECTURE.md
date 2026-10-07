@@ -505,7 +505,7 @@ have different session, authentication, capability and usage-reporting models. A
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 
 The [native browser runtime candidate](DEVELOPMENT.md#native-mac-browser-runtime-candidate) keeps
-the existing execution contract. Its pinned Seatbelt patch adds only registration and lookup of
+the existing execution contract. Its pinned Seatbelt patch adds registration and lookup of
 whole Chromium rendezvous service names with a positive decimal PID, for effective network-enabled
 workspace-write process policies with both current-account user-manager path denies. All eligible
 commands share that allowance; it is neither browser identity nor task isolation.
@@ -513,10 +513,14 @@ The guard excludes read-only, network-disabled, filesystem
 helper and other narrower custom policies by comparing filesystem semantics to canonical
 workspace-write plus the exact bus and systemd denies derived from the real account UID.
 Its comparison operand follows the named compiler's omission of legacy skip-missing defaults;
-supplied restrictions and emitted filesystem rules are unchanged.
+supplied filesystem permissions are unchanged. The emitter excludes each contained writable root's
+policy-protected metadata from every broader write clause before symlink and rename protection.
+This tightening applies to every role/profile using the candidate, independently of Mach eligibility;
+explicit narrower write grants retain public semantics and disjoint write clauses remain identical.
 Plain workspace-write without those denies has no added allowance.
 A named custom profile with identical effective permissions has the same allowance. Existing file
-roots, metadata protections, process/signal restrictions and service denies remain in force.
+roots, process/signal restrictions and service denies remain in force. Deterministic emission checks
+are separate from required native metadata enforcement, alias and isolation acceptance.
 This is an unadopted preparation artifact, with separate installation, isolation acceptance and
 operator merge gates; it grants no LaunchServices, WindowServer or host clipboard access.
 The fictional recovery lane selects the locked headless shell only for project-isolation/draft and
