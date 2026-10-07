@@ -95,6 +95,7 @@ class TaskToolCache(AltitudeCase):
 
     def test_cache_cleanup_failure_does_not_claim_archival(self):
         task = T.new(self.project, "Cache cleanup error", "Fictional task")
+        (S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache").mkdir(parents=True)
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
             with self.assertRaisesRegex(PermissionError, "cleanup refused"):
                 T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
@@ -102,14 +103,54 @@ class TaskToolCache(AltitudeCase):
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
         self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
 
+    def test_cache_cleanup_refuses_linked_parent_and_never_follows_package_links(self):
+        task = T.new(self.project, "Cache linked parent", "Fictional task")
+        directory = S.task_dir(self.project, task["slug"])
+        elsewhere = self.tmp / "elsewhere"
+        (elsewhere / "tool-cache").mkdir(parents=True)
+        keep = elsewhere / "tool-cache/package"
+        keep.write_text("unrelated data")
+        (directory / "l2-engine").symlink_to(elsewhere)
+        with self.assertRaises(OSError):
+            T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
+        self.assertEqual(keep.read_text(), "unrelated data")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "queued")
+        (directory / "l2-engine").unlink()
+        cache = directory / "l2-engine/tool-cache"
+        cache.mkdir(parents=True)
+        (cache / "linked-package").symlink_to(elsewhere)
+        T.reject(self.project, task["slug"], "Fixture rejection", actor="l3")
+        self.assertEqual(keep.read_text(), "unrelated data")
+        self.assertFalse((S.archive_dir(self.project) / task["slug"] / "l2-engine/tool-cache").exists())
+
     def test_completion_cleanup_failure_retains_reported_state_and_no_digest(self):
         task = T.new(self.project, "Completion cleanup error", "Fictional task")
         T.dispatch(self.project, task["slug"], attempt=1, session_id="fixture", agent_id="fixture",
                    worktree="/fictional/worktree", branch="fixture")
         T.report(self.project, task["slug"], {"verdict":"ok", "prs":[], "spend":{}})
+        (S.task_dir(self.project, task["slug"]) / "l2-engine/tool-cache").mkdir(parents=True)
         with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
             with self.assertRaisesRegex(PermissionError, "cleanup refused"):
                 T.done(self.project, task["slug"], "Fixture completion")
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "reported")
         self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())
         self.assertFalse((S.task_dir(self.project, task["slug"]) / "digest.md").exists())
+
+    def test_cache_cleanup_stays_on_open_job_when_its_parent_is_replaced(self):
+        task = T.new(self.project, "Cache parent race", "Fictional task")
+        directory = S.task_dir(self.project, task["slug"])
+        job = directory / "l2-engine"
+        (job / "tool-cache").mkdir(parents=True)
+        elsewhere = self.tmp / "elsewhere"
+        (elsewhere / "tool-cache").mkdir(parents=True)
+        keep = elsewhere / "tool-cache/package"
+        keep.write_text("unrelated data")
+        remove = T.shutil.rmtree
+        def replace_parent(path, **kwargs):
+            job.rename(directory / "old-job")
+            job.symlink_to(elsewhere)
+            return remove(path, **kwargs)
+        with mock.patch.object(T.shutil, "rmtree", side_effect=replace_parent):
+            T._remove_tool_cache(self.project, task["slug"])
+        self.assertFalse((directory / "old-job/tool-cache").exists())
+        self.assertEqual(keep.read_text(), "unrelated data")

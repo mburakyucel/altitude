@@ -46,13 +46,13 @@ DESIGN_IMAGE_COUNT = 12
 
 
 @contextmanager
-def _design_directory(root: Path | int, parts: list[str], *, create: bool = False):
+def _directory(root: Path | int, parts: list[str], *, create: bool = False):
     """Walk relative to an open root without following any symlink, including racing replacements."""
     fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts:
             if not part or part in (".", "..") or "/" in part or "\\" in part:
-                raise ValueError("invalid design path")
+                raise ValueError("invalid relative directory path")
             if create:
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=fd)
@@ -71,7 +71,7 @@ def _design_bytes(root: Path | int, relative: str, limit: int) -> bytes:
     parts = relative.split("/")
     if any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ValueError("invalid design path")
-    with _design_directory(root, parts[:-1]) as directory:
+    with _directory(root, parts[:-1]) as directory:
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
@@ -129,10 +129,10 @@ def task_file(project: str, reference: str) -> dict:
         raise TaskFileError(unsupported, 415)
     try:
         # Starting at / also refuses symlinks in ancestors of the configured runtime home.
-        with _design_directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
+        with _directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
             for location in ("tasks", "archive"):
                 try:
-                    with _design_directory(root, [location, slug]) as directory:
+                    with _directory(root, [location, slug]) as directory:
                         try:
                             record = json.loads(_design_bytes(directory, "status.json", DESIGN_IMAGE_LIMIT))
                         except (OSError, ValueError):
@@ -218,7 +218,7 @@ def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, di
 
 def _save_design(project: str, slug: str, files: dict[str, bytes]) -> None:
     relative = (S.task_dir(project, slug) / "designs").relative_to(config.ROOT)
-    with _design_directory(config.ROOT, list(relative.parts), create=True) as directory:
+    with _directory(config.ROOT, list(relative.parts), create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
@@ -1431,7 +1431,9 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
 def _remove_tool_cache(project: str, slug: str) -> None:
     """Dispose tool data before a terminal state is saved, under the caller's project lock."""
     try:
-        shutil.rmtree(S.tasks_dir(project) / slug / "l2-engine" / "tool-cache")
+        relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
+        with _directory(config.ROOT, list(relative.parts)) as directory:
+            shutil.rmtree("tool-cache", dir_fd=directory)
     except FileNotFoundError:
         pass  # Tasks that never launched have no tool caches.
 
