@@ -344,6 +344,8 @@ builds the web app, then runs a finite blank/local-fictional full-Chromium prefl
 It keeps stage logs, browser/version/executable digest, effective shared launch options, reports
 and named attachments in `VALIDATION_RESULTS`; the daemon retains them privately on the task.
 Profile/config/cache and package-manager storage belong to the run and its cleanup.
+On Mac, `MAC_CHROMIUM_TMPDIR` directs Chromium's native temporary-directory lookup into the
+same short owned folder: its pinned Apple implementation uses this override rather than `TMPDIR`.
 
 Stock worker permissions and installed engines stay unchanged. Mac validation uses its existing
 Seatbelt profile with Chromium's inner sandbox disabled, solely for this approved local-fictional

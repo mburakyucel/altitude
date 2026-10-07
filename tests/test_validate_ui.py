@@ -103,6 +103,12 @@ class TestValidateUI(AltitudeCase):
         time.sleep(1)
         self.assertFalse(marker.exists(), "the timeout kills descendants, not just the package-manager wrapper")
 
+    def test_native_temp_override_uses_only_the_owned_folder_and_is_absent_on_linux(self):
+        with mock.patch.object(ui.platform, '_darwin', return_value=True):
+            self.assertEqual(ui.platform.validation_browser_environment(self.tmp), {'MAC_CHROMIUM_TMPDIR': str(self.tmp)})
+        with mock.patch.object(ui.platform, '_darwin', return_value=False):
+            self.assertEqual(ui.platform.validation_browser_environment(self.tmp), {})
+
 
 
 if __name__ == "__main__":

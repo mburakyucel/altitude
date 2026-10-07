@@ -25,7 +25,8 @@ def validate(specs: list[str]) -> int:
                 or spec.startswith('-') or not (web / 'e2e' / path).is_file()):
             raise ValueError("UI_ARGS accepts existing relative .pw.ts files only; configuration is shared")
     home, temp = Path(os.environ["HOME"]), Path(os.environ.get("TMPDIR", tempfile.gettempdir()))
-    env = {**os.environ, "npm_config_cache": str(temp / "npm"), "XDG_CACHE_HOME": str(home / "cache"),
+    env = {**os.environ, **platform.validation_browser_environment(temp),
+           "npm_config_cache": str(temp / "npm"), "XDG_CACHE_HOME": str(home / "cache"),
            "XDG_CONFIG_HOME": str(home / "config"), "PLAYWRIGHT_BROWSERS_PATH": str(home / "browsers"),
            "ALTITUDE_BROWSER_EVIDENCE": str(results / "browser.json"), "ALTITUDE_UI_HEADLESS_SHELL": "0"}
     container = platform.validation_in_container()

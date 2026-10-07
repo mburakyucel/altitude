@@ -2277,6 +2277,11 @@ def validation_in_container() -> bool:
     return not _darwin()
 
 
+def validation_browser_environment(temp: Path) -> dict[str, str]:
+    """Chromium's supported hermetic temp override on Mac (#625), inside the run's existing write root."""
+    return {"MAC_CHROMIUM_TMPDIR": str(temp)} if _darwin() else {}
+
+
 def validation_browser_probe(work: Path) -> dict:
     """Finite in-profile controls for #625's fictional browser lane; never apply a nested profile.
 
