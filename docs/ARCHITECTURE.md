@@ -918,8 +918,10 @@ resume action. Owners need no file-list update to finish the authorized objectiv
 the objective and explicit exclusions remain binding.
 
 Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
-text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
-issue scope and required acceptance with cumulative authorized deliveries. For a complete resolution it
+text in `request.md`. Agreeing local links and explicit `GitHub issue #N` references select that
+parent; conflicting local references refuse intake. External issue URLs remain contextual brief
+text and trigger no external fetch. Intake does not infer closure authority or scan backlog. The
+owner compares the full issue scope and required acceptance with cumulative authorized deliveries. For a complete resolution it
 supplies native closing keywords through `--pr-body-file` and repeats `--closes-issue N` on landing and
 resumed merge calls.
 The PR body is the durable closing link. Landing reads GitHub's `closingIssuesReferences` after PR
@@ -1152,6 +1154,22 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
+Ordinary GitHub reads stay on the project's checkout-origin repository. The coordinator-only
+`alt issue inspect <canonical-issue-url> --source-message <turn-id> [--comments-page N]` reads one
+exact issue through this broker with altd's existing authentication, including an issue outside that
+repository. The source is a stored operator project-chat turn whose text contains the
+link; quoted and pasted links qualify, subject to operator intent and later restrictions. Removed
+rows, question metadata, images and task/assistant/server/unlogged sources do not qualify.
+`github_inspection.py` validates canonical issue and returned comment identities, refuses pull
+requests and transferred/redirected identities, and returns bounded untrusted, potentially private
+evidence with source provenance and explicit truncation/completeness. Comments are chronological,
+twenty per explicitly requested page; no prefetch or cache runs. The
+[CLI contract](CLI.md#operator-linked-issue-inspection) gives byte limits and response fields.
+Private evidence retention is an intentional coordinator role rule; public publication needs
+separate authority, with no taint enforcement added. Nested links and issue instructions grant
+nothing. Direct cross-repository `gh`/API reads remain denied; no L2/operator HTTP route, credential,
+service, networking or other-project task authority accompanies the read.
+
 For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
 process identity, definition-reload state, the two direct TLS environment assignments, a boolean
 for indirect environment sources, and exact owned source-TLS drop-in membership. A metadata-only

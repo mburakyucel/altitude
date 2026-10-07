@@ -12,28 +12,43 @@ class IssueIntakeError(RuntimeError):
     pass
 
 
-_URL = re.compile(r"(?<![A-Za-z0-9@./:-])https://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)"
-                  r"/issues/(?P<number>[1-9][0-9]*)(?![0-9/?#])", re.I)
+_URL = re.compile(r"https://github\.com/(?P<owner>[A-Za-z0-9][A-Za-z0-9_.-]*)/"
+                  r"(?P<repo>[A-Za-z0-9][A-Za-z0-9_.-]*)/issues/(?P<number>[1-9][0-9]*)", re.I)
+_LINK = re.compile(r"(?<![A-Za-z0-9@./:-])https://github\.com/[^\s<>\"'`\[\]()]+", re.I)
 _SHORTHAND = re.compile(r"\bgithub\s+issue\s*#(?P<number>[1-9][0-9]*)\b", re.I)
 _REMOTE = re.compile(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                      r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
 MAX_CONTENT = 70_000
 
 
-def task_reference(title: str, request: str) -> tuple[str | None, str | None, int] | None:
-    """The one issue a task names: a full issue URL or `GitHub issue #N` in its title or request."""
+def issue_identity(url: str) -> tuple[str, str, int] | None:
+    """Canonical GitHub issue identity, shared by intake and operator-linked inspection."""
+    match = _URL.fullmatch(url)
+    if not match:
+        return None
+    try:
+        return match.group("owner").lower(), match.group("repo").lower(), int(match.group("number"))
+    except ValueError:
+        return None
+
+
+def issue_links(text: str) -> list[tuple[str, str, int]]:
+    return [identity for match in _LINK.finditer(text)
+            if (identity := issue_identity(match.group().rstrip(".,;:)]}"))) is not None]
+
+
+def task_reference(title: str, request: str, repository: tuple[str, str]) -> int | None:
+    """Only a current-project issue is a parent; external URLs remain contextual text."""
     found = []
     for text in (str(request or ""), str(title or "")):
-        found += [(m.group("owner"), m.group("repo"), int(m.group("number"))) for m in _URL.finditer(text)]
-        found += [(None, None, int(m.group("number"))) for m in _SHORTHAND.finditer(text)]
+        found += [ref[2] for ref in issue_links(text) if ref[:2] == tuple(x.lower() for x in repository)]
+        found += [int(m.group("number")) for m in _SHORTHAND.finditer(text)]
     if not found:
         return None
-    numbers = {ref[2] for ref in found}
-    repos = {(ref[0].lower(), ref[1].lower()) for ref in found if ref[0]}
-    if len(numbers) != 1 or len(repos) > 1:
+    numbers = set(found)
+    if len(numbers) != 1:
         raise IssueIntakeError("task intake contains conflicting GitHub issue references")
-    owner, repo = next(iter(repos)) if repos else (None, None)
-    return owner, repo, numbers.pop()
+    return numbers.pop()
 
 
 def _run(args: list[str], project: str, timeout: int) -> subprocess.CompletedProcess:
@@ -56,13 +71,14 @@ def project_repo(project: str) -> tuple[str, str]:
 
 def inline(project: str, title: str, request: str) -> str | None:
     """Fetch the issue a new task names, from the project's own repository only, rendered for the request."""
-    reference = task_reference(title, request)
-    if reference is None:
+    # Plain briefs need no GitHub origin. Contextual links need only origin inspection,
+    # never an external issue fetch.
+    if not any(issue_links(str(text or "")) or _SHORTHAND.search(str(text or "")) for text in (title, request)):
         return None
-    wanted_owner, wanted_repo, number = reference
     owner, repo = project_repo(project)
-    if wanted_owner and (wanted_owner.lower(), wanted_repo.lower()) != (owner.lower(), repo.lower()):
-        raise IssueIntakeError("GitHub issue belongs to a different repository")
+    number = task_reference(title, request, (owner, repo))
+    if number is None:
+        return None
     run = _run(["gh", "issue", "view", str(number), "--repo", f"{owner}/{repo}", "--json", "number,title,body,state"],
                project, 120)
     try:

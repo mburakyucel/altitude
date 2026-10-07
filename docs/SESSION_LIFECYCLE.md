@@ -47,6 +47,11 @@ Task archival and intake's issue snapshot imply no issue closure. Partial delive
 open; closure requires cumulative full-scope delivery and required operator acceptance through the
 [reviewed closing relationship or L3 reconciliation](CLI.md#delivery-linked-issue-completion).
 Merge holds remain in force. No periodic issue cleanup runs.
+
+Task intake retains external issue URLs as context without fetching them. Agreeing current-project
+links or explicit `GitHub issue #N` references select the one local parent; conflicting local
+references refuse intake. Coordinator inspection evidence does not replace the brief's source
+authority or authorize work in the linked repository.
 The operator can also steer an L2 directly while other tasks continue.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
@@ -1028,8 +1033,21 @@ prompts, no Edit/Write/NotebookEdit tools, and native admission for trusted shim
 log/diff/show shims, including full patches and historical files with external diff/text-conversion helpers
 disabled, and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and fixed
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
-daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
-write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check.
+daemon-side file inputs, and re-applies the L3 command door. Ordinary GitHub reads stay in the
+project's repository; checkout, direct GitHub, and service write commands are absent. `alt issue new`
+and `alt issue comment` publish requested backlog through altd after its private-evidence check.
+The coordinator-only [linked-issue inspection verb](CLI.md#operator-linked-issue-inspection) uses
+the same broker and existing authentication for one canonical issue URL contained in an identified
+stored operator project-chat turn, including a quoted or pasted link to another repository. Removed
+rows, question metadata, images and task/assistant/server/unlogged sources are refused. The
+coordinator follows the operator's intent and later restrictions. Each explicit read returns bounded
+issue text and one chronological twenty-comment page, marked as untrusted, potentially private
+evidence with provenance and truncation/completeness; it follows no nested links and keeps no cache.
+The coordinator may retain this evidence privately in its project; public publication requires
+separate authority. This is a role boundary, without taint enforcement. Direct cross-repository
+`gh`/API reads remain denied, and the verb adds no L2/operator HTTP route or credential, service,
+networking or other-project task powers.
+
 The main-service read also returns [bounded loaded TLS evidence](CLI.md#loaded-service-evidence).
 It recognizes the native empty environment-file list's omitted line after a successful loaded read.
 It compares no baseline and performs no reload or lifecycle action. PID, start time and invocation
