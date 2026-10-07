@@ -1,5 +1,6 @@
 """The macOS side of the platform seam against fixtures: a fake launchctl, fixture process tables, coalitions and
 sockets. It runs on any host; scripts/platform_probe.py exercises the same mechanisms natively on a Mac."""
+import ctypes
 import ctypes.util
 import json
 import os
@@ -579,6 +580,29 @@ class Confinement(DarwinCase):
                      '(subpath "/private/var/folders/ab/cd")', '(subpath "/dev")'):
             self.assertIn(root, text)
 
+    def test_profile_refuses_the_services_that_start_programs_outside_it(self):
+        self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
+        text = platform.seatbelt_profile(["/private/tmp/work"])
+        for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
+                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)"):
+            self.assertIn(rule, text)
+        self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
+
+    def test_seatbelt_compiles_both_profiles_on_a_mac(self):
+        """Seatbelt rejects a whole profile over one unknown rule, which would stop every confined job."""
+        try:
+            library = ctypes.CDLL("/usr/lib/libsandbox.1.dylib")
+        except OSError:
+            self.skipTest("Seatbelt is macOS's")
+        library.sandbox_compile_string.restype = ctypes.c_void_p
+        library.sandbox_compile_string.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
+        for text in (platform.seatbelt_profile([str(self.tmp)]),
+                     platform.validation_profile((self.tmp / "work",), self.tmp / "unit.log", 8890)):
+            error = ctypes.c_char_p()
+            compiled = library.sandbox_compile_string(text.encode(), None, ctypes.byref(error))
+            self.assertTrue(compiled, error.value)
+            library.sandbox_free_profile(ctypes.c_void_p(compiled))
+
     def test_limits_replace_the_address_space_cap_with_a_footprint_watcher(self):
         argv = platform.limited_command(["ffmpeg", "-i", "x"], memory=1 << 30, cpu=10, output=5)
         self.assertEqual(argv[3:], [str(1 << 30), "10", "5", "ffmpeg", "-i", "x"])
@@ -643,6 +667,21 @@ class Supervisor(DarwinCase):
         self.assertEqual(self.supervise(["/usr/bin/true"]), 0)
         self.assertEqual((self.job / "coalition").read_text(), "44")
         self.assertTrue((self.job / "survivors").exists())
+
+    def test_piped_input_reaches_the_command_as_a_pipe_and_its_saved_copy_is_removed(self):
+        saved = self.job / "stdin"
+        data = b"x" * (1 << 20)  # past any pipe's capacity
+        for command, status, output in (
+                (["/bin/sh", "-c", '[ -p /dev/stdin ] && wc -c | tr -d " "'], 0, f"{len(data)}\n"),
+                (["/bin/sh", "-c", "head -c 3"], 0, "xxx"),  # stops reading early
+                ([str(self.tmp / "missing")], 127, None)):  # never starts
+            with self.subTest(command=command[-1]):
+                saved.write_bytes(data)
+                self.out.write_text("")
+                self.assertEqual(self.supervise(command, stdin=str(saved), piped=True), status)
+                self.assertFalse(saved.exists())
+                if output is not None:
+                    self.assertEqual(self.out.read_text(), output)
 
     def test_a_command_that_cannot_start_reads_as_127(self):
         self.assertEqual(self.supervise([str(self.tmp / "missing")]), 127)

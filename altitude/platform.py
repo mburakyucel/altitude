@@ -1534,6 +1534,11 @@ def find_library(name: str) -> str | None:
 LAUNCHCTL = shutil.which("launchctl") or "/bin/launchctl"
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 XCODE_SELECT = "/usr/bin/xcode-select"
+#: Seatbelt rules shared by every Altitude profile. Two per-user services start programs as the operator's account,
+#: outside the caller's sandbox: Apple's Simulator service, whose devices run what any client asks (its helpers and
+#: each booted device share the prefix), and LaunchServices, which opens any app.
+SERVICE_ESCAPES = ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
+                   ' (xpc-service-name-prefix "com.apple.CoreSimulator."))(deny lsopen)')
 CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
@@ -1654,8 +1659,9 @@ def _launchd_service_status(unit: str) -> dict:
 # environment leaves. Its program is a supervisor, outside any sandbox, that runs the command (under Altitude's
 # Seatbelt profile when the caller confines it), enforces the time limit, and when the command exits stops whatever is
 # left in the coalition, records the status and removes its own launchd job. The caller runs a launcher that hands the
-# supervisor its input and output: a regular file or device by path, as systemd-run --pipe passes the descriptor, and a
-# pipe through a FIFO the launcher relays.
+# supervisor its input and output: a regular file or device by path, as systemd-run --pipe passes the descriptor, output
+# pipes through FIFOs the launcher relays, and piped input as a private copy the supervisor removes once it has read
+# it and pipes to the command.
 
 _BOOT = "import sys; sys.path.insert(0, sys.argv[1]); from altitude import platform; platform.job_main(sys.argv[2:])"
 
@@ -1713,7 +1719,7 @@ def seatbelt_profile(writable: list[str]) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
     write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
     cache directories, /private/tmp and devices. Seatbelt matches resolved paths. launchd refuses service control to
-    every sandboxed process."""
+    every sandboxed process, and the profile refuses the services that would start a program outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
@@ -1723,7 +1729,7 @@ def seatbelt_profile(writable: list[str]) -> str:
         else:
             rules.append('(subpath "' + os.path.realpath(root).replace("\\", "\\\\").replace('"', '\\"') + '")')
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
-            f"(deny file-write*)(allow file-write* {' '.join(rules)})")
+            f"(deny file-write*)(allow file-write* {' '.join(rules)}){SERVICE_ESCAPES}")
 
 
 def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
@@ -1764,7 +1770,7 @@ def _launch(spec: dict) -> int:
             spec["stdin"] = _fd_path(0)
             if spec["stdin"] is None:  # a pipe: callers write a whole prompt, then close it
                 _write_private(job / "stdin", sys.stdin.buffer.read())
-                spec["stdin"] = str(job / "stdin")
+                spec.update(stdin=str(job / "stdin"), piped=True)
             for fd in (1, 2):
                 path = _fd_path(fd)
                 if path is None:
@@ -1867,8 +1873,10 @@ def _supervise(job: Path) -> int:
     terminal = spec.get("mode") == "terminal"
     status = 1
     try:
-        # A terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere.
-        streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
+        if spec.get("piped"):
+            streams = [_piped(Path(spec["stdin"]))]
+        else:  # a terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere
+            streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
         for fd in ("1", "2"):
             if terminal:
                 streams.append(os.dup(streams[0]))
@@ -1919,6 +1927,26 @@ def _supervise(job: Path) -> int:
             shutil.rmtree(job, ignore_errors=True)
         os.execv(LAUNCHCTL, [LAUNCHCTL, "remove", spec["label"]])
     return status
+
+
+def _piped(saved: Path) -> int:
+    """The read end of a pipe that carries the launcher's saved copy of its piped input, which is removed once read.
+
+    The command reads a pipe, as under systemd-run --pipe: a line its first reader takes is gone, whereas a reader of
+    a file can start again from its beginning (a worker's GitHub token reached the engine as prompt text that way)."""
+    data = saved.read_bytes()
+    saved.unlink()
+    read_end, write_end = os.pipe()
+
+    def feed() -> None:
+        try:
+            with os.fdopen(write_end, "wb") as stream:
+                stream.write(data)
+        except OSError:  # the command ended, or never started, without reading all of it
+            pass
+
+    threading.Thread(target=feed, daemon=True).start()
+    return read_end
 
 
 def _hold(child: subprocess.Popen, launcher: list) -> int:
@@ -2333,9 +2361,10 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     through the descriptor it inherits (Seatbelt checks that descriptor's writes and status by path too); read nothing else in the operator's home or
     the shared temporary folders, where Altitude's records, credentials, checkouts, caches and other processes' files
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
-    Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
-    service control to every sandboxed process, so the run cannot start, stop or change a service. It reads, never
-    writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim takes over a second."""
+    Altitude's `port`, on any address; ask nothing of the keychain, the Simulator service or LaunchServices; and signal
+    only its own processes. launchd refuses service control to every sandboxed process, so the run cannot start, stop
+    or change a service. It reads, never writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim
+    takes over a second."""
     def filters(kind: str, values) -> list[str]:
         return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
 
@@ -2363,7 +2392,8 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
         "(deny network-outbound (remote unix-socket))(allow network-outbound " + " ".join(
             f"(remote unix-socket {path})" for path in [*filters("subpath", own), *filters(
                 "path-literal", ("/private/var/run/mDNSResponder", "/private/var/run/syslog"))]) + ")",
-        '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))'])
+        '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))',
+        SERVICE_ESCAPES])
 
 
 def validation_command(roots: tuple[Path, ...], output: Path, port: int, argv: list[str],
