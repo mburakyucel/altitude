@@ -855,6 +855,7 @@ alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> --reason <why>
 alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
@@ -1704,6 +1705,7 @@ container deployment work uses the [standing container approval](../AGENTS.md#co
 ```text
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
 alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
 alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
@@ -1743,6 +1745,14 @@ recording the same answer again keeps that id. Revocation records `grant-revoke`
 later command; altd asks the service manager to stop a command still running under the revoked grant
 on every poll until it has ended, including after a restart. Whatever the command already did stays
 done, and its row says the grant was revoked while it ran.
+
+The operator's yes to a purpose also covers another task of the same project that needs that
+identical purpose, for example when the task that asked has closed and a new task carries on its
+remaining work. Only L3 applies it, with `--from-task <earlier-slug>` naming the task whose question
+the operator answered and `--attempt` naming this task's current attempt. The same mechanical checks
+run against that earlier question and answer; the grant records the purpose as the operator approved
+it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
+corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
 For standing approval, the owner copies the complete paragraph under **Container operations on this
 machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`

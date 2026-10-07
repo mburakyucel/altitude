@@ -21,6 +21,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   their own `alt task run` without a second auto-mode classifier judgment; altd still refuses it
   without a current grant. A grant recorded under `alt task machine` before this change is recorded
   again.
+- L3 can apply the operator's yes from one task to another task of the same project that needs the
+  identical purpose (`alt task grant --from-task`), so a settled approval is not asked again when
+  its work moves to a new task. The grant records which task the answer came from.
 - Chat accepts images tagged with `cICP` for Display P3 or BT.2020 colors, grayscale
   profiles and PNG gamma/primaries; it converts them to sRGB. Images whose color information has no
   conversion, such as HDR, upload with their colors as decoded instead of being refused.
