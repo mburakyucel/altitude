@@ -331,6 +331,9 @@ Only the coordinator uses:
 alt issue inspect https://github.com/owner/repo/issues/N --source-message <12hex-turn-id> [--comments-page N]
 ```
 
+Find the source with `alt l3 search 'literal issue URL' --json`: use the `turn_id` of
+the original operator row in this project's `chat.jsonl`, not a task or assistant hit.
+
 The project-bound broker reads the exact linked issue, including one in another repository, with
 altd's existing authenticated GitHub access. The source is one stored operator project-chat turn:
 `role=user`, `trigger=chat`, and operator `by` when present. Its text must contain the requested
@@ -339,9 +342,14 @@ and unlogged text cannot supply the source. Direct quoted or pasted links qualif
 still follows the operator's intent and later restrictions. The verb accepts no stdin body, repository
 override or arbitrary API path, and has no L2 or operator HTTP route. Direct cross-repository `gh`
 and API reads remain unavailable to the coordinator.
+The issue and comment GETs share one 120-second budget within both transports' 130-second wait.
+An unreadable, malformed or out-of-project chat source refuses inspection; report the failure to
+L3 for supported recovery rather than substituting another source.
 
 Only canonical HTTPS `github.com/owner/repo/issues/N` identities qualify. Queries, fragments, pull
-requests, control characters and returned identities changed by a transfer or redirect are refused.
+requests, C0/C1 controls (except newline, carriage return and tab), bidirectional formatting
+controls and returned identities changed by a transfer or redirect are refused. Ordinary
+zero-width joiners remain untrusted text so scripts and emoji using them are preserved.
 The JSON reply carries source provenance and an untrusted-evidence notice, issue text and one
 chronological comment page of twenty. `--comments-page` selects each subsequent page explicitly;
 there is no prefetch or cache. Issue bodies retain at most 32 KiB, each comment body 4 KiB, and the
@@ -360,6 +368,8 @@ Task intake selects a parent only from agreeing current-project issue links or e
 `GitHub issue #N` references. External issue URLs stay in the brief as context and trigger no external
 fetch; conflicting local references refuse intake. A read or retained snapshot grants no implementation
 or closure authority.
+Without a readable GitHub origin, full URLs remain context; explicit `GitHub issue #N` shorthand
+still requires that origin before a local parent can be fetched.
 
 ### Issue publication
 

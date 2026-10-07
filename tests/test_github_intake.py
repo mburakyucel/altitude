@@ -55,6 +55,30 @@ class TestGitHubIntake(AltitudeCase):
         self.assertEqual(run.call_count, 1)
         self.assertEqual(list(S.tasks_dir("p").glob("ambiguous-local*")), [])
 
+    def test_common_chat_formatting_preserves_local_parent_intake(self):
+        url = "https://github.com/acme/widget/issues/121"
+        gh = subprocess.CompletedProcess([], 0, json.dumps(ISSUE), "")
+        for i, text in enumerate((f"**{url}**", f"_{url}_", f"{url}!", f"Link:{url}",
+                                  f"{url}—see context", f"{url}。", f"“{url}”")):
+            with self.subTest(text=text), mock.patch.object(github_intake.subprocess, "run", side_effect=[REMOTE, gh]):
+                task = T.new("p", f"Formatted parent {i}", text, actor="burak")
+            self.assertIn("## GitHub issue", (S.task_dir("p", task["slug"]) / "request.md").read_text())
+
+    def test_context_only_brief_needs_no_github_origin_but_shorthand_does(self):
+        brief = "Context https://github.com/other/repo/issues/121"
+        origins = [subprocess.CompletedProcess([], 1, "", "no origin"),
+                   subprocess.CompletedProcess([], 0, "https://fictional.invalid/acme/widget", ""),
+                   subprocess.TimeoutExpired(["git"], 20), OSError("fictional git failure")]
+        for i, response in enumerate(origins):
+            with self.subTest(origin=response), mock.patch.object(github_intake.subprocess, "run", side_effect=[response]) as run:
+                task = T.new("p", f"Context without origin {i}", brief, actor="burak")
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual((S.task_dir("p", task["slug"]) / "request.md").read_text(), brief + "\n")
+            with mock.patch.object(github_intake.subprocess, "run", side_effect=[response]) as run:
+                with self.assertRaises(T.TransitionError):
+                    T.new("p", "Explicit local parent", brief + "; GitHub issue #2", actor="burak")
+            self.assertEqual(run.call_count, 1)
+
     def test_issue_is_inlined_once_at_creation(self):
         gh = subprocess.CompletedProcess([], 0, json.dumps(ISSUE), "")
         with mock.patch.object(github_intake.subprocess, "run", side_effect=[REMOTE, gh]) as run:

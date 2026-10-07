@@ -14,7 +14,8 @@ class IssueIntakeError(RuntimeError):
 
 _URL = re.compile(r"https://github\.com/(?P<owner>[A-Za-z0-9][A-Za-z0-9_.-]*)/"
                   r"(?P<repo>[A-Za-z0-9][A-Za-z0-9_.-]*)/issues/(?P<number>[1-9][0-9]*)", re.I)
-_LINK = re.compile(r"(?<![A-Za-z0-9@./:-])https://github\.com/[^\s<>\"'`\[\]()]+", re.I)
+_LINK = re.compile(r"(?<![A-Za-z0-9@./-])" + _URL.pattern
+                   + r"(?=$|[\s<>\"'`\[\](){}.,;:!*_~\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u3002])", re.I)
 _SHORTHAND = re.compile(r"\bgithub\s+issue\s*#(?P<number>[1-9][0-9]*)\b", re.I)
 _REMOTE = re.compile(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                      r"(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$", re.I)
@@ -34,7 +35,7 @@ def issue_identity(url: str) -> tuple[str, str, int] | None:
 
 def issue_links(text: str) -> list[tuple[str, str, int]]:
     return [identity for match in _LINK.finditer(text)
-            if (identity := issue_identity(match.group().rstrip(".,;:)]}"))) is not None]
+            if (identity := issue_identity(match.group())) is not None]
 
 
 def task_reference(title: str, request: str, repository: tuple[str, str]) -> int | None:
@@ -71,11 +72,16 @@ def project_repo(project: str) -> tuple[str, str]:
 
 def inline(project: str, title: str, request: str) -> str | None:
     """Fetch the issue a new task names, from the project's own repository only, rendered for the request."""
-    # Plain briefs need no GitHub origin. Contextual links need only origin inspection,
-    # never an external issue fetch.
+    # Without a GitHub origin, full URLs are context. Shorthand explicitly asks for
+    # a local parent, so it still requires a readable GitHub origin.
     if not any(issue_links(str(text or "")) or _SHORTHAND.search(str(text or "")) for text in (title, request)):
         return None
-    owner, repo = project_repo(project)
+    try:
+        owner, repo = project_repo(project)
+    except IssueIntakeError:
+        if any(_SHORTHAND.search(str(text or "")) for text in (title, request)):
+            raise
+        return None
     number = task_reference(title, request, (owner, repo))
     if number is None:
         return None

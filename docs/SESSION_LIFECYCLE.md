@@ -52,6 +52,7 @@ Task intake retains external issue URLs as context without fetching them. Agreei
 links or explicit `GitHub issue #N` references select the one local parent; conflicting local
 references refuse intake. Coordinator inspection evidence does not replace the brief's source
 authority or authorize work in the linked repository.
+
 The operator can also steer an L2 directly while other tasks continue.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different

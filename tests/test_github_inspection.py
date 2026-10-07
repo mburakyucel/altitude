@@ -1,7 +1,8 @@
 """Operator-linked evidence stays project-local and behind the coordinator broker.
 
-Real chat files, project sockets, runtime shims and the MCP adapter are exercised;
-only external gh calls receive fictional fixed responses. This proves application
+Real chat files, coordinator turns, project sockets, runtime shims and the MCP
+adapter are exercised; external gh/provider calls receive fixtures at their seams.
+This proves application
 authority and evidence handling, not live authentication or native confinement.
 """
 import copy
@@ -94,7 +95,8 @@ class TestGithubInspection(AltitudeCase):
 
     def test_direct_quotes_pasted_links_and_optional_operator_attribution(self):
         for text in (f"> Quoted issue: {self.url}", f"Pasted: [{self.url}]({self.url}).",
-                     f'"{self.url}"', f"`{self.url}`"):
+                     f'"{self.url}"', f"`{self.url}`", f"**{self.url}**", f"*{self.url}*",
+                     f"{self.url}!", f"{self.url}—please inspect", f"{self.url}。", f"Link:{self.url}"):
             for attribution in ({}, {"by": "operator"}, {"by": config.OPERATOR_ACTOR}):
                 with self.subTest(text=text, attribution=attribution):
                     self.clear_source()
@@ -133,6 +135,66 @@ class TestGithubInspection(AltitudeCase):
             self.inspect()
         self.assertNotIn(marker, str(error.exception))
         self.assertEqual(self.gh_calls, [])
+
+    def test_symlinked_source_outside_project_refuses_valid_operator_evidence(self):
+        source = config.project_dir(self.project) / "chat.jsonl"
+        outside = self.tmp / "fictional-outside-chat.jsonl"
+        outside.write_bytes(source.read_bytes())
+        source.unlink()
+        source.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "source could not be verified") as error:
+            self.inspect()
+        self.assertNotIn(str(outside), str(error.exception))
+        self.assertEqual(self.gh_calls, [])
+
+    def test_search_finds_operator_turn_identity_for_broker_inspection(self):
+        evidence = l3.search(self.project, self.url)
+        self.assertEqual(evidence["matched"], 1)
+        source = evidence["results"][0]["context"][0]
+        self.assertEqual(source["role"], "user")
+        self.assertEqual(source["turn_id"], self.turn)
+        result = self.inspect(turn=source["turn_id"])
+        self.assertEqual(result["source"]["message"], source["turn_id"])
+
+    def test_real_operator_turn_and_queued_server_turn_keep_source_authority_distinct(self):
+        self.clear_source()
+        self.private_ledgers()
+        self.register(self.project, l3_engine=config.ENGINES[0])
+        prompts = []
+
+        def execute(prompt, **kwargs):
+            prompts.append(prompt)
+            sid = kwargs.get("resume") or "fictional-coordinator-session"
+            return {"session_id": sid, "reported_session_id": sid, "text": "Fixture evidence reviewed.",
+                    "usage": {}, "error": None, "tools": []}
+
+        with mock.patch.object(engines, "installation", return_value={"available": True, "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", side_effect=execute), \
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
+            operator = l3.turn(self.project, f"Operator request: inspect {self.url}")
+            self.assertTrue(operator["completed"], operator)
+            queued = l3.queue_message(self.project, f"Server report also mentions {self.url}", trigger="report")
+            server_turn = l3.deliver_queued(self.project)
+            self.assertTrue(server_turn["completed"], server_turn)
+        self.assertEqual(len(prompts), 2)
+        rows = [json.loads(line) for line in (config.project_dir(self.project) / "chat.jsonl").read_text().splitlines()]
+        operator_rows = [row for row in rows if row["turn_id"] == operator["turn_id"]]
+        self.assertEqual([row["role"] for row in operator_rows], ["user", "assistant"])
+        self.assertTrue(all(row["trigger"] == "chat" for row in operator_rows))
+        server_rows = [row for row in rows if row["turn_id"] == server_turn["turn_id"]]
+        self.assertEqual([row["role"] for row in server_rows], ["user", "assistant"])
+        self.assertTrue(all(row["trigger"] == "report" for row in server_rows))
+        self.assertEqual(server_rows[0]["queue_ids"], [queued["id"]])
+        self.assertEqual(l3.queued(self.project), [])
+        evidence = l3.search(self.project, self.url)
+        user = next(row for result in evidence["results"] for row in result["context"]
+                    if row["role"] == "user")
+        self.assertEqual(user["turn_id"], operator["turn_id"])
+        self.assertEqual(self.inspect(turn=user["turn_id"])["issue"]["url"], self.url)
+        calls = len(self.gh_calls)
+        with self.assertRaisesRegex(ValueError, "direct operator"):
+            self.inspect(turn=server_turn["turn_id"])
+        self.assertEqual(len(self.gh_calls), calls)
 
     def test_server_assistant_question_image_removed_and_unlinked_sources_refuse(self):
         sources = [{"role": "assistant"}, {"role": "server"}, {"trigger": "server"}, {"trigger": None},
@@ -180,7 +242,8 @@ class TestGithubInspection(AltitudeCase):
                    self.url + "?query=1", self.url + "#issuecomment-1", self.url.replace("issues", "pull"),
                    self.url.replace("github.com", "github.com.evil.invalid"),
                    self.url.replace("github.com", "user@github.com"), self.url.replace("42", "0"),
-                   self.url.replace("context", "../context"), self.url.replace("context", "%63ontext")]
+                   self.url.replace("context", "../context"), self.url.replace("context", "%63ontext"),
+                   self.url + "!", self.url + "—", self.url + "。", "Link:" + self.url, f"**{self.url}**"]
         for url in invalid:
             with self.subTest(url=url), self.assertRaises(ValueError):
                 self.inspect(url=url)
@@ -231,6 +294,46 @@ class TestGithubInspection(AltitudeCase):
                          self.assertRaisesRegex(ValueError, "GitHub evidence could not be read") as error:
                         self.inspect()
                     self.assertNotIn(marker, str(error.exception))
+
+    def test_sequential_reads_share_one_decreasing_execution_budget(self):
+        with mock.patch.object(github_inspection, "time") as clock:
+            clock.monotonic.side_effect = [100.0, 105.0, 145.0]
+            self.assertTrue(self.inspect()["complete"])
+        self.assertEqual([kwargs["timeout"] for _, kwargs in self.gh_calls], [115.0, 75.0])
+        self.assertEqual(len(self.gh_calls), 2)
+
+    def test_exhausted_shared_budget_refuses_before_second_github_process(self):
+        with mock.patch.object(github_inspection, "time") as clock:
+            clock.monotonic.side_effect = [100.0, 101.0, 220.0]
+            with self.assertRaisesRegex(ValueError, "GitHub evidence could not be read"):
+                self.inspect()
+        self.assertEqual(len(self.gh_calls), 1)
+        self.assertEqual(self.gh_calls[0][1]["timeout"], 119.0)
+
+    def test_bidi_controls_refuse_issue_and_comment_bodies_without_echoing_them(self):
+        for control in ("\u061c", "\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
+                        "\u2066", "\u2067", "\u2068", "\u2069"):
+            for field in ("issue", "comment"):
+                with self.subTest(control=repr(control), field=field):
+                    self.issue.update(body="ordinary", comments=1)
+                    self.comments = [self.comment()]
+                    if field == "issue":
+                        self.issue["body"] = f"FICTIONAL_PRIVATE{control}disguised link"
+                    else:
+                        self.comments[0]["body"] = f"FICTIONAL_PRIVATE{control}disguised link"
+                    with self.assertRaisesRegex(ValueError, "control characters") as error:
+                        self.inspect()
+                    self.assertNotIn("FICTIONAL_PRIVATE", str(error.exception))
+                    self.assertNotIn(control, str(error.exception))
+
+    def test_ordinary_emoji_joiners_are_retained_in_issue_and_comment_evidence(self):
+        body = "Fictional engineer 👩‍💻 and family 👩‍👩‍👧‍👦."
+        self.issue.update(body=body, comments=1)
+        self.comments = [self.comment(body=body)]
+        result = self.inspect()
+        self.assertEqual(result["issue"]["body"], body)
+        self.assertEqual(result["comments"][0]["body"], body)
+        self.assertTrue(result["complete"])
 
     def test_comment_identity_duplicates_controls_and_overlarge_page_refuse(self):
         self.issue["comments"] = 1
