@@ -112,9 +112,10 @@ class Safari:
 
     def attach(self, prefix: str, seconds: float = 60) -> None:
         """Inspect Safari's page whose address starts with `prefix`."""
-        self.send("_rpc_getConnectedApplications:", {})
         end = time.monotonic() + seconds
         while time.monotonic() < end:
+            # Asked each time: a Safari launched just now registers with the inspector after the first answer.
+            self.send("_rpc_getConnectedApplications:", {})
             for app, row in list(self.apps.items()):
                 if row.get("WIRApplicationBundleIdentifierKey") == SAFARI:
                     self.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": app})
@@ -125,7 +126,10 @@ class Safari:
             if page:
                 break
         else:
-            raise TimeoutError(f"Safari listed no page at {prefix}")
+            seen = sorted(str(row.get("WIRURLKey")) for pages in self.listing.values() for row in pages.values())
+            raise TimeoutError(f"Safari listed no page at {prefix} (applications "
+                               f"{sorted(str(a.get('WIRApplicationBundleIdentifierKey')) for a in self.apps.values())}, "
+                               f"pages {seen})")
         self.app, key = page
         self.page = int(key) if str(key).isdigit() else key
         self.sender = str(uuid.uuid4()).upper()
