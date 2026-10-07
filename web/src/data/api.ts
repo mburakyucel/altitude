@@ -657,11 +657,19 @@ export const DigestSchema = z
   })
   .passthrough();
 
+const ProjectMessageSchema = z.object({
+  sender: z.string(), recipient: z.string(), exchange_id: z.string(), message_id: z.string(),
+  summary: z.string(), reply_to: z.string().nullish(),
+  direction: z.enum(["sent", "incoming"]),
+  status: z.enum(["sent", "queued", "supplied", "registration-changed"]),
+});
+
 export const ChatMessageSchema = z
   .object({
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    project_message: ProjectMessageSchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     trigger: z.string().nullish(),
     /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
@@ -684,6 +692,7 @@ export const QueuedMessageSchema = z
     trigger: z.string().nullish(),
     role: z.string().nullish(),
     text: z.string(),
+    project_message: ProjectMessageSchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
     position: z.number().nullish(),

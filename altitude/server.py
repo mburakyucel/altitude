@@ -268,6 +268,13 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 if value != "-":
                     raise ValueError("L3 questions-file input is accepted only on stdin (-)")
         _validate_l3_alt_args(args)
+        if args[:2] == ["project", "message"]:
+            if stdin:
+                raise ValueError("project messages accept deliberately written literal text, not stdin")
+            options = l3.project_message_parser().parse_args(args[2:])
+            result = l3.project_message(project, options.target, options.text, summary=options.summary,
+                                        request_id=options.request_id, reply_to=options.reply_to)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "setup"]:
             options = project_setup.parser().parse_args(args[2:])
             if options.name != project or stdin:

@@ -80,9 +80,10 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     reply: turn.assistant?.text ?? null,
     error: turn.error?.text ?? null,
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
-    slug: row ? subjectOf(row, project) : null,
+    slug: row && !row.project_message ? subjectOf(row, project) : null,
     fyi: turn.fyi,
     headsUp: turn.fyi && turn.trigger === "fyi" && turn.user?.heads_up === true,
+    projectMessage: row?.project_message,
   };
 }
 
@@ -109,7 +110,7 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
       continue;
     }
     const system = systemTurn(turn, project, activeId);
-    if (system.inProgress || system.headsUp) {
+    if (system.inProgress || system.headsUp || system.projectMessage) {
       flush();
       items.push({ kind: "system", turn: system });
     } else run.push(system);
@@ -396,7 +397,11 @@ export default function Conversation({
             <ul className="queued" aria-label="Queued messages">
               {queued.map((row, index) => (
                 <li key={row.id} className="queued-row">
-                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
+                  {row.project_message ? (
+                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                      trigger: "project-message", prompt: row.text, reply: null, error: null,
+                      inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
+                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>}
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
                     <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}

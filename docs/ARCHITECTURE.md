@@ -1338,6 +1338,33 @@ the operator's password, or that uses a terminal while `sudo` still remembers an
 as root. A password travels from the browser over TLS to altd and into the pseudo-terminal like any other input;
 Altitude stores nothing typed, and the operator's own shell keeps its history as it does in any terminal.
 
+## Same-installation coordinator information
+
+`alt project message` uses the existing per-project coordinator socket capability. The daemon
+binds the sender to that socket and handles the verb directly, using the same exact argument parser
+as CLI help. It adds no HTTP writer, file/record access capability, remote transport or automatic
+task creation. This uses the existing local capability trust, not a new same-user authentication
+scheme. The small workflow supports a development project and a separate installation-specific
+test project without turning their separation into an orchestration platform; targets come from
+existing project registration.
+
+Recipient queue acceptance, project-log receipts and system chat rows carry structured sender,
+recipient, exchange and summary metadata. Internal checkout bindings never enter prompts or chat
+API projections. Source Sent acknowledges acceptance, not handling; recipient pending rows become
+incoming history when supplied on an ordinary turn. Each information row stays separately folded
+outside routine system groups, with only Show/Hide. Existing literal history search attributes it
+as information; decision readers and human conversation handoffs exclude it.
+Expanded diagnostic code is read-only; message prose does not inherit the receiving project's
+terminal actions, file links or implicit issue-number links. Explicit public URLs remain clickable.
+
+Both fields enforce size limits and refuse recognized credentials, private record/home paths,
+recognizable transcripts and reserved evidence markers. No files or transcripts are gathered for
+the sender. Unknown secrets and arbitrary prose transcripts remain the writing coordinator's
+responsibility, and the receiving provider processes the text. Receiving coordinators triage under
+their own project rules and operator authority. Public sanitized incident notifications and public
+issue records retain their existing independent path. A returned merged fix is distinct from
+verified activation before suggesting a retry.
+
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
