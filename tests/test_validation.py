@@ -616,6 +616,7 @@ class TestValidationProfile(TestCase):
                        '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
                        f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
                        '(path-literal "/private/var/run/mDNSResponder")',
+                       '(allow file-read* (literal "/private/var/folders/ab/cd/T/xcrun_db"))',
                        '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))"):
             self.assertIn(clause, profile)
         self.assertNotIn(f'(subpath "{own}")', profile, "the runner's files beside the candidate's folders stay out")

@@ -2288,7 +2288,8 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     the shared temporary folders, where Altitude's records, credentials, checkouts, caches and other processes' files
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
     Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
-    service control to every sandboxed process, so the run cannot start, stop or change a service."""
+    service control to every sandboxed process, so the run cannot start, stop or change a service. It reads, never
+    writes, xcrun's lookup cache: without it every /usr/bin/git call takes over a second."""
     def paths(kind: str, values) -> str:
         return " ".join(f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values)
     home = os.path.realpath(Path.home())
@@ -2296,14 +2297,16 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     shared = list(dict.fromkeys(os.path.realpath(path) for path in (
         Path(_user_temp()).parent, "/private/tmp", "/private/var/tmp")))
     hidden = [home, *shared]
+    temp = os.path.realpath(_user_temp())
     ancestors = list(dict.fromkeys([*shared, *(str(parent) for root in own for parent in Path(root).parents
                                                if any(parent.is_relative_to(path) for path in hidden))]))
     return "".join([
         "(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))",
         f'(deny file-write*)(allow file-write* {paths("subpath", own)} (subpath "/dev"))',
-        f"(allow file-write-data file-read-metadata {paths('literal', [os.path.realpath(output)])})",
         f"(deny file-read* {paths('subpath', hidden)})(allow file-read* {paths('subpath', own)})",
-        f"(allow file-read-metadata {paths('literal', ancestors)})",
+        f"(allow file-read-metadata {paths('literal', [*ancestors, temp])})",
+        f"(allow file-read* {paths('literal', [os.path.join(temp, 'xcrun_db')])})",
+        f"(allow file-write-data file-read-metadata {paths('literal', [os.path.realpath(output)])})",
         f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
         f"(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket "
         f"{paths('subpath', own)} {paths('path-literal', ('/private/var/run/mDNSResponder', '/private/var/run/syslog'))}))",
