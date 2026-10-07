@@ -1491,6 +1491,8 @@
 
 /* Task consumption stays folded in task details on phone and desktop. */
 .token-usage { min-width: 0; font-size: var(--text-meta); }
+.task-context { margin: 0; font-size: var(--text-meta); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.task-context > span { margin-right: 6px; color: var(--text-muted); }
 .token-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-height: var(--target-min); padding: 4px 0; text-align: left; color: var(--text-secondary); }
 .token-summary-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .token-coverage, .token-freshness { color: var(--text-muted); }
@@ -2402,6 +2404,29 @@
   padding: 12px 16px 16px;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
+}
+.live-history-status {
+  /* Keep loading and its Retry visible without moving the reader's row anchor. */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+.live-record-control {
+  min-height: 44px;
+}
+.live-history-status > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.live-history-status .btn {
+  border: 1px solid var(--border);
 }
 .live-line {
   margin: 0;

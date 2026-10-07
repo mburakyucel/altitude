@@ -1555,7 +1555,9 @@ resume or recovery replaces it, and asks `engines.py` for normalized local obser
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
 `status.json.token_usage` snapshot and do no provider-log scanning. Engine adapters increment byte
 cursors over complete JSONL records and retain numeric response/message identities for deduplication
-in task-local `token-usage.json`. Discovery reads bounded provider metadata behind the engine seam.
+in task-local `token-usage.json`. Each session row also counts its distinct requests and carries its
+newest own request's input as context; the snapshot's `context` is the current owner session's.
+Discovery reads bounded provider metadata behind the engine seam.
 Neither telemetry nor helper discovery creates managed sessions, model calls, incidents, holds, or
 routing decisions. L3's project conversation is outside task accounting.
 
@@ -2471,7 +2473,7 @@ skeleton in the page's shape, and a failed read is one sentence with Retry.
 The task page is the operator's conversation with the L2 beside the worker's live session
 (design spec §3.10). Its compact desktop header puts the crumb back to the project, wrapping title
 with its state dot, Reject with an inline confirm, details and live-panel controls in one row.
-Attempt, when the task started or finished, context used and token usage open in Task details at
+Attempt, when the task started or finished, current context and token usage open in Task details at
 both viewports. A second wrapping row keeps chips visible: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
@@ -2491,7 +2493,9 @@ concise status with its complete reason in details; a fault retains a visible ca
 scrolling column and expands on request. It appears only while both its public words and recorded
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
-reader's position. Stop is one click in the task header at both viewports, serving Conversation and
+reader's position. Following stays at latest through preview expiration and replacement; React
+commits restore the bottom before queued layout-induced scroll events can change following.
+Stop is one click in the task header at both viewports, serving Conversation and
 Live session with one action. Stop, Continue and Check status share its button treatment and position.
 It remains Stopping until termination is evidenced; failed or unknown
 termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
@@ -2503,7 +2507,35 @@ in its own header while its scrim blocks the page header. It reads the worker's 
 and task-owned turn records together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
 as thin separators, each row with its recorded time or "time unavailable", hidden reasoning never shown, and Raw events behind a
-toggle for the complete redacted records, the task's other operational events among them. A queued
+toggle for redacted records, the task's other operational events among them. The panel opens its
+recent tail and loads older activity when the reader scrolls upward near the top. Each initial,
+history and update reply contains at most 50 rows and 64 KiB of serialized JSON. Tool calls and
+results fold on the server before paging; stable row identities are distinct from chronological
+order, so late events and updates to old commands merge into their correct positions. Raw events
+shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
+Show more for subsequent chunks; the complete redacted record remains accessible.
+
+Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
+The server retains only row signatures, order and change versions for active/recent viewer scopes.
+Indexes expire after 60 idle seconds, checked on access, without evicting other active readers;
+it retains no transcript bodies. Unchanged source fingerprints
+avoid parsing and return a small response. Changed inputs rebuild the canonical projection.
+Deletion history is bounded; index loss, source replacement or an expired cursor requests bounded
+reconciliation of a paused reader's loaded interval. A following reader reopens the recent tail
+after a lost index or a long absence; older rows remain available by scrolling upward. The browser
+preserves a paused reader's visible row while reconnecting. Source writes during a read leave its
+fingerprint stale so the next poll includes them without failing the current bounded read.
+Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
+refresh the projection without resetting reading position. Access and generation are checked
+before and after reads. Transcript state never authorizes task actions.
+
+Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and
+pairing loss cancel reads and discard them. There is no persistent browser storage or cross-task
+prefetch. Hidden documents and inactive phone panes suspend polling. One request at a time serializes history and live updates. Continuations yield after two
+requests so catch-up shares the connection with ordinary navigation. Loaded DOM and server metadata
+grow with history and active viewer scopes; this is not a virtualized or constant-memory transcript.
+Normal text/output previews use at most 4,000 characters and other strings at most 512, with further
+shortening when necessary for the serialized byte budget. Raw disclosure supplies the complete record. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
 missing session file says so. On a phone one header carries Back, a bordered title dropdown, the task
 action, L2 state and independent Merge held status. The title dropdown opens metadata, tokens, full
@@ -2528,7 +2560,11 @@ controls, the composer, recording, dialogs and horizontally scrollable content; 
 stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
 selection, images, conversation position and live reading state without reopening the keyboard;
 local history and deep links retain their navigation contract.
-Scrolling up in Live session pauses following; Follow catches up to the newest output. Switching
+Scrolling up in Live session pauses following while updates keep arriving below; Follow catches up
+to the newest output. Earlier-history loading and Retry appear inline at the top. A live-update
+failure retains readable text with its error in the footer; reconnecting or catching up takes
+precedence over Following/Paused. Prepends and changed rows preserve the visible row's pixel offset.
+Switching
 views cancels unsent dictation and releases the microphone; an explicit voice Send completes for its
 original conversation while hidden, without refocusing the composer.
 The read-only activity projection uses only the selected worker generation, existing redaction and

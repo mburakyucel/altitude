@@ -21,7 +21,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
-import { TokenUsage } from "../components/TokenUsage";
+import { TaskContext, TokenUsage } from "../components/TokenUsage";
 import { ReviewFeedback, ReviewMenu, ReviewRow, useTaskReview } from "../components/TaskReview";
 import type { ReviewControls } from "../components/TaskReview";
 import { useTaskBack } from "../components/useTaskBack";
@@ -72,7 +72,7 @@ interface Facts {
   dot: "running" | "waiting" | "danger" | "idle";
   /** Compact state, engine/model and PR with its checks state; full reasons are disclosed. */
   chips: Chip[];
-  /** Task details: attempt, when it started or finished, context used. */
+  /** Task details: attempt and when it started or finished. */
   sub: string;
   /** What a queued task waits for; shown where the live panel would be. */
   waiting: string | null;
@@ -147,12 +147,10 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
 
   const attempt = num(task["attempt"]) ?? 0;
-  const context = num(rec(task.live)["context_percent"]);
   const sub = [
     attempt > 0 ? `attempt ${attempt}` : "",
     state === "running" && agoText(task["dispatched"]) ? `started ${agoText(task["dispatched"])}` : "",
     finished && agoText(task["updated"]) ? `${state} ${agoText(task["updated"])}` : "",
-    state === "running" && context != null ? `${Math.round(context)}% of its context used` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -308,6 +306,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [active, updateQuestionVisibility]);
+  useLayoutEffect(() => {
+    // A removed preview can clamp scrollTop before a queued scroll event sees its
+    // replacement. Restore following during the commit, before that event can pause it.
+    const node = scroller.current;
+    if (active && following.current && node) node.scrollTop = node.scrollHeight;
+  });
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -667,6 +671,7 @@ function TaskPage({
         search.delete("question"); search.delete("revision"); search.set("review", id);
         void navigate(`${base}?${search}`, { replace: true, state: location.state });
       }} />
+      <TaskContext context={task.token_usage?.context} running={task.state === "running"} />
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}

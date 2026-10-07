@@ -42,7 +42,7 @@ class TestL2Activity(AltitudeCase):
         self.addCleanup(self.native.unlink, True)
 
     def select(self, engine):
-        self.task.update(state="running", l2_engine=engine, session_id="activity-session", agent_id="worker")
+        self.task.update(state="running", attempt=1, l2_engine=engine, session_id="activity-session", agent_id="worker")
         S.save_task(self.project, self.task)
         S.write_json(self.root / "worker.json", {"id": "worker", "engine": engine, "session_id": "activity-session",
                                                "started_at": START, "input_delivered": True})
@@ -101,7 +101,7 @@ class TestL2Activity(AltitudeCase):
                 result = self.activity()
                 self.assertEqual((result["generation"], result["state"], result["commentary"]),
                                  ("resumed-worker", "empty", None))
-                live = transcript.view(self.project, self.slug, engine=engine, session_id="activity-session")
+                live = transcript.view(self.project, self.slug, engine=engine, session_id="activity-session", attempt=1)
                 self.assertIn("Earlier direction", json.dumps(live))
 
     def test_missing_empty_partial_corrupt_and_unreadable_sources_stay_distinct(self):
@@ -164,7 +164,7 @@ class TestL2Activity(AltitudeCase):
                 activity = self.activity()
                 self.assertEqual(activity["commentary"]["text"], "Checking token [REDACTED]")
                 for data in (activity, transcript.view(self.project, self.slug, engine=engine,
-                                                        session_id="activity-session", raw=True)):
+                                                        session_id="activity-session", attempt=1, raw=True)):
                     self.assertNotIn("hidden", json.dumps(data))
                     self.assertNotIn(secret, json.dumps(data))
 
@@ -208,7 +208,7 @@ class TestL2Activity(AltitudeCase):
                         {"agent_id": "worker", "session_id": "other-session"}):
             self.task["message_deliveries"] = {message["id"]: receipt} if receipt else {}
             S.save_task(self.project, self.task)
-            live = transcript.view(self.project, self.slug, engine="codex", session_id="activity-session")
+            live = transcript.view(self.project, self.slug, engine="codex", session_id="activity-session", attempt=1)
             prompts = [row["text"] for row in live["events"] if row["type"] == "prompt"]
             self.assertEqual(prompts, [transcript.UNKNOWN_RESUME_PROMPT])
 
@@ -218,7 +218,7 @@ class TestL2Activity(AltitudeCase):
         T.brief(self.project, self.slug, "Brief contains " + token)
         S.append_event(self.project, self.slug, "stopped", reason="Error contains " + token)
         for raw in (False, True):
-            live = transcript.view(self.project, self.slug, engine="codex", session_id="activity-session", raw=raw)
+            live = transcript.view(self.project, self.slug, engine="codex", session_id="activity-session", attempt=1, raw=raw)
             self.assertNotIn(token, json.dumps(live))
             self.assertIn("Brief contains [REDACTED]", json.dumps(live))
             self.assertIn("Error contains [REDACTED]", json.dumps(live))
