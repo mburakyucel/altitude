@@ -2,7 +2,7 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
-test.use({ serviceScript: "project-message-service.py", launchOptions: { chromiumSandbox: true } });
+test.use({ serviceScript: "project-message-service.py" });
 
 test("coordinator exchanges stay folded, move from inbox to history and preserve task controls", async ({ page, request }, info) => {
   test.setTimeout(120_000);
