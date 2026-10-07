@@ -130,8 +130,9 @@ class TestClaudeTranscript(AltitudeCase):
         return transcript.view(self.project, self.slug, **{"engine": "claude", "session_id": "sess-1", **kwargs})
 
     def test_blocks_become_prompts_replies_calls_and_results_without_reasoning(self):
+        started_at = datetime.fromisoformat(_stamp(10))
         def at(seconds):
-            return _stamp(10, seconds)
+            return (started_at + timedelta(seconds=seconds)).isoformat()
         message = "Message from Operator (2026-09-03T10:00:07+00:00):\nPrefer the smaller diff"
         self.path.write_text("".join(json.dumps(r) + "\n" for r in (
             {"type": "user", "timestamp": at(1), "message": {"role": "user", "content": "# Brief\nDo it"}},
