@@ -93,8 +93,8 @@ not by itself mean work has resumed or a merge hold has been released.
 
 **View preview** opens captured design evidence in a separate tab. **Back to question** takes you
 to that capture's question and revision; an earlier capture also offers **Open current question**.
-Either return replaces the preview in that tab's history, so the task's **Back** reaches the
-preceding app context, or the owning project conversation when there is no earlier app entry.
+Either return replaces the preview in that tab's history, so the task's **Back** opens the
+owning project conversation. Browser Back/Forward follows the tab's remaining history.
 The original tab and its unsent draft remain available.
 
 <picture>

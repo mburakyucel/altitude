@@ -63,6 +63,25 @@ test("same-tab preview and question preserve browser Back and Forward", async ({
   await page.reload();
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/projects/atlas");
+  // The direct-document fallback replaces the task with the project. Browser history
+  // still contains the original project document; neither direction revives the preview.
+  await page.goBack();
+  await expect(page).toHaveURL("/projects/atlas");
+  await page.goForward();
+  await expect(page).toHaveURL("/projects/atlas");
+});
+
+test("a denied preview returns to its exact question and then the project", async ({ page, request }, info) => {
+  const q = (await task(request)).question;
+  await page.route(`**/api/design/atlas/${slug}/${q.id}/${q.revision}`, (route) =>
+    route.fulfill({ status: 403, json: { error: "Fixture denied preview" } }));
+  await walkthrough(page, info).open(q.design_url);
+  await expect(page.getByRole("heading", { name: "Design unavailable", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "← Back to question", exact: true }).click();
+  await expect(page).toHaveURL(atQuestion(q));
+  await expect(card(page, q)).toBeInViewport();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL("/projects/atlas");
 });
 
 test("task-origin preview leaves its opener and draft intact and returns without a loop", async ({ page, request }, info) => {
