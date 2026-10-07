@@ -16,15 +16,15 @@ ACTOR = os.environ.get("ALTITUDE_ACTOR", config.OPERATOR_ACTOR)
 READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("audit", "status"), ("incident", "list"),
                  *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
 L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done"),
-                               ("task", "machine"), ("task", "run"), ("task", "validate"), ("task", "review"),
-                               ("task", "terminal"), ("task", "publish")}
+                               ("task", "grant"), ("task", "run"), ("task", "validate"), ("task", "review"),
+                               ("task", "terminal")}
 L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "preserve-checkout", "recheck-ci", "handoff", "machine", "release", "publish")),
+                                    "done", "preserve-checkout", "recheck-ci", "handoff", "grant", "release")),
     *(("incident", name) for name in ("new", "amend", "publish")),
 }
 
@@ -192,7 +192,7 @@ def _brief_text(record: dict) -> str:
     return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}{waiting}", f"engine/model: {engine}",
                       f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
                       f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
-                      f"machine access: {(record.get('machine_access') or {}).get('purpose') or 'none'}",
+                      f"operator grant: {(record.get('grant') or {}).get('purpose') or 'none'}",
                       "planned files: " + (", ".join(record["lease"]) or "none"),
                       "overlaps: " + ("; ".join(overlaps) or "none")]
                      + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
@@ -364,24 +364,14 @@ def main(argv=None) -> None:
     hm.add_argument("--source", choices=("task", "project"), default="task")
     hm.add_argument("--question"); hm.add_argument("--revision", type=int)
     hm.add_argument("--pr-number", dest="pr", type=int); hm.add_argument("--head"); hm.add_argument("--reason")
-    mc = ts.add_parser("machine", help="record the operator's machine grant for a task, or revoke it (owner, L3 or operator)")
-    mc.add_argument("slug"); mode = mc.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--grant", action="store_true"); mode.add_argument("--revoke", action="store_true")
+    mc = ts.add_parser("grant", help="record the operator's grant for a task, or revoke it (owner, L3 or operator)")
+    mc.add_argument("slug"); mc.add_argument("--revoke", action="store_true")
     mc.add_argument("--approval", help="the original operator approval message")
     mc.add_argument("--question"); mc.add_argument("--revision", type=int)
     mc.add_argument("--source", choices=("task", "project"), default="task"); mc.add_argument("--reason", required=True)
     mc.add_argument("--standing-policy", metavar="HEADING", help="L3: exact purpose from a single AGENTS.md paragraph on main")
     mc.add_argument("--attempt", type=int, help="L3: observed current attempt, required with --standing-policy")
-    pub = ts.add_parser("publish", help="record/revoke release approval, or publish exactly the current owner's approved release")
-    pub.add_argument("slug")
-    mode = pub.add_mutually_exclusive_group()
-    mode.add_argument("--grant", action="store_true"); mode.add_argument("--revoke", action="store_true")
-    mode.add_argument("--check", action="store_true", help="check publication readiness without writing to GitHub")
-    pub.add_argument("--approval"); pub.add_argument("--version"); pub.add_argument("--sha"); pub.add_argument("--files")
-    pub.add_argument("--source", choices=("task", "project"), default="task")
-    pub.add_argument("--question"); pub.add_argument("--revision", type=int); pub.add_argument("--expires")
-    pub.add_argument("--reason")
-    rn = ts.add_parser("run", help="current L2: run one command under the task's machine grant, outside the worker sandbox")
+    rn = ts.add_parser("run", help="current L2: run one command under the task's operator grant, outside the worker sandbox")
     rn.add_argument("slug"); rn.add_argument("command")
     vl = ts.add_parser("validate", help="current L2: run a command in a disposable validation container for its own task, no grant needed")
     vl.add_argument("--kvm", action="store_true", help="add /dev/kvm for a virtual machine")
@@ -495,22 +485,6 @@ def main(argv=None) -> None:
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
     machine_run = c == "task" and args.tcmd == "run"
-    release_command = c == "task" and args.tcmd == "publish"
-    release_run = release_command and not (args.grant or args.revoke)
-    if release_command:
-        if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK")
-                or _project(args) != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")):
-            sys.exit("alt task publish: an L2 may act only for its own task and project")
-        grant_fields = (args.approval, args.version, args.sha, args.files, args.question, args.revision, args.expires)
-        if args.grant:
-            if not all((args.approval, args.version, args.sha, args.files, args.reason)):
-                ap.error("publish --grant requires --approval --version --sha --files --reason")
-        elif any(value is not None for value in grant_fields) or args.source != "task":
-            ap.error("release scope and approval options apply only to --grant")
-        if args.revoke and not args.reason or release_run and args.reason:
-            ap.error("--reason is required for --revoke and applies only to grant/revoke")
-        if release_run and ACTOR != "l2":
-            sys.exit("alt task publish: only the running task owner publishes or checks a release")
     validation_run = c == "task" and args.tcmd == "validate"
     if validation_run:
         args.slug = os.environ.get("ALTITUDE_TASK")
@@ -532,12 +506,12 @@ def main(argv=None) -> None:
             sys.exit("alt task review run: only the current L2 runs reviews for its own task and project")
     if machine_run and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK") or not os.environ.get("ALTITUDE_ATTEMPT")):
         sys.exit("alt task run: only the current L2 runs commands, and only for its own task")
-    if c == "issue" or closing_pr or setup_command or machine_run or validation_run or review_run or terminal_read or release_run:
+    if c == "issue" or closing_pr or setup_command or machine_run or validation_run or review_run or terminal_read:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or release_run or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
-        payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "check": args.check} if release_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
+        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
@@ -548,7 +522,7 @@ def main(argv=None) -> None:
             ap.error("project setup --repair requires --reason; reads accept no reason")
         from altitude import access, tls, validation
         from urllib.parse import quote
-        endpoint = "task/publish" if release_run else "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else "task/validate" if validation_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
+        endpoint = "task/review/run" if review_run else "task/terminal" if terminal_read else "task/run" if machine_run else "task/validate" if validation_run else ("project/setup" if args.repair else "setup/" + quote(args.name, safe="")) if setup_command else "pr/close" if closing_pr else "issue"
         import http.client
         import time
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
@@ -570,7 +544,7 @@ def main(argv=None) -> None:
                                              headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
-                with urllib.request.urlopen(request, context=context, timeout=None if review_run or release_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 if validation_run else 130) as response:
+                with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 if validation_run else 130) as response:
                     result = json.load(response)
                     if review_run and not result.get("ok"):
                         sys.exit(result.get("error", "Review execution failed"))
@@ -585,7 +559,7 @@ def main(argv=None) -> None:
                               + f"; log {result['log']}"
                               + (f"; results {result['results']}" if validation_run else ""))
                         sys.exit(0 if result["exit"] == 0 else 124 if result["timed_out"] else result["exit"] or 1)
-                    out(result["review"] if review_run else result if closing_pr or setup_command or release_run else result["url"])
+                    out(result["review"] if review_run else result if closing_pr or setup_command else result["url"])
             except urllib.error.HTTPError as exc:
                 if exc.code == 401:
                     sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
@@ -799,32 +773,24 @@ def main(argv=None) -> None:
             if args.off and ACTOR != config.OPERATOR_ACTOR:
                 sys.exit("alt task hold-merge: only the operator may release a merge hold")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
-        elif tc == "publish":
-            from altitude import releases
-            attempt = int(os.environ["ALTITUDE_ATTEMPT"]) if ACTOR == "l2" else None
-            if args.grant:
-                out(releases.grant(p, args.slug, args.approval, version=args.version, sha=args.sha, files=args.files,
-                                   reason=args.reason, actor=ACTOR, source=args.source, question=args.question,
-                                   revision=args.revision, expires=args.expires, expected_attempt=attempt))
-            else:
-                out(releases.revoke(p, args.slug, args.reason, actor=ACTOR, expected_attempt=attempt))
-        elif tc == "machine":
+        elif tc == "grant":
             attempt = os.environ.get("ALTITUDE_ATTEMPT")
             if ACTOR == "l2" and (args.slug != os.environ.get("ALTITUDE_TASK")
                                   or p != os.environ.get("ALTITUDE_PROJECT") or not attempt):
-                sys.exit("alt task machine: an L2 records or revokes the grant only on its own task")
-            if args.grant:
+                sys.exit("alt task grant: an L2 records or revokes the grant only on its own task")
+            if not args.revoke:
                 if not (args.approval and args.question and args.revision):
-                    sys.exit("alt task machine --grant: --approval <message-id> --question <id> --revision <n> --reason <why>")
-                out(T.grant_machine_access(p, args.slug, args.approval, question=args.question, revision=args.revision,
-                                           reason=args.reason, actor=ACTOR, source=args.source,
-                                           expected_attempt=int(attempt) if ACTOR == "l2" else args.attempt,
-                                           standing_policy=args.standing_policy))
+                    sys.exit("alt task grant: --approval <message-id> --question <id> --revision <n> --reason <why>")
+                out(T.record_grant(p, args.slug, args.approval, question=args.question, revision=args.revision,
+                                   reason=args.reason, actor=ACTOR, source=args.source,
+                                   expected_attempt=int(attempt) if ACTOR == "l2" else args.attempt,
+                                   standing_policy=args.standing_policy))
             else:
-                if args.standing_policy is not None or args.attempt is not None:
-                    sys.exit("alt task machine: --standing-policy and --attempt apply only to --grant")
-                out(T.revoke_machine_access(p, args.slug, args.reason, actor=ACTOR,
-                                            expected_attempt=int(attempt) if ACTOR == "l2" else None))
+                if any(value is not None for value in (args.standing_policy, args.attempt, args.approval, args.question,
+                                                        args.revision)):
+                    sys.exit("alt task grant --revoke: takes only --reason")
+                out(T.revoke_grant(p, args.slug, args.reason, actor=ACTOR,
+                                   expected_attempt=int(attempt) if ACTOR == "l2" else None))
         elif tc == "done":
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):
                 sys.exit("alt task done: ALTITUDE_ATTEMPT is required for the L2")

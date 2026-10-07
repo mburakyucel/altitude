@@ -103,7 +103,7 @@ macOS host behind it on `main`; Altitude runs from source on the operator's Mac.
 checks on the Mac remain pending: install and `alt doctor`, CLI and app update with adoption,
 failed-update rollback, uninstall keeping data, logout/login, reboot then login, sleep past a
 deadline, and the #551 install and update evidence. Two operator decisions of
-September 28, 2026 shape it: machine-grant commands run unsandboxed, as on Linux, because launchd
+September 28, 2026 shape it: operator-grant commands run unsandboxed, as on Linux, because launchd
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
 started. Native validation runs on the operator's Apple silicon Mac, as tasks on its Altitude

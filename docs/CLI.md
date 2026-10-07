@@ -439,7 +439,7 @@ authorized investigation continues through failed attempts until it has a result
 genuinely new boundary. A question arises only for access the owner lacks, a material machine or
 service change, unapproved spend, a live-provider test or an explicit restriction. Runaway work
 shows in the task's live activity, token usage and L3's stalled-work observation rather than through
-per-attempt approval. Diagnosis does not expand fix scope, machine access or
+per-attempt approval. Diagnosis does not expand fix scope, operator grants or
 merge permission. Unavailable history and unrelated successful checks never establish recovery.
 
 For fictional Atlas tasks whose original worker units were collected, the procedure is:
@@ -848,9 +848,9 @@ alt task block <slug> --reason <question> [--recommendation <approach> --label <
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
-alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
-alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
-alt task machine <slug> --revoke --reason <why>
+alt task grant <slug> --approval <message-id> --question <id> --revision <n> --reason <why>
+alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
@@ -1440,7 +1440,7 @@ L2 selects the original proposal message; missing concrete proposal input preven
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
 main and commit before retrying.
-`run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
+`run` is a fixed daemon operation, not an operator grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and
 fails explicitly beyond 256 KiB, naming its size; when authority, corrections and decisions alone exceed
@@ -1686,87 +1686,42 @@ Failed reconciliation follows L3's recovery path.
 Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
 operator-only; approval mode cannot combine with it or `--why`.
 
-### Release publication
+### Operator grant
+
+A worker's own shell covers builds, tests and installs inside its workspace. Anything else the
+operator asks a task to do and permits, such as changing a service unit, reloading or restarting it,
+installing a user-level toolchain, deploying, publishing a release or package, or writing to an external
+service, runs under one operator grant: the operator's yes to a stated purpose, after which the owner runs
+each command as the operator with `alt task run`. Disposable installation VMs, containers and
+sandboxed-browser checks run through [validation runs](#validation-runs) instead, with no grant. Host
+container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
 
 ```text
-alt task publish <slug> --grant --approval <message-id> --version <version> --sha <commit> --files <directory> --reason <why> [--source task|project] [--question <id> --revision <n>] [--expires <ISO-time>]
-alt task publish <slug> --revoke --reason <why>
-alt task publish <slug> --check
-alt task publish <slug>
-```
-
-The fixed publish operation creates only the approved repository/version/commit release. It accepts
-no arbitrary command, remote or release settings. The task's registered repository supplies the
-destination. The running owner records its own task-chat approval; L3 or the operator records an
-original project-chat approval with `--source project`. The recorder reads the original answer,
-conditions and later corrections and supplies its scope judgment in `--reason`. A relay cannot grant
-permission. Direct approval names the version and SHA; an answer without that scope needs
-`--question` and `--revision` selecting the exact historical question that supplied it. The SHA may
-be an unambiguous prefix, resolved once to its full value. Removed approval, wrong task, missing
-scope or mismatching version/commit refuses the grant.
-
-`--files` selects a subdirectory inside the task folder or its worktree containing exactly the five
-files produced by `scripts/build_release.py --source <approved SHA>`:
-`altitude-<version>.tar.gz`, its `.sha256`, `install.py`, `install.sh` and `SHA256SUMS`.
-Only regular files without symlink traversal qualify. The grant records validated paths and hashes, checks
-archive identity, manifest, installer and checksums, and takes notes from the approved commit's
-dated changelog section. Publication captures unchanged bytes for upload; the grant stores no asset
-bytes. Keep notes and build evidence outside that directory. Hashes establish
-integrity, not independent build attestation; publication retains the manual path's trust in the
-approved owner. Publication appends the fixed manual-build disclosure documented in the
-[release guide](RELEASING.md#approved-task-owner) to the dated notes. Keep that limit in the readiness record.
-
-`alt task status <slug>` exposes `release_grant`; `alt task events <slug> --json` shows `release-*`
-grant, refusal, attempt and external-phase records. The grant binds task, attempt, repository,
-version, full SHA, assets and original approval. An optional `--expires` supplies the operator's
-deadline. Normal resume retains the grant; a new attempt, task completion or completed publication
-ends it. Revocation is available to owner, L3 and operator. A revoked or consumed approval cannot
-mint another grant. A new attempt may replace an expired attempt's grant under still-valid original
-approval, with the same target/files, and recover only this task's recorded draft. Replacement
-preserves the approval's historical identity and cannot remove or extend its original deadline.
-
-An active grant generates exact native allow rules for the publish command and its `--check` form
-on normal launch/resume. Use the literal task slug in the exact commands shown by the grant result;
-shell-variable or quoted forms are not promised to match. After a mid-turn grant, checkpoint and park
-for L3 to resume the same attempt. User settings, inherited denies and managed policy remain in force. The resumed owner
-runs `--check` first: it checks transport, scope and prerequisites without GitHub writes. Admission
-of that read-only command does not establish admission of the separate publish invocation; report
-any native refusal without bypassing it.
-
-Publishing requires the running owner's connection to originate in its current worker job, together
-with matching project/task/attempt/state. L3 cannot publish, and a task slug or shared machine key
-alone supplies no publication authority. The release commit must be on main with a successful
-push-event `check` job for that exact SHA and its dated changelog notes. A prerelease is never latest.
-The operation creates a draft targeting the approved SHA, uploads and verifies captured assets,
-then publishes and reads back the tag and assets. It never pushes a tag first, moves/deletes tags,
-replaces assets, adopts a foreign draft or changes immutable-release settings.
-
-Every external write rechecks the current grant and deadline. Revocation cannot recall an in-flight
-request. A global repository/version ledger under Altitude's `releases` directory serializes
-publication across daemon restarts. Only a definite create refusal with no remote side effect clears
-ownership; uncertain outcomes remain task-owned and require read-back reconciliation before retry.
-After uncertain draft creation, successful reads must establish that neither the tag nor release
-exists before a recorded reconciliation permits a fresh create; no manual ledger edit is needed.
-An existing tag must match the approved commit, with no unfinished `release.yml` push run for that
-exact commit. This check repeats before publication, allowing completion of a matching operator tag
-after its hosted job finishes or is refused. Conflicting tags/releases refuse. No remote cleanup is automatic.
-The [release guide](RELEASING.md#publish-a-release) covers build provenance, manual publication,
-native first-use evidence and platform limits. Merge approval remains separate.
-
-### Machine access
-
-A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
-or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant. Disposable installation VMs, containers and sandboxed-browser checks run
-through [validation runs](#validation-runs) instead, with no grant. Host container deployment work
-uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
-
-```text
-alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
-alt task machine <slug> --grant --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
-alt task machine <slug> --revoke --reason <why>
+alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
+
+A granted command runs with the operator's access, including their user services and their GitHub
+login. altd records every command but does not judge intent from shell text, so the grant trusts the
+owner to stay inside the approved purpose. No grant is asked or recorded for loosening confinement
+(a worker sandbox, engine permission settings, Altitude's guards or hooks, the operator's user-level
+engine settings), for other tasks' worktrees or other projects' data, for releasing Altitude's own
+gates (merge holds, review findings, proposal checkpoints keep their own answers), or for entering or
+printing credentials, which stays a step in the operator's [task terminal](#reading-the-task-terminal).
+Owners and L3 keep to this list, and the per-command record makes any departure visible.
+
+The grant reaches each engine's own guard through the engine seam. A Claude owner's session
+settings carry one allow rule, `Bash(alt task run <slug> *)`, which Claude Code resolves before its
+auto-mode classifier, so a granted command is not judged again; without a current grant altd refuses
+the call, so the rule adds nothing, and a grant or revocation takes effect in the running session.
+A Codex owner's sandbox is unchanged: its shell reaches altd as for any `alt` verb, and the granted
+command runs outside the sandbox, so the worker's own shell still never reaches the user service bus.
+Whether Claude Code admits a particular call is observed on use, not by the provider-free tests; when
+a guard still refuses, the owner puts that one command in a `run` block for the operator's terminal
+rather than rewording it. Rules Altitude does not control, such as a repository ruleset or billing, are
+reported as the operator's remaining step.
 
 Without applicable standing project approval, the owner asks the operator once per purpose,
 in a plain question naming the purpose and its bounds
@@ -1776,9 +1731,13 @@ message after judging that the answer is a yes: the running owner for its own cu
 task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
 project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
-attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
-answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
-record `machine-grant-refused` and change nothing.
+attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (id, purpose,
+answer, approval, question/revision, attempt, actor, time) and a `grant` event; refusals
+record `grant-refused` and change nothing. Each command's row names the grant id it ran under;
+recording the same answer again keeps that id. Revocation records `grant-revoke` and refuses every
+later command; altd asks the service manager to stop a command still running under the revoked grant
+on every poll until it has ended, including after a restart. Whatever the command already did stays
+done, and its row says the grant was revoked while it ran.
 
 For standing approval, the owner copies the complete paragraph under **Container operations on this
 machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
@@ -1812,7 +1771,9 @@ only when the operator's answer sets one, because a single run is itself the ris
 different access, service change, spend or live-provider test still needs its own answer. Retain
 evidence and revoke the grant when done.
 
-`alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
+`alt task run` is the current owner's verb for its own task. altd accepts it only from a process in
+that owner's current worker job, as it does for `alt task validate`, so another agent holding the
+machine key cannot run commands under this task's grant. It records the run in `machine.jsonl`
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
@@ -1822,8 +1783,8 @@ result outlives altd. The CLI prints the output and a status line, then exits wi
 status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit
 recorded, and adds a `machine-run` task event and a `machine-run` project event with the command,
 unit, exit status and purpose. When Altitude restarts during a command, including one the command
-restarts itself, the next altd follows every unfinished row's unit to its end and completes the
-row and events from that saved status; the CLI tags its call with a request id, reconnects with it
+restarts itself, the next altd follows every unfinished row's unit to its end, stopping it if its
+grant was revoked meanwhile, and completes the row and events from that saved status; the CLI tags its call with a request id, reconnects with it
 and prints the same command's result without running it again. A missing grant, a non-running
 task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason,
 as does a request id from an earlier attempt. A unit stopped at the limit is reported as a timeout,
