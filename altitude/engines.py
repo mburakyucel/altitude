@@ -2042,9 +2042,12 @@ def worker(engine: str, task: dict, *, job_root: Path) -> dict | None:
     if row or engine != "claude":
         return row
     # I-20260907-171446: pre-activation jobs keep their transcript; no daemon launch path remains.
-    job = S.read_json(JOBS_DIR / str(task.get("agent_id")) / "state.json", {})
-    if not job:
+    job = S.read_json(JOBS_DIR / str(task.get("agent_id")) / "state.json", None)
+    if job is None:
         return None
+    # #676: missing legacy unit identity is unknown, just as it is for owned CLI records.
+    if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
+        raise RuntimeError("Worker unit identity is unavailable")
     unit = _claude_unit(job["name"])
     transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
     alive = platform.job_active(unit, codex_env(retain_user_bus=True)) and transcript is not None

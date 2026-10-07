@@ -1596,10 +1596,11 @@ def occupies_slot(task: dict) -> bool:
 
 def poll(project: str) -> list[dict]:
     """Return L2 turns that exited, using each task's persisted engine adapter."""
-    from . import reviews, usage
+    from . import incidents, reviews, usage
     reviews.poll(project)
     task_rows = S.list_tasks(project)
     finished = []
+    unavailable = []
     for t in task_rows:
         if t["state"] in ("running", "blocked", "reported"):
             t = usage.refresh(project, t["slug"])
@@ -1621,7 +1622,16 @@ def poll(project: str) -> list[dict]:
         if t["state"] != "running":
             continue
         engine = l2_engine(t)
-        a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
+        live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
+        try:
+            a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            # #676: an unavailable unit is not an exited worker. Keep ownership and capacity;
+            # a task fault would block it and release its slot. Other tick work still proceeds.
+            S.write_json(live_p, {"at": S.now(), "agent": {"status": "unknown", "state": "unknown",
+                         "engine": engine}, "idle_since": None})
+            unavailable.append(f"{project}/{t['slug']}: {exc}")
+            continue
         metadata = {key: a[key] for key in ("engine_model", "engine_reasoning_effort") if a and key in a}
         if metadata and any(t.get(key) != value for key, value in metadata.items()):
             with S.project_lock(project):
@@ -1631,7 +1641,6 @@ def poll(project: str) -> list[dict]:
                     current.update(metadata)
                     S.save_task(project, current)
                     t.update(metadata)
-        live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         prev = S.read_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
                  "pid": a.get("pid"), "usage": a.get("usage"), **metadata} if a else None)
@@ -1664,6 +1673,10 @@ def poll(project: str) -> list[dict]:
             finished.append({"task": t, "agent": a, "needs_input": True})
             idle_since = None
         S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": idle_since})
+    if unavailable:
+        incidents.system_fault("worker-status",
+                               "Worker status unavailable. Task states and capacity reservations retained; "
+                               "termination is unconfirmed.\n" + "\n".join(sorted(unavailable)), project=project)
     return finished
 
 
