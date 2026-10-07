@@ -1269,6 +1269,17 @@ After an
 `altd` restart, both engines are adopted from their private worker records, provider output and active units;
 existing daemon jobs are observed through their active unit and session transcript until they finish or resume.
 Both engines' units survive the service restart.
+If a running worker's unit identity or status is unavailable, polling records an unknown observation
+and continues with the other tasks and tick work. The task stays running and reserves its capacity;
+its session, attempt, inbox, claims, questions and holds are retained. A completed provider result
+or fresh report does not prove termination while unit status is unknown. The existing incident
+channel groups unavailable workers into one project observation and notifies L3 when that observation
+changes. Public fault titles contain no task identity. L3 owns verified recovery; polling neither
+invents a unit nor stops or relaunches the worker. Permanently lost unit identity has no supported
+termination-confirmation or reconstruction verb: the reservation stays pending trustworthy evidence,
+and L3 tracks that recovery capability gap separately from tick containment.
+Later available status returns the worker to ordinary reconciliation. Stop still requires its
+ownership record, and unavailable termination evidence remains unknown on either platform.
 An ended or missing worker's report is current only when its mtime is at or after the latest launch
 or resume timestamp, persisted on the task before the provider starts. A missing or stale report on a running task
 without an explicit completion is a system fault
