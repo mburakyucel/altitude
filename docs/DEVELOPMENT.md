@@ -83,6 +83,8 @@ are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose 
 for systemd set `host = "linux"`; on a Mac such a case reads its own process from a procfs fixture,
 and the systemd-run and Podman stand-ins run on the suite's interpreter rather than `/usr/bin/python3`,
 whose xcrun shim reports a validation run's read-only lookup cache in the logs they write.
+The container archive cases skip where Python has no Linux extended attributes: the archive runs in
+the Linux image.
 `tests/test_platform_darwin.py` covers the macOS side of the platform seam with fixtures on any host.
 `python3 scripts/platform_probe.py` checks the same mechanisms natively on either host with
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
