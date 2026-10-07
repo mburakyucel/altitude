@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Failed independent reviews retain bounded sanitized diagnostics and exit status in their task's
+  review record so owners and coordinators can investigate without exposing stdout transcripts.
+
 - One operator grant covers anything the operator permits a task to do, such as a service change, a
   deploy or a release publication: `alt task grant` records the operator's yes to a stated purpose
   (it replaces `alt task machine`), each command runs as the operator through `alt task run` and is
