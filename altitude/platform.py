@@ -80,7 +80,7 @@ def container_unavailable(subject: str) -> str | None:
         return "Browser terminal is unavailable in this container. Use podman exec from a host terminal."
     if subject == "Voice":
         return "Host voice is unavailable in this container. Use browser recognition where supported"
-    if subject == "Add a phone":
+    if subject == "Set up a device":
         return "Export the public CA with the host container command's certificate action; this image publishes no certificate-sharing port."
     if subject == "Validation":
         return validation_unavailable()

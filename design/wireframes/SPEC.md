@@ -1435,8 +1435,10 @@ a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the c
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
 field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning. To set up a phone, use Set up a device in Settings › Devices on a paired
-device, or run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+after it opens without a warning." The guidance points container users to the host launcher's public
+certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
+on the hosting computer. For localhost it directs the operator to `alt doctor` and the public `ca_cert`
+file. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |
