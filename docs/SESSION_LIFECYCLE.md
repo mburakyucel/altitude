@@ -269,8 +269,12 @@ connection, captured-input adapter, configuration, permission, context limit and
 describe recognized error vocabulary, not a verified execution cause. The engine seam selects error
 fields from its structured result or failure events; arbitrary prose, unknown codes, prompts and source
 are never retained. `stdout_state` distinguishes recognized and unrecognized errors, no structured error,
-empty output, unavailable capture, malformed output, incomplete capture and truncation. Incomplete or
-truncated stdout yields no categories; partial records are not parsed as complete evidence. The category
+empty output, unavailable capture, malformed output, incomplete capture and truncation. A complete Claude
+result also yields `stdout_facts`: its result subtype, terminal reason and API error kind from the CLI's
+fixed vocabulary (any other value is `unknown`), HTTP status (100–599), turn count and whether the API
+was contacted. These locate an unrecognized failure (setup, sign-in, API status, usage credits) without
+its prose; error codes, session identities and usage details are not retained. Incomplete or
+truncated stdout yields no categories or facts; partial records are not parsed as complete evidence. The category
 list contains at most eight fixed values. Provider stdout is not copied into diagnostics.
 Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing

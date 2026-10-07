@@ -271,12 +271,75 @@ class ReviewEngineTests(AltitudeCase):
             self.assertEqual(evidence["stdout_errors"], [])
         for stdout in ('{"type":"error","message":"permission denied PRIVATE"}\nnot json',
                        '{"type":"turn.failed","error":"PRIVATE"}'):
-            state, labels = engines._review_stdout_errors("codex", stdout)
+            state, labels, facts = engines._review_stdout_errors("codex", stdout)
             self.assertIn(state, ("malformed", "unrecognized_error"))
-            self.assertEqual(labels, [])
-        state, labels = engines._review_stdout_errors("codex", json.dumps(
+            self.assertEqual((labels, facts), ([], {}))
+        state, labels, facts = engines._review_stdout_errors("codex", json.dumps(
             {"type": "error", "message": "authentication failed " + "PRIVATE" * 10000}))
-        self.assertEqual((state, labels), ("recognized_error", ["authentication"]))
+        self.assertEqual((state, labels, facts), ("recognized_error", ["authentication"], {}))
+
+    def test_unrecognized_claude_result_keeps_fixed_facts_only(self):
+        private = "PRIVATE SOURCE password=fictional-secret /Users/fictional/private"
+        stdout = json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": private,
+                             "terminal_reason": "api_error", "api_error_status": 403,
+                             "api_error": "model_requires_usage_credits", "api_error_code": private,
+                             "num_turns": 1, "duration_api_ms": 412, "session_id": private,
+                             "usage": {"private": private}, "errors": [private]})
+        service = self.fixture(served=False)
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit(1)"]
+        result = engines.review("PRIVATE PROMPT", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual((evidence["exit_status"], evidence["stderr"]), (1, ""))
+        self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"]), ("unrecognized_error", []))
+        self.assertEqual(evidence["stdout_facts"], {
+            "subtype": "success", "terminal_reason": "api_error", "api_error": "model_requires_usage_credits",
+            "api_error_status": 403, "num_turns": 1, "api_contacted": True})
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn("fictional", json.dumps(result))
+
+    def test_claude_result_facts_refuse_unknown_values(self):
+        cases = [
+            ({"subtype": "PRIVATE_KIND", "terminal_reason": "PRIVATE REASON", "api_error": "PRIVATE",
+              "api_error_status": 999, "num_turns": True, "duration_api_ms": "PRIVATE"},
+             {"subtype": "unknown", "terminal_reason": "unknown", "api_error": "unknown"}),
+            ({"subtype": "error_during_execution", "terminal_reason": "turn_setup_failed", "api_error_status": "401",
+              "num_turns": 0, "duration_api_ms": 0, "api_error": {"PRIVATE": 1}},
+             {"subtype": "error_during_execution", "terminal_reason": "turn_setup_failed", "num_turns": 0,
+              "api_contacted": False}),
+            ({"num_turns": -1, "api_error_status": 99}, {}),
+        ]
+        for record, expected in cases:
+            with self.subTest(record=record):
+                stdout = json.dumps({"type": "result", "is_error": True, "result": "PRIVATE", **record})
+                evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+                self.assertEqual(evidence["stdout_state"], "unrecognized_error")
+                self.assertEqual(evidence.get("stdout_facts", {}), expected)
+                self.assertNotIn("PRIVATE", json.dumps(evidence))
+        stdout = json.dumps({"type": "result", "is_error": True, "terminal_reason": "api_error", "num_turns": 1})
+        for flags in ({"stdout_truncated": True}, {"capture_complete": False}):
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+                                                   engine="claude", **flags)
+            self.assertNotIn("stdout_facts", evidence)
+        self.assertNotIn("stdout_facts", engines._review_diagnostics(
+            engines._BoundedRawCapture(), stdout=json.dumps({"is_error": True, "num_turns": 1}), engine="claude"))
+
+    def test_fixed_cli_failure_phrases_map_to_categories(self):
+        cases = {
+            "Not logged in \u00b7 Please run /login": ["authentication"],
+            "Login expired \u00b7 Please run /login": ["authentication"],
+            "OAuth token revoked \u00b7 Please run /login": ["authentication"],
+            "Credit balance is too low": ["rate_limit"],
+            "Opus now uses usage credits": ["rate_limit"],
+            "Unable to connect to API (ECONNREFUSED)": ["connection"],
+            "EPERM: operation not permitted, open": ["permission"],
+            "Prompt is too long": ["context_limit"],
+        }
+        for message, expected in cases.items():
+            with self.subTest(message=message):
+                state, labels, _ = engines._review_stdout_errors(
+                    "claude", json.dumps({"type": "result", "is_error": True, "result": message}))
+                self.assertEqual((state, labels), ("recognized_error", expected))
 
     def test_capture_overflow_names_stream_and_withholds_ambiguous_stderr_tail(self):
         service = self.fixture()
