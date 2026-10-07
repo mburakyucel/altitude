@@ -192,6 +192,17 @@ class TestCodexAdapter(AltitudeCase):
         self.assertIn("different Codex thread", res["stderr"])
         stop.assert_called_once()
 
+    def test_container_launch_and_resume_replace_host_patch_instruction(self):
+        for resume in (None, 'thr-1'):
+            with self.subTest(resume=resume), mock.patch.object(platform, 'containerized', return_value=True), \
+                 mock.patch.object(platform, '_lifecycle_state', return_value={'reason': None}):
+                _, procs = self._launch(resume=resume)
+            sent = procs[0].stdin.getvalue().decode()
+            self.assertIn(engines.CODEX_CONTAINER_PATCH_NOTE, sent)
+            self.assertNotIn(engines.CODEX_PATCH_NOTE, sent)
+            self.assertIn('python3', sent)
+            self.assertTrue(sent.endswith('\n\nbrief'))
+
     def test_worker_row_states_follow_the_unit_and_the_events(self):
         wid = "w-states"
         paths = engines._codex_paths(self.job_root, wid)
