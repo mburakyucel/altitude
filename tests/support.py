@@ -45,8 +45,8 @@ _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
 # Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
 # so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes). A
-# validation run's own temporary folder is short, and the only one its macOS profile admits.
-SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir=os.environ.get("ALTITUDE_VALIDATION") and
+# validation run's own temporary folder is as short, and the only one its macOS profile admits.
+SUITE = Path(tempfile.mkdtemp(prefix="at-", dir=os.environ.get("ALTITUDE_VALIDATION") and
                               os.environ.get("TMPDIR") or "/tmp")).resolve()
 tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)

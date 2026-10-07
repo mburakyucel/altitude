@@ -2272,7 +2272,7 @@ def validation_unavailable() -> str | None:
 def validation_temp(run: str) -> Path:
     """A macOS validation run's own temporary folder: short, so Unix sockets under it stay within the 104-byte
     limit, and the only place in the shared temporary folders the run's profile admits."""
-    return Path("/private/tmp") / f"av-{run}"
+    return Path("/private/tmp") / f"av-{run[:8]}"
 
 
 def validation_in_container() -> bool:
