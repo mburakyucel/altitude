@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 import uuid
@@ -1427,6 +1428,10 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
+        try:
+            shutil.rmtree(src / "l2-engine" / "tool-cache")
+        except FileNotFoundError:
+            pass  # Tasks that never launched have no tool caches.
         dst = S.archive_dir(project) / slug
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)

@@ -69,12 +69,15 @@ def install_offline_guards() -> None:
                            "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_CONFIG",
                            "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "DBUS_SESSION_BUS_ADDRESS",
                            "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH", "ALTITUDE_SOURCE_BRANCH",
+                           "NPM_CONFIG_CACHE", "NPM_CONFIG_STORE_DIR",
                            "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND",
                            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}):
             os.environ.pop(key, None)
     for key, name in {"HOME": "home", "CODEX_HOME": "home/.codex", "CLAUDE_CONFIG_DIR": "home/.claude",
                       "XDG_CONFIG_HOME": "home/.config", "XDG_DATA_HOME": "home/.local/share",
                       "XDG_STATE_HOME": "home/.local/state", "XDG_CACHE_HOME": "home/.cache",
+                      "COREPACK_HOME": "home/.cache/node/corepack", "npm_config_cache": "home/.cache/npm",
+                      "npm_config_store_dir": "home/.cache/pnpm", "PIP_CACHE_DIR": "home/.cache/pip",
                       "XDG_RUNTIME_DIR": "runtime", "ALTITUDE_HOME": "altitude"}.items():
         path = SUITE / name
         path.mkdir(parents=True, exist_ok=True)
@@ -499,3 +502,5 @@ def local_terminal_stop(unit: str) -> None:
         deadline = time.monotonic() + terminal.CLOSE_GRACE_SECONDS
         while terminal_session(term.proc.pid) and time.monotonic() < deadline:
             time.sleep(.02)
+    if terminal_session(term.proc.pid):
+        raise RuntimeError("Fixture terminal session is still running after SIGKILL")

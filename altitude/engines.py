@@ -641,6 +641,22 @@ def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -
     return platform.manager_env(env) if retain_user_bus else platform.job_env(env)
 
 
+def task_tool_env(env: dict, job_root: Path) -> dict:
+    """Tool caches share the task's lifetime and existing writable runtime root.
+
+    Keep Corepack's installed managers readable at their original location before moving XDG caches.
+    """
+    env = dict(env)
+    cache = Path(job_root).resolve() / "tool-cache"
+    env["COREPACK_HOME"] = env.get("COREPACK_HOME") or str(
+        Path(env.get("XDG_CACHE_HOME") or Path(env["HOME"]) / ".cache") / "node/corepack")
+    for key in ("NPM_CONFIG_CACHE", "NPM_CONFIG_STORE_DIR"):
+        env.pop(key, None)
+    env.update(XDG_CACHE_HOME=str(cache), npm_config_cache=str(cache / "npm"),
+               npm_config_store_dir=str(cache / "pnpm"), PIP_CACHE_DIR=str(cache / "pip"))
+    return env
+
+
 def _claude_writable(*roots: Path) -> tuple[Path, ...]:
     """Where a Claude job may write when the platform confines its files (macOS): its roots, Claude's own state
     (sessions, settings, and the account file with its atomic replacements) and the GitHub CLI's configuration.
@@ -1965,7 +1981,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False}
     S.write_json(paths["record"], record)
-    worker_env = codex_env(extra_env, retain_user_bus=True)
+    worker_env = task_tool_env(codex_env(extra_env, retain_user_bus=True), root)
     if engine == "claude" and effort is not None:
         worker_env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     job_env = {key: value for key, value in codex_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}

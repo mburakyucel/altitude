@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Confined task owners use writable task-local tool caches without relocating installed Corepack
+  managers. Native terminal fixtures clean up without `ps`, and source-launch fixtures isolate the
+  service branch and boot identity. Claude-native and protected-browser acceptance remain explicit gaps.
+
 - The container image pins a verified GitHub CLI release supporting Altitude's PR fields. Its
   credential-free image check catches the older distribution CLI that signs in but cannot open
   a PR through normal landing. Setup documents phone sign-in and Git HTTPS credential-helper setup.

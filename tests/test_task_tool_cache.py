@@ -1,0 +1,92 @@
+"""Issue #617: confined workers keep writable tool caches without moving installed managers."""
+import json
+import sys
+from pathlib import Path
+from unittest import mock
+
+from tests.support import AltitudeCase, make_repo
+from altitude import engines, platform, state as S, tasks as T
+
+
+class TaskToolCache(AltitudeCase):
+    def test_corepack_reads_original_install_and_cache_environments_are_not_shared(self):
+        original = {"HOME": "/fixture/home", "XDG_CACHE_HOME": "/fixture/original",
+                    "NPM_CONFIG_CACHE": "/forbidden/npm", "NPM_CONFIG_STORE_DIR": "/forbidden/pnpm"}
+        first = engines.task_tool_env(original, self.tmp / "one")
+        second = engines.task_tool_env(original, self.tmp / "two")
+        self.assertEqual(first["COREPACK_HOME"], "/fixture/original/node/corepack")
+        self.assertNotEqual(first["XDG_CACHE_HOME"], second["XDG_CACHE_HOME"])
+        self.assertNotIn("NPM_CONFIG_CACHE", first)
+        self.assertNotIn("NPM_CONFIG_STORE_DIR", first)
+        self.assertEqual(original["XDG_CACHE_HOME"], "/fixture/original")
+        self.assertEqual(engines.task_tool_env({"HOME": "/fixture/home"}, self.tmp)["COREPACK_HOME"],
+                         "/fixture/home/.cache/node/corepack")
+        self.assertEqual(engines.task_tool_env({**original, "COREPACK_HOME": "/installed/managers"}, self.tmp)
+                         ["COREPACK_HOME"], "/installed/managers")
+
+    def test_both_platforms_and_engines_launch_resume_and_report_failure_with_writable_caches(self):
+        make_repo(self.repo)
+        self.patch(engines, "_codex_processes", {})
+        self.patch(engines, "claude_agents", return_value=[])
+        self.patch(platform, "job_active", return_value=False)
+        for host in ("linux", "darwin"):
+            for engine in ("claude", "codex"):
+                root = self.tmp / host / engine / "l2-engine"
+                for resume in (False, True):
+                    with self.subTest(host=host, engine=engine, resume=resume):
+                        init = ({"type": "system", "subtype": "init", "session_id": "session"}
+                                if engine == "claude" else {"type": "thread.started", "thread_id": "session"})
+                        end = ({"type": "result", "is_error": True, "result": "fixture failure"}
+                               if engine == "claude" else {"type": "turn.failed", "error": {"message": "fixture failure"}})
+                        script = ("import os, pathlib, sys\n"
+                                  "sys.stdin.read()\n"
+                                  "for key in ('XDG_CACHE_HOME','npm_config_cache','npm_config_store_dir','PIP_CACHE_DIR'):\n"
+                                  " p=pathlib.Path(os.environ[key]); p.mkdir(parents=True,exist_ok=True); (p/'fixture').write_text('ok')\n"
+                                  f"print({json.dumps(init)!r}, flush=True)\n"
+                                  f"print({json.dumps(end)!r}, flush=True)\n")
+                        def command(unit, argv, child_env, **kw):
+                            self.assertEqual(child_env["ALTITUDE_TASK"], "cache-task")
+                            self.assertEqual(child_env["COREPACK_HOME"], "/fixture/managers")
+                            for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
+                                self.assertTrue(Path(child_env[key]).is_relative_to(root / "tool-cache"))
+                            self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
+                            return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()),
+                                    sys.executable, "-c", script]
+                        with mock.patch.object(platform.sys, "platform", host), \
+                             mock.patch.object(platform, "job_command", side_effect=command):
+                            result = engines._start_worker(engine, "fixture", "continue", cwd=self.repo,
+                                job_root=root, resume="session" if resume else None,
+                                extra_env={"ALTITUDE_TASK":"cache-task", "COREPACK_HOME":"/fixture/managers",
+                                           "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})
+                            self.assertEqual(result["returncode"], 0, result)
+                            worker_id = result["agent"]["id"]
+                            process = engines._codex_processes.get(worker_id)
+                            if process is not None:
+                                process.wait(timeout=5)
+                            row = engines.worker(engine, {"agent_id":worker_id}, job_root=root)
+                            self.assertEqual((row["sessionId"], row["state"]), ("session", "failed"))
+
+    def test_archival_removes_only_this_tasks_tool_cache_and_retains_evidence(self):
+        task = T.new(self.project, "Cache lifetime", "Fictional task")
+        other = T.new(self.project, "Other lifetime", "Fictional task")
+        directory = S.task_dir(self.project, task["slug"])
+        cache = directory / "l2-engine/tool-cache/pnpm"
+        cache.mkdir(parents=True)
+        (cache / "package").write_text("fixture package")
+        evidence = directory / "l2-engine/worker.json"
+        evidence.write_text('{}')
+        other_cache = S.task_dir(self.project, other["slug"]) / "l2-engine/tool-cache"
+        other_cache.mkdir(parents=True)
+        T._archive(self.project, task["slug"])
+        archived = S.archive_dir(self.project) / task["slug"]
+        self.assertFalse((archived / "l2-engine/tool-cache").exists())
+        self.assertTrue((archived / "l2-engine/worker.json").exists())
+        self.assertTrue(other_cache.exists())
+
+    def test_cache_cleanup_failure_does_not_claim_archival(self):
+        task = T.new(self.project, "Cache cleanup error", "Fictional task")
+        with mock.patch.object(T.shutil, "rmtree", side_effect=PermissionError("cleanup refused")):
+            with self.assertRaisesRegex(PermissionError, "cleanup refused"):
+                T._archive(self.project, task["slug"])
+        self.assertTrue(S.task_dir(self.project, task["slug"]).exists())
+        self.assertFalse((S.archive_dir(self.project) / task["slug"]).exists())

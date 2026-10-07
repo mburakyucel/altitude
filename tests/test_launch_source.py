@@ -53,8 +53,18 @@ class LaunchSource(AltitudeCase):
         result = subprocess.run([sys.executable, "-c",
                                  "import tests.support; from altitude import config; "
                                  "import os; print(config.SOURCE_BRANCH); "
-                                 "assert 'ALTITUDE_SOURCE_BRANCH' not in os.environ"],
-                                env={**os.environ, "ALTITUDE_SOURCE_BRANCH": "service-only-branch"},
+                                 "assert 'ALTITUDE_SOURCE_BRANCH' not in os.environ; "
+                                 "assert 'NPM_CONFIG_CACHE' not in os.environ; "
+                                 "assert 'NPM_CONFIG_STORE_DIR' not in os.environ; "
+                                 "from pathlib import Path; "
+                                 "assert all(Path(os.environ[k]).is_relative_to(tests.support.SUITE) "
+                                 "for k in ('XDG_CACHE_HOME','COREPACK_HOME','npm_config_cache',"
+                                 "'npm_config_store_dir','PIP_CACHE_DIR'))"],
+                                env={**os.environ, "ALTITUDE_SOURCE_BRANCH": "service-only-branch",
+                                     "NPM_CONFIG_CACHE": "/unwritable/npm", "NPM_CONFIG_STORE_DIR": "/unwritable/store",
+                                     **{key: "/unwritable/service-cache" for key in
+                                        ("XDG_CACHE_HOME", "COREPACK_HOME", "npm_config_cache",
+                                         "npm_config_store_dir", "PIP_CACHE_DIR")}},
                                 cwd=REPO, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "main")
