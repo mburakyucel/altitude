@@ -467,10 +467,11 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             _active.clear()
         recorded, delivered, cleanup_error = row is None, target is not None, None
         try:
-            # Cleanup comes before the record, so a run whose cleanup failed is never recorded as a success. Evidence
-            # that was not delivered stays in place, and run.json and the delivery receipt stay until the record
-            # exists, for the next start to finish an interrupted one.
-            scratch = [area / name for name in ("work", "results", "empty", "home", "tmp") if delivered]
+            # Cleanup comes before the record, so a run whose cleanup failed is never recorded as a success. A run
+            # that never started leaves nothing to keep. Evidence that was not delivered stays in place, and run.json
+            # and the delivery receipt stay until the record exists, for the next start to finish an interrupted one.
+            scratch = [area] if row is None else [area / name for name in ("work", "results", "empty", "home", "tmp")
+                                                   if delivered]
             cleanup_error = cleanup([path for path in scratch if path.exists()], unit if row is not None else None)
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),

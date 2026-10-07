@@ -493,6 +493,13 @@ class TestValidationRunner(RunnerCase):
         self.assertEqual((saved["ended"], saved["exit"]), ("exit", 0))
         self.assertEqual(len([e for e in S.read_events(self.project, self.slug) if e["kind"] == "machine-run"]), 1)
 
+    def test_a_run_that_never_started_leaves_nothing_and_keeps_the_runner_open(self):
+        with mock.patch.object(validation, "_clone", side_effect=OSError("worktree unreadable")):
+            self.assertIn("worktree unreadable", self.validate(["true"], status=400)["error"])
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+        self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
     def test_a_run_whose_cleanup_fails_is_never_a_success(self):
         with mock.patch.object(validation, "cleanup_script", return_value="exit 3"):
             result = self.validate(["true"])
