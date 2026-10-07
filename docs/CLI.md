@@ -796,8 +796,8 @@ alt project set example --l2-preference claude --reason 'Use Claude more for L2'
 alt project set example --unset-l2-preference --reason 'Back to Auto'
 ```
 
-The same choice is **Provider priority** (Auto, or Prefer each engine) in the project's Settings
-page. A preference moves every option on that engine above the other options, keeping their tier
+The same choice is **Tasks** under **Routing** (Auto, Prefer or Only each engine) in the project's
+Settings page. A preference moves every option on that engine above the other options, keeping their tier
 order: with the default tiers, Prefer Claude tries Claude on Opus before Codex, and Prefer Codex
 tries Codex before Claude. The preferred engine is chosen whenever it is eligible; the other engine remains
 its fallback under the usual installation, quota and rejection handling. It applies only to fresh
@@ -806,6 +806,40 @@ L3 keeps the tiers as written, explicit task and project pins still win, and run
 attempts keep their engine. With custom routing the preference reorders only the options that
 routing lists, and an engine it omits stays unused. Auto (unset) is the routing tiers alone: the
 Settings page says whether that is the default distribution or names the custom routing.
+
+**Only** keeps a role on one engine, the Settings page's Only <engine> routing:
+
+```sh
+alt project set example --l2-engine codex --reason 'Keep tasks on Codex'
+alt project set example --unset-l3-engine --reason 'Let routing choose L3'
+```
+
+### Model choices
+
+A model choice is tried ahead of a role's routing tiers: **New tasks** for every project's fresh L2
+attempts, and each project's **L3** choice for its L3 turns. These are the Models dialog's two tabs
+(the [UI spec](../design/wireframes/SPEC.md#361-models-dialog)). A choice is `[engine][:model][@effort]`;
+a Claude alias alone names Claude:
+
+```sh
+alt machine set --new-tasks fable@high --reason 'Fable for new work this week'
+alt machine set --new-tasks @max --reason 'Max effort on whichever engine Auto picks'
+alt machine set --unset-new-tasks --reason 'Back to Auto'
+alt project set example --l3-choice codex@low --reason 'Light coordination on Codex'
+alt project set example --unset-l3-choice --reason 'Back to Auto'
+```
+
+Precedence, highest first: a task's or turn's explicit engine, model or effort (`alt task new
+--engine/--model/--effort`, `alt chat --engine`); a project's Only engine, which keeps its engine and
+uses the choice's model and effort only when they are on it; the choice; then the routing tiers with
+each project's Auto defaults. A choice whose engine or model is unavailable (missing CLI, exhausted
+window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so. An effort
+alone applies to whichever engine the tiers pick that accepts it; an engine that does not keeps its
+default. New tasks applies to tasks that start from then on, including queued ones; started tasks and
+resumes keep their model and effort. L3 uses its choice from the next turn. Reviewer selection and
+explicit engine handoff ignore choices. Routing explanations read "chosen for new tasks" or "chosen
+for L3". New tasks is a machine setting, so only the operator sets it; the L3 choice is a project
+setting.
 
 The daemon collects account quota every five minutes without an interactive session. The native
 headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
@@ -834,8 +868,8 @@ the two launchers can use different default models. Each alternative is tried at
 eligible, the explanation identifies installation, authentication, reset or configuration actions.
 
 Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
-one task; project `--l2-engine`/`--l3-engine` pins, the L3 engine choice in the composer or Settings and
-`alt chat --engine …` take precedence over Auto and never silently fall back. An explicit model pin
+one task; project `--l2-engine`/`--l3-engine` pins (Only) and `alt chat --engine …` take precedence
+over Auto and never silently fall back. An explicit model pin
 also remains strict. A project default model is a preference, not a pin: it names the model an
 Auto option on that engine uses and leaves the engine choice to the tiers. Changing preferences does not unpin them or change a running L2: resume keeps
 that attempt's engine, provider session and recorded launch model. A quota fallback is a recorded

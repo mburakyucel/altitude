@@ -43,6 +43,18 @@ svg.i.sm{width:14px;height:14px}
 .erow{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--text-muted)}
 .erow b{color:var(--text-secondary);font-weight:500}
 .erow .t{display:flex;justify-content:space-between}
+.newtasks{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);border:1px solid var(--border);border-radius:999px;padding:5px 10px;width:max-content;max-width:100%}
+.newtasks b{color:var(--text-primary);font-weight:600}.newtasks.set{background:var(--accent-tint);border-color:transparent}
+.l3pill{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border:1px solid var(--border);border-radius:999px;font-size:13px;color:var(--text-secondary)}.l3pill b{color:var(--text-primary)}
+.sgroup{margin-top:18px}.sgroup h2{font-size:13px;text-transform:none;color:var(--text-muted);margin:0 0 6px}
+.sgroup .card{padding:0}.sgroup .setting-link{border:0;border-top:1px solid var(--hairline);border-radius:0;margin:0}.sgroup .setting-link:first-child{border-top:0}
+.scols{display:grid;grid-template-columns:1fr 1fr;gap:0 28px;align-items:start}
+.models{width:400px;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);padding:14px 16px;font-size:14px}
+.models .tabs{display:flex;gap:4px;border-bottom:1px solid var(--hairline);margin:-2px 0 10px}.models .tabs span{padding:8px 10px;color:var(--text-muted)}.models .tabs span.on{color:var(--text-primary);box-shadow:inset 0 -2px var(--accent);font-weight:600}
+.models .opt{display:flex;gap:8px;align-items:center;padding:7px 2px}.models .opt i.r{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--border);display:inline-block}.models .opt i.r.on{border:4px solid var(--accent)}
+.models .opt small{color:var(--text-muted);margin-left:auto}
+.seg{display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:6px 0 10px}.seg span{flex:1;text-align:center;padding:6px 0;font-size:13px;border-left:1px solid var(--hairline)}.seg span:first-child{border-left:0}.seg span.on{background:var(--accent-tint);color:var(--accent);font-weight:600}
+.models .act{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}
 .meter{height:4px;border-radius:2px;background:var(--data-track);overflow:hidden}.meter i{display:block;height:100%;background:var(--accent);border-radius:2px}.meter.hot i{background:var(--danger)}
 .who{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;color:var(--text-secondary);font-size:13px;font-weight:500}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--bubble);color:var(--text-primary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
@@ -151,7 +163,7 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .m .l3{font-size:16px;line-height:1.6}
 .m .composer,.compact .composer{border-radius:22px;padding:4px;max-width:none}
 .m .composer .ph2,.m .composer .draft,.compact .composer .ph2,.compact .composer .draft{font-size:16px;min-height:44px;max-height:120px;overflow:auto;padding:10px 8px;line-height:24px}
-.m .crow,.compact .crow{margin-top:0}.m .crow>.pillbtn,.compact .crow>.pillbtn{display:none}
+.m .crow,.compact .crow{margin-top:0}
 .m .icb,.compact .icb{width:44px;height:44px}.m .hint.routine,.compact .hint.routine{display:none}
 .mcomp{padding:8px 12px}
 .phone-details>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:44px;height:44px;cursor:pointer}
@@ -344,6 +356,7 @@ def rail(selected, needs=3, first_run=False):
             '<div class="engines">'
             '<div class="erow"><div class="t"><b>Claude</b><span>21% of week</span></div><div class="meter"><i style="width:21%"></i></div></div>'
             '<div class="erow"><div class="t"><b>Codex</b><span>71% of week</span></div><div class="meter hot"><i style="width:71%"></i></div></div>'
+            f'<span class="newtasks">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>'
             '</div>'
         )
     return (
@@ -358,7 +371,7 @@ def rail(selected, needs=3, first_run=False):
 
 # ---------- shared pieces ----------
 def composer(placeholder="Message L3 about altitude", engine=True, mobile=False, draft=None, hint=None, to=None):
-    eng = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span>' if engine else (f'<span class="pillbtn">To {to}{I("chev-d","i sm")}</span>' if to else '<span style="flex:1"></span>')
+    eng = f'<span class="l3pill">L3 · <b>Auto</b>{I("chev-d","i sm")}</span>' if engine else (f'<span class="pillbtn">To {to}{I("chev-d","i sm")}</span>' if to else '<span style="flex:1"></span>')
     body = f'<div class="draft">{draft}</div>' if draft else f'<div class="ph2">{placeholder}</div>'
     h = f'<div class="hint{"" if "danger" in hint else " routine"}">{hint}</div>' if hint else ""
     return (
@@ -542,7 +555,7 @@ def mheader_project(sub="L3 · Ready"):
         '<header class="mh"><div><span class="name">altitude' + I("chev-d","i sm") + '</span>'
         f'<div class="subl" style="padding-left:4px;margin-top:-6px">{sub}</div></div><span class="sp"></span>'
         f'<details class="phone-details"><summary aria-label="More actions">{I("more")}</summary><div class="details-panel">'
-        '<a href="MobileSettings.html">Settings…</a><p>Reset L3 conversation</p><p>Remove project</p><a href="index.html">Design boards</a></div></details></header>'
+        '<a href="MobileProjectSettings.html">Project settings…</a><p>Setup…</p><p>Reset L3 conversation…</p><a href="MobileSettings.html">All settings…</a><a href="index.html">Design boards ↗</a></div></details></header>'
     )
 
 def mheader_global(title="Altitude"):
@@ -595,6 +608,7 @@ board("MobileSwitcher", 390, 844, mobile_chat(True))
 mobile_work = (
     '<div class="m"><div></div>' + mheader_project() +
     '<div class="mbody top"><div class="wh"><h2>Work</h2><span>5 current · 1 done this week</span></div>'
+    + f'<span class="newtasks" style="margin:0 0 10px">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>'
     + work_rows(mobile=True) + '</div><div></div>' + tabbar("work") + '</div>'
 )
 board("MobileWork", 390, 844, mobile_work)
@@ -670,20 +684,20 @@ def vrow(label, note, draft, phase, hint="", danger=False):
     cancel = f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>'
     stop = f'<span class="icb rec" aria-label="Stop">{I("stop","i lg")}</span>'
     mic = f'<span class="icb">{I("mic","i lg")}</span>'
-    pill = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span style="flex:1"></span>'
+    pill = f'<span class="l3pill">L3 · <b>Auto</b></span><span style="flex:1"></span>'
     if phase == "listening":
         desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded"') + '<span class="status">0:07</span>' + stop + arrow()
-        phone = cancel + wave(W[:6]) + '<span class="status">0:07</span>' + stop + arrow()
+        phone = pill + cancel + wave(W[:4]) + stop + arrow()
     elif phase == "transcribing":
         desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded frozen"') + '<span class="status">0:07</span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
-        phone = cancel + '<span class="gap"></span>' + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
+        phone = pill + cancel + f'<span class="icb dim">{I("mic","i lg")}</span>' + arrow(True)
         hint = '<span class="spin"></span> ' + hint
     elif phase == "unavailable":
         desk = pill + arrow(not draft)
-        phone = '<span class="gap"></span>' + arrow(not draft)
+        phone = pill + arrow(not draft)
     else:
         desk = pill + mic + arrow(not draft)
-        phone = '<span class="gap"></span>' + mic + arrow(not draft)
+        phone = pill + mic + arrow(not draft)
     return (f'<div class="vlab">{label}<span>{note}</span></div>'
             + vcomposer(draft, desk, hint, hint_danger=danger)
             + vcomposer(draft, phone, hint, phone=True, hint_danger=danger))
@@ -731,32 +745,48 @@ def voice_options(chosen="host", host="ready"):
 
 def settings_content(phone=False):
     target = "MobileVoiceSettings.html" if phone else "VoiceSettings.html"
-    return (
-        ('' if phone else '<h1>Settings</h1>')
-        + '<h2>This machine</h2><p class="muted" style="margin-top:-6px">Applies to every project in this Altitude installation.</p>'
-        + f'<a class="setting-link" href="{target}"><span><b>Voice input</b><small>This computer</small></span>{I("chev-r")}</a>'
-        '<div class="card" style="margin-top:14px"><h3>Network</h3><p class="muted" style="margin:2px 0 10px">Connection details · view only</p>'
-        '<div class="kv"><span>Address</span><b>https://altitude.example.test</b><span>HTTPS</span><b>On</b><span>Operator</span><b>Operator</b></div></div>'
-        + '<h2 style="margin-top:22px">This project</h2><p class="muted" style="margin-top:-6px">Applies only to that project.</p>'
-        + f'<a class="setting-link" href="{"MobileProjectSettings.html" if phone else "ProjectSettings.html"}"><span><b>altitude</b><small>L3 engine, models and reasoning effort</small></span>{I("chev-r")}</a>'
-    )
+    project = "MobileProjectSettings.html" if phone else "ProjectSettings.html"
+    link = lambda title, note, href="#": f'<a class="setting-link" href="{href}"><span><b>{title}</b><small>{note}</small></span>{I("chev-r")}</a>'
+    row = lambda title, note, tail: f'<div class="setting-link"><span><b>{title}</b><small>{note}</small></span>{tail}</div>'
+    switch = '<span class="field" style="min-width:3rem;text-align:center">On</span>'
+    group = lambda title, rows: f'<div class="sgroup"><h2>{title}</h2><div class="card">{rows}</div></div>'
+    left = (f'<div class="sgroup" style="margin-top:0"><div class="card">{link("Operator", "Your name on every screen")}</div></div>'
+        + group("This project", link("altitude", "L3: Auto · tasks prefer Codex", project))
+        + group("Models", link("New tasks", "Auto · each project's own defaults"))
+        + group("Projects", link("All projects", "2 projects · folder ~/Projects")))
+    right = (group("Voice", link("Voice input", "This computer", target))
+        + group("Devices and access", link("Devices", "2 paired · pair another, certificate")
+            + row("Terminal", "Every paired browser can run commands as you on this computer.", '<span class="field" style="min-width:3rem;text-align:center">Off</span>')
+            + row("Network", "https://altitude.example.test · HTTPS on · view only", ""))
+        + group("Coding agents", link("Prerequisites", "GitHub CLI sign-in, coding agents and Git")
+            + row("Validation runs", "Agents test installs, containers and browsers in throwaway containers.", switch)
+            + link("Incident reports", "Kept on this computer"))
+        + group("About", row("Version", "1.4.0 · Up to date", "")))
+    return ('' if phone else '<h1>Settings</h1>') + (left + right if phone else f'<div class="scols"><div>{left}</div><div>{right}</div></div>')
 
 def default_row(engine, model, effort, phone):
-    cols = "1fr" if phone else "6rem 1fr 1fr"
+    cols = "1fr" if phone else "9rem 1fr 1fr"
     return (f'<div style="display:grid;grid-template-columns:{cols};gap:12px;align-items:end;border-top:1px solid var(--hairline);padding-top:14px;margin-top:14px">'
             f'<b>{engine}</b><label class="muted" style="font-size:12px">Model<span class="field ph">Default: {model}</span></label>'
             f'<label class="muted" style="font-size:12px">Effort<span class="field">Default ({effort})</span></label></div>')
 
 def project_settings_content(phone=False):
     heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>altitude</h1>'
-    role = lambda title, timing, claude, codex: (f'<div class="card" style="margin-top:14px"><h3>{title}</h3><p class="muted" style="margin:2px 0 0">{timing}</p>'
-        + default_row("Claude", *claude, phone) + default_row("Codex", *codex, phone) + '</div>')
-    return (heading + '<p class="muted" style="margin:0 0 14px">Applies to this project only. A model or effort chosen for one launch, such as a task created with its own effort, wins over these defaults.</p>'
-        '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h3 style="margin:0">L3 engine</h3><span class="field" style="min-width:10rem">Auto</span></div>'
-        '<p class="muted" style="margin:8px 0 0">Auto follows the project\'s routing preferences and available quota.<br>Last turn: Codex · model not reported · High effort requested · applied effort not reported</p></div>'
-        + role("L3 · project conversation", "Applies from L3's next turn, in its existing conversation.", ("fable", "Native"), ("CLI default", "Native"))
-        + role("L2 · task owners", "Applies to fresh task attempts. Started tasks keep their model and effort.", ("opus", "Native"), ("CLI default", "High"))
-        + '<p class="muted" style="font-size:12px">These choices request a model and effort; they do not confirm what the engine used. Higher effort can use more time and tokens.</p>')
+    section = lambda title, note, body: f'<h2 style="margin-top:20px">{title}</h2><p class="muted" style="margin-top:-6px">{note}</p><div class="card">{body}</div>'
+    defaults = "".join(default_row(label, model, effort, phone) for label, model, effort in
+        (("Tasks · Claude", "opus", "High"), ("Tasks · Codex", "CLI default", "High"), ("L3 · Claude", "fable", "High"), ("L3 · Codex", "CLI default", "Medium")))
+    select = lambda title, note, value: (f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:6px 0">'
+        f'<span><b>{title}</b><br><small class="muted">{note}</small></span><span class="field" style="min-width:9rem">{value}</span></div>')
+    return (heading + '<p class="muted" style="margin:0 0 6px">Applies to this project only. A model or effort L3 sets for one task wins over these.</p>'
+        + section("L3", "Who answers in this project's chat. The same choice as the button under the message box; it comes before routing.",
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><span><b>Auto</b><br><small class="muted">Project routing and defaults · last reply reported gpt-5 · High</small></span><span class="btn">Change…</span></div>')
+        + section("Auto defaults", "Used under Auto and as the fallback. Started tasks keep their model and effort; L3 uses a change from its next reply.", defaults)
+        + section("Routing", "The order Auto tries: Claude and Codex share work by weekly headroom.",
+            select("Tasks", "Auto, Prefer or Only an engine.", "Prefer Codex") + select("L3", "Auto or Only an engine.", "Auto"))
+        + section("Project", "", f'<a class="setting-link" style="border:0;margin:0;padding:0 0 10px" href="#"><span><b>Setup</b><small>Ready</small></span>{I("chev-r")}</a>'
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--hairline);padding-top:10px">'
+            '<span><b>Remove project</b><br><small class="muted">Detach L3. Files and history stay; its settings here don\'t.</small></span>'
+            '<span class="btn" style="color:var(--danger);border-color:var(--danger)">Remove…</span></div>'))
 
 def voice_settings_content(phone=False):
     heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>Voice input</h1>'
@@ -796,14 +826,14 @@ def srow(label, note, chosen, status="", host="ready"):
 
 entry_desktop = ('<div class="vdesk" style="display:flex;gap:28px;align-items:flex-start">'
     '<div style="width:260px"><div class="muted" style="margin-bottom:8px">Rail, operator row</div><div class="who on" style="border:1px solid var(--border)"><span class="avatar">O</span>Operator<span style="margin-left:auto;color:var(--accent)">' + I("gear", "i sm") + '</span></div></div>'
-    '<div><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock"><div class="hi">Settings…</div><hr><div>Reset L3 conversation</div><div>Remove project</div><div>Design boards</div></div></div></div>')
-entry_phone = ('<div class="compact" style="width:390px"><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock" style="width:100%"><div class="hi">Settings…</div><hr><div>Reset L3 conversation</div><div>Remove project</div><div>Design boards</div></div></div>')
+    '<div><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock"><div class="hi">Project settings…</div><div>Setup…</div><div>Reset L3 conversation…</div><hr><div>All settings…</div><div>Design boards ↗</div></div></div></div>')
+entry_phone = ('<div class="compact" style="width:390px"><div class="muted" style="margin-bottom:8px">Project header, three dots</div><div class="menu-mock" style="width:100%"><div class="hi">Project settings…</div><div>Setup…</div><div>Reset L3 conversation…</div><hr><div>All settings…</div><div>Design boards ↗</div></div></div>')
 
 settings_inner = (
     '<div style="padding:28px 40px 8px"><h1 style="margin:0;font-size:18px">Settings: states and entry points</h1>'
-    '<p class="muted" style="margin:6px 0 18px">Settings opens a compact overview. The voice choices live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
+    '<p class="muted" style="margin:6px 0 18px">Settings opens an overview grouped by where each setting applies. The voice choices live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
     '<div class="sgrid">'
-    + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone", None).split('<div class="vdesk"')[0] + entry_desktop + entry_phone
+    + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone. The menu holds no destructive item", None).split('<div class="vdesk"')[0] + entry_desktop + entry_phone
     + srow("Loading", "no selected default or editable controls", None, "Loading settings…")
     + srow("Read failed", "Retry reads again; typing elsewhere is unaffected", None, 'Could not load settings. <span style="color:var(--accent);text-decoration:underline">Retry</span>')
     + srow("Saved host", "This computer, saved at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
@@ -922,16 +952,44 @@ state_sheet("TaskStates", "Task page states", [
 ], 2260)
 
 state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
-    ("Project actions", "one flow on phone and desktop", '<p>Reset L3 conversation</p><p>Remove project</p>'),
-    ("Removal confirmation", "detaches L3; retains files and history", '<p>Remove example from Altitude?</p><p class="muted">This detaches L3. The repository, remaining worktrees, saved history and queued messages stay on disk. Add the same folder and name again to attach L3 and restore history. Finish or reject existing tasks first.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
-    ("Cancelled", "Escape and outside click dismiss before submission", '<p>Reset L3 conversation</p><p>Remove project</p><p class="muted">The project and its conversation remain available.</p>'),
-    ("Pending", "all competing actions disabled; no dismissal", '<span class="btn primary" aria-disabled="true">Removing…</span> <span class="btn" aria-disabled="true">Cancel</span>'),
-    ("Denied", "keep confirmation with an actionable reason", '<p class="danger">Finish or reject the 1 unfinished task(s) first: existing-work.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
-    ("Failed", "retry remains in the confirmation", '<p class="danger">Could not remove the project. Try again.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
+    ("Where it is", "Settings › project › Project; the ⋯ menu holds no destructive item", '<p><b>Setup</b> <span class="muted">Ready</span></p><p><b>Remove project</b> <span class="muted">Detach L3. Files and history stay; its settings here don\'t.</span> <span class="btn" style="color:var(--danger);border-color:var(--danger)">Remove…</span></p>'),
+    ("Confirmation", "Cancel first and focused; the red action names the project", '<p><b>Remove example from Altitude?</b></p><p class="muted">L3 is detached and Altitude stops managing this folder.</p><ul class="muted" style="margin:0 0 10px;padding-left:18px"><li>Stays on disk: the repository, worktrees, history and queued messages.</li><li>Not kept: its settings here, such as models and routing.</li><li>Undo: add the same folder as example again to reattach L3 with its history.</li><li>Unfinished tasks and a running L3 reply must finish first.</li></ul><span class="btn">Cancel</span> <span class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">Remove example</span>'),
+    ("Cancelled", "Cancel, Escape, × and the scrim close it before submission", '<p class="muted">The project and its conversation remain available.</p>'),
+    ("Removing", "both buttons disabled", '<p class="muted">Removing… Closing doesn\'t cancel removal.</p><span class="btn" aria-disabled="true">Cancel</span> <span class="btn" aria-disabled="true">Removing…</span>'),
+    ("Refused", "the server's reason; the project stays", '<p class="danger">Finish or reject the 1 unfinished task(s) first: existing-work.</p><span class="btn">Cancel</span> <span class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">Remove example</span>'),
+    ("Response lost", "the project list is read again before saying anything", '<p class="muted">Checking whether it was removed…</p><p class="danger">Couldn\'t confirm removal; example is still in Altitude.</p><span class="btn">Cancel</span> <span class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">Retry</span>'),
     ("Removed", "managed row and old views leave", '<h3>Needs you</h3><p class="muted">A remaining project is selected. With none managed, First run offers the retained folder.</p><h3>Project not managed</h3><p class="muted">Select a project or add its folder again.</p>'),
     ("Attach L3 again", "existing folder-add flow restores history", '<p>example <span class="btn primary">Add project</span></p><p class="muted">Setup shows current configuration and progress.</p><p class="danger">Registration unavailable. Try again.</p><span class="btn">Retry</span>'),
     ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
-], 1400)
+], 1300)
+
+def models_dialog(tab="l3", chosen="Auto", effort="Default", note="", other=False, saving=False):
+    tabs = '<div class="tabs"><span' + (' class="on"' if tab == "l3" else '') + '>L3 · altitude only</span><span' + (' class="on"' if tab == "tasks" else '') + '>Tasks · All projects</span></div>'
+    head = ('<p class="muted" style="margin:0 0 8px">In use: <b>Auto</b> · who answers you in altitude\'s chat</p>' if tab == "l3"
+            else '<p class="muted" style="margin:0 0 8px">In use: <b>Auto</b> · every project; tasks that start from now, including queued ones. Started tasks keep theirs.</p>')
+    opts = "".join(f'<div class="opt"><i class="r{" on" if name == chosen else ""}"></i>{name}<small>{where}</small></div>' for name, where in
+        (("Auto", "routing and defaults"), ("Fable", "Claude"), ("Opus", "Claude"), ("Sonnet", "Claude"), ("Codex default", "Codex"), ("Other model…", "")))
+    if other:
+        opts += '<div style="display:flex;gap:8px;margin:4px 0 0 22px"><span class="field" style="min-width:6rem">Codex</span><span class="field" style="flex:1">gpt-6-astra</span></div>'
+    seg = '<div class="seg">' + "".join(f'<span{" class=on" if e == effort else ""}>{e}</span>' for e in ("Default", "Low", "Medium", "High", "Max")) + '</div>'
+    use = "Saving…" if saving else ("Use for L3 in altitude" if tab == "l3" else "Use for all new tasks")
+    foot = ('<p class="muted" style="font-size:12px;margin:6px 0 0">Applies from L3\'s next reply.</p>' if tab == "l3" else
+            '<p class="muted" style="font-size:12px;margin:6px 0 0">tutor runs tasks only on Codex, so it keeps its Codex model. <u>Change</u></p>'
+            '<p class="muted" style="font-size:12px;margin:4px 0 0">For one task, tell L3: “use Opus at Max for this”.</p>')
+    return (f'<div class="models"><div style="display:flex;justify-content:space-between"><b>Models</b><span>{I("x","i sm")}</span></div>{tabs}{head}'
+            f'{opts}<div style="margin-top:6px"><b style="font-size:13px">Effort</b></div>{seg}{note}'
+            f'<div class="act"><span class="btn primary"' + (' aria-disabled="true"' if saving else '') + f'>{use}</span></div>{foot}</div>')
+
+state_sheet("ModelsStates", "Models dialog: L3 and new tasks", [
+    ("Closed controls", "the L3 button under the message box; New tasks beside the quota (rail, phone Monitor and Work)", '<span class="l3pill">L3 · <b>Auto</b></span> <span class="l3pill">L3 · <b>Fable · Low</b></span><p></p><span class="newtasks">New tasks · <b>Auto</b></span> <span class="newtasks set">New tasks · <b>Fable · High</b></span><p></p><span class="newtasks set">New tasks · <b>Fable unavailable · Auto meanwhile</b></span>'),
+    ("L3 tab", "opens from the L3 button; focus on the current choice", models_dialog("l3")),
+    ("Tasks tab", "opens from New tasks; the Only project keeps its engine", models_dialog("tasks", "Fable", "High")),
+    ("Other model", "an engine and an exact model id", models_dialog("tasks", "Other model…", "High", other=True)),
+    ("Saving", "choices and the other tab are locked", models_dialog("l3", "Fable", "Low", saving=True)),
+    ("Changed elsewhere", "Reload drops the draft and shows the current value", models_dialog("tasks", "Opus", "Max", note='<p class="danger" style="font-size:13px">Changed in another window. <u>Reload</u></p>')),
+    ("Save failed", "the server's reason and Retry; In use keeps the earlier value", models_dialog("l3", "Opus", "Default", note='<p class="danger" style="font-size:13px">Claude does not support reasoning effort minimal. <u>Retry</u></p>')),
+    ("Loading and read failed", "the closed control is disabled while loading", '<p class="muted">Loading models…</p><p class="danger">Could not load models. <u>Retry</u></p>'),
+], 2340)
 
 state_sheet("ConversationStates", "Conversation and report states", [
     ("L3 never ran", "header offers Start L3", '<span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p>'),
@@ -985,7 +1043,7 @@ def restart_banner(mode="idle", mobile=False):
     return '<div class="banner"><div><p>Merged changes to the web app are waiting to activate. <span class="muted" title="7 September 2026, 10:00">4 files, landed 2h ago</span></p><p>' + message + '</p></div>' + action + '</div>'
 
 board("Monitor", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("monitor") + '<main class="pane">' + restart_banner() + '<div class="route-content">' + monitor_content + '</div></main></div>')
-board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting", mobile=True) + mheader_global() + '<div class="route-content">' + monitor_content + '</div><div></div>' + tabbar("monitor") + '</div>')
+board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting", mobile=True) + mheader_global() + '<div class="route-content">' + monitor_content.replace('<h1>Monitor</h1>', f'<h1>Monitor</h1><span class="newtasks">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>', 1) + '</div><div></div>' + tabbar("monitor") + '</div>')
 
 state_sheet("MonitorStates", "Monitor states", [
     ("Loading", "skeleton in the page’s shape", '<div class="skel" style="width:30%"></div><div class="skel" style="height:100px"></div><div class="skel" style="height:60px"></div>'),
@@ -1033,6 +1091,7 @@ ROUTES = [
     ("Settings · Voice input", "VoiceSettings", "MobileVoiceSettings"),
     ("Settings · This project", "ProjectSettings", "MobileProjectSettings"),
     ("Settings states and entry points", "SettingsStates", None),
+    ("Models dialog states", "ModelsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),

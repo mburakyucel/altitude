@@ -158,8 +158,8 @@ repeats the read; "Empty" is a sentence in `--text-muted`, never a blank area.
 
 Anatomy, top to bottom: brand; **Needs you** with a count badge; "Projects" section head with **+**
 (add a folder); one row per managed project with a state dot and the name;
-"N folders not managed" line; engine readout; **Monitor**; the operator row with the configured
-name and the theme toggle.
+"N folders not managed" line; engine readout; **New tasks**; **Monitor**; the operator row with the
+configured name and the theme toggle.
 
 The brand is the Altitude mark, 24px, then "Altitude" in card-title type. The mark is an A whose left
 side climbs in three steps (L1, L2, L3) to the summit, drawn as a white line on an `--accent` tile
@@ -187,6 +187,7 @@ hard-codes one, and one configured engine means one row.
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
 | Unmanaged folders line | N folders found in the projects folder; click opens First run for the picked folder; hidden at zero |
 | Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
+| New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens the Models dialog on its Tasks tab (§3.6.1); disabled while the overview loads |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
 ### 3.2 Project header
@@ -205,16 +206,18 @@ part reads "L3 is answering" (or "L3 is handling <what>" for a system turn, §4.
 The phone combines project identity and a short **L3 Ready / Answering / Handling** status in its
 single 54px shell header. The project name opens the switcher; a non-Auto pin stays named in the
 compact status. There is no second status row. The three dots open the same project actions menu as
-desktop, above any keyboard. The engine pin, the last L3 turn and model/effort defaults live on the
-project's Settings page (§3.15).
+desktop, above any keyboard. L3's model choice is the button under the message box (§3.6.1); default
+models, routing and removal live on the project's Settings page (§3.15).
 A healthy project's header holds no Setup control. **Setup…** in the overflow menu always opens the
 configuration checklist without replacing the conversation or draft; the header shows Setup only
 while setup needs attention (§3.12).
 
-Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Setup…** with
-the current setup status in muted text (§3.12), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
-(confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
-reports a design URL; opens in a new tab).
+Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Setup…** with the current
+setup status in muted text (§3.12), **Reset L3 conversation…** (confirm inline; `POST /api/l3/reset`),
+**All settings…** (opens Settings with this project under **This project**), **Design boards ↗**
+(present only when `GET /api/project/<name>` reports a design URL; opens in a new tab). The menu
+holds no destructive item, so no tap there can remove a project; **Remove project** is on the
+project's Settings page (§3.15).
 
 The menu holds actions only; no engine, model or effort control appears in it. Opening it focuses
 the first item; arrow keys, Home and End move between items; an inline confirmation takes focus and
@@ -223,17 +226,9 @@ the first item; arrow keys, Home and End move between items; an inline confirmat
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
 
-Removing a project means detaching its L3. The inline confirmation explains: finish or reject
-unfinished tasks and wait for workers, L3 turns and task processing first; the repository,
-remaining worktrees, saved history and queued messages stay on disk. Add the same folder and name
-again to attach L3, restore its sessions and history and deliver waiting messages. No work is
-implicitly stopped or reassigned. **Cancel**, Escape and outside dismissal close a confirmation
-before submission. **Removing…** disables the confirmation and competing actions, with no
-dismissal until the request completes. Errors/refusals appear inside the confirmation with Remove
-and Cancel still available; a work refusal names the unfinished tasks.
-
-Success removes the managed row and cached project views, selects a remaining project, and opens
-Needs you, or First run when the last project leaves. A stale project, task or report URL shows
+Removing a project means detaching its L3 (§3.15 Remove project). Success removes the managed row and
+cached project views, selects a remaining project, and opens Needs you, or First run when the last
+project leaves. A stale project, task or report URL shows
 "Project not managed" with an Open projects link, or First run when no project remains. The folder
 is still offered under its configured root; the path field supports folders elsewhere.
 `ProjectLifecycleStates.html` illustrates the single removal-and-attachment flow at phone-sized
@@ -490,11 +485,11 @@ The same card is the row in the work panel and the card under an L3 reply that c
 
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
-"Message the L2"); a left pill (engine pin on desktop L3 chat: Auto or an engine name; none on the
-task conversation or on phone, where the pin is in the project's Settings page); Add images button; microphone button; send control. The send control is the arrow in an accent circle
+"Message the L2"); on the project chat, the **L3** button on phone and desktop ("L3 · Auto",
+"L3 · Fable · Low"; none on the task conversation, because a started task keeps its model, §3.6.1); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted on desktop. The structure is the same on both widths: the field spans the box on top
-and the controls (pill, Add images, microphone, send, and the recording cluster while listening or
+and the controls (L3 button, Add images, microphone, send, and the recording cluster while listening or
 transcribing) sit in one row beneath it, in every state. Phone fields and messages are 16px with
 44px control targets; the row keeps its place through recording and landing, so the send control
 never moves beside the text. No routine hint or engine toolbar adds a row on phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
@@ -571,12 +566,55 @@ The approved [image interaction contract](IMAGE_INPUT.md) explains retention and
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
 engine fixtures at 390×844 and 1440×900; named screenshots live in `web/ui-artifacts/results/image-input*`.
 
+### 3.6.1 Models dialog
+
+One dialog chooses a model and effort ahead of routing, for two scopes, each where it lives. The **L3**
+button under the message box describes who answers what is typed there and opens the dialog on
+**L3 · <project> only**; the **New tasks** control beside the quota (rail, phone Monitor and Work) opens
+it on **Tasks · All projects**. Outside a project only the Tasks tab exists. Each tab's label says how
+far it reaches; the tabs are a tab list, and arrow keys, Home and End switch them. The dialog's name
+includes the open tab. On phone it is a bottom sheet; on desktop a centered dialog.
+
+Each tab starts with **In use: <choice>** and its scope: "who answers you in <project>'s chat", or
+"every project; tasks that start from now, including queued ones. Started tasks keep theirs." The
+models are a radio group: **Auto** (project routing and defaults), each alias and engine default the
+engine seam names with its engine, and **Other model…** with an engine and an exact model id (no
+spaces). **Effort** is a radio group of Default and the levels the chosen model's engine accepts; Auto
+offers every engine's levels and requests that effort on whichever engine routing picks. Focus starts
+on the current choice. The dialog holds one unsaved choice, owned by the open tab: switching tabs or
+closing drops it, and the tab shows its saved value again.
+
+**Use for L3 in <project>** or **Use for all new tasks** saves the model and effort together, only for
+that tab, and closes the dialog; the closed control then shows the new value. It is enabled only for
+a changed, valid choice. **Back to Auto**, shown while a choice is saved, removes it in one tap.
+The L3 tab says "Applies from L3's next reply." with the last reply's reported model and effort. The
+Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
+project whose **Only <engine>** routing keeps its tasks elsewhere ("tutor runs tasks only on Codex,
+so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
+tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 Only engine the same way
+("This project keeps L3 only on Codex, so Fable can't be used here. Change in Routing").
+
+| State | What appears and what actions do |
+| --- | --- |
+| Loading | The closed control is disabled; an opened tab says Loading models…. |
+| Read failed | "Could not load models" with Retry. |
+| Saving | **Use** reads Saving…; choices and the other tab are locked. |
+| Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
+| Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. |
+| Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
+
+Escape, × and, on phone, the scrim close the dialog and return focus to the control that opened it.
+Data: `GET /api/overview` `new_tasks` and `POST /api/new-tasks`; `GET /api/defaults/<project>`
+`l3_choice` and `POST /api/defaults` with setting `l3_choice`. Both writes send the value shown as
+`expected`, so a change made elsewhere is refused instead of overwritten. `web/e2e/models.pw.ts` walks
+these states at 390×844 and 1440×900. Board: ModelsStates.
+
 ### 3.7 Work panel
 
 Work answers “What is happening in this project?” Anatomy: "Work" and "N current · N done this
 week"; **Current** with every unfinished task once as a compact status row; **Done this week**
 folded to a count, expanding to rows. On phone it is the selected project's Work tab with the
-same sections. Task totals are labelled text, not attention badges. Work contains no question
+same sections, under one **New tasks** line (§3.6.1). Task totals are labelled text, not attention badges. Work contains no question
 body, recommendation or answer control.
 
 Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project.
@@ -829,8 +867,12 @@ fixed across state changes. Tabs retain an active underline to identify navigati
 Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
 the header button). Task details contains the muted line "attempt 1 · started 32 min ago"
-when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
-and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
+when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". The model
+chip says only what is known: "Requested · Opus 5 on Claude · Max" until the engine reports, then
+what it reported ("Opus 5 on Claude · High"), with "(requested Max)" when the levels differ. Task
+details holds **Model and effort**: Requested (what L3 set for this task, or the project choice and
+defaults), Launched, Engine reports ("not reported" when absent) and routing's recorded reason, with
+"Messages and resumes keep this model and effort; to redo the work on another one, ask L3." The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
@@ -841,8 +883,8 @@ restoration remain covered alongside the task state and composer walkthroughs.
 **Stop** is directly accessible in the task header on phone and desktop, serving both views.
 One click requests termination immediately. **Reject** is in phone task details and the desktop header,
 with inline confirmation:
-"Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
-Cancel. Stop appears while running; Reject appears while queued, running, blocked or reported.
+"Reject this task? Its worker ends and the task is archived." with "Reason (optional)", then
+**Cancel**, focused, and a red **Reject task**; Escape cancels. Stop appears while running; Reject appears while queued, running, blocked or reported.
 An operationally blocked task without an open question also offers **Resume**, using the existing
 daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
 A failed request leaves Resume available and places its error on a separate line under the actions,
@@ -1266,7 +1308,8 @@ their existing recovery, answer and navigation controls remain visible.
 
 ### 3.14 Monitor
 
-Anatomy: **Monitor** title; **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
+Anatomy: **Monitor** title; on phone the **New tasks** control (§3.6.1) beside the same quota;
+**Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
 its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
 plan when supplied, and "reading 3m old". Exact reading times appear on hover.
@@ -1324,18 +1367,29 @@ report deletes the in-memory evidence. No audio or conversation text is collecte
 sent. Collection survives in-app navigation and ends on reload. Controls and report work at both
 phone and desktop widths.
 
-Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
-or the desktop rail's operator row. The row highlights on every Settings route; theme switching
+Settings at `/settings` opens from **All settings…** in the project's three-dot menu on both widths,
+or the desktop rail's operator row; **Project settings…** opens that project's page directly. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
 A direct overview visit returns to `/projects`; entry from another view returns there.
 
-Under **This machine**, one bordered **Voice input** row shows the saved backend and a chevron.
+The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
+**Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
+**This project**, present only when Settings opens from a project, has one row naming it with its L3
+choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`.
+**Models** holds **New tasks**, the same value and Models dialog as the control beside the quota
+(§3.6.1). **Projects** holds **All projects** ("2 projects · folder ~/Projects"), opening
+`/settings/projects`: every managed project, each opening its page, then **Projects folder**.
+**Voice** holds **Voice input**. **Devices and access** holds Devices, the Terminal switch and the
+read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
+runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
+that opens a page has a chevron; switches save in place.
+
+One bordered **Voice input** row shows the saved backend and a chevron.
 Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.
-A **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
+The **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
 explanation that First run offers the folders directly inside it, the current value and the §3.12
 folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
 new folder; a failure shows the server explanation and Retry. First run reads the change at once.
-**Your name** shows the name, or "Not set · screens say “you”", and opens `/settings/name`;
 **Prerequisites** opens `/settings/prerequisites`; **Incident reports** shows "Published to
 <repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
 First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
@@ -1344,7 +1398,8 @@ A **Devices** row shows how many devices are paired and opens `/settings/devices
 browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "Chrome on Mac"), a
 **This device** badge beside the current one, and "Paired <date> · last used <date>". **Remove** asks
 once in the row ("It will need a new code to open Altitude again.", or "This browser will need…" for
-the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
+the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. Removing the
+current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
 With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
@@ -1396,7 +1451,6 @@ or "· <version> is available · What’s new" with the copyable `alt update` co
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent, and nothing installs without you." It saves on change like Terminal;
 off hides the Version row's newer release and the notice. Source deployments show neither row.
-The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
@@ -1420,42 +1474,61 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Saving | Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
-Under **This project**, opened from a project, one row names that project and opens
-`/settings/projects/<name>`; a direct visit lists every managed project under **Projects** instead.
-The project page has a labelled **Settings** back button and three cards. **L3 engine** holds the
-Auto/engine pin (the same pin as the desktop composer pill) and the last L3 turn: engine, observed
-model, requested effort and the effort the engine reported, each saying "not reported" when unknown.
-**L2 · task owners** opens with **Provider priority**, a select offering Auto and Prefer <engine>
-for each engine, saved on choice with its own status. The line below it says what the saved choice
-does: Auto with the default tiers names the default distribution by weekly headroom; Auto with
-custom routing names that routing; a preference says fresh tasks start on that engine when it is
-available and which engine takes over when it is not, or that the custom routing omits it; a project
-L2 engine pin says the pin wins. The L3 engine is unaffected.
-**L3 · project conversation** and **L2 · task owners** each hold one row per engine with **Model**
-and **Effort**: the model is free text with alias suggestions and a "Default: <model>" placeholder,
-saved on Enter or leaving the field, restored by Escape and cleared to Default when empty; effort
-offers "Default (<level>)", Native and only the levels that engine accepts, saved on choice. Each
-field saves alone and shows its own status; changing one pair never changes another. Copy says L3
-changes apply from its next turn, L2 defaults apply to fresh attempts while started tasks keep
-theirs, a choice made for one launch wins, and choices request rather than confirm what the engine
-used. At 390px each row stacks model above effort.
+The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
+"Applies to this project only. A model or effort L3 sets for one task wins over these." and four
+sections, in the order a choice is applied:
 
-| State | What appears and what actions do |
+- **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
+  the reason), "Until you choose Auto" or "Project routing and defaults", and what L3's last reply
+  reported ("L3 has not replied yet" before one). **Back to Auto** while a choice is saved, and
+  **Change…**, which opens the Models dialog on its L3 tab.
+- **Auto defaults**: one row per role and engine ("Tasks · Codex", "L3 · Claude") with **Model** and
+  **Effort**, used under Auto and as the fallback. The model is free text with alias suggestions and
+  a "Default: <model>" placeholder, saved on Enter or leaving the field, restored by Escape and
+  cleared to Default when empty; effort offers "Default (<level>)", Native and only the levels that
+  engine accepts, saved on choice. Each field saves alone with its own status. While New tasks holds
+  a choice the copy names it. At 390px each row stacks model above effort.
+- **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>; **L3** is Auto or
+  Only <engine>. The copy names the order Auto tries (the default weekly-headroom split or the custom
+  routing), that Only keeps the role on that engine even with a model choice and waits while it is
+  unavailable, and when a preferred engine is missing from custom routing. A change saves on choice
+  with the value shown as `expected`; one changed elsewhere says "Changed in another window." and
+  the page shows the current routing.
+- **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files
+  and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
+  usable when the model settings cannot be read.
+
+**Remove…** opens a dialog, centered on desktop and a bottom sheet on phone: **Remove <name> from
+Altitude?**, "L3 is detached and Altitude stops managing this folder.", then what stays on disk (the
+repository, worktrees, history and queued messages), what is not kept (its settings here, such as
+models and routing), how to undo (add the same folder as <name> again to reattach L3 with its
+history), and that unfinished tasks and a running L3 reply must finish first. **Cancel** comes first
+and has focus; Escape, × and the scrim cancel. The red **Remove <name>** sends `POST
+/api/project/remove`.
+
+| Remove state | What appears and what actions do |
 | --- | --- |
-| Loading | Loading settings…; no fields. |
-| Read failed | Could not load settings and Retry. |
-| Saving | That field is disabled with Saving…; other fields stay editable. |
+| Removing | "Removing… Closing doesn't cancel removal."; both buttons disabled. |
+| Removed | §3.2's success navigation. |
+| Refused | The server's reason in red, such as unfinished tasks; the project stays and Cancel works. |
+| Response lost | "Checking whether it was removed…" while the project list is read again: a project that is gone counts as removed; otherwise "Couldn't confirm removal; <name> is still in Altitude." with **Retry**. |
+
+| Project page state | What appears and what actions do |
+| --- | --- |
+| Loading | Loading settings…; the Project section is usable. |
+| Read failed | Could not load settings and Retry; the Project section is usable. |
+| Saving | That field or select is disabled with Saving…; other fields stay editable. |
 | Saved | That field shows the persisted value and Saved. |
 | Failed/denied save | Server explanation and Retry save; the field keeps the saved value. |
-| Not started | L3 engine card says L3 has not started. |
 
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
 Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,
 typed draft preservation, all three choices, key replacement/removal and loading/saving/failure.
-`web/e2e/project-settings.pw.ts` walks the menu entry, This project row, independent saves, reload
-persistence, restoring Default, the engine pin, the L2 provider priority (Auto, a preference, reload
-persistence, L3 unchanged, saving, denied save and restoring Auto), loading/read failure and
-saving/denied states at both sizes, with the project draft preserved.
+`web/e2e/project-settings.pw.ts` walks the menu entries, the This project row, the grouped overview,
+All projects, independent default saves, reload persistence, restoring Default, routing (Prefer,
+Only, a change made elsewhere), loading/read failure and saving/denied states at both sizes, with the
+project draft preserved. `web/e2e/project-lifecycle.pw.ts` walks the Remove dialog's cancel, refused,
+lost-response and removed outcomes. `web/e2e/models.pw.ts` walks §3.6.1.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
 ### 3.16 Pair this device
@@ -1577,7 +1650,8 @@ retain phone/desktop state verification and accessible review evidence.
 | Surface | Reads | Writes |
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
-| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, engine pin), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Models and settings | `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/new-tasks`, `POST /api/defaults` (choice, defaults, routing; each with `expected`) |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |

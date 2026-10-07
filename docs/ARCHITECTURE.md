@@ -218,12 +218,18 @@ Both roles clear observed `engine_reasoning_effort` for a new turn; absent obser
 Model compatibility and provider caps remain native decisions. Effort failures do not trigger
 application-side downgrading or engine fallback. No model capability catalog or session migration exists.
 
-`GET /api/defaults/<project>` returns the L3 engine pin and each role's model/effort pair per engine
-with its setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
-the existing settings request/apply mechanism under project/registry locks. The project Settings page
+`GET /api/defaults/<project>` returns the project's Only engines, L3 choice (with why it is unavailable,
+if it is), routing, the model choices on offer and each role's model/effort pair per engine with its
+setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
+the existing settings request/apply mechanism under project/registry locks. The machine-wide New
+tasks choice reads in `GET /api/overview` and saves through `POST /api/new-tasks`, operator only.
+Both writes accept the value the client showed as `expected` and refuse with 409 when the stored
+value differs, so a second window cannot silently overwrite a change it never saw.
+`route.pick_engine` tries a role's choice ahead of its routing tiers (CLI
+[model choices](CLI.md#model-choices) gives the precedence). The project Settings page
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
 independently of worker capacity. A conflicting pending request refuses another save until applied.
-Neither path mutates engine pins or running tasks. Native L1 helpers inherit or override effort
+Neither path mutates Only engines or running tasks. Native L1 helpers inherit or override effort
 through their own engine controls; Altitude does not create helper workers or promise a uniform L1
 override.
 
@@ -739,7 +745,8 @@ them without a PR, restart or free task slot. Altd applies the request on its ne
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
-above the others for fresh L2 only; L3 keeps the tiers as written. [CLI examples](CLI.md#automatic-routing-preferences) cover
+above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
+keep a role on one engine and `--l3-choice` sets L3's model choice. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by

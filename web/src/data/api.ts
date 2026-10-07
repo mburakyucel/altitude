@@ -714,8 +714,7 @@ export const ChatViewSchema = z
     queued: z.array(QueuedMessageSchema).nullish(),
     send_now_reason: z.string().nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
-    /** The project's L3 engine pin, one of the overview's engine names; null or absent means the
-     * weekly quota decides. */
+    /** The engine the project's L3 routing is Only on; null or absent means Auto. */
     engine: z.string().nullish(),
   })
   .passthrough();

@@ -173,7 +173,7 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
 type Removal = { status: "idle" | "removing" | "checking" } | { status: "refused" | "unconfirmed"; message: string };
 
 /**
- * Remove project (SPEC.md §3.10): Cancel first and focused, a red named action, and what stays. A response
+ * Remove project (SPEC.md §3.15): Cancel first and focused, a red named action, and what stays. A response
  * lost on the way rereads the project list before saying anything, so a removal that happened is not retried.
  */
 function RemoveDialog({ name, removal, onRemove, onClose }: { name: string; removal: Removal; onRemove: () => void; onClose: () => void }) {
