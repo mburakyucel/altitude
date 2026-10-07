@@ -68,7 +68,7 @@ def install_offline_guards() -> None:
                            "ALTITUDE_SESSION_KEY", "ALTITUDE_ROOTS", "ALTITUDE_TLS_DIR", "ALTITUDE_HOST",
                            "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_CONFIG",
                            "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "DBUS_SESSION_BUS_ADDRESS",
-                           "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH",
+                           "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH", "ALTITUDE_SOURCE_BRANCH",
                            "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND",
                            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}):
             os.environ.pop(key, None)
@@ -462,15 +462,7 @@ TERMINAL_LAUNCHER = ("import fcntl, os, sys, termios\nfd = os.open(sys.argv[1], 
 
 def terminal_session(leader: int) -> list[int]:
     """The processes still in a terminal's session."""
-    rows = subprocess.run(["ps", "-Ao", "pid=,stat="], capture_output=True, text=True, check=True).stdout
-    found = []
-    for pid, state in (line.split() for line in rows.splitlines()):
-        try:
-            if os.getsid(int(pid)) == leader and not state.startswith("Z"):
-                found.append(int(pid))
-        except OSError:
-            continue
-    return found
+    return platform.session_processes(leader)
 
 
 def local_terminal_launch(unit: str, tty: str, path: Path) -> subprocess.Popen:

@@ -1364,6 +1364,27 @@ def process_name(pid: int) -> str | None:
         return None
 
 
+def session_processes(leader: int) -> list[int]:
+    """Live members of a POSIX session, without executing a privileged process-table tool.
+
+    Session membership does not cover descendants that leave it; job cleanup uses the service manager.
+    """
+    found = []
+    pids = _pids() if _darwin() else [int(entry.name) for entry in PROC.iterdir() if entry.name.isdigit()]
+    for pid in pids:
+        try:
+            if _darwin():
+                member = os.getsid(pid) == leader and _bsd(pid).status != SZOMB
+            else:
+                fields = _stat(pid)
+                member = int(fields[3]) == leader and fields[0] != "Z"
+            if member:
+                found.append(pid)
+        except OSError:
+            continue  # Exited or inaccessible processes cannot establish membership.
+    return found
+
+
 def _controlling_terminal() -> None:  # runs in the child between fork and exec
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 

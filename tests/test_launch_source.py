@@ -1,5 +1,6 @@
 """Committed installation inputs and dirty deployments, without providers or user services."""
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,16 @@ class LaunchSource(AltitudeCase):
                 (repository / ".git/index").read_bytes(),
                 git("diff", "--binary", "HEAD", cwd=repository),
                 git("ls-files", "--others", "--exclude-standard", cwd=repository))
+
+    def test_fixture_bootstrap_removes_the_source_service_branch_before_config_import(self):
+        result = subprocess.run([sys.executable, "-c",
+                                 "import tests.support; from altitude import config; "
+                                 "import os; print(config.SOURCE_BRANCH); "
+                                 "assert 'ALTITUDE_SOURCE_BRANCH' not in os.environ"],
+                                env={**os.environ, "ALTITUDE_SOURCE_BRANCH": "service-only-branch"},
+                                cwd=REPO, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "main")
 
     def test_committed_inputs_survive_deployment_edits_and_same_owner_resume(self):
         # Project rules are sourced from the task base, not the deployment's staged/working versions.
