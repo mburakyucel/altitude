@@ -1659,8 +1659,9 @@ def _launchd_service_status(unit: str) -> dict:
 # environment leaves. Its program is a supervisor, outside any sandbox, that runs the command (under Altitude's
 # Seatbelt profile when the caller confines it), enforces the time limit, and when the command exits stops whatever is
 # left in the coalition, records the status and removes its own launchd job. The caller runs a launcher that hands the
-# supervisor its input and output: a regular file or device by path, as systemd-run --pipe passes the descriptor, and a
-# pipe through a FIFO the launcher relays.
+# supervisor its input and output: a regular file or device by path, as systemd-run --pipe passes the descriptor, output
+# pipes through FIFOs the launcher relays, and piped input as a private copy the supervisor removes once it has read
+# it and pipes to the command.
 
 _BOOT = "import sys; sys.path.insert(0, sys.argv[1]); from altitude import platform; platform.job_main(sys.argv[2:])"
 
@@ -1769,7 +1770,7 @@ def _launch(spec: dict) -> int:
             spec["stdin"] = _fd_path(0)
             if spec["stdin"] is None:  # a pipe: callers write a whole prompt, then close it
                 _write_private(job / "stdin", sys.stdin.buffer.read())
-                spec["stdin"] = str(job / "stdin")
+                spec.update(stdin=str(job / "stdin"), piped=True)
             for fd in (1, 2):
                 path = _fd_path(fd)
                 if path is None:
@@ -1872,8 +1873,10 @@ def _supervise(job: Path) -> int:
     terminal = spec.get("mode") == "terminal"
     status = 1
     try:
-        # A terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere.
-        streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
+        if spec.get("piped"):
+            streams = [_piped(Path(spec["stdin"]))]
+        else:  # a terminal's shell holds its pseudo-terminal read-write on all three descriptors, as it would anywhere
+            streams = [os.open(spec["stdin"], os.O_RDWR if terminal else os.O_RDONLY)]
         for fd in ("1", "2"):
             if terminal:
                 streams.append(os.dup(streams[0]))
@@ -1924,6 +1927,26 @@ def _supervise(job: Path) -> int:
             shutil.rmtree(job, ignore_errors=True)
         os.execv(LAUNCHCTL, [LAUNCHCTL, "remove", spec["label"]])
     return status
+
+
+def _piped(saved: Path) -> int:
+    """The read end of a pipe that carries the launcher's saved copy of its piped input, which is removed once read.
+
+    The command reads a pipe, as under systemd-run --pipe: a line its first reader takes is gone, whereas a reader of
+    a file can start again from its beginning (a worker's GitHub token reached the engine as prompt text that way)."""
+    data = saved.read_bytes()
+    saved.unlink()
+    read_end, write_end = os.pipe()
+
+    def feed() -> None:
+        try:
+            with os.fdopen(write_end, "wb") as stream:
+                stream.write(data)
+        except OSError:  # the command ended, or never started, without reading all of it
+            pass
+
+    threading.Thread(target=feed, daemon=True).start()
+    return read_end
 
 
 def _hold(child: subprocess.Popen, launcher: list) -> int:

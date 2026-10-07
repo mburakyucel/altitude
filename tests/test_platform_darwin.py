@@ -668,6 +668,21 @@ class Supervisor(DarwinCase):
         self.assertEqual((self.job / "coalition").read_text(), "44")
         self.assertTrue((self.job / "survivors").exists())
 
+    def test_piped_input_reaches_the_command_as_a_pipe_and_its_saved_copy_is_removed(self):
+        saved = self.job / "stdin"
+        data = b"x" * (1 << 20)  # past any pipe's capacity
+        for command, status, output in (
+                (["/bin/sh", "-c", '[ -p /dev/stdin ] && wc -c | tr -d " "'], 0, f"{len(data)}\n"),
+                (["/bin/sh", "-c", "head -c 3"], 0, "xxx"),  # stops reading early
+                ([str(self.tmp / "missing")], 127, None)):  # never starts
+            with self.subTest(command=command[-1]):
+                saved.write_bytes(data)
+                self.out.write_text("")
+                self.assertEqual(self.supervise(command, stdin=str(saved), piped=True), status)
+                self.assertFalse(saved.exists())
+                if output is not None:
+                    self.assertEqual(self.out.read_text(), output)
+
     def test_a_command_that_cannot_start_reads_as_127(self):
         self.assertEqual(self.supervise([str(self.tmp / "missing")]), 127)
         self.assertIn("missing", self.out.read_text())
