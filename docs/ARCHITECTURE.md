@@ -2060,13 +2060,13 @@ bordered card under an L3 reply that created the task and the row in the work pa
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
 the queue's own reason (a planned wait, the WIP limit, an engine hold, a restart in progress,
 a resume checkpoint or plain dispatch), so the card never names a file list. A queued task with `planned_wait` reads
-**Planned · waits for <reason>** with the muted queue dot; the reason wraps on phone and desktop.
+**Planned · Waiting for <prerequisite>.** with the muted queue dot; the explanation wraps on phone and desktop.
 Releasing it changes the same row to **Queued** with its ordinary dispatch hold, then **Running**
 only when launched. Planned tasks stay in Current without adding attention or a separate panel.
-A task blocked waiting on L3 reads "Waits for L3" with the running dot, and the rail's project dot
+A task blocked waiting on L3 names the coordinator and the recorded prerequisite with the running dot, and the rail's project dot
 counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. An owner/daemon park without a question, fault
-or operator stop reads "Paused" with the idle dot. Stop evidence, not the block recorder, identifies
+or operator stop explains the recorded reason, or its absence, with the idle dot. Stop evidence, not the block recorder, identifies
 "Stopped". Queue and restart inventory labels share `tasks.block_status`; an unset wait owner is
 a pause, never an inferred operator wait or attention item. The work panel (spec §3.7) reads the project's
 tasks and the overview queue filtered to the project. **Current** contains every unfinished task
