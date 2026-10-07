@@ -20,7 +20,6 @@ import struct
 import threading
 import time
 import uuid
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,7 +111,7 @@ def _row(source: str, kind: str, role: str, text: str = "", *, type: str = "even
     return row
 
 
-def _platform_row(event: dict, raw: bool) -> dict:
+def _platform_row(event: dict) -> dict:
     event = _redact(event)
     kind = str(event.get("kind") or "platform")
     if kind == "state":
@@ -125,7 +124,7 @@ def _platform_row(event: dict, raw: bool) -> dict:
     if event.get("by"):
         text = f"{text} · {event['by']}"
     return _row("platform", "boundary" if kind in BOUNDARIES else "platform", "system", text, type=kind,
-                at=event.get("at"), session_id=event.get("session_id"), raw=event if raw else None)
+                at=event.get("at"), session_id=event.get("session_id"))
 
 
 def _turn_prompt(project: str, slug: str, task: dict, turn: dict) -> str:
@@ -208,7 +207,6 @@ def activity(project: str, slug: str) -> dict:
 
 PAGE_ITEMS = 50
 PAGE_BYTES = 64 * 1024
-INDEX_LIMIT = 4
 INDEX_TTL = 60.0
 TOMBSTONE_LIMIT = 4096
 _REDACTION = "credential-shaped keys and values are redacted; model reasoning is never shown"
@@ -246,8 +244,21 @@ def _order(when: float, priority: int, source_order: int, turn_time: float, offs
     return f"{_clock_order(when)}{priority:x}{_clock_order(turn_time)}{source_order:016x}{offset + 1:016x}{block:08x}"
 
 
+def _public_fields(row: dict) -> dict:
+    """Native metadata has a fixed scalar shape; malformed nested values stay in raw disclosure."""
+    result = {key: row[key] if isinstance(row.get(key), str) else ""
+              for key in ("source", "kind", "type", "text")}
+    result.update({key: row[key] if isinstance(row.get(key), str) else None
+                   for key in ("role", "at", "session_id", "tool", "summary", "tool_use_id", "status")})
+    if "output" in row:
+        result["output"] = row["output"] if isinstance(row["output"], str) else ""
+    if "error" in row:
+        result["error"] = row["error"] if isinstance(row["error"], bool) else False
+    return result
+
+
 def _preview(row: dict) -> dict:
-    row = dict(row, raw=None, truncated=False)
+    row = dict(row, truncated=False)
     for key, value in list(row.items()):
         if not isinstance(value, str):
             continue
@@ -292,7 +303,7 @@ class _Index:
         self.deleted.clear()
 
 
-_indexes: OrderedDict[tuple, _Index] = OrderedDict()
+_indexes: dict[tuple, _Index] = {}
 _indexes_lock = threading.Lock()
 
 
@@ -301,11 +312,9 @@ def _index(key: tuple) -> _Index:
     with _indexes_lock:
         for expired in [key for key, value in _indexes.items() if now - value.touched >= INDEX_TTL]:
             del _indexes[expired]
-        index = _indexes.pop(key, None) or _Index()
+        index = _indexes.get(key) or _Index()
         index.touched = now
         _indexes[key] = index
-        while len(_indexes) > INDEX_LIMIT:
-            _indexes.popitem(last=False)
         return index
 
 
@@ -323,8 +332,9 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
 
     def add(row, safe, source, when, priority, turn_time, offset, block=0):
         identity = _digest([source, offset, safe, block])
-        row = dict(row, id=identity, order=_order(when, priority, source_order, turn_time, offset, block),
-                   session_id=row.get("session_id") or task.get("session_id"), raw=None)
+        row = dict(_public_fields(row), id=identity,
+                   order=_order(when, priority, source_order, turn_time, offset, block))
+        row["session_id"] = row["session_id"] or str(task.get("session_id") or "")
         records[identity] = safe
         if raw:
             row["text"] = json.dumps(safe, ensure_ascii=False, indent=2)
@@ -337,7 +347,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
     event_source = f"platform:{_stat(event_path)[:2]}"
     for offset, event in enumerate(S.read_events(project, slug)):
         safe = _redact(event)
-        add(_platform_row(event, False), safe, event_source, _when(event.get("at")) or 0.0, 0, 0.0, offset)
+        add(_platform_row(event), safe, event_source, _when(event.get("at")) or 0.0, 0, 0.0, offset)
     for source_order, (path, turn) in enumerate(sources):
         turn = turn or {}
         source = f"{path}:{_stat(path)[:2]}"
@@ -397,8 +407,8 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
             else:
                 for block, row in enumerate(rows):
                     item = add(row, safe, source, when, 1, turn_time, offset, block)
-                    tool_id = row.get("tool_use_id")
-                    if tool_id and row["kind"] in _CALLS:
+                    tool_id = item.get("tool_use_id")
+                    if tool_id and item["kind"] in _CALLS:
                         known = calls.get(tool_id)
                         if known:
                             identity, order = known["id"], known["order"]
@@ -406,7 +416,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                             folded.add(item["id"])
                         else:
                             calls[tool_id] = item
-                    elif tool_id and row["kind"] == "result":
+                    elif tool_id and item["kind"] == "result":
                         pending.setdefault(tool_id, []).append(item)
             offset += len(line)
         if not raw:
@@ -471,32 +481,37 @@ def view(project: str, slug: str, *, engine: str, session_id: str, attempt: int,
     key = (str(config.project_dir(project)), slug, engine, session_id, attempt, raw)
     index = _index(key)
     with index.lock:
-        fingerprint, sources = _inputs(project, slug, task)
-        rows = records = None
-        if fingerprint != index.fingerprint or mode != "delta":
-            rows, records, source_state, has_engine, replacement = _projection(
-                project, slug, task, engine, raw, sources, index.sources)
-            current = S.load_task(project, slug)
-            _require_task_access(project, slug)
-            require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
-            fresh, _ = _inputs(project, slug, current)
-            if fresh != fingerprint:
-                # A changing read never becomes an authoritative cursor/index version.
-                raise ValueError("session changed while reading; retry")
-            _publish(index, rows, source_state, has_engine, fingerprint, replacement)
-        _require_task_access(project, slug)
-        require_generation(S.load_task(project, slug), engine=engine, session_id=session_id, attempt=attempt)
-        result = {"project": project, "slug": slug, "engine": engine, "session_id": session_id, "attempt": attempt,
-                  "cursor": f"{index.epoch}:{index.version}", "events": [], "deleted": [], "redaction": _REDACTION,
-                  "has_earlier": bool(lower and any(meta.order < lower for meta in index.rows.values())),
-                  "has_engine_records": index.has_engine_records, "lower": lower, "more": False, "reset": False, "next": ""}
-        since = 0
+        epoch, since = "", 0
         if cursor:
             try:
                 epoch, value = cursor.split(":")
                 since = int(value)
             except (ValueError, AttributeError):
                 epoch, since = "", -1
+        fingerprint, sources = _inputs(project, slug, task)
+        rows = records = None
+        # A continuation needs bodies for still-undelivered upserts even when sources are unchanged.
+        # Materialize and publish once, before selecting changes, so metadata always describes
+        # this request's actual bodies rather than an earlier projection of the same inputs.
+        needs_body = (epoch == index.epoch and 0 <= since <= index.version
+                      and any(meta.version > since and meta.order >= lower for meta in index.rows.values()))
+        if fingerprint != index.fingerprint or mode != "delta" or needs_body:
+            rows, records, source_state, has_engine, replacement = _projection(
+                project, slug, task, engine, raw, sources, index.sources)
+            current = S.load_task(project, slug)
+            _require_task_access(project, slug)
+            require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
+            fresh, _ = _inputs(project, slug, current)
+            # Live writers must not starve readers. Return this coherent projection while forcing
+            # the next request to re-read when inputs changed during materialization.
+            _publish(index, rows, source_state, has_engine, fingerprint if fresh == fingerprint else "", replacement)
+        _require_task_access(project, slug)
+        require_generation(S.load_task(project, slug), engine=engine, session_id=session_id, attempt=attempt)
+        result = {"project": project, "slug": slug, "engine": engine, "session_id": session_id, "attempt": attempt,
+                  "cursor": f"{index.epoch}:{index.version}", "events": [], "deleted": [], "redaction": _REDACTION,
+                  "has_earlier": bool(lower and any(meta.order < lower for meta in index.rows.values())),
+                  "has_engine_records": index.has_engine_records, "lower": lower, "more": False, "reset": False, "next": ""}
+        if cursor:
             if epoch != index.epoch or not 0 <= since <= index.version:
                 result["reset"] = True
                 return result
@@ -518,14 +533,6 @@ def view(project: str, slug: str, *, engine: str, session_id: str, attempt: int,
             changes.extend((version, identity, False) for identity, (version, order) in index.deleted.items()
                            if version > since and order >= lower)
             changes.sort()
-            if changes and rows is None:
-                rows, _, _, _, _ = _projection(project, slug, task, engine, raw, sources, index.sources)
-                current = S.load_task(project, slug)
-                _require_task_access(project, slug)
-                require_generation(current, engine=engine, session_id=session_id, attempt=attempt)
-                fresh, _ = _inputs(project, slug, current)
-                if fresh != fingerprint:
-                    raise ValueError("session changed while reading; retry")
             for version, identity, present in changes:
                 target = "events" if present else "deleted"
                 item = dict(_preview(rows[identity]), version=version) if present else identity

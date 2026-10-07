@@ -328,8 +328,8 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
   const state = task.state ?? "";
   const running = state === "running";
   const hasSession = !waiting && Boolean(sessionId);
-  const attempt = typeof task.attempt === "number" ? task.attempt : 1;
-  const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running, active, attempt);
+  const attempt = typeof task.attempt === "number" ? task.attempt : 0;
+  const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running, active, attempt, !paused);
   const events = transcript.data?.events ?? [];
   const scope = { project, slug: task.slug, engine, sessionId, attempt };
   const loadOlder = () => {

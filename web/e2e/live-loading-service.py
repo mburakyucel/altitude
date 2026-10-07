@@ -81,6 +81,19 @@ def main():
             if mode == "empty":
                 path.write_text("")
                 return self._json({"ok": True})
+            if mode == "burst":
+                batch = []
+                for _ in range(220):
+                    counts[slug] += 4
+                    batch.append(record(counts[slug], "burst"))
+                with path.open("a") as stream:
+                    stream.write("".join(json.dumps(value) + "\n" for value in batch))
+                return self._json({"latest": f"Activity burst {counts[slug]}:", "appended": len(batch)})
+            if mode == "short-tail":
+                rows = [json.loads(line) for line in path.read_text().splitlines()]
+                rows[-1]["row"]["text"] = "Shortened fixture activity."
+                path.write_text("".join(json.dumps(value) + "\n" for value in rows))
+                return self._json({"latest": "Shortened fixture activity."})
             counts[slug] += 4
             value = record(counts[slug], "update")
             if mode == "late":

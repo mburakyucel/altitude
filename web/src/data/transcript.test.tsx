@@ -5,11 +5,11 @@ import { useTranscript } from "./api";
 const row = (id: string, order: string, version = 1, text = id) => ({ id, order, version,
   source: "fixture", kind: "message", type: "assistant", role: "assistant", text });
 const page = (extra: Record<string, unknown> = {}) => ({ project: "atlas", slug: "work", engine: "fixture",
-  session_id: "session", attempt: 1, cursor: "epoch:1", lower: "20", next: "", more: false, reset: false,
+  session_id: "session", attempt: 0, cursor: "epoch:1", lower: "20", next: "", more: false, reset: false,
   has_earlier: true, has_engine_records: true, deleted: [], events: [row("recent", "20")], redaction: "redacted", ...extra });
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const focus = () => act(() => { window.dispatchEvent(new Event("focus")); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("mounted transcript reader", () => {
   it("preserves the update watermark across history and merges late inserts, changed rows and deletions", async () => {
@@ -25,7 +25,7 @@ describe("mounted transcript reader", () => {
         default: return response(page());
       }
     }));
-    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false));
+    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false, true, true, 0, false));
     await waitFor(() => expect(result.current.data?.events).toHaveLength(1));
     act(() => result.current.loadOlder());
     await waitFor(() => expect(result.current.data?.events.map(e => e.id)).toEqual(["old", "recent"]));
@@ -52,7 +52,7 @@ describe("mounted transcript reader", () => {
       if (q.get("cursor") === "epoch:1") return response(page({ reset: true, events: [] }));
       return response(page({ cursor: "new:9", events: [row("recent", "20", 9, "racing update")] }));
     }));
-    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false));
+    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false, true, true, 0, false));
     await waitFor(() => expect(result.current.data).toBeDefined());
     focus();
     await waitFor(() => expect(release).toBeDefined());
@@ -130,5 +130,41 @@ describe("mounted transcript reader", () => {
     rerender({ active: true });
     await waitFor(() => expect(result.current.data?.events.map(e => e.id)).toEqual(["recent", "new"]));
     expect(cursors).toEqual(["", "epoch:1", "epoch:1"]);
+  });
+
+  it("suspends reads in a hidden document and refreshes when visible", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const fetch = vi.fn(async () => response(page()));
+    vi.stubGlobal("fetch", fetch);
+    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false));
+    expect(fetch).not.toHaveBeenCalled();
+    visibility.mockReturnValue("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    visibility.mockReturnValue("hidden");
+    focus();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["expired index", "long absence"])("reopens a following reader at the recent tail after %s", async (cause) => {
+    const modes: string[] = [];
+    let initial = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const q = new URL(url, "http://local").searchParams;
+      modes.push(q.get("mode")!);
+      expect(q.get("attempt")).toBe("0");
+      if (q.get("mode") === "initial") {
+        initial += 1;
+        return response(page(initial === 1 ? {} : { cursor: "new:900", lower: "80", events: [row("latest", "90", 900)] }));
+      }
+      return response(page({ reset: true, events: [] }));
+    }));
+    const { result } = renderHook(() => useTranscript("atlas", "work", "fixture", "session", false));
+    await waitFor(() => expect(result.current.data?.events[0]?.id).toBe("recent"));
+    if (cause === "long absence") vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    focus();
+    await waitFor(() => expect(result.current.data?.events.map(e => e.id)).toEqual(["latest"]));
+    expect(modes).toEqual(cause === "long absence" ? ["initial", "initial"] : ["initial", "delta", "initial"]);
+    expect(result.current.data?.has_earlier).toBe(true);
   });
 });

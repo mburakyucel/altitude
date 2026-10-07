@@ -43,6 +43,83 @@ async function upward(page: Page, body: Locator) {
   await page.mouse.wheel(0, -400);
 }
 
+test("following after an epoch reset opens a bounded recent tail across a burst, with older history still accessible", async ({ page, request }, info) => {
+  const task = await fixture(request);
+  const walk = walkthrough(page, info);
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  await page.goto(task.path);
+  await expect(live.getByText(task.latest, { exact: false })).toBeVisible();
+  await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  // Hold only transport while source mutation and index expiry are arranged. The application
+  // then receives the real reset response and chooses the real follow/reconcile path itself.
+  await page.route((url) => transcriptMode(url, "delta"), async (route) => {
+    await gate;
+    return route.continue();
+  });
+  const modes: string[] = [];
+  page.on("request", (outgoing) => {
+    const url = new URL(outgoing.url());
+    if (url.pathname.startsWith("/api/transcript/")) modes.push(url.searchParams.get("mode") || "initial");
+  });
+  try {
+    const burst = await task.control("burst");
+    expect(burst.appended).toBe(220);
+    await task.control("reset-index");
+    const refreshed = page.waitForResponse((response) => transcriptMode(new URL(response.url()), "initial"));
+    release();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    const response = await refreshed;
+    const bytes = await response.body();
+    const tail = JSON.parse(bytes.toString());
+    expect(bytes.byteLength).toBeLessThanOrEqual(65_536);
+    expect(tail.events.length).toBeLessThanOrEqual(50);
+    expect(tail.has_earlier).toBe(true);
+    await expect(live.getByText(burst.latest, { exact: false })).toBeInViewport();
+    await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    expect(modes.filter((mode) => mode === "initial")).toHaveLength(1);
+    expect(modes, "A following reader does not replay the entire intervening gap").not.toContain("reconcile");
+    expect(await live.locator("[data-transcript-id]").count()).toBeLessThanOrEqual(50);
+    await walk.state("gap-01-following-recent-burst-tail", { visible: [live.getByText(burst.latest, { exact: false })], hidden: [live.getByText("Reconnecting to the session…", { exact: true })] });
+    const older = page.waitForResponse((reply) => transcriptMode(new URL(reply.url()), "history"));
+    const before = await live.locator("[data-transcript-id]").count();
+    await upward(page, live.locator(".live-body"));
+    await older;
+    await expect.poll(() => live.locator("[data-transcript-id]").count()).toBeGreaterThan(before);
+    const ids = await live.locator("[data-transcript-id]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-transcript-id")));
+    expect(new Set(ids).size).toBe(ids.length);
+    await walk.state("gap-02-earlier-burst-history-remains-accessible", { visible: [live.getByRole("button", { name: "Follow", exact: true })], hidden: [] });
+  } finally {
+    release();
+  }
+});
+
+test("shrinking bottom content while following does not manufacture an upward gesture", async ({ page, request }, info) => {
+  const task = await fixture(request);
+  await task.control("long-record");
+  const walk = walkthrough(page, info);
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  const body = live.locator(".live-body");
+  await page.goto(task.path);
+  await expect(live.getByText("Long fixture record", { exact: false }).first()).toBeInViewport();
+  await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  const before = await body.evaluate((node) => ({ height: node.scrollHeight, top: node.scrollTop }));
+  await walk.state("shrink-01-following-long-tail", { visible: [live.getByRole("button", { name: "Pause", exact: true })], hidden: [live.getByRole("button", { name: "Follow", exact: true })] });
+  // Rewrite actual source text; no DOM geometry, scrolling or application state is faked.
+  await task.control("short-tail");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(live.getByText("Shortened fixture activity.", { exact: true })).toBeInViewport();
+  await expect.poll(() => body.evaluate((node) => node.scrollHeight)).toBeLessThan(before.height - 300);
+  await expect.poll(() => body.evaluate((node) => node.scrollTop)).toBeLessThan(before.top - 300);
+  await expect(live.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(live.getByRole("button", { name: "Follow", exact: true })).toHaveCount(0);
+  await expect.poll(() => body.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(2);
+  const update = await task.control("append");
+  await expect(live.getByText(update.latest, { exact: false })).toBeInViewport();
+  await walk.state("shrink-02-short-tail-and-next-output-still-follow", { visible: [live.getByRole("button", { name: "Pause", exact: true }), live.getByText(update.latest, { exact: false })], hidden: [live.getByRole("button", { name: "Follow", exact: true })] });
+});
+
 test("infinite history loads on upward intent, preserves expansion and anchor through failure, and reaches complete history", async ({ page, request }, info) => {
   const task = await fixture(request);
   const walk = walkthrough(page, info);
@@ -73,6 +150,7 @@ test("infinite history loads on upward intent, preserves expansion and anchor th
     await walk.state("history-01-loading-keeps-content", {
       visible: [live.getByText("Loading earlier activity…", { exact: true })], hidden: [],
     });
+    await expect(live.getByText("Loading earlier activity…", { exact: true })).toBeInViewport();
     const anchor = await readingAnchor(body);
     expect(await live.locator("[data-transcript-id]").count()).toBe(initialIds.length);
     release();
@@ -80,6 +158,7 @@ test("infinite history loads on upward intent, preserves expansion and anchor th
       visible: [live.getByText("Could not load earlier activity.", { exact: false }), live.getByRole("button", { name: "Retry", exact: true })],
       hidden: [live.getByText("Loading earlier activity…", { exact: true })],
     });
+    await expect(live.getByText("Could not load earlier activity.", { exact: false })).toBeInViewport();
     await expectAnchor(body, anchor);
     await live.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(live.getByText("Beginning of session", { exact: true })).toBeAttached();

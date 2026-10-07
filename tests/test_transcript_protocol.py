@@ -6,7 +6,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
-from altitude import state as S, transcript
+from altitude import dispatch, state as S, tasks as T, transcript
 from tests.test_live_transcript import _CodexTranscriptCase, _stamp
 
 
@@ -215,18 +215,51 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
         with self.assertRaises(transcript.TranscriptAccessError):
             self._view(raw=True, mode="record", record=event["id"])
 
-    def test_changed_source_during_read_is_not_published_and_retry_observes_it(self):
-        self.write([self.message(1)])
+    def test_continuous_writes_do_not_starve_initial_history_or_delta_reads(self):
+        self.write([self.message(index) for index in range(120)])
         original = transcript._projection
+        appended = 120
         def changed(*args, **kwargs):
+            nonlocal appended
             result = original(*args, **kwargs)
-            self.write([self.message(2)], append=True)
+            self.write([self.message(appended)], append=True)
+            appended += 1
             return result
-        with patch.object(transcript, "_projection", side_effect=changed):
-            with self.assertRaisesRegex(ValueError, "changed while reading"):
-                self._view()
-        self.assertEqual([row["text"] for row in self._view()["events"] if row["kind"] == "message"],
-                         ["message 1", "message 2"])
+        with patch.object(transcript, "_projection", side_effect=changed) as project:
+            first = self._view()
+            self.assertEqual(first["events"][-1]["text"], "message 119")
+            older = self._view(mode="history", cursor=first["cursor"], before=first["lower"])
+            delta = self._view(mode="delta", cursor=first["cursor"], lower=older["lower"])
+            self.assertEqual([row["text"] for row in delta["events"]], ["message 120", "message 121"])
+            following = self._view(mode="delta", cursor=delta["cursor"], lower=older["lower"])
+            self.assertEqual([row["text"] for row in following["events"]], ["message 122"])
+            self.assertEqual(project.call_count, 4, "one projection serves each busy-source request")
+        final = self._view(mode="delta", cursor=following["cursor"], lower=older["lower"])
+        self.assertEqual([row["text"] for row in final["events"]], ["message 123"])
+        for result in (first, older, delta, following, final):
+            self.assertFalse(result["reset"])
+            self.assertLessEqual(len(json.dumps(result).encode()), transcript.PAGE_BYTES)
+
+    def test_outstanding_delta_publishes_its_materialized_rows_before_selecting_changes(self):
+        self.write([self.message(1)])
+        first = self._view()
+        self.write([self.message(2)], append=True)
+        current = self._view()  # Another reader published the new row; this reader is still behind.
+        stale = next(row for row in current["events"] if row["text"] == "message 2")
+        original = transcript._projection
+        changed_id = "f" * 64
+        def different_projection(*args, **kwargs):
+            rows, records, sources, has_engine, replacement = original(*args, **kwargs)
+            changed = dict(rows.pop(stale["id"]), id=changed_id, text="changed projection")
+            rows[changed_id] = changed
+            return rows, records, sources, has_engine, replacement
+        with patch.object(transcript, "_projection", side_effect=different_projection) as project:
+            delta = self._view(mode="delta", cursor=first["cursor"])
+        self.assertEqual(project.call_count, 1)
+        self.assertEqual(delta["deleted"], [stale["id"]])
+        self.assertEqual([row["id"] for row in delta["events"]], [changed_id])
+        self.assertEqual(delta["events"][0]["text"], "changed projection")
+        self.assertGreater(delta["events"][0]["version"], stale["version"])
 
     def test_tombstone_exhaustion_requests_reconciliation_instead_of_losing_deletions(self):
         self.write([self.message(1)])
@@ -273,14 +306,59 @@ class TestTranscriptProtocol(_CodexTranscriptCase):
                 with self.assertRaises(ValueError):
                     self._view(**arguments)
 
-    def test_index_contains_only_signatures_and_orders_and_is_lru_bounded(self):
+    def test_index_contains_only_signatures_and_orders(self):
         marker = "body must never live in index"
         self.write([self.message(1, text=marker)])
         self._view()
         index = next(reversed(transcript._indexes.values()))
         self.assertNotIn(marker, repr(index))
-        self.assertLessEqual(len(transcript._indexes), transcript.INDEX_LIMIT)
         self.assertTrue(index.rows)
+
+    def test_six_active_viewers_keep_epochs_and_idle_scopes_are_lazily_expired(self):
+        with transcript._indexes_lock:
+            transcript._indexes.clear()
+        viewers = []
+        with patch.object(transcript.time, "monotonic", return_value=100) as clock:
+            for number in range(6):
+                task = T.new(self.project, f"Active viewer {number}", "Observe work")
+                session = f"active-session-{number}"
+                task.update(l2_engine="codex", session_id=session, attempt=1)
+                S.save_task(self.project, task)
+                root = dispatch.l2_job_root(self.project, task["slug"])
+                root.mkdir(parents=True, exist_ok=True)
+                S.write_json(root / "worker.json", {"id": "worker", "session_id": session, "started_at": _stamp(1)})
+                self.write([self.message(number)], path=root / "worker.stdout.jsonl")
+                scope = {"engine": "codex", "session_id": session, "attempt": 1}
+                first = transcript.view(self.project, task["slug"], **scope)
+                viewers.append((task["slug"], scope, first["cursor"]))
+            for tick in (110, 120, 130):
+                clock.return_value = tick
+                for slug, scope, cursor in viewers:
+                    delta = transcript.view(self.project, slug, **scope, mode="delta", cursor=cursor)
+                    self.assertFalse(delta["reset"])
+                    self.assertEqual(delta["cursor"], cursor)
+                    self.assertEqual(delta["events"], [])
+            self.assertEqual(len(transcript._indexes), 6)
+            clock.return_value = 191
+            slug, scope, cursor = viewers[0]
+            reset = transcript.view(self.project, slug, **scope, mode="delta", cursor=cursor)
+            self.assertTrue(reset["reset"])
+            self.assertEqual(len(transcript._indexes), 1, "next access purges every expired scope")
+
+    def test_malformed_native_timestamp_is_null_and_unicode_pages_still_make_progress(self):
+        for timestamp in ({"oversized": "🙂" * 30000}, 123456):
+            with self.subTest(timestamp_type=type(timestamp).__name__):
+                self.write([self.message(1, text="🙂" * 12000, at=timestamp)])
+                first = self._view()
+                row = next(row for row in first["events"] if row["kind"] == "message")
+                self.assertIsNone(row["at"])
+                self.assertTrue(row["truncated"])
+                self.assertNotIn("raw", row)
+                self.assertLessEqual(len(json.dumps(first).encode()), transcript.PAGE_BYTES)
+                raw = self._view(raw=True)
+                self.assertTrue(raw["events"])
+                self.assertTrue(all(event["at"] is None for event in raw["events"] if event["source"] != "platform"))
+                self.assertLessEqual(len(json.dumps(raw).encode()), transcript.PAGE_BYTES)
 
 
 if __name__ == "__main__":

@@ -580,7 +580,7 @@ export const TranscriptEventSchema = z.object({
   at: z.string().nullish(), session_id: z.string().nullish(), text: z.string(),
   tool: z.string().nullish(), summary: z.string().nullish(), tool_use_id: z.string().nullish(),
   output: z.string().nullish(), status: z.string().nullish(), error: z.boolean().nullish(),
-  truncated: z.boolean().nullish(), raw: z.unknown().nullish(),
+  truncated: z.boolean().nullish(),
 }).passthrough();
 export const TranscriptSchema = z.object({
   project: z.string(), slug: z.string(), engine: z.string(), session_id: z.string(), attempt: z.number(), cursor: z.string(),
@@ -939,6 +939,7 @@ type TranscriptSync = { rows: Map<string, TranscriptEvent>; cursor: string; afte
 type TranscriptReader = {
   data?: Transcript; cursor: string; error: unknown; historyError: unknown;
   fetching: boolean; historyPending: boolean; catchingUp: boolean; sync?: TranscriptSync;
+  tail: boolean; lastRead: number;
 };
 
 function mergeTranscript(rows: TranscriptEvent[], page: Transcript): TranscriptEvent[] {
@@ -961,10 +962,13 @@ export function useTranscript(
   raw: boolean,
   live = true,
   enabled = true,
-  attempt = 1,
+  attempt = 0,
+  following = true,
 ) {
   const reader = useMemo<TranscriptReader>(() => ({ cursor: "", error: null, historyError: null,
-    fetching: false, historyPending: false, catchingUp: false }), [project, slug, engine, sessionId, attempt, raw]);
+    fetching: false, historyPending: false, catchingUp: false, tail: false, lastRead: 0 }), [project, slug, engine, sessionId, attempt, raw]);
+  const follows = useRef(following);
+  follows.current = following;
   const [, redraw] = useReducer(n => n + 1, 0);
   const actions = useRef({ refetch: () => {}, loadOlder: () => {} });
 
@@ -984,7 +988,10 @@ export function useTranscript(
     reader.catchingUp = Boolean(reader.data);
     const publish = () => { if (!stopped) redraw(); };
     const beginSync = () => {
-      reader.sync = { rows: new Map(), cursor: "", after: "", lower: reader.data?.lower ?? "" };
+      if (follows.current) {
+        reader.sync = undefined;
+        reader.tail = true;
+      } else reader.sync = { rows: new Map(), cursor: "", after: "", lower: reader.data?.lower ?? "" };
       reader.catchingUp = true;
     };
     const schedule = (delay: number) => {
@@ -992,19 +999,24 @@ export function useTranscript(
       timer = setTimeout(() => void read(), delay);
     };
     const read = async () => {
-      if (stopped || busy) return;
+      if (stopped || busy || document.visibilityState === "hidden") return;
       clearTimeout(timer);
       busy = true;
-      const history = historyWanted && !reader.sync && !!reader.data?.has_earlier;
+      if (follows.current && reader.data && (reader.sync || Date.now() - reader.lastRead >= 60_000)) {
+        reader.sync = undefined;
+        reader.tail = true;
+        reader.catchingUp = true;
+      }
+      const history = historyWanted && !reader.sync && !reader.tail && !!reader.data?.has_earlier;
       historyWanted = false;
       const sync = reader.sync;
-      const mode = sync ? "reconcile" : history ? "history" : reader.data ? "delta" : "initial";
+      const mode = sync ? "reconcile" : history ? "history" : reader.data && !reader.tail ? "delta" : "initial";
       const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt), raw: raw ? "1" : "0", mode });
       if (sync) {
         query.set("lower", sync.lower);
         query.set("after", sync.after);
         query.set("cursor", sync.cursor);
-      } else if (reader.data) {
+      } else if (reader.data && mode !== "initial") {
         query.set("cursor", reader.cursor);
         query.set("lower", reader.data.lower);
         if (history) query.set("before", reader.data.lower);
@@ -1021,6 +1033,7 @@ export function useTranscript(
         if (page.project !== project || page.slug !== slug || page.engine !== engine || page.session_id !== sessionId || page.attempt !== attempt) {
           throw new ApiError(404, "The session changed. Refresh the task.");
         }
+        reader.lastRead = Date.now();
         if (page.reset) {
           beginSync();
           again = true;
@@ -1041,9 +1054,11 @@ export function useTranscript(
           // A history page does not acknowledge changes to already-loaded rows.
           reader.historyError = null;
         } else {
-          reader.data = { ...page, events: mergeTranscript(reader.data?.events ?? [], page),
+          reader.data = { ...page, events: mergeTranscript(mode === "initial" ? [] : reader.data?.events ?? [], page),
             lower: mode === "initial" ? page.lower : page.has_earlier ? reader.data?.lower ?? "" : "" };
           reader.cursor = page.cursor;
+          if (mode === "initial") reader.historyError = null;
+          reader.tail = false;
           reader.catchingUp = page.more;
           again = page.more;
         }

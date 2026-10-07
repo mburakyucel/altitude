@@ -2510,20 +2510,26 @@ shows one preview per source record. Full record opens an explicit 4,000-charact
 Show more for subsequent chunks; the complete redacted record remains accessible.
 
 Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
-The server retains only row signatures, order and change versions in four in-memory indexes,
-evicted after 60 idle seconds; it retains no transcript bodies. Unchanged source fingerprints
+The server retains only row signatures, order and change versions for active/recent viewer scopes.
+Indexes expire after 60 idle seconds, checked on access, without evicting other active readers;
+it retains no transcript bodies. Unchanged source fingerprints
 avoid parsing and return a small response. Changed inputs rebuild the canonical projection.
 Deletion history is bounded; index loss, source replacement or an expired cursor requests bounded
-reconciliation of the loaded interval. The browser preserves its visible row while reconnecting.
+reconciliation of a paused reader's loaded interval. A following reader reopens the recent tail
+after a lost index or a long absence; older rows remain available by scrolling upward. The browser
+preserves a paused reader's visible row while reconnecting. Source writes during a read leave its
+fingerprint stale so the next poll includes them without failing the current bounded read.
 Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
 refresh the projection without resetting reading position. Access and generation are checked
 before and after reads. Transcript state never authorizes task actions.
 
 Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and
 pairing loss cancel reads and discard them. There is no persistent browser storage or cross-task
-prefetch. One request at a time serializes history and live updates. Continuations yield after two
+prefetch. Hidden documents and inactive phone panes suspend polling. One request at a time serializes history and live updates. Continuations yield after two
 requests so catch-up shares the connection with ordinary navigation. Loaded DOM and server metadata
-grow with history; this is not a virtualized or constant-memory transcript. A queued
+grow with history and active viewer scopes; this is not a virtualized or constant-memory transcript.
+Normal text/output previews use at most 4,000 characters and other strings at most 512, with further
+shortening when necessary for the serialized byte budget. Raw disclosure supplies the complete record. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
 missing session file says so. On a phone one header carries Back, a bordered title dropdown, the task
 action, L2 state and independent Merge held status. The title dropdown opens metadata, tokens, full

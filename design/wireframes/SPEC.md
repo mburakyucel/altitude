@@ -999,6 +999,9 @@ The exhausted top says **Beginning of session**. Neither history status nor upda
 Pause also stops following while the worker runs; new activity continues arriving below. Live read
 failures retain the text and replace the footer with **Could not update the session.** and Retry.
 **Reconnecting to the session…** and **Catching up…** likewise take precedence over Following/Paused.
+A following reader returns to the recent tail after a long absence or a lost server index; a paused
+reader keeps their position while the loaded history reconciles. Earlier rows remain accessible by
+scrolling upward. Background browser tabs suspend reads and refresh when shown again.
 Raw events opens its own recent tail with the same scrolling. Each source record has a bounded
 preview and **Full record** disclosure: **Loading record…**, Cancel, a local error and Retry, then
 **Show more** for another chunk or **Hide full record**. Closing or leaving cancels its request.
