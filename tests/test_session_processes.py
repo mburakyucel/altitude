@@ -19,7 +19,7 @@ class SessionProcesses(AltitudeCase):
              mock.patch.object(platform.subprocess, "run", side_effect=PermissionError("ps refused")):
             self.assertEqual(sorted(platform.session_processes(40)), [40, 41])
 
-    def test_mac_reads_libproc_zombies_and_skips_vanished_or_unreadable_processes(self):
+    def test_mac_reads_libproc_zombies_and_skips_vanished_or_unidentified_processes(self):
         def session(pid):
             if pid == 44:
                 raise ProcessLookupError("exited")
@@ -38,6 +38,14 @@ class SessionProcesses(AltitudeCase):
              mock.patch.object(platform, "_bsd", side_effect=bsd), \
              mock.patch.object(platform.subprocess, "run", side_effect=PermissionError("ps refused")):
             self.assertEqual(platform.session_processes(40), [40, 41])
+
+    def test_mac_confirmed_session_member_cannot_be_declared_absent_when_unreadable(self):
+        with mock.patch.object(platform, "_darwin", return_value=True), \
+             mock.patch.object(platform, "_pids", return_value=[40]), \
+             mock.patch.object(platform.os, "getsid", return_value=40), \
+             mock.patch.object(platform, "_bsd", side_effect=PermissionError("member refused")):
+            with self.assertRaisesRegex(PermissionError, "member refused"):
+                platform.session_processes(40)
 
     def test_mac_process_table_failure_is_not_an_empty_session(self):
         with mock.patch.object(platform, "_darwin", return_value=True), \

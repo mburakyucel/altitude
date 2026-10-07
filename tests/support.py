@@ -385,6 +385,14 @@ class AltitudeCase(unittest.TestCase):
         self.addCleanup(self._forget, name)
         return projects[name]
 
+    def fixture_boot_identity(self) -> None:
+        """Resume integration uses a fixture boot; native PID/lifetime checks remain real.
+
+        The daemon reads the kernel boot identity outside worker confinement. Kernel-reader tests
+        supply their own observations instead of importing this integration fixture.
+        """
+        self.patch(platform, "_process_boot", return_value="fixture-boot")
+
     @staticmethod
     def _forget(name: str) -> None:
         projects = config.load_projects()

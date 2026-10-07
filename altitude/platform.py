@@ -1374,14 +1374,20 @@ def session_processes(leader: int) -> list[int]:
     for pid in pids:
         try:
             if _darwin():
-                member = os.getsid(pid) == leader and _bsd(pid).status != SZOMB
+                try:
+                    session = os.getsid(pid)
+                except PermissionError:
+                    continue  # No evidence this inaccessible process belongs to the session.
+                member = session == leader and _bsd(pid).status != SZOMB
             else:
                 fields = _stat(pid)
                 member = int(fields[3]) == leader and fields[0] != "Z"
             if member:
                 found.append(pid)
-        except OSError:
-            continue  # Exited or inaccessible processes cannot establish membership.
+        except ProcessLookupError:
+            continue
+        except FileNotFoundError:
+            continue  # Exited between enumeration and inspection.
     return found
 
 
