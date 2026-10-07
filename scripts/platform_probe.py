@@ -225,12 +225,23 @@ def app_ran(app: Path, marker: Path) -> bool:
     return ran
 
 
-def simulator() -> str:
-    """Xcode's version, or why the Simulator attempts cannot show anything on this Mac."""
-    found = subprocess.run(["xcrun", "--find", "simctl"], capture_output=True, text=True)
-    if found.returncode:
-        return "no Simulator tools installed, so the Simulator attempts show nothing here"
-    return subprocess.run(["xcodebuild", "-version"], capture_output=True, text=True).stdout.split("\n")[0]
+def controls(app: Path, marker: Path) -> tuple[bool, str]:
+    """Outside any profile, the fixture app must run and the Simulator service must answer, so a refusal inside is the
+    profile's. Returns whether the Simulator attempts cover anything here, and Xcode's version or why not."""
+    subprocess.run(["/usr/bin/open", "-g", "-j", str(app)], capture_output=True, timeout=60)
+    check(app_ran(app, marker), "the fixture app did not run outside the profile, so its attempt shows nothing")
+    listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=60)
+    if listed.returncode:
+        return False, "Simulator attempts uncovered: the Simulator service does not answer outside the profile either"
+    return True, subprocess.run(["xcodebuild", "-version"], capture_output=True, text=True).stdout.split("\n")[0]
+
+
+def refusal(simulator: bool, error: Path) -> str:
+    """The Simulator attempt's own error under the profile, as evidence of what refused it."""
+    if not simulator:
+        return ""
+    lines = error.read_text().strip().splitlines() if error.exists() else []
+    return f"; Simulator refused with {lines[0][:200] if lines else 'no error output'!r}"
 
 
 @row
@@ -243,6 +254,7 @@ def confinement():
         outside = Path.home() / f".altitude-probe-{NONCE}"
         marker = Path.home() / f".altitude-probe-{NONCE}-app"
         fixture_app(root / "fixture.app", marker)
+        simulator, xcode = controls(root / "fixture.app", marker)
         label = platform._label(job)
         script = (f"echo x > '{root}/inside' && echo write-inside; echo x > '{outside}' 2>/dev/null && echo write-home; "
                   "kill -TERM $PPID 2>/dev/null && echo signal-supervisor; "
@@ -251,15 +263,16 @@ def confinement():
                   "sleep 5 & kill $! && echo signal-own-child; "
                   f"git init -q '{root}/repo' && echo git; "
                   f"/usr/bin/open -g -j '{root}/fixture.app' 2>/dev/null && echo open-app; "
-                  "xcrun simctl list runtimes >/dev/null 2>&1 && echo simulator")
+                  f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
         result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
         written, ran = outside.exists(), app_ran(root / "fixture.app", marker)
         outside.unlink(missing_ok=True)
         check(result.stdout.split() == ["write-inside", "signal-own-child", "git"] and not written and not ran,
               f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
+        evidence = refusal(simulator, root / "simctl.err")
     return ("writes under the roots only; the supervisor, launchd, LaunchServices and the Simulator service are out of "
-            f"reach; own children stay signalable and git works ({simulator()})")
+            f"reach; own children stay signalable and git works ({xcode}{evidence})")
 
 
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
@@ -321,7 +334,12 @@ attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
 attempt("open-app", lambda: run("/usr/bin/open", "-g", "-j", os.path.join(area, "fixture.app")))
-attempt("simulator", lambda: run("xcrun", "simctl", "list", "runtimes"))
+def simulator():
+    listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=30)
+    with open(os.path.join(area, "simctl.err"), "w") as stream:
+        stream.write(listed.stderr)
+    listed.check_returncode()
+attempt("simulator", simulator)
 attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
 with open(os.path.join(area, "seen.json"), "w") as stream:
     json.dump(seen, stream)
@@ -343,6 +361,7 @@ def validation_confinement():
         temp.mkdir()
         (outside / "secret").write_text("fictional credential\n")
         fixture_app(area / "fixture.app", outside / "launched")
+        simulator, xcode = controls(area / "fixture.app", outside / "launched")
         (outside / "linked").symlink_to(outside)  # a root a worker replaced with a link into the home
         (outside / "s.sock").unlink(missing_ok=True)
         home_socket = socket.socket(socket.AF_UNIX)
@@ -373,6 +392,7 @@ def validation_confinement():
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
         check(not app_ran(area / "fixture.app", outside / "launched"), "the fixture app ran")
+        evidence = refusal(simulator, area / "simctl.err")
     finally:
         subprocess.run([platform.LAUNCHCTL, "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=60)
         for listener in listeners:
@@ -382,7 +402,7 @@ def validation_confinement():
         Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
     return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
             "sockets, keychain, launchd, LaunchServices, the Simulator service and the supervisor are out of reach; "
-            f"system files, name resolution, other loopback ports, own sockets in every root and git work ({simulator()})")
+            f"system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
 
 
 @row
