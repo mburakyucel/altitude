@@ -21,7 +21,7 @@ const server = createServer((_, response) => {
 });
 let browser;
 const deadline = setTimeout(() => {
-  writeFileSync(output, JSON.stringify({ ...result, error: "60-second timeout" }, null, 2) + "\n");
+  writeFileSync(output, JSON.stringify({ ...result, passed: false, error: "60-second timeout" }, null, 2) + "\n");
   process.exit(1);
 }, 60000);
 try {
