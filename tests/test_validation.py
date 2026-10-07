@@ -534,7 +534,7 @@ exec "$@"
 LOGGED = 'bash -c "$1" >> "$3" 2>&1; status=$?; printf %s "$status" > "$2.tmp" && mv "$2.tmp" "$2"; exit "$status"'
 
 
-class TestMacValidationRunner(RunnerCase):
+class MacRunnerCase(RunnerCase):
     """macOS: the job launcher and sandbox-exec are fixtures; the script, profile, environment, records and cleanup
     are real. scripts/platform_probe.py's validation-confinement row checks the profile itself on a Mac."""
     host = "darwin"
@@ -558,6 +558,8 @@ class TestMacValidationRunner(RunnerCase):
         select.chmod(0o755)
         self.patch(platform, "XCODE_SELECT", str(select))
 
+
+class TestMacValidationRunner(MacRunnerCase):
     def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
         (self.repo / "uncommitted.txt").write_text("not tested\n")
         result = self.validate(["sh", "-c", 'git rev-parse HEAD > "$VALIDATION_RESULTS/head"; '

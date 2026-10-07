@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui ui-shell ui-ios audit-history installation-vm browser-sandbox restart install-service
+.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm browser-sandbox restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -24,6 +24,12 @@ ui-validate:    ## disposable candidate fictional browser checks; invoke with al
 	python3 scripts/validate_ui.py $(UI_ARGS)
 ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first)
 	cd web && pnpm ui:ios $(UI_ARGS)
+ui-simulator:   ## opt-in phone walkthrough in iOS Safari on a disposable Simulator iPhone (macOS, [RESULTS=dir]); inside a task, through the validation runner
+ifdef ALTITUDE_TASK
+	alt task validate --simulator -- sh -c 'make web && make ui-simulator'
+else
+	python3 scripts/ios_simulator.py $(RESULTS)
+endif
 installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
 	alt task validate --kvm -- make installation-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)" $(if $(BASELINE),BASELINE="$(BASELINE)") $(if $(RECOVERY),RECOVERY=1)

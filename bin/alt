@@ -385,6 +385,7 @@ def main(argv=None) -> None:
     vl = ts.add_parser("validate", help="current L2: run a command against its own committed candidate in a disposable, isolated validation run, no grant needed")
     vl.add_argument("--kvm", action="store_true", help="Linux: add /dev/kvm for a virtual machine")
     vl.add_argument("--publish", type=int, metavar="PORT", help="Linux: publish this container port on a free 127.0.0.1 port")
+    vl.add_argument("--simulator", action="store_true", help="macOS: a disposable iOS Simulator iPhone whose Safari the command drives through $SIMULATOR_INSPECTOR")
     vl.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command and its arguments")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
@@ -523,7 +524,7 @@ def main(argv=None) -> None:
         import urllib.request
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
@@ -555,7 +556,7 @@ def main(argv=None) -> None:
                                              headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
-                with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 if validation_run else 130) as response:
+                with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 + (validation.SIMULATOR_SECONDS if args.simulator else 0) if validation_run else 130) as response:
                     result = json.load(response)
                     if review_run and not result.get("ok"):
                         sys.exit(result.get("error", "Review execution failed"))
@@ -572,7 +573,10 @@ def main(argv=None) -> None:
                               + ("; output truncated, read the log" if result.get("output_truncated") else "")
                               + f"; log {result['log']}"
                               + (f"; results {result['results']}; commit {result['commit']} tree {result['tree']}; "
-                                 f"{result['host']}; {result['isolation']}" if validation_run else ""))
+                                 f"{result['host']}; {result['isolation']}" if validation_run else "")
+                              + ("; " + ", ".join(str(result["simulator"].get(key)) for key in (
+                                  "device", "runtime", "safari", "xcode", "screenshot") if result["simulator"].get(key))
+                                 if validation_run and result.get("simulator") else ""))
                         # Only a command that exited 0 and whose run ended cleanly is a success.
                         code = 124 if result["timed_out"] else result["exit"] if ended == "exit" else 1
                         sys.exit(1 if code is None else code)

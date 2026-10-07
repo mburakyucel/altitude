@@ -2078,14 +2078,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
                         raise ValueError("alt task validate: unsupported fields")
                     peer, local = self.client_address, self.connection.getsockname()
 
                     def owner(task: dict) -> bool:
                         return task_owner_connection(o["project"], o["slug"], task, peer, local)
                     return self._json(validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                     kvm=o.get("kvm", False), publish=o.get("publish"), owner=owner))
+                                                     kvm=o.get("kvm", False), publish=o.get("publish"),
+                                                     simulator=o.get("simulator", False), owner=owner))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
