@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- The container image pins a verified GitHub CLI release supporting Altitude's PR fields. Its
+  credential-free image check catches the older distribution CLI that signs in but cannot open
+  a PR through normal landing. Setup documents phone sign-in and Git HTTPS credential-helper setup.
+  One Linux live run records real onboarding, an owner-created PR and issue, and authentication/task
+  persistence across restart, Stop/start and backed-up image replacement. Mac remains unverified.
+
 - Failed independent reviews retain bounded sanitized diagnostics and exit status in their task's
   review record so owners and coordinators can investigate without exposing stdout transcripts.
 
