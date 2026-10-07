@@ -1533,6 +1533,7 @@ def find_library(name: str) -> str | None:
 
 LAUNCHCTL = shutil.which("launchctl") or "/bin/launchctl"
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+XCODE_SELECT = "/usr/bin/xcode-select"
 CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
@@ -2302,6 +2303,24 @@ def validation_temp(run: str) -> Path:
     return Path("/private/tmp") / f"av-{run[:8]}"
 
 
+def validation_path(path: list[str]) -> list[str]:
+    """A macOS validation run's PATH: `path` with the active developer directory's tools just ahead of /usr/bin.
+    /usr/bin's git and python3 are xcrun shims that try to write xcrun's lookup cache, which the run's profile keeps
+    read-only, and report that as an `error:` line on the tool's own stderr; earlier entries, such as a Homebrew
+    python3, still come first."""
+    try:
+        developer = subprocess.run([XCODE_SELECT, "-p"], capture_output=True, text=True, timeout=5,
+                                   check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return path
+    tools = Path(developer) / "usr" / "bin"
+    if (not tools.is_absolute() or not tools.is_dir() or str(tools) in path
+            or Path(os.path.realpath(tools)).is_relative_to(os.path.realpath(Path.home()))):  # the profile hides it
+        return path
+    at = path.index("/usr/bin") if "/usr/bin" in path else len(path)
+    return [*path[:at], str(tools), *path[at:]]
+
+
 def validation_in_container() -> bool:
     """Whether a validation run is a rootless Podman container (Linux) rather than a process under the validation
     Seatbelt profile (macOS, where Podman would need a virtual machine of its own)."""
@@ -2316,7 +2335,7 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
     Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
     service control to every sandboxed process, so the run cannot start, stop or change a service. It reads, never
-    writes, xcrun's lookup cache: without it every /usr/bin/git call takes over a second."""
+    writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim takes over a second."""
     def filters(kind: str, values) -> list[str]:
         return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
 

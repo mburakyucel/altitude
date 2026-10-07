@@ -126,10 +126,10 @@ def candidate_dirs(run: Path) -> list[Path]:
 def native_script(run: Path, argv: list[str], output: Path) -> str:
     """macOS: the owner's command in the run's clone under the validation profile, which admits only the run's
     candidate folders. Its environment is only this: a home and temporary folder of its own, and altd's PATH without
-    folders the profile hides."""
+    folders the profile hides, with the developer tools ahead of /usr/bin."""
     hidden = os.path.realpath(Path.home())
-    path = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
-            if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)]
+    path = platform.validation_path([entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
+                                     if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)])
     env = {"HOME": str(run / "home"), "TMPDIR": str(platform.validation_temp(run.name)), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
            "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
