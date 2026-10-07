@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-test("full Chromium opens blank and fictional content", async ({ browser, page }, info) => {
+test("@chromium full Chromium opens blank and fictional content", async ({ browser, page }, info) => {
   test.setTimeout(30_000);
   await page.goto("about:blank");
   await page.setContent("<!doctype html><title>Fictional preflight</title><h1>Fictional project</h1>");

@@ -2292,13 +2292,14 @@ def validation_browser_probe(work: Path) -> dict:
     checks = []
     def denied(name, operation):
         try:
-            operation()
+            value = operation()
         except PermissionError as exc:
             checks.append({"name": name, "passed": True, "errno": exc.errno})
         except OSError as exc:
             checks.append({"name": name, "passed": False, "unavailable_errno": exc.errno})
         else:
             checks.append({"name": name, "passed": False, "unexpected_allow": True})
+            return value
 
     def directory(path):
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
@@ -2307,13 +2308,14 @@ def validation_browser_probe(work: Path) -> dict:
     denied("operator-home-directory-open", lambda: directory(pwd.getpwuid(os.getuid()).pw_dir))
     denied("shared-temp-directory-open", lambda: directory("/private/tmp"))
     scratch = work.parent / ("browser-probe-" + uuid.uuid4().hex)
-    def create():
-        fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = denied("outside-candidate-root-create", lambda: os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    if fd is not None:
         try:
             os.close(fd)
-        finally:
             scratch.unlink()
-    denied("outside-candidate-root-create", create)
+        except OSError as exc:
+            # Creation already succeeded: failed cleanup cannot retroactively prove a write denial.
+            checks[-1]["cleanup_error"] = str(exc)
     with tempfile.TemporaryDirectory(prefix="browser-probe-", dir=os.environ["TMPDIR"]) as own:
         path = Path(own) / "owned"
         with path.open("wb") as stream:

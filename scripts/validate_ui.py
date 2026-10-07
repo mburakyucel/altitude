@@ -28,6 +28,7 @@ def validate(specs: list[str]) -> int:
     env = {**os.environ, **platform.validation_browser_environment(temp),
            "npm_config_cache": str(temp / "npm"), "XDG_CACHE_HOME": str(home / "cache"),
            "XDG_CONFIG_HOME": str(home / "config"), "PLAYWRIGHT_BROWSERS_PATH": str(home / "browsers"),
+           "ALTITUDE_UI_BROWSER_CONFIG": str(home / "config"),
            "ALTITUDE_BROWSER_EVIDENCE": str(results / "browser.json"), "ALTITUDE_UI_HEADLESS_SHELL": "0"}
     container = platform.validation_in_container()
     configuration = "playwright.validation.config.ts" if container else "playwright.config.ts"
@@ -63,7 +64,10 @@ def validate(specs: list[str]) -> int:
                         status = run.wait(timeout=timeout)
                     except subprocess.TimeoutExpired:
                         # The unreaped stage leader pins this owned group; never target a name or another job.
-                        os.killpg(run.pid, signal.SIGKILL)
+                        try:
+                            os.killpg(run.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass  # already exited; keep the timeout stage record and reap the leader
                         run.wait(timeout=10)
                         status = 124
                 except subprocess.TimeoutExpired:
