@@ -136,9 +136,9 @@ def browser_trial_package() -> dict:
     """The single reviewed preparation artifact; this is not a general runtime selector."""
     return {"entrypoint": "bin/codex", "executables": ("bin/codex", "bin/codex-code-mode-host",
             "codex-path/rg", "codex-resources/zsh/bin/zsh"), "files": {
-        "codex-package.json": "0529d05aa1dba4df0faf5860c84b48957d8ad4fc982e76bc1700ffc06d5e7643",
+        "codex-package.json": "dc08d2c0976a9392f63774a07c84f0098d80c4289493639461ee6247f9c6f4e8",
         "codex-path/rg": "a326a1fb48074202e9ad41e4cd1e389eeea372c8c6f7d7e80da81176d5d9430e",
-        "bin/codex": "6b214d28581f60881a28f9fb7c93071af509b0aea8ab294b8933bcb879e8554b",
+        "bin/codex": "0c06091484dba7d0e8ac98e300b301dee5daf348f2b15e64b29251b87d707d3d",
         "bin/codex-code-mode-host": "e773e0c65bbe36afca9de5bae227fbe47691726314e6b8441c49923c937a9203",
         "codex-resources/zsh/bin/zsh": "db6fe1a78eaceaff3b0f0cde25fc25afe466d61b0bf76b4ebe35812e4bc8dd71"}}
 

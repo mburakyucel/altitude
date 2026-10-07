@@ -514,9 +514,11 @@ helper and other narrower custom policies by comparing filesystem semantics to c
 workspace-write plus the exact bus and systemd denies derived from the real account UID.
 Its comparison operand follows the named compiler's omission of legacy skip-missing defaults;
 supplied filesystem permissions are unchanged. The emitter excludes each contained writable root's
-policy-protected metadata from every broader write clause before symlink and rename protection.
+metadata denied by the public matcher from every broader write clause before symlink and rename protection.
 This tightening applies to every role/profile using the candidate, independently of Mach eligibility;
 explicit narrower write grants retain public semantics and disjoint write clauses remain identical.
+The public matcher's order-dependent explicit ancestor-metadata grants remain an exception, documented
+with the actual role-root shape and native acceptance limits in development guidance.
 Plain workspace-write without those denies has no added allowance.
 A named custom profile with identical effective permissions has the same allowance. Existing file
 roots, process/signal restrictions and service denies remain in force. Deterministic emission checks

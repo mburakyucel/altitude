@@ -348,7 +348,7 @@ The added policy tests cover effective worker roots, current role combinations, 
 denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
 tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
 
-The emitter also excludes each contained writable root's policy-protected metadata from every
+The emitter also excludes each contained writable root's metadata denied by the public matcher from every
 broader write clause, including logical and resolved exclusion paths and protected rename ancestors.
 Containment follows emitted root normalization; ordinary mutable roots are not canonicalized.
 This tightens filesystem emission in every role/profile using the candidate, independently of Mach
@@ -360,6 +360,14 @@ use fixed worker-shape denial/ordinary-write expectations and public-permission 
 cover missing/file/directory metadata, multiple ancestors, explicit writes and trusted aliases.
 The existing Mach eligibility matrix remains unchanged. Record exact upstream format/test/build
 results and package digests separately: Altitude's required PR check does not run these Rust tests.
+
+The public matcher's first metadata-prefix rule can permit child metadata when an explicit writable
+ancestor metadata root wins by entry order; emission preserves that exception rather than inventing
+new public permissions. In the recorded isolated task shape, the workspace is a linked worktree and
+the common Git directory is outside it: the repository root is not a writable task root. Current
+coordinator and captured-review policies do not grant the repository root either. Native eligibility
+still inspects actual roots and order; a repository-root/common-Git combination is not accepted from
+these fixtures, and its metadata denial remains an adoption stop.
 
 Build the CLI and its code-mode host together using upstream's package builder's verified V8
 artifact pair:

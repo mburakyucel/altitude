@@ -537,7 +537,7 @@
 +mod metadata_tests;
 --- /dev/null
 +++ b/codex-rs/sandboxing/src/seatbelt_metadata_tests.rs
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,426 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use std::collections::HashMap;
@@ -577,16 +577,22 @@
 +            panic!("expected predicate: {self:?}");
 +        };
 +        match parts[0].atom() {
-+            "allow" => parts[2..].iter().any(|part| part.matches(path, params)),
++            "allow" => parts[1..]
++                .iter()
++                .filter(|part| matches!(part, Self::List(_)))
++                .any(|part| part.matches(path, params)),
 +            "require-all" => parts[1..].iter().all(|part| part.matches(path, params)),
 +            "require-not" => !parts[1].matches(path, params),
-+            "literal" | "subpath" => {
-+                let Self::List(parameter) = &parts[1] else {
-+                    panic!("expected parameter");
++            "literal" | "path" | "subpath" => {
++                let value = match &parts[1] {
++                    Self::Atom(value) => value.trim_matches('"'),
++                    Self::List(parameter) => {
++                        assert_eq!(parameter[0].atom(), "param");
++                        params[parameter[1].atom().trim_matches('"')]
++                    }
 +                };
-+                assert_eq!(parameter[0].atom(), "param");
-+                let root = Path::new(params[parameter[1].atom().trim_matches('"')]);
-+                if parts[0].atom() == "literal" {
++                let root = Path::new(value);
++                if parts[0].atom() != "subpath" {
 +                    path == root
 +                } else {
 +                    path.starts_with(root)
@@ -595,15 +601,16 @@
 +            "regex" => {
 +                let pattern = parts[1]
 +                    .atom()
-+                    .strip_prefix("#\"")
-+                    .expect("raw regex")
-+                    .strip_suffix('"')
-+                    .expect("regex end")
++                    .trim_start_matches('#')
++                    .trim_matches('"')
 +                    .replace("\\\"", "\"");
 +                regex_lite::Regex::new(&pattern)
 +                    .expect("valid emitted regex")
 +                    .is_match(&path.to_string_lossy())
 +            }
++            // Conservatively admit these non-path constraints. A path denial
++            // must hold without relying on extensions or fictional vnode type.
++            "extension" | "vnode-type" => true,
 +            other => panic!("unsupported write predicate: {other}"),
 +        }
 +    }
@@ -611,22 +618,32 @@
 +
 +fn emitted_write_allows(args: &[String], path: &Path) -> bool {
 +    let policy = seatbelt_policy_arg(args);
-+    let start = policy.find("(allow file-write*\n").expect("write grant");
-+    let grant = &policy[start..];
-+    let end = grant.find("\n)").expect("write grant end") + 2;
-+    let lexer =
-+        regex_lite::Regex::new(r##"#?"(?:\\.|[^"\\])*"|[()]|[^\s()]+"##).expect("policy lexer");
++    let lexer = regex_lite::Regex::new(r##";[^\n]*|#?"(?:\\.|[^"\\])*"|[()]|[^\s()]+"##)
++        .expect("policy lexer");
 +    let mut tokens = lexer
-+        .find_iter(&grant[..end])
++        .find_iter(policy)
++        .filter(|token| !token.as_str().starts_with(';'))
 +        .map(|token| token.as_str().to_string())
-+        .collect();
-+    let expression = Expr::parse(&mut tokens);
-+    assert!(tokens.is_empty(), "unparsed policy tokens");
++        .collect::<VecDeque<_>>();
 +    let params = args
 +        .iter()
 +        .filter_map(|arg| arg.strip_prefix("-D")?.split_once('='))
 +        .collect();
-+    expression.matches(path, &params)
++    let mut allowed = false;
++    while !tokens.is_empty() {
++        let expression = Expr::parse(&mut tokens);
++        if let Expr::List(parts) = &expression
++            && parts
++                .first()
++                .is_some_and(|part| matches!(part, Expr::Atom(action) if action == "allow"))
++            && parts
++                .iter()
++                .any(|part| matches!(part, Expr::Atom(action) if action.starts_with("file-write")))
++        {
++            allowed |= expression.matches(path, &params);
++        }
++    }
++    allowed
 +}
 +
 +fn metadata_args(
@@ -897,4 +914,53 @@
 +            assert_eq!(actual, expected);
 +        }
 +    }
++}
++
++#[test]
++fn top_level_tmp_alias_preserves_contained_exclusions() {
++    let tmp = TempDir::new_in("/private/tmp").expect("aliased tempdir");
++    let physical = tmp.path().canonicalize().expect("physical root");
++    let logical = Path::new("/tmp").join(physical.file_name().expect("root name"));
++    let child = logical.join("child");
++    fs::create_dir(physical.join("child")).expect("child root");
++    let policy = restricted_write_policy(&[&logical, &child]);
++    let args = metadata_args(
++        &policy,
++        &logical,
++        MacosSeatbeltProfile::Process,
++        /*trusted_home*/ None,
++    );
++    assert!(!policy.can_write_local_path_with_cwd(&child.join(".agents/settings"), &logical));
++    assert!(!emitted_write_allows(
++        &args,
++        &physical.join("child/.agents/settings")
++    ));
++    assert!(emitted_write_allows(
++        &args,
++        &physical.join("child/ordinary")
++    ));
++}
++
++#[test]
++fn evaluator_detects_an_additional_write_grant() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let child = cwd.join("child");
++    fs::create_dir(&child).expect("child root");
++    let policy = restricted_write_policy(&[&cwd, &child]);
++    let mut args = metadata_args(
++        &policy,
++        &cwd,
++        MacosSeatbeltProfile::Process,
++        /*trusted_home*/ None,
++    );
++    let target = child.join(".agents/settings");
++    assert!(!emitted_write_allows(&args, &target));
++    let index = args
++        .iter()
++        .position(|arg| arg == "-p")
++        .expect("policy argument")
++        + 1;
++    args[index].push_str("\n(allow file-write* (subpath (param \"WRITABLE_ROOT_0\")))\n");
++    assert!(emitted_write_allows(&args, &target));
 +}
