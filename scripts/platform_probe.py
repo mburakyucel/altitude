@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import subprocess
@@ -301,12 +302,17 @@ def validation_confinement():
         command = platform.validation_command(area, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
                                                            str(outside), str(Path.home()), str(port), str(other), label],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
-        result = subprocess.run(platform.job_command(name("validation"), command, env(), runtime_max=60),
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
-        seen = json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {}
+        # As a validation run: a logged job whose output and status stay in the run area (engines.machine_files).
+        log, status = area / "run.log", area / "run.exit"
+        subprocess.run(platform.logged_job_command(name("validation"), f"cd {shlex.quote(str(area))} && exec "
+                                                   + shlex.join(command), log=log, status=status, env=env(), timeout=60),
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+        output = log.read_text() if log.exists() else ""
+        lines = [line for line in output.splitlines() if line.startswith("{")]
+        seen = json.loads(lines[-1]) if lines else {}
         allowed = {"write-area", "read-system", "bind-other", "connect-other", "unix-area", "git"}
         check(seen and all(seen[key] == (key in allowed) for key in seen),
-              f"attempts {seen}; stderr {result.stderr.strip()[-300:]}")
+              f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
     finally:
         subprocess.run([platform.LAUNCHCTL, "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=60)
