@@ -381,7 +381,7 @@ WebKit's finite prerequisite check opens a local fictional page with the emulate
 and records the Playwright/browser versions, executable, non-root user and page result:
 
 ```sh
-alt task validate -- sh -c 'pnpm --dir web install --frozen-lockfile && node scripts/webkit_smoke.mjs /results/webkit-smoke.json && node scripts/browser_sandbox.mjs /results/browser-sandbox.json'
+alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && node ../scripts/webkit_smoke.mjs /results/webkit-smoke.json && node ../scripts/browser_sandbox.mjs /results/browser-sandbox.json'
 ```
 
 Run both checks when changing the runner image. A candidate image can be built and tested
@@ -474,7 +474,7 @@ prepared validation image, which supplies Chromium, WebKit and both sets of syst
 downloading WebKit in a worker does not install its Linux libraries. Commit the candidate first:
 
 ```sh
-alt task validate -- sh -c 'pnpm --dir web install --frozen-lockfile && pnpm --dir web build && make ui-ios; result=$?; cp -r web/ui-artifacts/ios /results/ios; exit "$result"'
+alt task validate -- sh -c '(cd web && pnpm install --frozen-lockfile && pnpm build) && make ui-ios; result=$?; cp -r web/ui-artifacts/ios /results/ios; exit "$result"'
 ```
 
 `web/playwright.ios.config.ts` runs one project named `phone`, so specs keep their phone layout and
