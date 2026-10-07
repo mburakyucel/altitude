@@ -55,7 +55,7 @@ def main():
                 elif action == "change-registration":
                     send("atlas", "lab", "Second fictional diagnostic.", "Another probe", "probe-2")
                     projects = config.load_projects()
-                    projects["lab"]["path"] = str(config.PROJECT_ROOTS[0] / "replacement")
+                    projects["lab"]["path"] = str(make_repo(config.PROJECT_ROOTS[0] / "replacement" / "repo"))
                     config.save_projects(projects)
                     result = {"changed": True}
                 else:
