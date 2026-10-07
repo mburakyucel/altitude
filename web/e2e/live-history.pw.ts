@@ -322,6 +322,12 @@ test("a paused upward scroll survives a refresh before its native scroll event",
   await walkthrough(page, info).state("history-refresh-keeps-upward-intent", {
     visible: [live.getByRole("button", { name: "Follow", exact: true })], hidden: [],
   });
+  if (info.project.name === "phone") {
+    const anchor = await readingAnchor(body);
+    await page.getByRole("link", { name: "Conversation", exact: true }).click();
+    await page.getByRole("link", { name: "Live session", exact: true }).click();
+    await expectAnchor(body, anchor);
+  }
 });
 
 test("switching away from a pending initial read aborts it and cannot populate another task", async ({ page, request }, info) => {

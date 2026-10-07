@@ -249,11 +249,11 @@ class TranscriptBody extends Component<ScrollProps> {
     this.observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(this.restore);
     if (this.content.current) this.observer?.observe(this.content.current);
   }
-  getSnapshotBeforeUpdate() {
+  getSnapshotBeforeUpdate(previous: ScrollProps) {
     const node = this.body.current;
     // A refresh can commit after native scrolling but before its scroll event.
     // Capture that reading position before the DOM changes, not the stale anchor.
-    if (!this.props.following && node && node.scrollTop !== this.previousScroll) {
+    if (previous.active && this.props.active && !this.props.following && node && node.scrollTop !== this.previousScroll) {
       const up = node.scrollTop < this.previousScroll;
       this.remember();
       return up;
