@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 import uuid
@@ -45,13 +46,13 @@ DESIGN_IMAGE_COUNT = 12
 
 
 @contextmanager
-def _design_directory(root: Path | int, parts: list[str], *, create: bool = False):
+def _directory(root: Path | int, parts: list[str], *, create: bool = False):
     """Walk relative to an open root without following any symlink, including racing replacements."""
     fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts:
             if not part or part in (".", "..") or "/" in part or "\\" in part:
-                raise ValueError("invalid design path")
+                raise ValueError("invalid relative directory path")
             if create:
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=fd)
@@ -70,7 +71,7 @@ def _design_bytes(root: Path | int, relative: str, limit: int) -> bytes:
     parts = relative.split("/")
     if any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ValueError("invalid design path")
-    with _design_directory(root, parts[:-1]) as directory:
+    with _directory(root, parts[:-1]) as directory:
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
@@ -128,10 +129,10 @@ def task_file(project: str, reference: str) -> dict:
         raise TaskFileError(unsupported, 415)
     try:
         # Starting at / also refuses symlinks in ancestors of the configured runtime home.
-        with _design_directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
+        with _directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
             for location in ("tasks", "archive"):
                 try:
-                    with _design_directory(root, [location, slug]) as directory:
+                    with _directory(root, [location, slug]) as directory:
                         try:
                             record = json.loads(_design_bytes(directory, "status.json", DESIGN_IMAGE_LIMIT))
                         except (OSError, ValueError):
@@ -217,7 +218,7 @@ def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, di
 
 def _save_design(project: str, slug: str, files: dict[str, bytes]) -> None:
     relative = (S.task_dir(project, slug) / "designs").relative_to(config.ROOT)
-    with _design_directory(config.ROOT, list(relative.parts), create=True) as directory:
+    with _directory(config.ROOT, list(relative.parts), create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
@@ -973,18 +974,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     usage.remember(task)
     if to == "rejected":
         usage.capture(project, task)
-    stopped = None
-    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
-        from . import engines
-        engine = task.get("l2_engine") or "claude"
-        try:
-            note = engines.remove_l2_worker(
-                engine, task["agent_id"], job_root=S.task_dir(project, task["slug"]) / "l2-engine")
-        except Exception as exc:
-            raise TransitionError(
-                f"{task['slug']}: cannot reject while its {engine} worker may still be live: {exc}"
-            ) from exc
-        stopped = (engine, note)
     task["state"] = to
     if to in ("reported", "done", "rejected"):
         _store_groups(task)
@@ -1005,10 +994,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if stopped:
-        engine, note = stopped
-        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
-                       engine=engine, note=note[:200])
     S.regen_state_md(project)
     return task
 
@@ -1117,6 +1102,19 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        if task["state"] in ("running", "blocked") and task.get("agent_id"):
+            from . import engines
+            engine = engines.transcript_engine(task)
+            try:
+                note = engines.remove_l2_worker(
+                    engine, task["agent_id"], job_root=S.task_dir(project, slug) / "l2-engine")
+            except Exception as exc:
+                raise TransitionError(
+                    f"{slug}: cannot reject while its worker may still be live: {exc}"
+                ) from exc
+            S.append_event(project, slug, "session-stopped", agent_id=task["agent_id"],
+                           engine=engine, note=note[:200])
+        _remove_tool_cache(project, slug)
         _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -1374,6 +1372,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                              and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
             raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
                                              *(verified.get("problems") or [])]))
+        _remove_tool_cache(project, slug)
         task = _move(project, task, "done", actor, **({"findings_tracked": tracked} if tracked else {}))
         if tracked:
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
@@ -1412,6 +1411,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
             continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(task)
+        _remove_tool_cache(project, slug)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
@@ -1422,6 +1422,16 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
     fyi(project, slug, " ".join(filter(None, (f"{task['title']} completed without code changes.", digest.strip(),
                                               "Its findings stay in the task conversation."))), actor=actor)
     return task
+
+
+def _remove_tool_cache(project: str, slug: str) -> None:
+    """Dispose tool data before a terminal state is saved, under the caller's project lock."""
+    try:
+        relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
+        with _directory(config.ROOT.resolve(), list(relative.parts)) as directory:
+            shutil.rmtree("tool-cache", dir_fd=directory)
+    except FileNotFoundError:
+        pass  # Tasks that never launched have no tool caches.
 
 
 def _archive(project: str, slug: str) -> None:

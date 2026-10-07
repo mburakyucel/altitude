@@ -43,17 +43,41 @@ Test names flush before execution so incomplete runs identify each shard's last 
 `python3 tests/run_parallel.py --workers N` selects a worker count for focused measurement.
 Serial `python3 -m unittest discover -v tests` and `make test` remain available.
 Dependency and browser installation are explicit prerequisites, so a warm run need not
-fetch packages. In a restricted worktree add `--store-dir /tmp/altitude-ui-pnpm-store` to the
-frozen install. Do not alter the lockfile to work around an installation failure. On a clean
+fetch packages. L2 workers on either host export writable npm, pnpm, pip and XDG tool-cache
+paths under their task's `l2-engine/tool-cache`. XDG supplies the GitHub CLI's downloaded CI-log
+cache too. Corepack keeps its original installed-manager location through `COREPACK_HOME`;
+the pinned pnpm must already be available there. A missing manager remains a toolchain
+prerequisite. When a worktree's existing `node_modules` uses another pnpm store, run
+`pnpm --dir web install --force --frozen-lockfile` once to reinstall from the task's store;
+ordinary frozen installs then reuse it. This replaces the shared temporary-store workaround.
+Each task starts with an empty package store, so its first install downloads the locked dependencies
+and requires registry/network access; package downloads are not shared between tasks. The forced
+frozen reinstall also requires those packages in the task store or network access. It changes no lockfile.
+Tool caches last through task resumptions and are removed before task archival; they are not
+archived as review evidence. Existing package-tool content/version checks and GitHub CLI log
+cache rules apply; delivery still reads current candidate checks. The tools create their own
+directories within the existing writable runtime root. Outside an L2 worker, select a writable
+store explicitly if your shell's defaults are restricted. Do not alter the lockfile to work around an installation failure. On a clean
 Linux CI host, `playwright install --with-deps chromium` also installs browser OS dependencies.
+
+Rejection confirms worker termination before cache disposal. If cleanup is refused, completion
+or rejection retains its prior state instead of claiming success. The owner repairs only its
+task's cache entry: unlink a replaced `l2-engine`/`tool-cache` link without following its target,
+or restore write/search permissions on task-owned cache directories, then retry the same action.
+Never change unrelated target data or confinement. A terminated owner requests that bounded
+repair through L3; an unavailable safe repair remains an explicit task-local dependency.
+The configured runtime home may itself be a symlink; its resolved root anchors cleanup, while
+links below it are refused.
 
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use
 `cwebp`) and `bash` (macOS's own bash 3.2 has no bracketed paste, which the terminal walkthroughs
 check), with `/opt/homebrew/opt/python@3.12/libexec/bin`, `/opt/homebrew/opt/node@24/bin` and
-`/opt/homebrew/bin` ahead of `/usr/bin` on PATH. Terminal tests there start each shell as a real,
-throwaway launchd job, the only part of the suite that reaches launchd, since only a real job gives
-the shell a coalition of its own; the browser walkthroughs' terminal service opts in the same way. The
+`/opt/homebrew/bin` ahead of `/usr/bin` on PATH. Routine terminal tests replace the service-manager
+launch/stop at the platform seam with real throwaway shells in separate POSIX sessions. Cleanup
+reads libproc and session membership on Mac, or procfs on Linux, without executing `ps`; zombies
+and vanished processes are omitted, and a confirmed member that cannot be read fails cleanup.
+The native platform probe separately covers job coalitions. The
 walkthroughs press the platform's own editing keys (`ControlOrMeta`), so select-all, copy and paste
 are Cmd shortcuts on a Mac while Ctrl+C still interrupts the shell. Cases whose fixtures stand in for systemd set `host = "linux"`, and
 `tests/test_platform_darwin.py` covers the macOS side of the platform seam with fixtures on any host.
@@ -80,6 +104,34 @@ it supplies throwaway runtime/provider homes and refuses unexpected external eng
 execution. Local Git repositories, scripted child processes and loopback HTTP remain available.
 A focused module can be run with `env -u ALTITUDE_ACTOR python3 -m unittest tests.test_isolation`;
 modules use the same bootstrap. The tests do not run the production daemon or its timer.
+
+The fixture bootstrap discards `ALTITUDE_SOURCE_BRANCH` before config imports and redirects worker
+tool-cache variables into its throwaway home. Source-launch/resume integration uses a fixture boot
+identity with real PID/lifetime observations: production reads boot identity in the unconfined
+daemon, while a native worker may be denied `kern.bootsessionuuid`. Kernel-reader tests supply
+their own observations and retain explicit failure coverage; this fixture changes no production
+identity or confinement policy. Reproduce these affected journeys with:
+
+```sh
+env -u ALTITUDE_ACTOR python3 -m unittest -v tests.test_session_processes tests.test_terminal tests.test_launch_source tests.test_task_tool_cache tests.test_engines tests.test_toolchain
+```
+
+Native Codex evidence establishes these deterministic task/fixture and tool-cache entry points
+on the recorded Mac OS/architecture/revision only. Claude-native execution and the full protected
+native browser suite need their own recorded runs. Until that evidence exists, a Mac owner records
+the missing native journeys and uses the required Linux candidate CI for `make check` delivery
+evidence. The [Mac validation lane](#macos-validation-runs) supplies a separate fictional
+application environment; it does not establish native worker or browser-sandbox acceptance.
+Browser recovery and native-runtime adoption stay with their owners. No overall macOS support
+follows from fixture passes.
+
+The broader native Python suite also has uncovered fixture gaps: other resume integrations still
+read the confined kernel boot identity, Linux process fixtures access `/proc`, and container archive
+fixtures require Linux extended-attribute APIs and filename behavior. Admission/queue assertions
+can fail after those fixture errors leave a resume claim pending. These are not a native full-suite
+pass; retain the failing module and traceback alongside the focused command above. Container
+acceptance is tracked under #643 and native runtime/fixture acceptance under #225 and #617.
+Required Linux candidate CI remains the full-suite delivery gate while those native gaps are open.
 
 Clean-close report cases join their real turn-boundary L3 queue drain before inspecting faults
 or releasing case patches and project registration. The command socket is a fixture because

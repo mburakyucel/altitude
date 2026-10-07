@@ -185,6 +185,12 @@ class TestTerminalLifecycle(TerminalCase):
 
     def test_close_stops_commands_that_ignore_the_hang_up(self):
         # A review found Close could leave a hang-up-ignoring command, and the terminal, running.
+        run = subprocess.run
+        def confined_run(command, *args, **kwargs):
+            if Path(command[0]).name == "ps":
+                raise PermissionError("Issue #617: confined ps is refused")
+            return run(command, *args, **kwargs)
+        self.patch(subprocess, "run", side_effect=confined_run)
         self.turn(True)
         self.patch(terminal, "CLOSE_GRACE_SECONDS", .3)
         self.open()

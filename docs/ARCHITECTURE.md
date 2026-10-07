@@ -564,6 +564,18 @@ verification; it is not a registration-only plug-in operation. The [roadmap](ROA
 records these follow-up candidates without expanding this documentation milestone into a rewrite.
 
 Engines retain responsibility for their execution tools, context management and native helpers.
+Every L2 launch and resume supplies the same task-local tool-cache environment on Linux and Mac.
+GitHub CLI logs and package-tool caches live under `l2-engine/tool-cache` inside the task's existing
+writable runtime root; installed Corepack managers retain their original location. Tool-native
+validation/invalidation rules apply, and live delivery checks remain authoritative. Archival removes
+this disposable cache subtree while retaining worker and review evidence. Cache cleanup precedes
+the terminal state change under the project lock; failure retains the task's prior state and location.
+Deletion walks from the runtime root through open directories without following links, and removes
+only the cache subtree relative to the held job-directory descriptor.
+Rejection stops the attached worker through the engine seam before disposal, so no live writer
+recreates the cache after archival.
+[Development](DEVELOPMENT.md#local-checks)
+describes frozen-install handling for worktrees with an existing pnpm store and native evidence limits.
 Altitude supplies focused [role instructions](../personas/), repository context and delivery
 boundaries. Execution strategy stays adaptable because a fixed sequence of stages and specialist
 roles can outlive the model/tool assumptions behind it. Customization belongs in repository
