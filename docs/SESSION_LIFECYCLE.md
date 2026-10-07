@@ -1482,9 +1482,10 @@ window, percentage and observation time. For Claude that is input plus cache-rea
 cache-creation tokens against the probed 1,000,000-token window; synthetic all-zero limit records are
 ignored. For Codex it is the newest response record's input against the `model_context_window` its
 rollout reports, the same per-request counter Codex reports as `last_token_usage`. Context is
-unavailable, never estimated, when the current session has no complete request of its own: after a
-resume before its first request, with only replayed history, with incomplete counters, or with only
-provider aggregates such as `turn.completed`, which measure cumulative consumption. Without a
+unavailable, never estimated, when the current session has no complete request of its own: a
+replacement session before its first request, with only replayed history, with incomplete counters, or with only
+provider aggregates such as `turn.completed`, which measure cumulative consumption. A resume that keeps the same
+session continues that conversation, so its last reading stays, labelled with its age. Without a
 reported window the tokens show without a percentage. Task details shows **Current context** while
 the task runs and **Context at last request** otherwise; Monitor's L2 rows use the same reading.
 

@@ -178,6 +178,12 @@ class TaskTokenUsage(AltitudeCase):
         usage.capture(self.project, task)
         self.assertIsNone(task["token_usage"]["context"])
         self.assertEqual(task["token_usage"]["total_tokens"], 290)
+        # Failed collection retains counters but never relabels a predecessor's context as current.
+        task["token_usage"]["context"] = snapshot["context"]
+        self.observe.side_effect = OSError("unavailable local telemetry")
+        usage.capture(self.project, task)
+        self.assertIsNone(task["token_usage"]["context"])
+        self.assertEqual(task["token_usage"]["total_tokens"], 290)
 
     def test_native_helper_audit_survives_attempts_passive_reads_failures_and_archive(self):
         home = self.tmp / "provider"

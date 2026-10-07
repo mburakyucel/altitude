@@ -111,7 +111,10 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
         task["token_usage"] = snapshot
     except Exception:
         # Missing/malformed provider records or unavailable telemetry storage must not block a task.
-        task["token_usage"] = {**previous, "status": "partial" if previous.get("total_tokens") is not None else "unknown",
+        # A replaced owner's retained context is not the current session's.
+        context = previous.get("context") or {}
+        current = (context.get("engine"), context.get("session_id")) == (task.get("l2_engine"), task.get("session_id"))
+        task["token_usage"] = {**previous, "context": context if current and context else None, "status": "partial" if previous.get("total_tokens") is not None else "unknown",
                                "finalized_at": S.now() if final else None,
                                "notes": list(dict.fromkeys([*previous.get("notes", []),
                                                             "Usage collection unavailable; prior observations retained."]))}
