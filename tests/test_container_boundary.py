@@ -115,6 +115,9 @@ class TestContainerIdentity(AltitudeCase):
             self.assertTrue(platform.containerized())
             marker.lstat.side_effect = FileNotFoundError
             self.assertFalse(platform.containerized())
+            self.identity(65534)
+            with self.assertRaises(RuntimeError):
+                platform.containerized()
 
 
 class TestContainerBoundary(AltitudeCase):

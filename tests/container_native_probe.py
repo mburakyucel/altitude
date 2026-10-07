@@ -72,6 +72,7 @@ sys.path.insert(0, '/opt/altitude')
 from altitude import platform
 out['identity'] = {'containerized': platform.containerized(), 'instance': platform._container_instance(),
                    'uid_map': Path('/proc/self/uid_map').read_text(),
+                   'uid': os.geteuid(), 'overflow_uid': int(Path('/proc/sys/kernel/overflowuid').read_text()),
                    'marker_uid': platform.CONTAINER_MARKER.stat().st_uid}
 try:
     platform.require_native_application()
@@ -184,6 +185,12 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
     if role == 'task' and observed['git_commit']['exit'] != 0:
         failures.append('task: git commit failed')
     if role == 'task':
+        identity = observed['identity']
+        mapping = [list(map(int, line.split())) for line in identity['uid_map'].splitlines()]
+        if (identity['marker_uid'] != identity['overflow_uid'] or identity['uid'] in (0, identity['overflow_uid'])
+                or len(mapping) != 1 or len(mapping[0]) != 3
+                or mapping[0][0] != identity['uid'] or mapping[0][2] != 1):
+            failures.append('task: probe did not exercise the unmapped image-owner namespace')
         status = observed['task_status']
         try:
             record = json.loads(status['stdout'])

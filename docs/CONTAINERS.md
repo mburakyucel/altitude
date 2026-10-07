@@ -378,8 +378,11 @@ installed native diagnostic into the disposable image and exercises the applicat
 and coordinator profiles. It retains binary/probe hashes, positive controls, allowed/denied writes,
 manager/broker/loopback socket checks and a fictional Git commit. It also checks the normal confined
 `alt task status` command, image-instance recognition, a Python workspace edit, denied image/ancestor
-writes and native-operation refusal. The source deployment is already
-root-owned and denies the unsandboxed write control. The stripped-image lane passed with diagnostic
+writes and native-operation refusal. The task probe requires the actual unmapped-owner namespace;
+a literal-root view cannot satisfy that regression check. This proves the bundled interpreter's
+editing operation inside the native sandbox, not a provider session following the instruction.
+The source deployment is already root-owned and denies the unsandboxed write control.
+The earlier permission-matrix lane (before these identity/status/edit checks) passed with diagnostic
 CLI 0.158.0 and bubblewrap 0.12.0. Task writes were limited to worktree/Git/state/temp; coordinator
 writes were limited to scratch. Both denied user-manager sockets and Git-consent writes; the task
 retained broker/loopback access and the coordinator denied direct connections. Both sandboxed roles
