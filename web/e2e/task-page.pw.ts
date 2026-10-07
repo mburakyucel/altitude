@@ -188,7 +188,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   await walk.open(taskPath(project.name, held.slug));
   await walk.state("02-held-reads-as-queued", {
     action: () => v.showLive(),
-    visible: [v.main.getByText("Waiting to resume", { exact: true }).first(), v.live.getByText("Waits for resume · usage limit: the window resets at 02:00")],
+    visible: [v.main.getByText("Waiting to resume", { exact: true }).first(), v.live.getByText("Waits for resume")],
     hidden: [v.main.getByText("Blocked", { exact: true }), v.stop],
   });
   await walk.state("03-held-composer", {
@@ -285,8 +285,9 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   await expect(page.locator(".msg-row:has-text('I also checked the timer tests.') ~ .conversation-question")).toHaveCount(1);
   await walk.state("01-blocked-on-the-operator", {
     visible: [v.main.getByText("Your turn · 1 question", { exact: true }).first(), turn.getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
-    hidden: [line, v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
+    hidden: [v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
+  await expect(line).toHaveText("Waiting for your answer to the task’s question.");
 
   await clearRoutes(page);
   const waiting = DecisionSchema.parse({ ...decision, id: "suite-question", anchor_id: "suite-anchor", asked_by: "l2", audience: "l3", question: "which suite covers the timer", recommendation: null });
@@ -296,7 +297,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   await walk.open(`${taskPath(project.name, base.slug)}?question=${waiting.id}&revision=1`);
   const l3Question = v.conversation.locator(`[data-question-id="${waiting.id}"]`);
   await walk.state("02-blocked-waiting-for-l3", {
-    visible: [v.main.getByText("Waits for L3", { exact: true }).first(), v.conversation.getByText("L3 is answering", { exact: true }), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
+    visible: [v.main.getByText("Waiting for coordinator", { exact: true }).first(), v.conversation.getByText("L3 is answering", { exact: true }), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
     hidden: [card, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
@@ -314,7 +315,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   });
   await walk.open(taskPath(project.name, base.slug));
   await walk.state("03-blocked-by-a-fault", {
-    visible: [line.getByText("The sandbox refused the network socket. L3 has been told.")],
+    visible: [line.getByText("A system problem paused work. Waiting for the coordinator to check the blocker.")],
     hidden: [v.main.getByText("Tried twice"), card],
   });
   await walk.state("04-fault-session-paused", {

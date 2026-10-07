@@ -376,7 +376,7 @@ export const OverviewSchema = z
   })
   .passthrough();
 
-const PlannedWaitSchema = z.object({ reason: z.string(), after: z.string().nullable() });
+const PlannedWaitSchema = z.object({ reason: z.string(), after: z.string().nullable(), after_title: z.string().nullish() });
 
 export const TaskRowSchema = z
   .object({

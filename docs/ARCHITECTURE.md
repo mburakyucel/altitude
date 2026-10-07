@@ -669,7 +669,9 @@ handoff; findings stay in the task conversation. The project view's archive list
 rejected task finished in the last seven days, newest first by finish time, whatever their slugs.
 
 Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is one short wait and
-`after` optionally names one existing task in this project. `alt task new --wait` or `--after`
+`after` optionally names one existing task in this project. Project and task reads add
+`after_title` from the live or archived prerequisite; unavailable evidence remains null without
+changing the saved wait. `alt task new --wait` or `--after`
 creates the existing task record and written brief without a worker, worktree or WIP slot.
 Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
 the wait with `alt task release <slug> --reason '…'`. An already archived-done dependency is satisfied at
@@ -2067,13 +2069,13 @@ bordered card under an L3 reply that created the task and the row in the work pa
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
 the queue's own reason (a planned wait, the WIP limit, an engine hold, a restart in progress,
 a resume checkpoint or plain dispatch), so the card never names a file list. A queued task with `planned_wait` reads
-**Planned · waits for <reason>** with the muted queue dot; the reason wraps on phone and desktop.
+**Planned · Waiting for <prerequisite>.** with the muted queue dot; the explanation wraps on phone and desktop.
 Releasing it changes the same row to **Queued** with its ordinary dispatch hold, then **Running**
 only when launched. Planned tasks stay in Current without adding attention or a separate panel.
-A task blocked waiting on L3 reads "Waits for L3" with the running dot, and the rail's project dot
+A task blocked waiting on L3 names the coordinator and the recorded prerequisite with the running dot, and the rail's project dot
 counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. An owner/daemon park without a question, fault
-or operator stop reads "Paused" with the idle dot. Stop evidence, not the block recorder, identifies
+or operator stop explains the recorded reason, or its absence, with the idle dot. Stop evidence, not the block recorder, identifies
 "Stopped". Queue and restart inventory labels share `tasks.block_status`; an unset wait owner is
 a pause, never an inferred operator wait or attention item. The work panel (spec §3.7) reads the project's
 tasks and the overview queue filtered to the project. **Current** contains every unfinished task
@@ -2488,8 +2490,14 @@ at their recorded message anchor), a held review card when one waits, no open op
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
-concise status with its complete reason in details; a fault retains a visible cause in red with
-"L3 has been told". One replacing two-line public update sits at the end of the conversation's
+concise explanation with its complete reason in details. Task rows and pages share a read-only
+explanation from current questions, fault, Stop and wait records. An interrupted session says it
+ended before completion; an open coordinator question supplies the known prerequisite even when
+the fault reason contains worker output. Other system faults remain a system problem without a
+guessed cause. Raw diagnostics, identifiers and complete reasons stay in details and incident
+evidence. Excerpts of authored wait prose are bounded; they do not claim recovery or schedule a retry.
+Operator questions and merge holds stay independent of the explanation, and Stop confirmation
+comes only from steering evidence. One replacing two-line public update sits at the end of the conversation's
 scrolling column and expands on request. It appears only while both its public words and recorded
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message

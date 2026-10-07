@@ -455,25 +455,33 @@ fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, 
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click
 opens the task conversation, at its current operator question when one is open (§3.7).
 
-States by task state: planned (a queued task with a planned wait: "Planned · waits for <reason>",
+States by task state: planned (a queued task with a planned wait: "Planned · Waiting for <reason>.",
 muted queue dot and a reason that wraps on phone and desktop); queued ("Queued · <hold>", where
 the hold is the queue's own reason: "waits
-for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
+for a free task slot", "waits for an available coding engine", "waits for Altitude to restart", "waits
 for resume at <time>", or plain "waits for dispatch"; never a file lease, which the queue does not
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
-on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
+on L3 ("Waiting for the coordinator: <short prerequisite>.", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
-operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus "Waiting for you",
+operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus a sentence explaining the answer or review wait,
 amber dot); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
-blocked by a fault ("Paused · <one sentence>", red dot); operator-stopped ("Stopped by you", red dot);
-owner/daemon-parked without a question, review, fault or operator stop ("Paused", idle dot);
-reported ("Report landed · waits for L3", running dot, or "waiting for you" with a held review);
+blocked by a fault (a short explanation of the interruption and the known coordinator prerequisite, red dot);
+operator-stopped (confirmed Stop explains Continue; a stop request alone points to the task for confirmation, red dot);
+owner/daemon-parked without a question, review, fault or operator stop (a short reason, or "Work is paused; no reason is recorded.", idle dot);
+reported ("Waiting for the coordinator to check the task’s report.", running dot, or a review wait);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
 week).
 
 Open operator questions remain visible while running or queued, independently of execution.
 A fault keeps its red dot and cause even when a separate question also needs an answer. An
 operational pause without a question uses its actual status, never an inferred request to decide.
+Rows and pages share the same read-only explanation. Authored prerequisite excerpts use at most
+120 characters, excluding diagnostic output and source identifiers; full reasons remain in Task
+details. A worker death reads **The task session ended before completion.** plus its current
+coordinator prerequisite, or **Waiting for the coordinator to check the blocker.** Other faults
+say **A system problem paused work.** without inventing a cause. No explanation claims a restart,
+recovery or retry without a corresponding record. Named planned prerequisites use their task title
+when available and explicitly identify a prerequisite task when only its slug remains.
 
 The same card is the row in the work panel and the card under an L3 reply that created the task
 (§5.2 note 4); a slug the project no longer lists renders as the row with the slug as its title.
@@ -881,8 +889,8 @@ details. Desktop retains its direct operational actions and
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
 selection and reading position. A failure remains visible, not only inside details.
 
-Compact task states use the §3.5 labels (**L2 working**, **Waits for L3**, **Your turn · …**,
-**L2 replying to you**, **Paused · fault**, **Paused**, **Stopped by you**); **Merge held** can
+Compact task states use the §3.5 labels (**L2 working**, **Waiting for coordinator**, **Your turn · …**,
+**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**); **Merge held** can
 accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
 An operator question sits at the end of the chat with no generic Resume while the question is open.
 When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears
@@ -899,7 +907,7 @@ away until the owner resolves the question, including while a submitted response
 Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
 approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park
 on another dependency shows that wait and no card (the CLI and queue add "PR #N approved"), including after routine integration
-gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
+gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a red explanation of the interruption and its known wait. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. On phone they
@@ -1024,9 +1032,9 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
 planned (the wait reason replaces the live panel; the conversation accepts messages without release);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
-operator (the question at the end of the chat); blocked on L3 ("Waits for L3"
-with the full reason in details); blocked by a fault (a red line with the first sentence, at most 100 characters,
-and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
+operator (the question at the end of the chat); blocked on L3 ("Waiting for coordinator"
+and the short prerequisite, with the full reason in details); blocked by a fault (a red explanation
+from the same projection as task rows, never a raw-log excerpt); held for resume (Queued chip, the queue's recorded wait in place of
 the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
 Empty conversations read "No messages yet." on an active task and "No messages on this task." on
 a finished one. The live session is connecting (skeleton and "Connecting to the session…";

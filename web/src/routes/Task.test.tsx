@@ -303,7 +303,7 @@ describe("Task on desktop", () => {
     stub({ ...askingL3, hold_merge: holdReason, question: { ...decision, audience: "l3" }, questions: [{ ...decision, audience: "l3" }] });
     const { user } = renderApp({ route });
     const opener = await screen.findByRole("button", { name: /Task details$/ });
-    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for coordinator")).toBeInTheDocument();
     expect(screen.queryByText(holdReason)).toBeNull();
     expect(screen.queryByText(askingL3.blocked_reason)).toBeNull();
     const field = screen.getByRole("textbox", { name: "Message the L2" });
@@ -469,7 +469,7 @@ describe("Task on desktop", () => {
     const { user, queryClient } = renderApp({ route });
     await screen.findByText("Planned", { exact: true });
     const conversation = screen.getByRole("region", { name: "Task conversation" });
-    expect(within(conversation).getByText("Waits for the index migration to land")).toBeInTheDocument();
+    expect(screen.getAllByText("Waiting for the index migration to land.")[0]).toBeInTheDocument();
     expect(within(conversation).getByText("No messages yet.")).toBeInTheDocument();
     const field = screen.getByRole("textbox", { name: "Message the L2" });
     await user.type(field, "Keep pagination compatible.");
@@ -484,7 +484,7 @@ describe("Task on desktop", () => {
     task.planned_wait = null;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
     await screen.findByText("Queued", { exact: true });
-    expect(screen.queryByText("Waits for the index migration to land")).toBeNull();
+    expect(screen.queryByText("Waiting for the index migration to land.")).toBeNull();
     expect(field).toBeEnabled();
     expect(field).toHaveValue("Preserve this draft");
     expect(within(conversation).getByText("Keep pagination compatible.")).toBeInTheDocument();
@@ -506,7 +506,7 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Blocked")).toBeNull();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(within(panel).getByText("Waits for resume · usage limit: the window resets at 02:00")).toBeInTheDocument();
+    expect(within(panel).getByText("Waits for resume")).toBeInTheDocument();
     expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
   });
 
@@ -526,7 +526,7 @@ describe("Task on desktop", () => {
     expect(turn.previousElementSibling).toHaveTextContent("L3 messaged the L2");
     expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
     expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
-    expect(document.querySelector(".task-line")).toBeNull();
+    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for your answer to the task’s question.");
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
     expect(screen.getByText("Replying hands the turn back to the L2.")).toBeInTheDocument();
   });
@@ -623,20 +623,20 @@ describe("Task on desktop", () => {
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for coordinator")).toBeInTheDocument();
     expect(screen.queryByText("which suite covers the timer")).toBeNull();
-    expect(document.querySelector(".task-line")).toBeNull();
+    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for the coordinator: which suite covers the timer.");
     await user.click(screen.getByRole("button", { name: /Task details$/ }));
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
   });
 
-  it("shows a fault as one red sentence and says L3 has been told", async () => {
+  it("explains a fault in red without inferring its cause from diagnostic prose", async () => {
     stub(faulted);
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     const line = document.querySelector(".task-line");
-    expect(line).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+    expect(line).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
     expect(line).not.toHaveTextContent("Tried twice");
     expect(line).toHaveClass("text-danger");
   });
@@ -647,8 +647,8 @@ describe("Task on desktop", () => {
     const { user } = renderApp({ route });
     const opener = await screen.findByRole("button", { name: /Task details$/ });
     const notice = document.querySelector(".task-fault");
-    expect(notice).toHaveTextContent("The verification browser could not start");
-    expect(notice).toHaveTextContent("… L3 has been told.");
+    expect(notice).toHaveTextContent("A system problem paused work.");
+    expect(notice).not.toHaveTextContent(reason);
     expect(notice!.textContent!.length).toBeLessThanOrEqual(120);
     await user.click(opener);
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText(reason)).toBeInTheDocument();
@@ -1121,7 +1121,7 @@ describe("Task on the phone", () => {
     stub(faulted);
     renderApp({ route });
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(document.querySelector(".task-line")).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+    expect(document.querySelector(".task-line")).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
   });
 });
 

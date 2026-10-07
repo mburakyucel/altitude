@@ -6,6 +6,7 @@ import { clock } from "./Bubbles";
 import type { DotState } from "../shell/projects";
 import { questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
+import { statusExcerpt, taskExplanation } from "../data/taskStatus";
 
 /*
  * The task card (SPEC.md §3.5): state dot, title, meta line, chevron; the link opens the task page. The
@@ -20,11 +21,6 @@ function sentence(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
-function oneSentence(text: string): string {
-  const first = text.split(/(?<=[.!?])\s/)[0] ?? text;
-  return first.length > 160 ? `${first.slice(0, 159).trimEnd()}…` : first;
-}
-
 /** The queued meta from the queue's own hold text (§3.5): the WIP limit, an engine hold, a pending
  * activation, a resume checkpoint, or plain dispatch. Overlapping file leases do not hold dispatch. */
 export function holdText(hold: string | null | undefined, why: string | null | undefined): string {
@@ -34,10 +30,10 @@ export function holdText(hold: string | null | undefined, why: string | null | u
     const at = when(checkpoint[1]);
     return at != null ? `waits for resume at ${clock(at)}` : "waits for resume";
   }
-  if (hold.startsWith("restart in progress")) return "waits for the restart";
-  if (hold.startsWith("engine hold: ")) return `waits for an engine · ${hold.slice("engine hold: ".length)}`;
-  if (hold.startsWith("WIP limit")) return `waits for a slot · ${hold}`;
-  return `waits · ${hold}`;
+  if (hold.startsWith("restart in progress")) return "waits for Altitude to restart";
+  if (hold.startsWith("engine hold: ")) return "waits for an available coding engine";
+  if (hold.startsWith("WIP limit")) return "waits for a free task slot";
+  return `waits · ${statusExcerpt(hold) || "the start condition is unavailable"}`;
 }
 
 /** The L2's model and engine, "Opus on Alpha": the engine seam's label, the model as written. */
@@ -58,10 +54,10 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
   const fault = str(task["fault"]);
-  const reason = str(task["blocked_reason"]);
+  const explanation = taskExplanation(task, decision);
   const waitsOnL3 = str(task["waiting_on"]) === "l3";
   const steering = task["steering"] as { state?: string } | undefined;
-  const stopped = decision?.kind === "stopped" || steering?.state === "stopped" || Boolean(task["stop_id"]);
+  const stopped = decision?.kind === "stopped" || ["stopped", "stopping", "stop_unconfirmed"].includes(steering?.state ?? "") || (Boolean(task["stop_id"]) && !held);
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
   const engine = l2Label(task, overview);
   const prs = (Array.isArray(task["prs"]) ? task["prs"] : []).filter((n): n is number => typeof n === "number");
@@ -70,10 +66,10 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
 
   if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done" };
   if (state === "rejected") return { dot: "idle", meta: "Rejected" };
-  if (fault) return { dot: "danger", meta: `Paused · ${oneSentence(reason || `a ${fault} fault stopped the task`)}` };
-  if (stopped && state === "blocked") return { dot: "danger", meta: "Stopped by you" };
+  if (fault && explanation) return { dot: "danger", meta: explanation };
+  if (stopped && explanation) return { dot: "danger", meta: explanation };
   if (replying) return { dot: "running", meta: "L2 replying to you" };
-  if (state === "queued" && task.planned_wait) return { dot: "idle", meta: `Planned · waits for ${task.planned_wait.reason}` };
+  if (state === "queued" && task.planned_wait) return { dot: "idle", meta: `Planned · ${explanation}` };
   if (state === "queued" || held) {
     return { dot: "idle", meta: `${held ? "Waiting to resume" : "Queued"} · ${holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))}` };
   }
@@ -83,10 +79,10 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   }
   if (state === "blocked") {
     // A block waiting on L3 is Altitude's wait: the running dot, not amber (§3.5).
-    if (waitsOnL3 && !decision) return { dot: "running", meta: "Waits for L3" };
-    return { dot: "idle", meta: decision ? "Waiting for you" : "Paused" };
+    if (waitsOnL3 && !decision) return { dot: "running", meta: explanation! };
+    return { dot: "idle", meta: explanation! };
   }
-  if (state === "reported") return { dot: "running", meta: decision ? "Report landed · waiting for you" : "Report landed · waits for L3" };
+  if (state === "reported") return { dot: "running", meta: explanation! };
   return { dot: "idle", meta: state ? sentence(state) : "Status unavailable" };
 }
 

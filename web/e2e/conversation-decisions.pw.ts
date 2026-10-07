@@ -319,7 +319,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await expect(page).toHaveURL(workPath);
   // Stop is the operator's own action: the turn stays with the L2 and the questions stay open.
   await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
-    visible: [row.getByText("Stopped by you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
+    visible: [row.getByText("You requested a stop; confirmation is in the task.", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
   await row.click();
@@ -328,7 +328,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await back.click();
   await walk.state("03c-owner-asks-all-three-again", {
-    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for you", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();
@@ -348,7 +348,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   const again = await park(request, slug);
   expect(again.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
   await walk.state("05b-owner-asks-remaining-two-again", {
-    visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for you", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "West", exact: true }).click();
@@ -357,7 +357,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await walk.open(workPath);
   await walk.state("06-same-row-last-question", {
-    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Waiting for you", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
   });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`question=${owner.id}&revision=${owner.revision}$`));

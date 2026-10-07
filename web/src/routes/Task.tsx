@@ -11,6 +11,8 @@ import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
+import { taskExplanation } from "../data/taskStatus";
+import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
@@ -76,9 +78,10 @@ interface Facts {
   sub: string;
   /** What a queued task waits for; shown where the live panel would be. */
   waiting: string | null;
-  /** A block that is a fault: the one-sentence reason, and L3 has been told. */
-  fault: string | null;
+  /** The known wait, with raw technical evidence confined to details. */
+  explanation: string | null;
   blockReason: string;
+  queueReason: string;
   holdReason: string;
   engineLabel: string;
   finished: boolean;
@@ -91,13 +94,6 @@ interface Facts {
   /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
   review: Decision | null;
   repository?: string | null;
-}
-
-function faultSummary(text: string): string {
-  const first = text.trim().split(/(?<=[.!?])\s+/)[0] ?? "";
-  // The complete fault remains in Task details; its permanent notice leaves room for messages.
-  if (first.length > 100) return `${first.slice(0, 100).replace(/\s+\S*$/, "")}…`;
-  return /[.!?]$/.test(first) ? first : `${first}.`;
 }
 
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
@@ -140,9 +136,9 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const hold = str(task["hold_merge"]);
 
   const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
-    : faultKind && state === "blocked" ? "Paused · fault" : turn ?? (replying ? "L2 replying to you"
+    : faultKind && state === "blocked" ? "Work interrupted" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
-    ? waitsOnL3 ? "Waits for L3" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
+    ? waitsOnL3 ? "Waiting for coordinator" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
   const dot: Facts["dot"] =
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
 
@@ -155,13 +151,10 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     .filter(Boolean)
     .join(" · ");
 
-  const why = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug)?.why;
-  const waiting =
-    state === "queued"
-      ? `Waits for ${planned?.reason ?? (why === "resume" ? "resume" : "dispatch")}`
-      : held
-        ? `Waits for resume${reason ? ` · ${reason}` : ""}`
-        : null;
+  const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
+  const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review"));
+  const waiting = state === "queued" || held
+    ? planned ? explanation : sentence(holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))) : null;
 
   return {
     state,
@@ -170,8 +163,9 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     chips: [{ text: label }, ...(engineChip ? [{ text: engineChip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
-    fault: faultKind ? `${faultSummary(reason || `A ${faultKind} fault blocked the task`)} L3 has been told.` : null,
+    explanation: !faultKind && (state === "queued" || held) ? waiting : explanation,
     blockReason: state === "blocked" ? reason : "",
+    queueReason: state === "queued" || held ? wait?.hold ?? "" : "",
     holdReason: hold,
     engineLabel,
     finished,
@@ -430,7 +424,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   }
   return (
     <section className="convo" aria-label="Task conversation">
-      {task.state === "queued" && task.planned_wait ? <p className="conversation-notice" role="status">{facts.waiting}</p> : null}
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
         {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
@@ -658,7 +651,7 @@ function TaskPage({
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
   const detailsButton = <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button>;
-  const faultNotice = facts.fault ? <p className="task-line task-fault text-danger" role="status">{facts.fault}</p> : null;
+  const statusNotice = facts.explanation ? <p className={`task-line task-explanation${task["fault"] ? " task-fault text-danger" : ""}`} role="status">{facts.explanation}</p> : null;
   const details = detailsOpen ? <Overlay label="Task details" side={phone ? "bottom" : "right"} onClose={closeDetails}>
     <div className="task-details">
       <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
@@ -674,6 +667,7 @@ function TaskPage({
       <TaskContext context={task.token_usage?.context} running={task.state === "running"} />
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
+      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       {decision ? <Link className="btn" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
       {phone ? <>
@@ -742,7 +736,7 @@ function TaskPage({
         <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
       }>{control}</PhoneHeader>
       <div className="task-page" data-phone>
-        {faultNotice}
+        {statusNotice}
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
@@ -790,7 +784,7 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         <ConfirmRow actions={actions} />
         {resumeError}
-        {faultNotice}
+        {statusNotice}
       </header>
       <div className="task-body">
         <div className="task-main">{conversation}</div>
