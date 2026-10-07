@@ -82,36 +82,6 @@ def refresh_quotas(min_interval: float = 300) -> None:
         S.write_json(config.MONITOR_DIR / path, read())
 
 
-def transcript_context_percent(session_id: str | None, cwd: Path | None) -> float | None:
-    """Read the last assistant usage from the session transcript (~/.claude/projects/<slug>/<sid>.jsonl)."""
-    if not session_id:
-        return None
-    base = Path.home() / ".claude" / "projects"
-    cands = list(base.glob(f"*/{session_id}.jsonl"))
-    if not cands:
-        return None
-    try:
-        with open(cands[0], "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 200_000))
-            tail = f.read().decode("utf-8", "ignore").splitlines()
-    except OSError:
-        return None
-    for line in reversed(tail):
-        try:
-            o = json.loads(line)
-        except ValueError:
-            continue
-        message = o.get("message") or {}
-        u = message.get("usage") if o.get("type") == "assistant" and message.get("model") != "<synthetic>" else None
-        if u:
-            tokens = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
-            if tokens:
-                return round(100.0 * tokens / config.CONTEXT_WINDOW, 1)
-    return None
-
-
 def repository_rules(repo: Path) -> Path | None:
     """The project's shared rules, or its legacy native instruction file."""
     return next((repo.resolve() / name for name in ("AGENTS.md", "CLAUDE.md")
@@ -1392,6 +1362,8 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
     Claude messages are repeated streaming snapshots, deduplicated by message id. Inclusive input
     is input+cache-read+cache-write for Claude, input alone for Codex; reasoning is an output subset.
     Native children require recorded parentage. Discovery cannot prove exhaustive helper coverage.
+    A session's context is its newest own request's inclusive input, against the provider-reported
+    window (Codex) or the probed Claude window.
     """
     state = json.loads(json.dumps(cursor or {}))
     state.setdefault("owners", [])
@@ -1500,6 +1472,9 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
                             elif payload.get("type") == "task_started":
                                 file["turn"] = f"offset:{offset}"
                             if payload.get("type") == "token_count":
+                                window = (payload.get("info") or {}).get("model_context_window")
+                                if isinstance(window, int) and not isinstance(window, bool) and window > 0:
+                                    row["context_window"] = window
                                 usage = (payload.get("info") or {}).get("total_token_usage")
                                 if not isinstance(usage, dict):
                                     continue
@@ -1524,7 +1499,8 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
                         # A replacement session may repeat inherited message ids; ownership stays
                         # with the first recorded session and only new numeric evidence is added.
                         state["records"][key] = {"session_id": old["session_id"] if old else sid,
-                                                  "values": _token_max(old["values"] if old else {}, values)}
+                                                  "values": _token_max(old["values"] if old else {}, values),
+                                                  "at": max(filter(None, (old.get("at") if old else None, at)), default=None)}
                     if values and at:
                         row["observed_at"] = max(row["observed_at"] or "", at)
                 if file.get("lost"):
@@ -1546,7 +1522,8 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         row = state["sessions"][sid]
         children = [project(child) for child, child_row in state["sessions"].items()
                     if child_row["parent_session_id"] == sid and child not in visited]
-        records = [entry["values"] for entry in state["records"].values() if entry["session_id"] == sid]
+        entries = [entry for entry in state["records"].values() if entry["session_id"] == sid]
+        records = [entry["values"] for entry in entries]
         own = _token_sum(records)
         disjoint = _token_sum([own, *(bound for bound, _ in children)])
         legacy = _token_legacy_segments(row)
@@ -1571,8 +1548,15 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         files = [file for file in state["files"].values() if file["session_id"] == sid]
         if not files or any(file.get("missing") for file in files):
             row_notes.append("Local usage records are unavailable; retained counters may be incomplete.")
+        # Context is the newest own request's complete input: replayed history and aggregates never stand in.
+        newest = max((entry for entry in entries if entry.get("at") and not entry["values"].get("incomplete")),
+                     key=lambda entry: entry["at"], default=None)
+        window = row.get("context_window") or (config.CONTEXT_WINDOW if engine == "claude" else None)
+        context = {"tokens": newest["values"]["input_tokens"], "window": window, "observed_at": newest["at"],
+                   "percent": round(100.0 * newest["values"]["input_tokens"] / window, 1) if window else None} if newest else None
         public = {"session_id": sid, "parent_session_id": row["parent_session_id"], "role": role,
-                  **values, "total_tokens": total, "observed_at": row["observed_at"],
+                  **values, "total_tokens": total, "requests": None if use_aggregate else len(records) or None,
+                  "context": context, "observed_at": row["observed_at"],
                   "status": "unknown" if total is None and not records else
                             "partial" if row_notes or total is None else "observed", "notes": row_notes}
         if sid not in state["owners"]:
@@ -1585,6 +1569,7 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
             if ancestor in state["owners"]:
                 own_total = score(own) if any(own.get(key) is not None for key in ("input_tokens", "output_tokens")) else None
                 helpers.append({**public, **own, "role": "delegated", "total_tokens": own_total,
+                                "requests": len(records) or None,
                                 "status": "unknown" if own_total is None else public["status"],
                                 "owner_session_id": ancestor, "depth": depth,
                                 "parentage": row.get("parentage"),

@@ -42,7 +42,7 @@ OPERATOR_SEAM = ("altitude/config.py",)
 PROVIDER_BASELINE = {
     "altitude/dispatch.py": 2,
     "altitude/l3.py": 31,
-    "altitude/monitor.py": 5,
+    "altitude/monitor.py": 4,
     "altitude/quota_codex.py": 15,
     "altitude/server.py": 1,
     "altitude/tasks.py": 3,

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TokenUsageSchema, TaskViewSchema } from "../data/api";
-import { TokenUsage } from "./TokenUsage";
+import { TaskContext, TokenUsage } from "./TokenUsage";
 
 const snapshot = (over: Record<string, unknown> = {}) => TokenUsageSchema.parse({
   status: "partial", total_tokens: 1_200, input_tokens: 1_000, output_tokens: 200,
@@ -22,19 +22,42 @@ describe("passive task token usage", () => {
     expect(screen.getByText("Freshness unknown")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: /Token usage unknown/ }));
     expect(screen.getByText("No attributable session counters available.")).toBeVisible();
-    expect(screen.getAllByText("Unknown")).toHaveLength(9);
+    expect(screen.getAllByText("Unknown")).toHaveLength(10);
     expect(screen.getByText("Helper evidence unavailable.")).toBeVisible();
     expect(screen.queryByText("No helpers observed.")).not.toBeInTheDocument();
     view.rerender(<TokenUsage usage={snapshot({ status: "observed", total_tokens: 0, input_tokens: 0, output_tokens: 0 })} />);
-    expect(screen.getByText("0 observed tokens")).toBeVisible();
+    expect(screen.getByText("0 tokens processed")).toBeVisible();
     expect(screen.getByText("Observed coverage")).toBeVisible();
+  });
+
+  it("separates processed input, cache and output from the request count and explains repeated input", async () => {
+    render(<TokenUsage usage={snapshot({ requests: 229 })} />);
+    expect(screen.getByText("229 model requests")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /1,200 tokens processed/ }));
+    expect(screen.getByText("Input processed").nextSibling).toHaveTextContent("1,000");
+    expect(screen.getByText("Output generated").nextSibling).toHaveTextContent("200");
+    expect(screen.getByText("Model requests").nextSibling).toHaveTextContent("229");
+    expect(screen.getByText(/sends the conversation so far again.*not a bill, quota use or the current context/)).toBeVisible();
+  });
+
+  it("shows current context only from a reliable reading and never from cumulative totals", () => {
+    const view = render(<TaskContext context={null} running />);
+    expect(screen.getByText("Current context")).toBeVisible();
+    expect(screen.getByText(/unavailable · no reliable reading for the current session/)).toBeVisible();
+    view.rerender(<TaskContext context={{ tokens: 188_131, window: 1_000_000, percent: 18.8, observed_at: new Date().toISOString() }} running />);
+    expect(screen.getByText(/188,131 tokens · 19% of 1,000,000 · just now/)).toBeVisible();
+    view.rerender(<TaskContext context={{ tokens: 4_000, window: 1_000_000, percent: 0.4 }} running={false} />);
+    expect(screen.getByText("Context at last request")).toBeVisible();
+    expect(screen.getByText(/4,000 tokens · <1% of 1,000,000/)).toBeVisible();
+    view.rerender(<TaskContext context={{ tokens: 50_000, window: null, percent: null }} running />);
+    expect(screen.getByText(/50,000 tokens · window not reported/)).toBeVisible();
   });
 
   it("shows live increases without closing details, cache subsets, and distinct collection and evidence ages", async () => {
     const view = render(<TokenUsage usage={snapshot()} running />);
-    const toggle = screen.getByRole("button", { name: /1,200 observed tokens/ });
+    const toggle = screen.getByRole("button", { name: /1,200 tokens processed/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Input")).not.toBeInTheDocument();
+    expect(screen.queryByText("Input processed")).not.toBeInTheDocument();
     await userEvent.click(toggle);
     expect(screen.getByText("Checked just now")).toBeVisible();
     expect(screen.getByText("Usage observed 5 min ago.")).toBeVisible();
@@ -42,12 +65,12 @@ describe("passive task token usage", () => {
     expect(screen.getByText("Cache write · in input").nextSibling).toHaveTextContent("Unknown");
     expect(screen.getByText("Reasoning · in output").nextSibling).toHaveTextContent("50");
     view.rerender(<TokenUsage usage={snapshot({ total_tokens: 1_500, output_tokens: 500 })} running />);
-    expect(screen.getByRole("button", { name: /1,500 observed tokens/ })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Output").nextSibling).toHaveTextContent("500");
+    expect(screen.getByRole("button", { name: /1,500 tokens processed/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Output generated").nextSibling).toHaveTextContent("500");
     expect(screen.getByText("Helper coverage is unknown.")).toBeVisible();
     expect(screen.getByText("Partial totals sum available counters and are a lower bound.")).toBeVisible();
     await userEvent.click(toggle);
-    expect(screen.queryByText("Input")).not.toBeInTheDocument();
+    expect(screen.queryByText("Input processed")).not.toBeInTheDocument();
   });
 
   it("groups attempts by the recorded engine, separating owner, attributable helpers and an unsplit provider total", async () => {
@@ -60,14 +83,14 @@ describe("passive task token usage", () => {
     render(<TokenUsage usage={usage} engines={[{ engine: "alpha", label: "Engine A" }]} />);
     await userEvent.click(screen.getByRole("button"));
     const first = within(screen.getByRole("region", { name: "Engine A usage" }));
-    expect(first.getByRole("heading", { name: "Engine A 1,200 observed tokens" })).toBeVisible();
+    expect(first.getByRole("heading", { name: "Engine A 1,200 tokens processed" })).toBeVisible();
     expect(first.getByText(/L2 owner · attempt 1 · 1,000 tokens/)).toBeVisible();
     expect(first.getByText(/Delegated · attempt 1 · 200 tokens/)).toBeVisible();
     expect(first.getByText("Session helper · parent owner-first")).toBeVisible();
     const second = within(screen.getByRole("region", { name: "beta usage" }));
     expect(second.getByText(/Provider total · helpers unsplit · attempt 2 · 600 tokens/)).toBeVisible();
     expect(second.getByText(/L2 owner · attempt 3 · tokens unknown/)).toBeVisible();
-    expect(second.getByRole("heading", { name: "beta 600 observed tokens" })).toBeVisible();
+    expect(second.getByRole("heading", { name: "beta 600 tokens processed" })).toBeVisible();
   });
 
   it("marks a stalled collector stale while retaining its total, then retains the final observation without aging it stale", () => {
@@ -76,7 +99,7 @@ describe("passive task token usage", () => {
     const view = render(<TokenUsage usage={snapshot({ checked_at: checked })} running />);
     act(() => vi.advanceTimersByTime(80_000));
     expect(screen.getByText("Stale · checked 1 min ago")).toBeVisible();
-    expect(screen.getByText("1,200 observed tokens")).toBeVisible();
+    expect(screen.getByText("1,200 tokens processed")).toBeVisible();
     view.rerender(<TokenUsage usage={snapshot({ checked_at: checked, finalized_at: checked, notes: ["Source removed; retained observations are partial."] })} running />);
     act(() => vi.advanceTimersByTime(86_400_000));
     expect(screen.queryByText(/Stale/)).not.toBeInTheDocument();
@@ -110,10 +133,10 @@ describe("passive task token usage", () => {
     expect(helpers.getByText("Owner linkage owner-first · L2 owner owner-first")).toBeVisible();
     expect(helpers.getByRole("heading", { name: /Engine A · Owner-linked helper · depth unknown · tokens unknown/ })).toBeVisible();
     expect(helpers.getByText("Unsplit provider total: 600 tokens · may include descendants; not attributable to this helper alone.")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Engine A 1,800 observed tokens" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Engine A 1,800 tokens processed" })).toBeVisible();
     expect(screen.getByText(/Provider total · helpers unsplit/)).toBeVisible();
     const provider = within(screen.getByText(/Provider total · helpers unsplit/).parentElement!);
-    expect(provider.getByText("Input").nextSibling).toHaveTextContent("500");
+    expect(provider.getByText("Input processed").nextSibling).toHaveTextContent("500");
     expect(provider.getByText("Cache read · in input").nextSibling).toHaveTextContent("300");
     expect(screen.queryByText(/Delegated · attempt/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button"));

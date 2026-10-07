@@ -279,18 +279,18 @@ describe("Monitor", () => {
     const disclosure = await screen.findByRole("button", { name: "L2 usage details" });
     expect(screen.getAllByRole("button", { name: "L2 usage details" })).toHaveLength(1);
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText("500 tokens processed")).not.toBeInTheDocument();
     expect(screen.queryByText("L1 helpers observed")).not.toBeInTheDocument();
     const calls = fetch.mock.calls.length;
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("500 observed tokens")).toBeVisible();
+    expect(screen.getByText("500 tokens processed")).toBeVisible();
     expect(screen.getByText("Session native-helper")).toBeVisible();
     expect(screen.getByText("Owner attempt context: 1, 2.")).toBeVisible();
     expect(fetch).toHaveBeenCalledTimes(calls);
     await user.click(disclosure);
     expect(screen.queryByText("Session native-helper")).not.toBeInTheDocument();
-    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText("500 tokens processed")).not.toBeInTheDocument();
   });
 
   it("keeps an aged figure visible and labels it stale", async () => {

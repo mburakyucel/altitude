@@ -123,14 +123,35 @@ the persistent home. The operator shell explicitly includes `~/.local/bin` and s
 profiles, so a fresh volume needs no shell-profile edit. That user PATH is not given to container root.
 Missing bundled Git/GitHub CLI is an incomplete-image error. Host tools and
 authentication cannot establish container readiness. Set Git identity and authentication there,
-without pasting credentials into chat. One engine suffices; live provider/auth compatibility is unverified.
+without pasting credentials into chat. One engine suffices; the [live Linux run](#live-linux-run)
+records the tested engine and authentication limits.
+
+The image installs GitHub CLI 2.100.0 from the upstream release, with architecture-specific SHA-256
+checksums verified before installation. Its JSON PR fields satisfy Altitude's landing contract;
+the distribution's older CLI can authenticate but lacks a required field. The image gate checks
+that capability without credentials or a GitHub request.
+
+For phone-only sign-in, use the installed engine's device-code flow when it offers one, and
+enable device-code login in the account's security settings if required. Complete the displayed
+URL and short-lived code in the phone browser; the waiting CLI stays inside the container.
+GitHub CLI supports this flow with `gh auth login --hostname github.com --git-protocol https --web`.
+After signing in, configure Git to use that container-local login:
+
+```sh
+gh auth setup-git --hostname github.com
+```
+
+Verify `gh auth status` and, from the selected repository, `git fetch origin main` before starting
+a task. A successful GitHub CLI sign-in alone does not prove Git can authenticate: the live
+phone-login run left the HTTPS credential helper unset until `gh auth setup-git` configured it.
+These commands run inside the container; do not mount or copy host credentials as a shortcut.
 
 Clone/import under `/home/altitude/Projects`, then follow First run: name, prerequisites, incident
-preference and project selection. Registration retains repository/instructions checks, custom-hook
+preference, voice and project selection. Registration retains repository/instructions checks, custom-hook
 choices, Git guards and coordinator setup. The interface labels volume paths and refuses paths or
 links escaping the project volume. Check again/Retry retain their existing journeys. The Linux
-browser lane covers fresh state through a working task and replacement; authentication observations
-come from fixtures and do not establish real account sign-in compatibility.
+browser lane covers fresh state through a working task and replacement with fixture authentication.
+The separate [live run](#live-linux-run) observes real sign-in, Check again and registration.
 
 ## Lifecycle and recovery
 
@@ -307,6 +328,73 @@ namespace. Deterministic fixtures cover that integration; actual Mac acceptance 
 with the native runtime owner.
 
 ## Evidence
+
+### Live Linux run
+
+The operator-authorized run on 2026-10-06/07 uses one private throwaway repository and one owner
+task, initially with GitHub CLI 2.46.0 and Codex CLI 0.160.1 inside the container. The real coordinator and
+owner use the configured engine; the observed model is `gpt-6.1-sol`. This is one manual acceptance
+run, not an unattended suite or release gate. The second engine and macOS are untested; Mac
+confirmation remains tracked in [#643](https://github.com/mburakyucel/altitude/issues/643).
+The ARM64 package path has not been built in this run. Both package hashes match the upstream
+[2.100.0 checksum manifest](https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_checksums.txt).
+
+| Image | Source commit | Local release | Image ID |
+| --- | --- | --- | --- |
+| Fresh installation | `79896693f4ffc31371f793557ebbd0c4a15bc682` | `v0.1.0-rc.2026100601` | `bbc2d7d9f6a28c5521543a36de42c95e7eb5bff3eef2844b72bd73a0accb74ff` |
+| Repaired replacement | `1235573c80028135a50c9ba29a6b228075912cc2` | `v0.1.0-rc.2026100702` | `8467b7cf01662984d3213078f111901527e23685e25310fcc91ff6a2c67492f1` |
+| GitHub CLI replacement | `a2539bcd1275428dd1178fc7eb9a36aed88c8fa1` | `v0.1.0-rc.2026100703` | `64376d5d899da94b77badb1dad15f1a567fef88ad303d24de23fbce7ac2759d3` |
+
+The host is Ubuntu 24.04 amd64 with Podman 4.9.3 and crun 1.14.1. The launcher retains its normal
+limits and exactly two named volumes; no host credentials or home directories are mounted.
+
+The observed sequence establishes:
+
+- Fresh tools require sign-in inside the container. Phone device flows authenticate both tools;
+  the engine account requires device-code sign-in enabled in its security settings. Short-lived
+  codes expire while waiting for the operator. No password or token passes through chat.
+- Authentication resides in the persistent home, including the GitHub CLI configuration and
+  engine credential file. Both sign-ins, registered project and original task/session/hold survive
+  the observed host reboot followed by launcher restart and the later image replacement.
+- Authenticated onboarding passes at 390×844 and 1440×900: installed tools and sign-in observations,
+  Check again, private incident reports, unavailable host voice, project-volume selection,
+  repository registration, Git guards and the coordinator's first conversation.
+- GitHub CLI sign-in alone leaves Git's HTTPS helper unset in this phone flow. Configuring it
+  with `gh auth setup-git` makes the real private-repository fetch succeed.
+- A graceful launcher Stop precedes a complete private backup of both volumes and the old image.
+  The repaired image starts with the same volumes, retains authentication and saved work, and
+  pauses new AI work. Host Continue succeeds for the inspected replacement instance.
+- A second backup and replacement installs GitHub CLI 2.100.0. Sign-ins, project registration,
+  the original task/session and merge hold survive again. Continue succeeds; the same live owner
+  opens a one-file PR through `alt land` and retains its previously created test issue. The PR
+  remains open and unmerged. Direct whitespace checks pass; the scratch repository has no hosted CI.
+- Planned launcher restart and explicit Stop followed by starting that same container retain
+  both sign-ins, registration, the original task/session/hold and its paused admission. Status
+  between Stop and start confirms the container exited successfully with no payload PID.
+
+The live owner exposes a namespace identity/editing defect repaired in
+[PR #664](https://github.com/mburakyucel/altitude/pull/664). The installed repair passes normal
+confined task status and bundled-Python editing while protected writes and native operations remain
+denied. The original provider session resumes and creates its requested document without another
+login and creates the explicitly authorized test issue. The bundled GitHub CLI then rejects
+`baseRefOid` during normal PR delivery; the image's pinned CLI and capability check address this
+separate packaging defect. The run ends with the dedicated container stopped, its volumes and
+private backups retained, and the scratch PR held for the operator. Remote repository deletion
+remains with the operator. No native host service, trust store or network configuration is changed.
+
+The committed packaging candidate also passes the disposable Ubuntu image/workflow lane with the
+new credential-free field check, startup, deterministic task/admission recovery and cleanup.
+This opt-in image lane is separate from the required PR suite; its recorded run covers the actual
+package rather than asserting the Containerfile's text.
+
+Private task evidence retains image/archive identities, command results and named phone/desktop
+screenshots. Account identifiers, credential material and the scratch repository are excluded from
+public evidence. Chromium keeps its sandbox; a temporary harness forwards exact local HTTPS
+responses to the browser without substituting application, tool or provider responses. This is
+viewport evidence, not direct runner networking or physical-phone certificate trust. Backup restore,
+large-volume throughput and provider-session confinement parity across engines remain unverified.
+
+### Reusable fixture lanes
 
 `make container-vm RESULTS=<new-directory>` builds the committed candidate and exercises its actual
 host launcher and image in a disposable Ubuntu 24.04 amd64 KVM VM. Inside an owner task, the target
