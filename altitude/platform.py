@@ -2269,6 +2269,12 @@ def validation_unavailable() -> str | None:
     return f"validation runs need {' and '.join(missing)} on this computer" if missing else None
 
 
+def validation_temp(run: str) -> Path:
+    """A macOS validation run's own temporary folder: short, so Unix sockets under it stay within the 104-byte
+    limit, and the only place in the shared temporary folders the run's profile admits."""
+    return Path("/private/tmp") / f"av-{run}"
+
+
 def validation_in_container() -> bool:
     """Whether a validation run is a rootless Podman container (Linux) rather than a process under the validation
     Seatbelt profile (macOS, where Podman would need a virtual machine of its own)."""

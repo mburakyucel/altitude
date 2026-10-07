@@ -419,8 +419,9 @@ On a Mac, where Podman would need a virtual machine of its own and there is no K
 runs the command as a launchd job under `platform.validation_profile`, a Seatbelt profile stricter
 than a worker's:
 
-- **Writes** only the run's own folders (clone, results, a home and a temporary folder) and devices.
-  The runner's files beside them in the area stay out of reach.
+- **Writes** only the run's own folders (clone, results, a home, and a short temporary folder
+  `/private/tmp/av-<id>` that is its `TMPDIR`) and devices. The runner's files beside them in the area
+  stay out of reach, and a suite that creates files directly in `/tmp` must use `TMPDIR` instead.
 - **Reads** nothing in the operator's home or the shared temporary folders (`/private/tmp`,
   `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
   home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment

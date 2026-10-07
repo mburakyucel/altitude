@@ -546,6 +546,7 @@ class TestMacValidationRunner(RunnerCase):
         self.patch(platform, "logged_job_command", side_effect=lambda name, command, *, log, status, **kwargs:
                    ["/bin/bash", "-c", LOGGED, "job", command, str(status), str(log)])
         self.active = self.patch(platform, "job_active", return_value=False)
+        self.patch(platform, "validation_temp", side_effect=lambda run: self.tmp / f"av-{run}")
         hidden = Path.home() / "bin"
         self.setenv("PATH", f"{hidden}:{os.environ['PATH']}")
 
@@ -561,15 +562,16 @@ class TestMacValidationRunner(RunnerCase):
         area = Path(env["HOME"]).parent
         self.assertEqual(area.parent, validation.home() / "runs")
         self.assertEqual((env["TMPDIR"], env["VALIDATION_RESULTS"], env["ALTITUDE_VALIDATION"]),
-                         (str(area / "tmp"), str(area / "results"), "1"))
+                         (str(self.tmp / f"av-{area.name}"), str(area / "results"), "1"))
         self.assertFalse({key for key in env if key.startswith(("ALTITUDE_", "GIT_", "CLAUDE", "CODEX"))}
                          - {"ALTITUDE_VALIDATION"}, "nothing of altd's environment crosses")
         self.assertNotIn(str(Path.home() / "bin"), env["PATH"].split(":"), "folders the profile hides are dropped")
         self.assertEqual(self.profile.read_text(), platform.validation_profile(
-            (area / "work", area / "results", area / "home", area / "tmp"), area / f"{result['unit']}.log",
+            (area / "work", area / "results", area / "home", self.tmp / f"av-{area.name}"),
+            area / f"{result['unit']}.log",
             config.PORT),
             "the candidate's folders only: the runner's own files beside them stay out of its reach")
-        self.assertFalse(area.exists())
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
         self.assertEqual(self.stops.call_args.args[0], result["unit"])
         [row] = self.rows()
         self.assertEqual({k: row[k] for k in ("commit", "ended", "cleanup", "kvm", "publish")},
@@ -594,7 +596,7 @@ class TestMacValidationRunner(RunnerCase):
         self.active.return_value = False
         validation.reconcile()
         self.assertEqual(self.stops.call_args_list[-1].args[0], "altitude-validation-*.service")
-        self.assertFalse(area.exists())
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
         self.assertEqual(self.validate(["true"])["ended"], "exit")
 
 

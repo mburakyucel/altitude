@@ -116,11 +116,11 @@ def container_command(name: str, run: Path, argv: list[str], *, kvm: bool, publi
 
 
 def candidate_dirs(run: Path) -> list[Path]:
-    """The folders of a run area the candidate sees: its clone, results and, in a container, an empty mount point, or
-    on macOS a home and temporary folder of its own. The area's other files (`run.json`, the delivery receipt, the
-    unit's log and exit status) are the runner's, outside the candidate's reach."""
-    names = ("empty",) if platform.validation_in_container() else ("home", "tmp")
-    return [run / name for name in ("work", "results", *names)]
+    """The folders of a run the candidate sees: its clone, results and, in a container, an empty mount point, or on
+    macOS a home and a short temporary folder of its own. The area's other files (`run.json`, the delivery receipt,
+    the unit's log and exit status) are the runner's, outside the candidate's reach."""
+    own = [run / "empty"] if platform.validation_in_container() else [run / "home", platform.validation_temp(run.name)]
+    return [run / "work", run / "results", *own]
 
 
 def native_script(run: Path, argv: list[str], output: Path) -> str:
@@ -130,7 +130,7 @@ def native_script(run: Path, argv: list[str], output: Path) -> str:
     hidden = os.path.realpath(Path.home())
     path = [entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
             if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)]
-    env = {"HOME": str(run / "home"), "TMPDIR": str(run / "tmp"), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
+    env = {"HOME": str(run / "home"), "TMPDIR": str(platform.validation_temp(run.name)), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
            "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
@@ -373,7 +373,8 @@ def reconcile() -> None:
         runs = sorted(p for p in (home() / "runs").glob("*") if p.is_dir()) if (home() / "runs").is_dir() else []
         if runs and not platform.validation_unavailable():
             platform.job_stop(f"{UNIT_PREFIX}*.service", platform.manager_env(engines.clean_env()))
-            cleanup([area for area in runs if _interrupted(area)])
+            cleanup([path for area in runs if _interrupted(area) for path in (area, *candidate_dirs(area))
+                     if path.exists()])
         left = [area for area in runs if area.exists()]
         if left:
             LOG.error(f"validation: {len(left)} run area(s) retained because evidence or cleanup could not finish; "
@@ -444,7 +445,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     row, result, failure, stopped, target, skipped = None, None, None, False, None, []
     try:
         for folder in candidate_dirs(area):
-            folder.mkdir(parents=True)
+            folder.mkdir(mode=0o700, parents=True)
         for name in ("storage", "tmp", "cache"):
             (home() / name).mkdir(exist_ok=True)
         with _state:
@@ -483,7 +484,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             # a run whose cleanup failed is never recorded as a success. A run that never started leaves nothing to
             # keep. Evidence that was not delivered stays in place. Only the runner's own files (run.json, the receipt,
             # log and exit status) stay until the record exists, for the next start to finish an interrupted run.
-            scratch = [area] if row is None else candidate_dirs(area) if delivered else []
+            scratch = [area, *candidate_dirs(area)] if row is None else candidate_dirs(area) if delivered else []
             cleanup_error = cleanup([path for path in scratch if path.exists()], unit if row is not None else None)
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
