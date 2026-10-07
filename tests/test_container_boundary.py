@@ -13,19 +13,24 @@ from altitude import config, dispatch, installation, l3, platform, server, sourc
 
 
 class TestContainerIdentity(AltitudeCase):
+    def identity(self, uid=0):
+        marker = mock.MagicMock()
+        marker.lstat.return_value = SimpleNamespace(st_uid=uid, st_mode=stat.S_IFREG | 0o644)
+        parent = mock.Mock()
+        parent.lstat.return_value = SimpleNamespace(st_uid=uid, st_mode=stat.S_IFDIR | 0o755)
+        marker.parents = [parent, Path('/')]
+        marker.open.return_value.__enter__.return_value.read.return_value = b"altitude-container-v1\n"
+        self.patch(platform, 'CONTAINER_MARKER', marker)
+        self.patch(Path, 'lstat', return_value=SimpleNamespace(st_uid=uid, st_mode=stat.S_IFDIR | 0o755))
+        return marker, parent
+
     def test_absent_marker_is_native_even_with_environment_claim(self):
         marker = self.tmp / "absent"
         with mock.patch.object(platform, "CONTAINER_MARKER", marker), mock.patch.dict(os.environ, {"container": "podman"}):
             self.assertFalse(platform.containerized())
 
     def test_image_marker_requires_root_owned_regular_file_and_parents(self):
-        marker = mock.Mock()
-        marker.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o644)
-        parent = mock.Mock()
-        parent.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
-        marker.parents = [parent]
-        marker.open.return_value.__enter__ = mock.Mock(return_value=mock.Mock(read=lambda _: b"altitude-container-v1\n"))
-        marker.open.return_value.__exit__ = mock.Mock(return_value=False)
+        marker, parent = self.identity()
         with mock.patch.object(platform, "CONTAINER_MARKER", marker):
             self.assertTrue(platform.containerized())
             for mode, uid in ((stat.S_IFLNK | 0o777, 0), (stat.S_IFREG | 0o666, 0), (stat.S_IFREG | 0o644, 1000)):
@@ -34,6 +39,83 @@ class TestContainerIdentity(AltitudeCase):
                     platform.containerized()
             marker.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o644)
             parent.lstat.return_value = SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o755)
+            with self.assertRaises(RuntimeError):
+                platform.containerized()
+
+    def test_single_user_namespace_recognizes_protected_image_and_refuses_native_authority(self):
+        self.identity(65534)
+        proc = self.tmp / 'proc'
+        (proc / 'self').mkdir(parents=True)
+        (proc / 'sys/kernel').mkdir(parents=True)
+        (proc / 'self/uid_map').write_text('1000 0 1\n')
+        (proc / 'sys/kernel/overflowuid').write_text('65534\n')
+        self.patch(platform, 'PROC', proc)
+        self.patch(os, 'geteuid', return_value=1000)
+        self.patch(os, 'access', return_value=False)
+        self.assertTrue(platform.containerized())
+        self.patch(platform, 'CONTAINER_INSTANCE', platform.CONTAINER_MARKER)
+        platform.CONTAINER_MARKER.open.return_value.__enter__.return_value.read.return_value = b'a' * 32 + b'\n'
+        self.assertEqual(platform._container_instance(), 'a' * 32)
+        platform.CONTAINER_MARKER.open.return_value.__enter__.return_value.read.return_value = b'altitude-container-v1\n'
+        with self.assertRaisesRegex(RuntimeError, 'image-managed'):
+            platform.require_native_application()
+
+    def test_namespace_identity_rejects_writable_paths_and_invalid_mapping(self):
+        marker, parent = self.identity(65534)
+        proc = self.tmp / 'proc'
+        (proc / 'self').mkdir(parents=True)
+        (proc / 'sys/kernel').mkdir(parents=True)
+        mapping = proc / 'self/uid_map'
+        mapping.write_text('1000 0 1\n')
+        (proc / 'sys/kernel/overflowuid').write_text('65534\n')
+        self.patch(platform, 'PROC', proc)
+        self.patch(os, 'geteuid', return_value=1000)
+        access = self.patch(os, 'access', return_value=False)
+        for target in (marker, parent, Path('/')):
+            access.side_effect = lambda path, *a, **kw: path == target
+            with self.subTest(writable=target), self.assertRaises(RuntimeError):
+                platform.containerized()
+        access.side_effect = None
+        for entry in (marker, parent):
+            original = entry.lstat.return_value
+            for uid, mode in ((1000, original.st_mode), (65533, original.st_mode),
+                              (65534, original.st_mode | 0o020), (65534, stat.S_IFLNK | 0o755)):
+                entry.lstat.return_value = SimpleNamespace(st_uid=uid, st_mode=mode)
+                with self.subTest(uid=uid, mode=mode), self.assertRaises(RuntimeError):
+                    platform.containerized()
+            entry.lstat.return_value = original
+        for value in ('', 'bad', '0 1000 1\n', '1000 0 2\n', '1000 0 1\n2000 2 1\n'):
+            mapping.write_text(value)
+            with self.subTest(mapping=value), self.assertRaises(RuntimeError):
+                platform.containerized()
+        mapping.unlink()
+        with self.assertRaises(RuntimeError):
+            platform.containerized()
+
+    def test_invalid_contents_fail_closed_and_instance_uses_same_ownership_contract(self):
+        marker, _ = self.identity()
+        marker.open.return_value.__enter__.return_value.read.return_value = b'not-an-image\n'
+        with self.assertRaises(RuntimeError):
+            platform.containerized()
+        self.patch(platform, 'CONTAINER_INSTANCE', marker)
+        marker.open.return_value.__enter__.return_value.read.return_value = b'a' * 32 + b'\n'
+        self.assertEqual(platform._container_instance(), 'a' * 32)
+        for value in (b'bad', b'a' * 32 + b' ' * 32 + b'x', b'\xff'):
+            marker.open.return_value.__enter__.return_value.read.return_value = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                platform._container_instance()
+        marker.lstat.return_value.st_uid = 1000
+        with self.assertRaises(ValueError):
+            platform._container_instance()
+
+    def test_native_macos_never_reads_linux_namespace_metadata(self):
+        marker, _ = self.identity()
+        self.patch(platform, '_darwin', return_value=True)
+        with mock.patch.object(Path, 'read_text', side_effect=AssertionError('Linux metadata read')):
+            self.assertTrue(platform.containerized())
+            marker.lstat.side_effect = FileNotFoundError
+            self.assertFalse(platform.containerized())
+            self.identity(65534)
             with self.assertRaises(RuntimeError):
                 platform.containerized()
 
