@@ -2027,9 +2027,12 @@ def worker(engine: str, task: dict, *, job_root: Path) -> dict | None:
     if row or engine != "claude":
         return row
     # I-20260907-171446: pre-activation jobs keep their transcript; no daemon launch path remains.
-    job = S.read_json(JOBS_DIR / str(task.get("agent_id")) / "state.json", {})
-    if not job:
+    job = S.read_json(JOBS_DIR / str(task.get("agent_id")) / "state.json", None)
+    if job is None:
         return None
+    # #676: missing legacy unit identity is unknown, just as it is for owned CLI records.
+    if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
+        raise RuntimeError("Worker unit identity is unavailable")
     unit = _claude_unit(job["name"])
     transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
     alive = platform.job_active(unit, codex_env(retain_user_bus=True)) and transcript is not None
@@ -2372,15 +2375,50 @@ def _review_object(text: str) -> dict:
     raise ValueError("The review answer holds no JSON object.")
 
 
-def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str]]:
-    """#665: project structured error fields to fixed categories, never provider prose/source."""
+#: Claude's fixed result vocabulary (installed CLI 2.1.292 result schema). Other values become "unknown".
+CLAUDE_RESULT_FACTS = {
+    "subtype": ("success", "error_during_execution", "error_max_turns", "error_max_budget_usd",
+                "error_max_structured_output_retries"),
+    "terminal_reason": ("blocking_limit", "rapid_refill_breaker", "prompt_too_long", "image_error", "model_error",
+                        "api_error", "malformed_tool_use_exhausted", "aborted_streaming", "aborted_tools",
+                        "stop_hook_prevented", "hook_stopped", "tool_deferred", "max_turns", "background_requested",
+                        "completed", "budget_exhausted", "structured_output_retry_exhausted",
+                        "tool_deferred_unavailable", "turn_setup_failed"),
+    "api_error": ("max_output_tokens", "dlp_request_denied", "claude_code_version_too_old", "safety_monitor_blocked",
+                  "effort_requires_thinking", "advisor_incompatible", "tool_history_mismatch",
+                  "autocompact_thrashing", "pdf_too_large", "pdf_password_protected", "media_removed", "no_response",
+                  "tls_untrusted_ca", "gateway_content_type", "provider_credentials", "gateway_signin_required",
+                  "gateway_session_expired", "api_key_auth_disabled", "org_disabled_credential",
+                  "invalid_credential_header", "model_requires_usage_credits", "long_context_credits_required",
+                  "consent_unanswered", "no_allowed_fallback", "model_substitution_disabled", "field_not_granted",
+                  "usage_limit_reached"),
+}
+
+
+def _review_result_facts(record: dict) -> dict:
+    """#665: the fixed failure facts a Claude result carries, so a failure that matches no category still says
+    where it ended (setup, API status, error kind) without its prose."""
+    facts = {key: (record[key] if record[key] in allowed else "unknown")
+             for key, allowed in CLAUDE_RESULT_FACTS.items() if isinstance(record.get(key), str)}
+    status = record.get("api_error_status")
+    if type(status) is int and 100 <= status <= 599:
+        facts["api_error_status"] = status
+    if type(record.get("num_turns")) is int and record["num_turns"] >= 0:
+        facts["num_turns"] = min(record["num_turns"], 1000)
+    if type(record.get("duration_api_ms")) in (int, float):
+        facts["api_contacted"] = record["duration_api_ms"] > 0
+    return facts
+
+
+def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str], dict]:
+    """#665: project structured error fields to fixed categories and facts, never provider prose/source."""
     try:
         records = ([json.loads(stdout)] if engine == "claude" else
                    [json.loads(line) for line in stdout.splitlines() if line.strip()])
         if not all(isinstance(record, dict) for record in records):
-            return "malformed", []
+            return "malformed", [], {}
     except (ValueError, RecursionError):
-        return "malformed", []
+        return "malformed", [], {}
     messages, error_seen = [], False
     for record in records:
         if engine == "claude" and record.get("is_error") is True:
@@ -2400,18 +2438,20 @@ def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str]]:
     # Free-form error strings may echo prompts, captured source or private details. Only fixed
     # vocabulary leaves this seam; even unknown codes/subtypes are not persisted.
     categories = {
-        "authentication": r"authentication|unauthorized|invalid api key|not logged in",
-        "rate_limit": r"rate.?limit|quota|usage limit",
-        "connection": r"connection|connect(?:ion)? refused|network|timed? out|timeout",
+        "authentication": r"authentication|unauthorized|invalid api key|not logged in|run /login|login expired|oauth token",
+        "rate_limit": r"rate.?limit|quota|usage limit|usage credits|credit balance",
+        "connection": r"connection|connect(?:ion)? refused|unable to connect|network|timed? out|timeout",
         "captured_input": r"captured_input|captured adapter|mcp",
         "configuration": r"invalid (?:configuration|config|argument)|unknown (?:option|argument)|unrecognized (?:option|argument)",
-        "permission": r"permission denied|access denied|forbidden",
-        "context_limit": r"context (?:window|length|limit)|too many tokens",
+        "permission": r"permission denied|access denied|forbidden|operation not permitted",
+        "context_limit": r"context (?:window|length|limit)|too many tokens|prompt is too long",
         "turn_limit": r"maximum turns|max turns",
     }
     labels = [label for label, pattern in categories.items()
               if any(re.search(pattern, message, re.I) for message in messages)]
-    return ("recognized_error" if labels else "unrecognized_error" if error_seen else "no_structured_error"), labels
+    facts = _review_result_facts(records[0]) if engine == "claude" and records[0].get("type") == "result" else {}
+    state = "recognized_error" if labels else "unrecognized_error" if error_seen else "no_structured_error"
+    return state, labels, facts
 
 
 def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_truncated=False,
@@ -2446,6 +2486,7 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
     evidence = {"exit_status": exit_status, "stderr": bounded.decode("utf-8", errors="ignore"),
                 "stderr_truncated": truncated or shortened,
                 "stdout_truncated": stdout_truncated, "capture_complete": capture_complete}
+    facts = {}
     if stdout is None:
         state, labels = "unavailable", []
     elif not capture_complete:
@@ -2455,8 +2496,10 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
     elif not stdout.strip():
         state, labels = "empty", []
     else:
-        state, labels = _review_stdout_errors(engine, stdout)
+        state, labels, facts = _review_stdout_errors(engine, stdout)
     evidence.update(stdout_state=state, stdout_errors=labels)
+    if facts:
+        evidence["stdout_facts"] = facts
     if exception is not None:
         evidence["exception_type"] = type(exception).__name__
         evidence["errno"] = getattr(exception, "errno", None)

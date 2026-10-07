@@ -418,8 +418,13 @@ class TestSystemFault(AltitudeCase):
                               "l2_engine": "claude", "created": S.now(), "updated": S.now()})
         # I-20260907-171446: polling reads owned units, while launch still fails closed on registry errors.
         with mock.patch.object(engines, "worker", side_effect=RuntimeError("unit inspection failed")):
-            with self.assertRaisesRegex(RuntimeError, "unit inspection failed"):
-                dispatch.poll(PROJECT)
+            self.assertEqual(dispatch.poll(PROJECT), [])
+        self.assertEqual(S.load_task(PROJECT, "poll-probe")["state"], "running")
+        live = S.read_json(config.MONITOR_DIR / f"live-{PROJECT}--poll-probe.json")
+        self.assertEqual(live["agent"]["status"], "unknown")
+        fault = S.read_json(incidents.FAULTS)[json.dumps([PROJECT, "worker-status"])]
+        self.assertIn("unit inspection failed", fault["detail"])
+        self.assertIsNone(fault["task"], "an unknown worker retains its task state and capacity")
 
     def test_verifier_tooling_failure_is_a_fault_verdict(self):
         self.patch(verify, "gh", new=lambda *a, **k: (_ for _ in ()).throw(verify.VerifierFault("gh: network down")))

@@ -94,6 +94,11 @@ observed; explicit Continue releases the same held inbox. An L3 CLI process stop
 request with timer and capacity-available wakes, then owns Git isolation validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
+An unavailable worker-unit identity or status stays an unknown observation during polling.
+Reconciliation retains the running task and its capacity reservation, records a deduplicated incident
+for L3, and continues other tick work. Unknown status authorizes neither completion nor relaunch or
+an unnamed stop; existing claims, sessions, inboxes and holds remain intact. Engine ownership and
+platform termination checks remain the authority for recovery.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
 the same project lock as resume and hook pickup, records removal in the existing message delivery
 metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
@@ -629,7 +634,9 @@ live-provider compatibility remains unverified under the standing testing decisi
 
 Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
 evidence in the existing task-owned record. Recognized structured stdout error fields yield fixed
-diagnostic categories; stdout transcripts and arbitrary error prose are not copied into diagnostics.
+diagnostic categories, and a Claude result's allowlisted failure facts (subtype, terminal reason, API
+error kind and status) locate failures no category recognizes; stdout transcripts and arbitrary error
+prose are not copied into diagnostics.
 Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
 The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
@@ -2417,7 +2424,11 @@ partial answers. It uses that question's exact URL, never an earlier proposal's 
 question through its task row. Preview headings use the captured title to distinguish a proposal
 from an implementation review. Opening a separate tab preserves the originating route and draft.
 `/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
-screenshots, full-size image links, explanation and **Back to question**. The page reads
+screenshots, full-size image links, explanation and **Back to question**, which returns to
+the exact captured question revision. Both **Back to question** and **Open current question**
+replace the preview's history entry, so the task's Back control opens the owning project conversation.
+Browser Back/Forward follows the remaining history; the originating tab and its draft stay intact.
+The preview reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
 `/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
 require a registered project, resolve the owning task and exact question revision, and verify the
