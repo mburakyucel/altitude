@@ -18,11 +18,13 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import selectors
 import shutil
 import socket
 import struct
 import subprocess
 import threading
+import time
 from urllib.parse import urlsplit
 
 from . import platform
@@ -31,6 +33,8 @@ XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
 BOOT_SECONDS = 300
 FRAME_LIMIT = 64 << 20            # bytes in one inspector message; a page snapshot is a few MiB
+FRAME_SECONDS = 30               # for the rest of a message once its length has arrived
+SESSIONS = 4                     # run connections at once; a walkthrough uses one
 OPEN = "_rpc_altitudeOpenURL:"    # the relay's own request: {"url": ...}, answered by OPENED with {"error": ...}
 OPENED = "_rpc_altitudeOpenedURL:"
 UNAVAILABLE = "--simulator needs a Mac with Xcode and an installed iOS Simulator runtime"
@@ -171,7 +175,7 @@ def _read(sock: socket.socket) -> dict | None:
     size = struct.unpack(">I", head)[0]
     if size > FRAME_LIMIT:
         raise ValueError(f"an inspector message of {size} bytes is over the limit")
-    body = _exact(sock, size)
+    body = _exact(sock, size, time.monotonic() + FRAME_SECONDS)
     message = plistlib.loads(body or b"")
     if (not isinstance(message, dict) or not isinstance(message.get("__selector"), str)
             or not isinstance(message.get("__argument"), dict)):
@@ -179,16 +183,25 @@ def _read(sock: socket.socket) -> dict | None:
     return message
 
 
-def _exact(sock: socket.socket, size: int) -> bytes | None:
-    data = b""
-    while len(data) < size:
-        chunk = sock.recv(min(size - len(data), 1 << 20))
-        if not chunk:
-            if data:
-                raise ConnectionError("the connection closed inside a message")
-            return None
-        data += chunk
-    return data
+def _exact(sock: socket.socket, size: int, deadline: float | None = None) -> bytes | None:
+    data = bytearray()
+    waiting = selectors.DefaultSelector() if deadline else None  # kqueue or epoll: altd can pass select()'s limit
+    try:
+        if waiting:
+            waiting.register(sock, selectors.EVENT_READ)
+        while len(data) < size:
+            if waiting and not waiting.select(max(0, deadline - time.monotonic())):
+                raise TimeoutError("an inspector message stalled")
+            chunk = sock.recv(min(size - len(data), 1 << 20))
+            if not chunk:
+                if data:
+                    raise ConnectionError("the connection closed inside a message")
+                return None
+            data += chunk
+    finally:
+        if waiting:
+            waiting.close()
+    return bytes(data)
 
 
 def _write(sock: socket.socket, selector: str, argument: dict) -> None:
@@ -202,6 +215,7 @@ class _Session:
     def __init__(self, run: socket.socket, phone: socket.socket, port: int, open_url):
         self.run, self.phone, self.port, self.open_url = run, phone, port, open_url
         self.lock = threading.Lock()
+        self.sending = threading.Lock()  # both directions' threads write to the run
         self.apps: set = set()          # Safari's application identifiers
         self.pages: dict = {}           # application -> {page: address}, Safari's web pages only
         self.senders: dict = {}         # sender -> (application, page) set up through this connection
@@ -220,6 +234,10 @@ class _Session:
                 pass
             sock.close()
 
+    def _to_run(self, selector: str, argument: dict) -> None:
+        with self.sending:
+            _write(self.run, selector, argument)
+
     def _pump(self, source: socket.socket, handle) -> None:
         try:
             while (message := _read(source)) is not None and handle(message["__selector"], message["__argument"]):
@@ -237,7 +255,7 @@ class _Session:
                     self.open_url(argument["url"])
                 except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
                     error = str(exc)
-            _write(self.run, OPENED, {"error": error or ""})
+            self._to_run(OPENED, {"error": error or ""})
             return True
         if selector not in FROM_RUN:
             return False
@@ -291,7 +309,7 @@ class _Session:
                     return True
             elif selector != "_rpc_reportCurrentState:":
                 return True
-        _write(self.run, selector, argument)
+        self._to_run(selector, argument)
         return True
 
 
@@ -320,6 +338,11 @@ class Relay:
             except OSError:
                 return
             run.settimeout(None)
+            with self.lock:
+                full = len(self.sessions) >= SESSIONS
+            if full:
+                run.close()
+                continue
             try:
                 phone = socket.socket(socket.AF_UNIX)
                 phone.connect(self.inspector)
@@ -332,7 +355,12 @@ class Relay:
                     session.close()
                     return
                 self.sessions.append(session)
-            threading.Thread(target=session.serve, daemon=True).start()
+            threading.Thread(target=self._serve, args=(session,), daemon=True).start()
+
+    def _serve(self, session: _Session) -> None:
+        session.serve()
+        with self.lock:
+            self.sessions.remove(session)
 
     def close(self) -> None:
         self.stopped.set()

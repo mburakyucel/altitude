@@ -9,8 +9,10 @@ import os
 from pathlib import Path
 import plistlib
 import socket
+import struct
 import sys
 import threading
+import time
 from unittest import TestCase, mock
 
 from tests.support import SUITE
@@ -281,6 +283,51 @@ class TestRelay(RelayCase):
                 client.send(sim.OPEN, {"url": url})
                 self.assertIn(error, client.until(sim.OPENED)["error"])
         self.assertEqual(self.opened, ["http://127.0.0.1:5555/", "http://localhost:5555/a"])
+
+    def test_replies_to_the_run_stay_whole_while_the_phone_sends_large_messages(self):
+        client = self.client()
+        self.attach(client)
+        client.until("_rpc_applicationSentData:")
+        blob = {"WIRApplicationIdentifierKey": SAFARI_APP, "WIRDestinationKey": "sender", "WIRMessageDataKey": b"x" * (1 << 20)}
+        flood = threading.Thread(target=lambda: [sim._write(self.phone.connections[-1], "_rpc_applicationSentData:", blob)
+                                                 for _ in range(20)])
+        write = sim._write
+
+        def halves(sock, selector, argument):  # a send the kernel takes in two parts, as sendall may
+            data = plistlib.dumps({"__selector": selector, "__argument": argument}, fmt=plistlib.FMT_BINARY)
+            frame = struct.pack(">I", len(data)) + data
+            sock.sendall(frame[:len(frame) // 2])
+            time.sleep(0.001)
+            sock.sendall(frame[len(frame) // 2:])
+
+        with mock.patch.object(sim, "_write", halves):
+            opens = threading.Thread(target=lambda: [client.send(sim.OPEN, {"url": "http://127.0.0.1:5555/"})
+                                                     for _ in range(50)])
+            flood.start()
+            opens.start()
+            counts = {sim.OPENED: 0, "_rpc_applicationSentData:": 0}
+            while counts != {sim.OPENED: 50, "_rpc_applicationSentData:": 20}:
+                selector, _ = client.read()
+                counts[selector] += 1
+            flood.join()
+            opens.join()
+        self.assertIs(sim._write, write)
+
+    def test_a_run_holds_a_bounded_number_of_connections_and_ended_ones_free_their_place(self):
+        clients = [self.client() for _ in range(sim.SESSIONS)]
+        self.assertTrue(Client(self.tmp / "run.sock").closed(), "a connection over the limit is closed at once")
+        clients[0].sock.close()
+        for _ in range(100):
+            if len(self.relay.sessions) < sim.SESSIONS:
+                break
+            time.sleep(0.05)
+        self.client()
+
+    def test_a_message_that_stalls_partway_closes_its_connection(self):
+        client = self.client()
+        with mock.patch.object(sim, "FRAME_SECONDS", 0.2):
+            client.sock.sendall(struct.pack(">I", 100) + b"partial")
+            self.assertTrue(client.closed())
 
     def test_closing_the_relay_ends_its_connections_and_frees_the_socket(self):
         client = self.client()
