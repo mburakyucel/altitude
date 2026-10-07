@@ -2408,7 +2408,7 @@ question revision; changing any selected content or label advances it, preservin
 and design. A normal block without design inputs retains the attached capture. There is no separate
 review conversation, approval state or artifact registry.
 
-`question_view` exposes `design_url` and the captured `design_title` for **View preview · <saved title>**
+`question_view` exposes `design_url` and the captured `design_title` for **View preview · saved title**
 in Needs you and the owning question. Links and viewer headings identify the saved proposal by its
 title; the question revision is an identity and answer fence, not a displayed proposal version.
 The conversation's offscreen-question jump reaches that question, where its preview opens.
