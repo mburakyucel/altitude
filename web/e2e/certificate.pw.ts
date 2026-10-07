@@ -180,10 +180,13 @@ sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.strin
     ["Android", "android", "Settings › Security › Encryption & credentials › Install a certificate › CA certificate"],
   ]) {
     await walk.state(`14-${id}-instructions`, {
-      action: () => navigation.getByRole("link", { name: device, exact: true }).click(),
+      action: async () => {
+        await navigation.getByRole("link", { name: device, exact: true }).click();
+        // Check the anchor before full-page capture temporarily changes the mobile viewport.
+        await expect(page.locator(`#${id}`)).toBeInViewport();
+      },
       visible: [page.locator(`#${id}`), page.getByText(instruction, { exact: true })], hidden: [],
     });
-    await expect(page.locator(`#${id}`)).toBeInViewport();
   }
   await walk.state("15-desktop-certificate-check", {
     action: () => page.getByRole("link", { name: "Download and check the certificate", exact: true }).click(),
