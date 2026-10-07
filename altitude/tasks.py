@@ -1904,7 +1904,7 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
         raise TransitionError("L3 authority must cite an original L3 task message")
     if not authorized:
         raise TransitionError("resolution must cite an original message with authority for this question")
-    # An operator answer survives re-publication. Design approvals and machine grants (`exact`) stay bound
+    # An operator answer survives re-publication. Design approvals and operator grants (`exact`) stay bound
     # to the captures or purpose the operator actually read.
     relaxed = row["role"] == OPERATOR_MESSAGE_ROLE and not exact and not question.get("design")
     if source == "task" and not relaxed:
@@ -2346,7 +2346,7 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
-def _standing_machine_policy(project: str, heading: str, approval: str) -> dict:
+def _standing_policy(project: str, heading: str, approval: str) -> dict:
     """Capture one approved purpose from main, never a task's editable policy."""
     root = config.project_path(project)
     try:
@@ -2368,16 +2368,16 @@ def _standing_machine_policy(project: str, heading: str, approval: str) -> dict:
     return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
 
-def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
-                         actor: str, source: str = "task", expected_attempt: int | None = None,
-                         standing_policy: str | None = None) -> dict:
+def record_grant(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
+                 actor: str, source: str = "task", expected_attempt: int | None = None,
+                 standing_policy: str | None = None) -> dict:
     """Record an exact operator answer, or L3's application of an approved project-policy purpose.
 
     The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
     question and attempt. An owner self-records only from the operator's task-chat answer.
     """
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("a machine grant needs the owner, the coordinator or the operator and a reason")
+        raise TransitionError("an operator grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         try:
@@ -2404,7 +2404,7 @@ def grant_machine_access(project: str, slug: str, approval: str, *, question: st
                                  and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
                 if not operator:
                     raise ValueError("standing approval must cite an original operator message in this project's chat")
-                policy = _standing_machine_policy(project, standing_policy, approval)
+                policy = _standing_policy(project, standing_policy, approval)
                 if decision["detail"].split() != policy["text"].split():
                     raise ValueError("requested purpose must exactly match the standing policy scope")
             else:
@@ -2413,42 +2413,42 @@ def grant_machine_access(project: str, slug: str, approval: str, *, question: st
                         or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
                     raise ValueError("cite the operator message that answered the current operator question revision")
                 operator = _decision_source(project, slug, decision, approval, source, exact=True)
-            previous = task.get("machine_access")
+            previous = task.get("grant")
             if previous and (policy or previous.get("policy")) and any((
                     previous.get("purpose", "").split() != decision["detail"].split(),
                     previous.get("approval") != approval, previous.get("source") != source,
                     previous.get("attempt") != task.get("attempt"), previous.get("policy") != policy)):
-                raise ValueError("revoke the existing machine grant before switching its purpose or standing policy")
+                raise ValueError("revoke the existing operator grant before switching its purpose or standing policy")
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
-            S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
+            S.append_event(project, slug, "grant-refused", actor=actor, approval=approval, question=question,
                            revision=revision, reason=reason, standing_policy=standing_policy, error=str(exc))
-            raise TransitionError(f"machine grant refused: {exc}") from exc
+            raise TransitionError(f"operator grant refused: {exc}") from exc
         grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
         if policy:
             grant["policy"] = policy
-        task["machine_access"] = grant
+        task["grant"] = grant
         S.save_task(project, task)
-        S.append_event(project, slug, "machine-grant", **grant)
+        S.append_event(project, slug, "grant", **grant)
         return grant
 
 
-def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
-                          expected_attempt: int | None = None) -> dict:
+def revoke_grant(project: str, slug: str, reason: str, *, actor: str,
+                 expected_attempt: int | None = None) -> dict:
     """Revocation narrows authority: the coordinator or the operator at any time, the owner for its own attempt."""
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("revoking a machine grant needs the owner, the coordinator or the operator and a reason")
+        raise TransitionError("revoking an operator grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        previous = task.get("machine_access")
+        previous = task.get("grant")
         if not previous:
-            raise TransitionError("task has no machine grant")
+            raise TransitionError("task has no operator grant")
         if actor == "l2" and expected_attempt != task.get("attempt"):
             raise TransitionError("the owner revokes a grant only for its current attempt")
-        task["machine_access"] = None
+        task["grant"] = None
         S.save_task(project, task)
-        S.append_event(project, slug, "machine-revoke", actor=actor, reason=reason.strip(),
+        S.append_event(project, slug, "grant-revoke", actor=actor, reason=reason.strip(),
                        purpose=previous["purpose"], approval=previous["approval"])
         return task
 

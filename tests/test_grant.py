@@ -1,4 +1,4 @@
-"""An operator's purpose grant opens the machine to one task; every command under it is recorded.
+"""An operator's purpose grant lets one task run commands as the operator; every command under it is recorded.
 
 Only the transient-unit launcher is a fixture: a `systemd-run` shim inside the test directory runs the
 exact command line altd composes, appends output where the unit would, and enforces the runtime limit.
@@ -55,7 +55,7 @@ def wait_for(condition, what):
         time.sleep(.02)
 
 
-class TestMachineAccess(AltitudeCase):
+class TestOperatorGrant(AltitudeCase):
     host = "linux"  # systemd fixtures
 
     def setUp(self):
@@ -127,9 +127,9 @@ class TestMachineAccess(AltitudeCase):
         row = self.answer(question)
         self.resolve(question, row)
         self.tick()
-        return T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
-                                      revision=question["revision"], reason="Purpose matches the answer.",
-                                      actor="l3"), question, row
+        return T.record_grant(self.project, self.slug, row["id"], question=question["id"],
+                              revision=question["revision"], reason="Purpose matches the answer.",
+                              actor="l3"), question, row
 
     def unit(self, sequence):
         return f"altitude-machine-{self.project}-{self.slug}-{sequence}.service"
@@ -140,45 +140,45 @@ class TestMachineAccess(AltitudeCase):
     def test_grant_needs_the_operator_answer_to_the_current_question(self):
         question = self.ask()
         with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
-            T.grant_machine_access(self.project, self.slug, "0" * 32, question=question["id"],
-                                   revision=question["revision"], reason="r", actor="l3")
+            T.record_grant(self.project, self.slug, "0" * 32, question=question["id"],
+                           revision=question["revision"], reason="r", actor="l3")
         row = self.answer(question)
         self.tick()
         other = T.message(self.project, self.slug, "burak", "Also, use the blue theme.", by="burak")
         self.resolve(question, row)
         with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
-            T.grant_machine_access(self.project, self.slug, other["id"], question=question["id"],
-                                   revision=question["revision"], reason="r", actor="l3")
+            T.record_grant(self.project, self.slug, other["id"], question=question["id"],
+                           revision=question["revision"], reason="r", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "owner, the coordinator or the operator"):
-            T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
-                                   revision=question["revision"], reason="r", actor="altd")
+            T.record_grant(self.project, self.slug, row["id"], question=question["id"],
+                           revision=question["revision"], reason="r", actor="altd")
         with self.assertRaisesRegex(T.TransitionError, "current attempt"):  # the owner's fence
-            T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
-                                   revision=question["revision"], reason="r", actor="l2")
-        self.assertEqual(len(self.events("machine-grant-refused")), 3)
-        self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
-        grant = T.grant_machine_access(self.project, self.slug, row["id"], question=question["id"],
-                                       revision=question["revision"], reason="Purpose matches.", actor="l3")
+            T.record_grant(self.project, self.slug, row["id"], question=question["id"],
+                           revision=question["revision"], reason="r", actor="l2")
+        self.assertEqual(len(self.events("grant-refused")), 3)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+        grant = T.record_grant(self.project, self.slug, row["id"], question=question["id"],
+                               revision=question["revision"], reason="Purpose matches.", actor="l3")
         self.assertEqual((grant["purpose"], grant["answer"], grant["approval"], grant["actor"], grant["attempt"]),
                          (question["detail"], "Yes, go ahead.", row["id"], "l3", 1))
-        self.assertEqual(S.load_task(self.project, self.slug)["machine_access"], grant)
-        self.assertEqual(len(self.events("machine-grant")), 1)
+        self.assertEqual(S.load_task(self.project, self.slug)["grant"], grant)
+        self.assertEqual(len(self.events("grant")), 1)
         brief = self.alt("task", "status", self.slug, "--brief", env={"ALTITUDE_PROJECT": self.project})
-        self.assertIn(f"machine access: {question['detail']}", brief.stdout)
+        self.assertIn(f"operator grant: {question['detail']}", brief.stdout)
 
     def test_the_owner_records_its_grant_from_the_operators_task_chat_answer(self):
         question = self.ask()
         row = self.answer(question)
         grant = dict(question=question["id"], revision=question["revision"], reason="Burak said yes to this purpose.")
         with self.assertRaisesRegex(T.TransitionError, "answered the current operator question"):
-            T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
+            T.record_grant(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
         self.resolve(question, row)
         for attempt, source in ((2, "task"), (1, "project")):
             with self.assertRaisesRegex(T.TransitionError, "current attempt, from the operator's task-chat answer"):
-                T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=attempt,
-                                       source=source, **grant)
-        self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
-        recorded = T.grant_machine_access(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
+                T.record_grant(self.project, self.slug, row["id"], actor="l2", expected_attempt=attempt,
+                               source=source, **grant)
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
+        recorded = T.record_grant(self.project, self.slug, row["id"], actor="l2", expected_attempt=1, **grant)
         self.assertEqual((recorded["purpose"], recorded["approval"], recorded["actor"], recorded["attempt"]),
                          (question["detail"], row["id"], "l2", 1))
         self.assertEqual(self.run_command("echo granted")["exit"], 0)
@@ -195,9 +195,9 @@ class TestMachineAccess(AltitudeCase):
         self.resolve(revised, row)  # the owner may judge the earlier answer still applies ...
         self.tick()
         with self.assertRaises(T.TransitionError):  # ... but a grant needs the operator's answer to this purpose
-            T.grant_machine_access(self.project, self.slug, row["id"], question=revised["id"],
-                                   revision=revised["revision"], reason="r", actor="l3")
-        self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+            T.record_grant(self.project, self.slug, row["id"], question=revised["id"],
+                           revision=revised["revision"], reason="r", actor="l3")
+        self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
 
     def standing(self):
         """An original project decision committed as policy before the owner requests its scope."""
@@ -224,7 +224,7 @@ class TestMachineAccess(AltitudeCase):
         arguments = dict(question=question["id"], revision=question["revision"], reason="Container work only.",
                          actor="l3", source="project", expected_attempt=1, standing_policy=self.standing_heading)
         arguments.update(overrides)
-        return T.grant_machine_access(self.project, self.slug, "abcdef123456", **arguments)
+        return T.record_grant(self.project, self.slug, "abcdef123456", **arguments)
 
     def test_standing_cli_grant_resume_run_and_revoke_preserve_original_authority(self):
         approval = self.standing()
@@ -234,7 +234,7 @@ class TestMachineAccess(AltitudeCase):
         self.patch(engines, "worker_live", return_value=False)
         question = self.ask(" ".join(self.standing_text.split()), "l3")
         self.assertLess(approval["at"], question["asked"])
-        arguments = ("task", "machine", self.slug, "--grant", "--approval", approval["turn_id"],
+        arguments = ("task", "grant", self.slug, "--approval", approval["turn_id"],
                      "--question", question["id"], "--revision", str(question["revision"]), "--source", "project",
                      "--standing-policy", self.standing_heading, "--reason", "Container work only.")
         env = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l3"}
@@ -253,8 +253,8 @@ class TestMachineAccess(AltitudeCase):
         stored = S.load_task(self.project, self.slug)
         self.assertEqual(stored["state"], "blocked")
         self.assertEqual(stored["questions"][-1]["status"], "open")
-        self.assertEqual(stored["machine_access"], grant)
-        self.assertEqual(self.events("machine-grant")[-1]["policy"], grant["policy"])
+        self.assertEqual(stored["grant"], grant)
+        self.assertEqual(self.events("grant")[-1]["policy"], grant["policy"])
         self.assertIn("only the running owner's", self.run_command("true", status=403)["error"])
         message = self.resumed_by("l3", "Standing grant recorded; continue within its scope.")
         T.resolve_question(self.project, self.slug, question["id"], question["revision"], message,
@@ -267,10 +267,10 @@ class TestMachineAccess(AltitudeCase):
         task["attempt"] = 2
         S.save_task(self.project, task)
         self.assertIn("earlier attempt", self.run_command("true", status=403, attempt="2")["error"])
-        revoked = self.alt("task", "machine", self.slug, "--revoke", "--reason", "Purpose complete.", env=env)
+        revoked = self.alt("task", "grant", self.slug, "--revoke", "--reason", "Purpose complete.", env=env)
         self.assertEqual(revoked.returncode, 0, revoked.stderr)
-        self.assertIsNone(S.load_task(self.project, self.slug)["machine_access"])
-        self.assertIn("no machine grant", self.run_command("true", status=403, attempt="2")["error"])
+        self.assertIsNone(S.load_task(self.project, self.slug)["grant"])
+        self.assertIn("no operator grant", self.run_command("true", status=403, attempt="2")["error"])
 
     def test_standing_grant_refuses_outside_and_mixed_purposes_without_mutation(self):
         self.standing()
@@ -285,8 +285,8 @@ class TestMachineAccess(AltitudeCase):
                     self.standing_grant(question)
                 self.assertEqual(S.load_task(self.project, self.slug), before)
                 T.resume(self.project, self.slug)
-        self.assertEqual(len(self.events("machine-grant-refused")), 6)
-        self.assertFalse(self.events("machine-grant"))
+        self.assertEqual(len(self.events("grant-refused")), 6)
+        self.assertFalse(self.events("grant"))
 
     def test_standing_grant_reads_main_not_branch_dirty_checkout_or_owner_worktree(self):
         self.standing()
@@ -315,7 +315,7 @@ class TestMachineAccess(AltitudeCase):
                 self.commit_standing(document)
                 with self.assertRaisesRegex(T.TransitionError, "standing policy"):
                     self.standing_grant(question)
-                self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+                self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
         git("rm", "AGENTS.md", cwd=self.repo)
         git("commit", "-q", "-m", "Remove standing policy", cwd=self.repo)
         (self.worktree / "AGENTS.md").write_text(self.standing_document)
@@ -337,7 +337,7 @@ class TestMachineAccess(AltitudeCase):
                 self.standing_chat.write_text("".join(json.dumps(row) + "\n" for row in messages))
                 with self.assertRaisesRegex(T.TransitionError, "original operator message in this project's chat"):
                     self.standing_grant(question)
-                self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+                self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
         self.standing_chat.write_text((json.dumps(approval) + "\n") * 2)
         with self.assertRaisesRegex(T.TransitionError, "duplicate project operator message identity"):
             self.standing_grant(question)
@@ -350,7 +350,7 @@ class TestMachineAccess(AltitudeCase):
             with self.subTest(overrides=overrides):
                 with self.assertRaises(T.TransitionError):
                     self.standing_grant(question, **overrides)
-                self.assertIsNone(S.load_task(self.project, self.slug).get("machine_access"))
+                self.assertIsNone(S.load_task(self.project, self.slug).get("grant"))
         T.resume(self.project, self.slug)
         # Even a running owner cannot turn a project standing decision into a self-recorded grant.
         for source in ("task", "project"):
@@ -370,21 +370,21 @@ class TestMachineAccess(AltitudeCase):
         direct, _, _ = self.granted()
         self.standing()
         question = self.ask(self.standing_text, "l3")
-        with self.assertRaisesRegex(T.TransitionError, "revoke the existing machine grant"):
+        with self.assertRaisesRegex(T.TransitionError, "revoke the existing operator grant"):
             self.standing_grant(question)
-        self.assertEqual(S.load_task(self.project, self.slug)["machine_access"], direct)
-        T.revoke_machine_access(self.project, self.slug, "Replace completed purpose.", actor="l3")
+        self.assertEqual(S.load_task(self.project, self.slug)["grant"], direct)
+        T.revoke_grant(self.project, self.slug, "Replace completed purpose.", actor="l3")
         standing = self.standing_grant(question)
         T.resume(self.project, self.slug)
         direct_question = self.ask()
         answer = self.answer(direct_question)
         self.resolve(direct_question, answer)
         arguments = dict(question=direct_question["id"], revision=direct_question["revision"], reason="New purpose.", actor="l3")
-        with self.assertRaisesRegex(T.TransitionError, "revoke the existing machine grant"):
-            T.grant_machine_access(self.project, self.slug, answer["id"], **arguments)
-        self.assertEqual(S.load_task(self.project, self.slug)["machine_access"], standing)
-        T.revoke_machine_access(self.project, self.slug, "Container work complete.", actor="l3")
-        self.assertNotIn("policy", T.grant_machine_access(self.project, self.slug, answer["id"], **arguments))
+        with self.assertRaisesRegex(T.TransitionError, "revoke the existing operator grant"):
+            T.record_grant(self.project, self.slug, answer["id"], **arguments)
+        self.assertEqual(S.load_task(self.project, self.slug)["grant"], standing)
+        T.revoke_grant(self.project, self.slug, "Container work complete.", actor="l3")
+        self.assertNotIn("policy", T.record_grant(self.project, self.slug, answer["id"], **arguments))
 
     def resumed_by(self, actor, reason):
         """altd performs the requested resume; the reason reaches the owner as the requester's message."""
@@ -401,25 +401,25 @@ class TestMachineAccess(AltitudeCase):
         S.save_task(self.project, {**task, "worktree": str(add_worktree(self.repo, self.slug))})
         self.patch(engines, "worker_live", return_value=False)
         grant, _question, _row = self.granted()
-        waiting = self.ask("L3: record the machine grant for the approved purpose, then resume me.", "l3")
+        waiting = self.ask("L3: record the operator grant for the approved purpose, then resume me.", "l3")
         self.assertEqual(waiting["audience"], "l3")
         # An operator's resume reason authorizes that resume only; it answers no question.
         operator_resume = self.resumed_by("burak", "Go on.")
         with self.assertRaisesRegex(T.TransitionError, "original message with authority"):
             T.resolve_question(self.project, self.slug, waiting["id"], waiting["revision"], operator_resume,
                                disposition="answered", reason="Resumed.", expected_attempt=1)
-        waiting = self.ask("L3: record the machine grant for the approved purpose, then resume me.", "l3")
+        waiting = self.ask("L3: record the operator grant for the approved purpose, then resume me.", "l3")
         l3_resume = self.resumed_by("l3", "Grant recorded for the approved purpose.")
         view = T.resolve_question(self.project, self.slug, waiting["id"], waiting["revision"], l3_resume,
                                   disposition="answered", reason="L3 recorded the grant and resumed me.",
                                   expected_attempt=1)
         self.assertEqual((view["status"], view["resolution"]["by"]), ("resolved", "l3"))
-        self.assertEqual(S.load_task(self.project, self.slug)["machine_access"], grant)
+        self.assertEqual(S.load_task(self.project, self.slug)["grant"], grant)
 
     def test_commands_run_only_under_a_grant_and_are_recorded(self):
         refused = self.run_command("echo hello", status=403)
-        self.assertIn("no machine grant", refused["error"])
-        self.assertIn("alt task machine --grant", refused["error"])
+        self.assertIn("no operator grant", refused["error"])
+        self.assertIn("alt task grant", refused["error"])
         grant, question, row = self.granted()
         result = self.run_command("echo hello; echo trouble >&2; pwd; exit 3")
         self.assertEqual((result["exit"], result["timed_out"], result["n"], result["error"]), (3, False, 1, None))
@@ -497,16 +497,16 @@ class TestMachineAccess(AltitudeCase):
         self.tick()
         T.resume(self.project, self.slug)
         with self.assertRaisesRegex(T.TransitionError, "current attempt"):
-            T.revoke_machine_access(self.project, self.slug, "done", actor="l2", expected_attempt=2)
-        task = T.revoke_machine_access(self.project, self.slug, "Purpose complete.", actor="l3")
-        self.assertIsNone(task["machine_access"])
-        self.assertEqual(len(self.events("machine-revoke")), 1)
-        self.assertIn("no machine grant", self.run_command("true", status=403)["error"])
-        with self.assertRaisesRegex(T.TransitionError, "no machine grant"):
-            T.revoke_machine_access(self.project, self.slug, "again", actor="l3")
+            T.revoke_grant(self.project, self.slug, "done", actor="l2", expected_attempt=2)
+        task = T.revoke_grant(self.project, self.slug, "Purpose complete.", actor="l3")
+        self.assertIsNone(task["grant"])
+        self.assertEqual(len(self.events("grant-revoke")), 1)
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+        with self.assertRaisesRegex(T.TransitionError, "no operator grant"):
+            T.revoke_grant(self.project, self.slug, "again", actor="l3")
         self.granted()
-        task = T.revoke_machine_access(self.project, self.slug, "Finished early.", actor="l2", expected_attempt=1)
-        self.assertIsNone(task["machine_access"])
+        task = T.revoke_grant(self.project, self.slug, "Finished early.", actor="l2", expected_attempt=1)
+        self.assertIsNone(task["grant"])
         self.granted()
         task = S.load_task(self.project, self.slug)
         task["attempt"] = 2
@@ -532,21 +532,21 @@ class TestMachineAccess(AltitudeCase):
         self.assertEqual(result.returncode, 7)
         self.assertIn("failing\n", result.stdout)
         self.assertIn("exit 7", result.stdout)
-        result = self.alt("task", "machine", self.slug, "--revoke", "--reason", "Purpose complete.", env=owner)
+        result = self.alt("task", "grant", self.slug, "--revoke", "--reason", "Purpose complete.", env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIsNone(json.loads(result.stdout)["machine_access"])
-        grant_args = ("--grant", "--approval", row["id"], "--question", question["id"],
+        self.assertIsNone(json.loads(result.stdout)["grant"])
+        grant_args = ("--approval", row["id"], "--question", question["id"],
                       "--revision", str(question["revision"]), "--reason", "Same answer.")
-        for elsewhere in (("task", "machine", "other-task"), ("--project", "other", "task", "machine", self.slug)):
+        for elsewhere in (("task", "grant", "other-task"), ("--project", "other", "task", "grant", self.slug)):
             result = self.alt(*elsewhere, *grant_args, env=owner)
             self.assertEqual(result.returncode, 1)
             self.assertIn("only on its own task", result.stderr)
-        result = self.alt("task", "machine", self.slug, *grant_args, env=owner)
+        result = self.alt("task", "grant", self.slug, *grant_args, env=owner)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((json.loads(result.stdout)["purpose"], json.loads(result.stdout)["actor"]),
                          (question["detail"], "l2"))
-        self.alt("task", "machine", self.slug, "--revoke", "--reason", "Done.", env=owner)
-        result = self.alt("task", "machine", self.slug, *grant_args, env={**base, "ALTITUDE_ACTOR": "l3"})
+        self.alt("task", "grant", self.slug, "--revoke", "--reason", "Done.", env=owner)
+        result = self.alt("task", "grant", self.slug, *grant_args, env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["actor"], "l3")
 
@@ -630,12 +630,59 @@ class TestMachineAccess(AltitudeCase):
                           if e["kind"] == "machine-run"], [(self.unit(1), 5)])
         self.assertEqual((self.run_command("echo next")["n"], len(self.events("machine-run"))), (2, 2))
 
+    def test_claude_sessions_may_call_only_their_own_task_runner_natively(self):
+        settings = S.read_json(dispatch.session_settings(self.project, self.slug, "fixture-key"))
+        self.assertEqual(settings["permissions"], {"allow": [f"Bash(alt task run {self.slug} *)"]})
+        # The rule admits the call; altd still refuses it without the task's current grant.
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+
+    def test_revoking_the_grant_stops_the_command_it_is_running(self):
+        self.granted()
+        started, release = self.tmp / "started", self.tmp / "release"
+        stops = []
+        def job_stop(name, env, **kwargs):  # the fixture service manager ends the job when asked
+            stops.append(name)
+            release.touch()
+        self.patch(platform, "job_stop", side_effect=job_stop)
+        with ThreadPoolExecutor(1) as pool:
+            running = pool.submit(self.run_command,
+                                  f"touch {started}; while [ ! -e {release} ]; do sleep .02; done; exit 3")
+            wait_for(started.exists, "the command to start")
+            self.tick()
+            T.revoke_grant(self.project, self.slug, "Operator withdrew permission.", actor="l3")
+            result = running.result(timeout=30)
+        self.assertEqual(stops, [self.unit(1)])
+        self.assertEqual(result["exit"], 3)
+        self.assertIn("grant was revoked", result["error"])
+        [row] = self.rows()
+        self.assertIn("grant was revoked", row["error"])
+        self.assertIn("no operator grant", self.run_command("true", status=403)["error"])
+
+    def test_a_command_interrupted_by_a_restart_is_stopped_when_its_grant_was_revoked_meanwhile(self):
+        grant = self.granted()[0]
+        folder = S.task_dir(self.project, self.slug)
+        (folder / "machine.jsonl").write_text(json.dumps({
+            "n": 1, "purpose": "p", "granted": grant["at"], "command": "make deploy", "unit": self.unit(1),
+            "exit": None, "timed_out": False, "started": datetime.now(timezone.utc).isoformat(), "finished": None,
+            "error": "still running or interrupted with altd"}) + "\n")
+        self.active.add(self.unit(1))
+        self.patch(platform, "job_stop", side_effect=lambda name, env, **kwargs: self.active.discard(name))
+        self.tick()
+        T.revoke_grant(self.project, self.slug, "Operator withdrew permission.", actor="l3")
+        for thread in server.settle_interrupted_machine_commands():
+            thread.join(30)
+        platform.job_stop.assert_called_once()
+        [row] = self.rows()
+        self.assertEqual(row["exit"], None)
+        self.assertIn("grant was revoked", row["error"])
+
     def test_an_interrupted_command_is_settled_from_its_exit_status_or_stays_uncertain(self):
         self.granted()
         folder = S.task_dir(self.project, self.slug)
         runs = folder / "machine.jsonl"
         started = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-        interrupted = {"purpose": "p", "exit": None, "timed_out": False, "started": started, "finished": None,
+        interrupted = {"purpose": "p", "granted": S.load_task(self.project, self.slug)["grant"]["at"], "exit": None,
+                       "timed_out": False, "started": started, "finished": None,
                        "error": "still running or interrupted with altd"}
         runs.write_text(json.dumps({**interrupted, "n": 1, "command": "make gate", "unit": self.unit(1)}) + "\n")
         (folder / f"{self.unit(1)}.exit").write_text("0")
@@ -689,7 +736,7 @@ class TestMachineAccess(AltitudeCase):
         self.run_command("echo first", request=request)
         task = S.load_task(self.project, self.slug)
         task["attempt"] = 2
-        task["machine_access"]["attempt"] = 2
+        task["grant"]["attempt"] = 2
         S.save_task(self.project, task)
         self.assertIn("earlier attempt", self.run_command("echo first", request=request, attempt="2",
                                                           status=403)["error"])

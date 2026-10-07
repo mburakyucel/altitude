@@ -7,7 +7,7 @@ buffer lets a reconnecting page resume where it left off; nothing typed or print
 and closing are recorded, on the task or project log.
 
 Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full command access
-as the operator, outside every worker sandbox and the machine-grant approval flow. A task's own owner may read its
+as the operator, outside every worker sandbox and the operator-grant approval flow. A task's own owner may read its
 task terminal's output (`owner_output`, `owner_connection`), never type into or control it; the last output of an
 ended task terminal stays readable in memory until a new terminal opens there, the task finishes or altd stops.
 """

@@ -644,19 +644,6 @@ def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished:
         time.sleep(0.25)
 
 
-def release_permissions(engine: str, slug: str) -> dict:
-    """Native allowance for the daemon's fixed publish operation, never raw GitHub commands.
-
-    Claude loads these exact rules on launch/resume; inherited denies and managed policy remain
-    authoritative. Codex already admits the command in its ordinary task sandbox. The daemon
-    checks the recorded grant again on every invocation, including after its deadline or revocation.
-    """
-    if engine != "claude":
-        return {}
-    command = f"alt task publish {S.require_task_slug(slug)}"
-    return {"permissions": {"allow": [f"Bash({command})", f"Bash({command} --check)"]}}
-
-
 @config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
@@ -896,16 +883,30 @@ def machine_command(command: str, *, cwd: Path, folder: Path, unit: str, identit
         return str(exc)[:300]
 
 
+def machine_stop(unit: str) -> bool:
+    """Stop a command's job; True once asked, whatever the service manager answered."""
+    try:
+        platform.job_stop(unit, codex_env(retain_user_bus=True))
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        pass
+    return True
+
+
 def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, timeout: int,
-                    launch_error: str | None = None, poll: float = 2) -> dict:
+                    launch_error: str | None = None, poll: float = 2, revoked=lambda: False,
+                    stopped: bool = False) -> dict:
     """Wait until the unit has written its exit status or ended, then return its exit status and timing.
 
     `watched` says this altd saw the job end, so a missing status after the limit is a timeout; a job that ended
-    unseen, while Altitude restarted, without a status stays an explicit uncertainty. Neither is ever a success."""
+    unseen, while Altitude restarted, without a status stays an explicit uncertainty. Neither is ever a success.
+    `revoked()` turning true stops the job: revoking the grant also ends the command it is running. `stopped` says
+    the caller already stopped it for that reason."""
     status = machine_files(folder, unit)[1]
     begun = datetime.fromisoformat(started)
     env = codex_env(retain_user_bus=True)
     while not status.exists():
+        if not stopped and revoked():
+            stopped = machine_stop(unit)
         try:  # the limit ends the job, so past it (and a little grace) nothing is still running
             ended = datetime.now(timezone.utc) >= begun + timedelta(seconds=timeout + 60) or \
                 not platform.job_active(unit, env)
@@ -921,11 +922,13 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
         record["exit"] = int(status.read_text().strip())
         record["finished"] = datetime.fromtimestamp(status.stat().st_mtime, timezone.utc).isoformat()
     except (OSError, ValueError):
-        record["timed_out"] = watched and (finished - begun).total_seconds() >= timeout
+        record["timed_out"] = not stopped and watched and (finished - begun).total_seconds() >= timeout
         record["error"] = (f"stopped at the {timeout}s limit" if record["timed_out"] else
                            f"no exit status recorded: {launch_error or 'the unit ended without writing one'}"
                            if watched else "no exit status recorded: the unit ended while altd restarted, "
                                            "so the result is uncertain")
+    if stopped:
+        record["error"] = "stopped because the grant was revoked; effects it already had remain"
     return record
 
 

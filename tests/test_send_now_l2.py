@@ -41,7 +41,7 @@ class TestSendNowL2(AltitudeCase):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task = self.launch(engine)
-                task.update(hold_merge="Operator review required", machine_access={"fixture": "retained"})
+                task.update(hold_merge="Operator review required", grant={"fixture": "retained"})
                 S.save_task(self.project, task)
                 work = Path(task["worktree"]) / "README.md"
                 work.write_text("Uncommitted work stays here.\n")
@@ -59,7 +59,7 @@ class TestSendNowL2(AltitudeCase):
                 self.worker.on_resume = None
                 current = S.load_task(self.project, task["slug"])
                 self.assertEqual(current["state"], "running")
-                for key in ("session_id", "attempt", "launch_model", "branch", "worktree", "hold_merge", "machine_access"):
+                for key in ("session_id", "attempt", "launch_model", "branch", "worktree", "hold_merge", "grant"):
                     self.assertEqual(current[key], task[key])
                 self.assertNotEqual(current["agent_id"], task["agent_id"])
                 self.assertEqual(work.read_text(), "Uncommitted work stays here.\n")
