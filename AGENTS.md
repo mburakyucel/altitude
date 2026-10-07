@@ -181,13 +181,13 @@ dispatch or resume claim, adversarial review, validation run, report verificatio
 validation holds through its bounded execution and evidence recording; running workers themselves do not hold it).
 New dispatches continue while activation is pending and wait only during the requested restart window.
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
-separate explicit authorization and post-change health verification; a recorded machine grant whose purpose
+separate explicit authorization and post-change health verification; a recorded operator grant whose purpose
 names the service is that authorization for its owner, and every command under it is recorded on the task.
 
 ### Container operations on this machine
 
 The operator's project-chat approval of 2026-10-06 18:24 UTC (`c6f1ba6f5929`) stands until the
-operator revokes it: L3 records a container-scoped machine grant on an owner's request without
+operator revokes it: L3 records a container-scoped operator grant on an owner's request without
 another operator question. Its scope is the Linux container deployment on this machine:
 `scripts/container.py` operations, rootless Podman, the volumes, images and containers the launcher
 creates, and anything executed inside those containers. It excludes the operator's native Altitude

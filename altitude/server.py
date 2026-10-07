@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, releases, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -47,7 +47,7 @@ L3_GH_READS = {
     ("run", "list"), ("run", "view"), ("run", "watch"),
 }
 L3_TASK_TARGETS = {
-    "handoff", "release", "publish",
+    "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
@@ -2057,23 +2057,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self._json({"error": str(exc)}, 400)
-            if parts == ["api", "task", "publish"]:
-                try:
-                    if o.keys() - {"project", "slug", "attempt", "check"} or not isinstance(o.get("check", False), bool):
-                        raise ValueError("alt task publish: unsupported fields")
-                    if not isinstance(o.get("project"), str) or not isinstance(o.get("slug"), str):
-                        raise ValueError("alt task publish: project and slug must be names")
-                    peer, local = self.client_address, self.connection.getsockname()
-                    with config.restart_lock() as ready:
-                        if not ready or config.restart_in_progress():
-                            raise ValueError("Altitude is restarting; retry publication after activation")
-                        result = releases.run(o["project"], o["slug"], o.get("attempt"), check=o.get("check", False),
-                            owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local))
-                    return self._json(result)
-                except PermissionError as exc:
-                    return self._json({"error": str(exc)}, 403)
-                except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
-                    return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish"}:
@@ -2092,8 +2075,10 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command", "request"}:
                         raise ValueError("alt task run: unsupported fields")
-                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                          o.get("request")))
+                    peer, local = self.client_address, self.connection.getsockname()
+                    return self._json(run_machine_command(
+                        o["project"], o["slug"], o.get("attempt"), o.get("command"), o.get("request"),
+                        owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local)))
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError) as exc:
@@ -2680,12 +2665,14 @@ def _machine_rows(runs: Path) -> list[dict]:
     return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
 
 
-def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object) -> dict:
-    """One command under the task's recorded machine grant, executed by altd outside the worker sandbox.
+def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object, *,
+                        owner=lambda task: False) -> dict:
+    """One command under the task's recorded operator grant, executed by altd outside the worker sandbox.
 
-    Only the running owner's current attempt may call it, and only while a grant is recorded. The command, unit,
-    exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task events and
-    the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
+    Only the running owner's current attempt may call it, from its own worker job (`owner(task)`), so another agent
+    holding this machine's key cannot run commands under this task's grant, and only while a grant is recorded. The
+    command, unit, exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task
+    events and the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
     command: calling again with it, after a restart ended the connection, waits for that command's result
     instead of running it again.
     """
@@ -2700,24 +2687,26 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         task = S.load_task(project, slug)
         if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
             raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
+        if not owner(task):
+            raise PermissionError("alt task run: only this task's owner may run its granted commands")
         rows = _machine_rows(runs)
         earlier = next((r for r in rows if r.get("request") == request), None)
         if earlier is not None and earlier.get("attempt") != task.get("attempt"):
             raise PermissionError("alt task run: this request belongs to an earlier attempt")
         if earlier is None:
-            grant = task.get("machine_access")
+            grant = task.get("grant")
             if not grant:
-                raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for "
+                raise PermissionError("alt task run: this task has no operator grant; ask the operator for access for "
                                       "a concrete purpose, resolve their answer, then record it with "
-                                      "alt task machine --grant")
+                                      "alt task grant")
             if grant.get("attempt") != task.get("attempt"):
-                raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
+                raise PermissionError("alt task run: the operator grant belongs to an earlier attempt; ask again")
             if any(r["finished"] is None for r in rows):  # one at a time keeps the record readable
                 raise ValueError("alt task run: one command at a time; the previous command is still running")
             # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
             sequence = len(rows) + 1
             row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
-                   "command": command,
+                   "granted": grant["id"], "command": command,
                    "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
                    "started": datetime.now(timezone.utc).isoformat(), "finished": None,
                    "error": "still running or interrupted with altd"}
@@ -2726,25 +2715,46 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             raise ValueError("alt task run: this request already ran a different command")
     if earlier is not None:
         return _await_machine_row(project, slug, earlier["n"])
+    finished, stopped = threading.Event(), []
+
+    def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation is watched beside it
+        while not finished.wait(MACHINE_POLL_SECONDS):
+            if stopped or _grant_revoked(project, slug, row):
+                stopped.append(True)
+                engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
+
+    threading.Thread(target=stop_when_revoked, daemon=True).start()
     try:  # a launch that fails still settles its row, so it never holds the next command
         launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
                                                folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
                                                identity=dispatch.l2_env(project, slug, task["attempt"]))
     except (OSError, RuntimeError, ValueError, KeyError) as exc:
         launch_error = str(exc)[:300]
-    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error)
+    finally:
+        finished.set()
+    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error, stopped=bool(stopped))
+
+
+def _grant_revoked(project: str, slug: str, row: dict) -> bool:
+    """The grant a command runs under is no longer the task's current grant."""
+    try:
+        grant = S.load_task(project, slug).get("grant") or {}
+    except (OSError, ValueError):
+        return False
+    return grant.get("id") != row.get("granted")
 
 
 def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
-                           launch_error: str | None = None) -> dict:
+                           launch_error: str | None = None, stopped: bool = False) -> dict:
     """Follow the row's unit to its end and complete its row, task event and project log entry once; return the
     completed row with the unit's output. The altd that started the command settles it, and the next altd settles
-    one that a restart interrupted. The row is written last, so a restart between the writes settles it again,
-    and the task event, found by unit, is not repeated."""
+    one that a restart interrupted, stopping it if its grant was revoked meanwhile. The row is written last, so a
+    restart between the writes settles it again, and the task event, found by unit, is not repeated."""
     folder = S.task_dir(project, slug)
     outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
                                       timeout=config.MACHINE_COMMAND_TIMEOUT, launch_error=launch_error,
-                                      poll=MACHINE_POLL_SECONDS)
+                                      poll=MACHINE_POLL_SECONDS, revoked=lambda: _grant_revoked(project, slug, row),
+                                      stopped=stopped)
     runs = folder / "machine.jsonl"
     with S.project_lock(project):
         rows = _machine_rows(runs)
