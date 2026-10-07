@@ -102,10 +102,11 @@ const transcript = {
   slug: "fix-timer",
   engine: "claude",
   session_id: "0123456789abcdef",
-  cursor: 2,
+  attempt: 1, cursor: "fixture:2", lower: "", next: "", more: false, reset: false,
+  has_earlier: false, has_engine_records: true, deleted: [],
   events: [
-    { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "queued → running" },
-    { seq: 1, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
+    { id: "boundary", order: "01", version: 1, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "queued → running" },
+    { id: "reading", order: "02", version: 2, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
   ],
   redaction: "credential-shaped keys and values are redacted",
 };
@@ -358,7 +359,7 @@ describe("Task on desktop", () => {
     expect(within(panel).getByText("Following live · new steps appear at the bottom")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "true");
     expect(String(fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"))?.[0])).toContain(
-      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
+      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&attempt=1&raw=0",
     );
     expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();

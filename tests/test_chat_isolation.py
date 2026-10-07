@@ -138,7 +138,7 @@ class TestChatIsolation(AltitudeCase):
             for project in self.projects:
                 other = next(p for p in self.projects if p != project)
                 sid = f"{engine}-{project}"
-                view = json.loads(self.request(f"/api/transcript/{project}/{slug}?engine={engine}&session_id={sid}"))
+                view = json.loads(self.request(f"/api/transcript/{project}/{slug}?engine={engine}&session_id={sid}&attempt=1&raw=1"))
                 texts = "\n".join(row["text"] for row in view["events"])
                 self.assertIn(f"event::{project}::task", texts)
                 self.assertIn(f"provider::{project}", texts)
@@ -147,7 +147,7 @@ class TestChatIsolation(AltitudeCase):
                 self.assertEqual([row["text"] for row in T.task_messages(project, slug)], [f"message::{project}::task"])
                 self.assertEqual(T.pending(project, slug), T.task_messages(project, slug))
                 with self.assertRaises(transcript.TranscriptAccessError):
-                    transcript.view(project, slug, engine=engine, session_id=f"{engine}-{other}")
+                    transcript.view(project, slug, engine=engine, session_id=f"{engine}-{other}", attempt=1)
 
 
 if __name__ == "__main__":

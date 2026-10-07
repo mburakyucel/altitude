@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
 import { useOptimisticMutation } from "./useOptimisticMutation";
@@ -575,14 +575,17 @@ export const TaskViewSchema = z
 // carries its tool, a one-line summary, and the tool_use_id its result row shares; a Codex command carries
 // its own output.
 export const TranscriptEventSchema = z.object({
-  seq: z.number(), source: z.string(), kind: z.string(), type: z.string(), role: z.string().nullish(),
+  id: z.string(), order: z.string(), version: z.number(),
+  source: z.string(), kind: z.string(), type: z.string(), role: z.string().nullish(),
   at: z.string().nullish(), session_id: z.string().nullish(), text: z.string(),
   tool: z.string().nullish(), summary: z.string().nullish(), tool_use_id: z.string().nullish(),
   output: z.string().nullish(), status: z.string().nullish(), error: z.boolean().nullish(),
   truncated: z.boolean().nullish(), raw: z.unknown().nullish(),
 }).passthrough();
 export const TranscriptSchema = z.object({
-  project: z.string(), slug: z.string(), engine: z.string(), session_id: z.string(), cursor: z.number(),
+  project: z.string(), slug: z.string(), engine: z.string(), session_id: z.string(), attempt: z.number(), cursor: z.string(),
+  lower: z.string(), next: z.string(), more: z.boolean(), reset: z.boolean(),
+  has_earlier: z.boolean(), has_engine_records: z.boolean(), deleted: z.array(z.string()),
   events: z.array(TranscriptEventSchema), redaction: z.string(),
 }).passthrough();
 
@@ -932,9 +935,24 @@ export function useTaskDesign(project: string, slug: string, question: string, r
   });
 }
 
-/** The worker's session as a timeline. `live` (the task is running) polls every 2s; a finished or
- * paused session refreshes at the page's ordinary rate. A 404 is the server saying this attempt has
- * no session file; the page reads that from `ApiError.status`. */
+type TranscriptSync = { rows: Map<string, TranscriptEvent>; cursor: string; after: string; lower: string };
+type TranscriptReader = {
+  data?: Transcript; cursor: string; error: unknown; historyError: unknown;
+  fetching: boolean; historyPending: boolean; catchingUp: boolean; sync?: TranscriptSync;
+};
+
+function mergeTranscript(rows: TranscriptEvent[], page: Transcript): TranscriptEvent[] {
+  const merged = new Map(rows.map(row => [row.id, row]));
+  for (const id of page.deleted) merged.delete(id);
+  for (const row of page.events) {
+    const previous = merged.get(row.id);
+    if (!previous || previous.version <= row.version) merged.set(row.id, row);
+  }
+  return [...merged.values()].sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : 0);
+}
+
+/** Only the mounted viewer retains rows. One serialized reader owns history, deltas and epoch
+ * reconciliation; aborted requests never publish into a different task, attempt or representation. */
 export function useTranscript(
   project: string,
   slug: string,
@@ -943,17 +961,159 @@ export function useTranscript(
   raw: boolean,
   live = true,
   enabled = true,
+  attempt = 1,
 ) {
-  const query = new URLSearchParams({ engine, session_id: sessionId, raw: raw ? "1" : "0" });
-  return useQuery<Transcript>({
-    queryKey: ["transcript", project, slug, engine, sessionId, raw],
-    queryFn: async () => TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`)),
-    refetchInterval: live ? 2_000 : pollInterval,
-    // The poll is the retry: a failed read shows at once (a 404 is the server's answer, no session
-    // file for this task generation) and the next interval reads again.
-    retry: false,
-    enabled: enabled && Boolean(project && slug && engine && sessionId),
-  });
+  const reader = useMemo<TranscriptReader>(() => ({ cursor: "", error: null, historyError: null,
+    fetching: false, historyPending: false, catchingUp: false }), [project, slug, engine, sessionId, attempt, raw]);
+  const [, redraw] = useReducer(n => n + 1, 0);
+  const actions = useRef({ refetch: () => {}, loadOlder: () => {} });
+
+  useEffect(() => {
+    if (!enabled || !project || !slug || !engine || !sessionId) {
+      actions.current = { refetch: () => {}, loadOlder: () => {} };
+      return;
+    }
+    let stopped = false;
+    let busy = false;
+    let historyWanted = false;
+    let continuations = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+    // A cancelled multi-page reconciliation restarts from its original loaded boundary.
+    reader.sync = undefined;
+    reader.catchingUp = Boolean(reader.data);
+    const publish = () => { if (!stopped) redraw(); };
+    const beginSync = () => {
+      reader.sync = { rows: new Map(), cursor: "", after: "", lower: reader.data?.lower ?? "" };
+      reader.catchingUp = true;
+    };
+    const schedule = (delay: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void read(), delay);
+    };
+    const read = async () => {
+      if (stopped || busy) return;
+      clearTimeout(timer);
+      busy = true;
+      const history = historyWanted && !reader.sync && !!reader.data?.has_earlier;
+      historyWanted = false;
+      const sync = reader.sync;
+      const mode = sync ? "reconcile" : history ? "history" : reader.data ? "delta" : "initial";
+      const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt), raw: raw ? "1" : "0", mode });
+      if (sync) {
+        query.set("lower", sync.lower);
+        query.set("after", sync.after);
+        query.set("cursor", sync.cursor);
+      } else if (reader.data) {
+        query.set("cursor", reader.cursor);
+        query.set("lower", reader.data.lower);
+        if (history) query.set("before", reader.data.lower);
+      }
+      controller = new AbortController();
+      reader.fetching = true;
+      reader.historyPending = history;
+      if (history) reader.historyError = null;
+      publish();
+      let again = false;
+      try {
+        const page = TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal: controller.signal }));
+        if (stopped) return;
+        if (page.project !== project || page.slug !== slug || page.engine !== engine || page.session_id !== sessionId || page.attempt !== attempt) {
+          throw new ApiError(404, "The session changed. Refresh the task.");
+        }
+        if (page.reset) {
+          beginSync();
+          again = true;
+        } else if (sync) {
+          if (!sync.cursor) sync.cursor = page.cursor;
+          for (const row of page.events) sync.rows.set(row.id, row);
+          sync.after = page.next;
+          if (!page.more) {
+            reader.data = { ...page, lower: page.has_earlier ? sync.lower : "",
+              events: mergeTranscript([], { ...page, events: [...sync.rows.values()] }), cursor: sync.cursor };
+            reader.cursor = sync.cursor;
+            reader.sync = undefined;
+          }
+          again = true; // The baseline watermark catches writes that raced the forward traversal.
+        } else if (history && reader.data) {
+          reader.data = { ...reader.data, events: mergeTranscript(reader.data.events, page),
+            lower: page.lower, has_earlier: page.has_earlier, has_engine_records: page.has_engine_records };
+          // A history page does not acknowledge changes to already-loaded rows.
+          reader.historyError = null;
+        } else {
+          reader.data = { ...page, events: mergeTranscript(reader.data?.events ?? [], page),
+            lower: mode === "initial" ? page.lower : page.has_earlier ? reader.data?.lower ?? "" : "" };
+          reader.cursor = page.cursor;
+          reader.catchingUp = page.more;
+          again = page.more;
+        }
+        if (!history) reader.error = null;
+      } catch (error) {
+        if (stopped) return;
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+          reader.data = undefined;
+          reader.cursor = "";
+          reader.sync = undefined;
+          reader.error = error;
+          reader.historyError = null;
+        } else if (history) reader.historyError = error;
+        else reader.error = error;
+      } finally {
+        busy = false;
+        if (!stopped) {
+          reader.fetching = false;
+          reader.historyPending = false;
+          publish();
+          if (historyWanted || again) {
+            continuations += 1;
+            schedule(continuations >= 2 ? (continuations = 0, 250) : 0);
+          } else {
+            continuations = 0;
+            schedule(live ? 2_000 : 20_000);
+          }
+        }
+      }
+    };
+    const refresh = () => { if (!busy) void read(); };
+    actions.current = {
+      refetch: refresh,
+      loadOlder: () => {
+        if (!reader.data?.has_earlier || reader.historyPending || reader.sync) return;
+        historyWanted = true;
+        if (!busy) void read();
+      },
+    };
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("online", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    void read();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      controller?.abort();
+      reader.fetching = false;
+      reader.historyPending = false;
+      actions.current = { refetch: () => {}, loadOlder: () => {} };
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [reader, project, slug, engine, sessionId, attempt, raw, enabled, live]);
+
+  return { data: reader.data, error: reader.error, isPending: !reader.data && !reader.error,
+    isError: Boolean(reader.error), isFetching: reader.fetching,
+    historyPending: reader.historyPending, historyError: reader.historyError,
+    reconnecting: Boolean(reader.sync), catchingUp: reader.catchingUp,
+    refetch: () => actions.current.refetch(), loadOlder: () => actions.current.loadOlder() };
+}
+
+const TranscriptRecordSchema = z.object({ text: z.string(), next_offset: z.number().nullable() });
+export async function fetchTranscriptRecord(project: string, slug: string, engine: string, sessionId: string,
+  attempt: number, record: string, offset: number, signal: AbortSignal) {
+  const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt),
+    raw: "1", mode: "record", record, offset: String(offset) });
+  return TranscriptRecordSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal }));
 }
 
 export function useMonitor() {

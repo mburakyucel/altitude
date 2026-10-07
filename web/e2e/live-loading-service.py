@@ -2,10 +2,11 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import sys
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
-from altitude import config, engines, server, state as S, tasks as T
+from altitude import config, engines, server, state as S, tasks as T, transcript
 
 
 def main():
@@ -37,7 +38,7 @@ def main():
     engines.public_message_identity = lambda _engine, _value: None
 
     tasks = []
-    for count in (100, 5000):
+    for count in ((0, 100) if "single" in sys.argv else (0, 100, 5000, 20000)):
         row = T.new(project, f"Inspect {count} activity records", "Fictional long-session loading measurement.")
         slug = row["slug"]
         worktree = add_worktree(repo, slug)
@@ -47,7 +48,8 @@ def main():
         path = config.ROOT / f"fixture-{count}.jsonl"
         # Last record is a visible message, so measuring the landmark proves recent content arrived.
         rows = [record(index, count) for index in range(count)]
-        rows.append(record(count, count))
+        if count:
+            rows.append(record(count, count))
         path.write_text("".join(json.dumps(value) + "\n" for value in rows))
         sources[slug] = (path, {"id": session, "session_id": session, "started_at": start.isoformat(), "input_delivered": True})
         counts[slug] = count
@@ -61,15 +63,39 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
-            if self.path != "/fixture/append":
+            if self.path not in ("/fixture/append", "/fixture/control"):
                 return super().do_POST()
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             slug = body["slug"]
+            mode = "append" if self.path == "/fixture/append" else body["mode"]
+            path = sources[slug][0]
+            if mode == "reset-index":
+                with transcript._indexes_lock:
+                    transcript._indexes.clear()
+                return self._json({"ok": True})
+            if mode == "replace-source":
+                replacement = path.with_suffix(".replacement")
+                replacement.write_bytes(path.read_bytes())
+                replacement.replace(path)
+                return self._json({"ok": True})
+            if mode == "empty":
+                path.write_text("")
+                return self._json({"ok": True})
             counts[slug] += 4
             value = record(counts[slug], "update")
-            with sources[slug][0].open("a") as stream:
+            if mode == "late":
+                value = record(-4, "late")
+            elif mode == "command-result":
+                # An appended result changes an existing old call, behind the recent tail.
+                value["row"].update(kind="result", role="tool", tool_use_id="call-0",
+                                    text="Late fixture command result: complete.")
+            elif mode == "long-record":
+                value["row"]["text"] = "Long fixture record " + "readable detail " * 900
+            elif mode != "append":
+                return self._json({"error": "Unknown fixture control"}, 400)
+            with path.open("a") as stream:
                 stream.write(json.dumps(value) + "\n")
-            return self._json({"latest": f"Activity update {counts[slug]}:"})
+            return self._json({"latest": value["row"]["text"].split(":")[0][:80] + ":"})
 
     serve(Handler)
 
