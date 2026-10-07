@@ -177,13 +177,13 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
   expect((await request.post("/fixture/integrate")).ok()).toBe(true);
   await walk.open("/projects/atlas/tasks/release-notes");
   await walk.state("08c-integrated-head-stays-approved", {
-    visible: [v.main.getByText("Waits for L3").first(), v.bubble("Approved: merge PR #42.")],
+    visible: [v.main.getByText("Waiting for coordinator").first(), v.bubble("Approved: merge PR #42.")],
     hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true }), v.main.getByText("Your turn · review PR #42")],
   });
   await walk.open("/projects/atlas?tab=work");
   const work = page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Release notes ·/ });
   await walk.state("08d-integrated-head-work-row", {
-    visible: [work.getByText("Waits for L3", { exact: true })],
+    visible: [work.getByText(/^Waiting for the coordinator:/)],
     hidden: [work.getByText(/Your turn/)],
   });
   await walk.open("/");
@@ -205,14 +205,14 @@ test("Work rows say whose turn it is", async ({ page }, info) => {
       row("Release notes").getByText("Your turn · review PR #42", { exact: true }),
       row("Cache warmup").getByText(/^L2 working/),
       row("Retry policy").getByText("L2 replying to you", { exact: true }),
-      row("Repair checkout").getByText("Paused · Checkout unavailable.", { exact: true }),
-      row("Stopped validation").getByText("Stopped by you", { exact: true }),
+      row("Repair checkout").getByText("A system problem paused work. Waiting for the coordinator to check the blocker.", { exact: true }),
+      row("Stopped validation").getByText("You requested a stop; confirmation is in the task.", { exact: true }),
     ],
     hidden: [row("Cache warmup").getByText(/Your turn/), row("Retry policy").getByText(/Your turn/), work.getByRole("article")],
   });
   await row("Repair checkout").click();
   await walk.state("09b-fault-header", {
-    visible: [v.main.getByText("Paused · fault").first()],
+    visible: [v.main.getByText("Work interrupted").first()],
     hidden: [v.turn, v.conversation.getByText(/Your turn/)],
   });
 });

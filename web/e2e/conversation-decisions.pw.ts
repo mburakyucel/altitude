@@ -319,7 +319,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await expect(page).toHaveURL(workPath);
   // Stop is the operator's own action: the turn stays with the L2 and the questions stay open.
   await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
-    visible: [row.getByText("Stopped by you", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
+    visible: [row.getByText("You requested a stop; confirmation is in the task.", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
   await row.click();

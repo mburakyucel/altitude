@@ -1332,10 +1332,18 @@ No summarizer or duplicate reply is generated. View changes preserve the draft a
 blocked questions use the existing question conversation, and finished tasks remove the preview,
 composer and Stop.
 
-An owner/daemon park without a question, review, fault or operator stop remains blocked and displays
-**Paused** with an idle card dot. Queue and restart inventories call an unassigned wait **paused**;
-they attribute waits only to a recorded recipient or the operator's turn. **Stopped by you**
-identifies an operator stop, and a fault reads **Paused · fault**.
+An owner/daemon park without a question, review, fault or operator stop remains blocked with an
+idle card dot. Task rows and pages explain the recorded wait in short prose; an absent reason says
+**Work is paused; no reason is recorded.** Current questions identify the coordinator's prerequisite,
+the operator's unanswered question or the owner's continuation after a reply. Faults retain a red
+indication alongside independent questions and merge holds. Worker death means the session ended
+before completion; its raw worker identity and output remain in Task details and incident evidence.
+An open coordinator prerequisite survives a replaced fault reason and remains visible. No text
+inference clears a fault, requests operator action, assumes a reboot or promises recovery.
+Queue and restart inventories retain their operational labels. **Stopped by you** requires confirmed
+steering evidence; a row with only a stop request points to the task for confirmation. Planned waits
+name the prerequisite title when available, while capacity and recorded resume checkpoints use the
+queue's own wait. Presentation changes none of these lifecycle states or controls.
 
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline

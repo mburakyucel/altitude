@@ -7,10 +7,10 @@ const hold = "The operator must inspect the phone reading and composing layouts,
 const block = "Keep the decision open until its owner can verify the expected behavior against the complete task brief. This longer explanation remains available without taking a permanent paragraph above the conversation, including while the software keyboard is open.";
 const cases = [
   { key: "running-held", state: "running", label: "L2 working", held: true },
-  { key: "waiting-l3", state: "blocked", label: "Waits for L3", held: false, audience: "l3" },
-  { key: "waiting-l3-held", state: "blocked", label: "Waits for L3", held: true, audience: "l3" },
+  { key: "waiting-l3", state: "blocked", label: "Waiting for coordinator", held: false, audience: "l3" },
+  { key: "waiting-l3-held", state: "blocked", label: "Waiting for coordinator", held: true, audience: "l3" },
   { key: "operator-held", state: "blocked", label: "Your turn · 1 question", held: true, audience: "operator" },
-  { key: "fault-held", state: "blocked", label: "Paused · fault", held: true, fault: "browser" },
+  { key: "fault-held", state: "blocked", label: "Work interrupted", held: true, fault: "browser" },
   { key: "paused", state: "blocked", label: "Paused", held: false },
 ];
 
@@ -61,7 +61,7 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
   await expect(readingAnchor).toBeInViewport();
   const readingOffset = await anchorOffset();
   await walk.state("01-reading-collapsed", {
-    visible: [opener, field, latest, readingAnchor, page.getByText(scene.label, { exact: true }).first(), ...(scene.fault ? [page.getByText("The verification browser could not start. L3 has been told.")] : [])],
+    visible: [opener, field, latest, readingAnchor, page.getByText(scene.label, { exact: true }).first(), ...(scene.fault ? [page.getByText("A system problem paused work. Waiting for the coordinator to check the blocker.")] : [])],
     hidden: [dialog, page.getByText(hold, { exact: true }), page.getByText(reason, { exact: true }), ...(phone ? [page.getByRole("button", { name: "Reject", exact: true })] : [])],
   });
   for (const keyboard of phone ? [false, true] : [false]) {

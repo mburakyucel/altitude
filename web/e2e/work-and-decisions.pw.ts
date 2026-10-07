@@ -233,8 +233,8 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(v.panel.getByRole("article")).toHaveCount(0);
   await expect(v.panel.getByRole("button", { name: "Fast-forward it", exact: true })).toHaveCount(0);
   const pausedRow = current.getByRole("link", { name: `${parked.title} · Paused`, exact: true });
-  const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · Stopped by you`, exact: true });
-  const faultRow = current.getByRole("link", { name: `${faulty.title} · Paused · Checkout unavailable.`, exact: true });
+  const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · You requested a stop; confirmation is in the task.`, exact: true });
+  const faultRow = current.getByRole("link", { name: `${faulty.title} · A system problem paused work. Waiting for the coordinator to check the blocker.`, exact: true });
   await expect(pausedRow.locator(".dot")).toHaveAttribute("data-state", "idle");
   await expect(stoppedRow.locator(".dot")).toHaveAttribute("data-state", "danger");
   await expect(faultRow.locator(".dot")).toHaveAttribute("data-state", "danger");
@@ -245,7 +245,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
     hidden: [pausedRow.getByText(/Your turn|Stopped/)],
   });
   await walk.state("01-current-waiting-queued-and-l3", {
-    visible: [waiting.getByText(/Your turn · 1 question/), current.getByRole("link", { name: startsWith(queued.title as string) }), current.getByRole("link", { name: `${waitsL3.title} · Waits for L3`, exact: true }), fold],
+    visible: [waiting.getByText(/Your turn · 1 question/), current.getByRole("link", { name: startsWith(queued.title as string) }), current.getByRole("link", { name: startsWith(`${waitsL3.title} · Waiting for the coordinator`) }), fold],
     hidden: [v.panel.getByText(decision.question, { exact: true }), v.panel.getByRole("link", { name: /^Link task PR chips/ })],
   });
   await walk.state("02-recent-completion-expanded", {

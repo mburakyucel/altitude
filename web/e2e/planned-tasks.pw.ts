@@ -22,8 +22,8 @@ const control = async (request: APIRequestContext, action: string) => {
 test("planned work accepts a brief update, releases through capacity, and auto-releases its dependency", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const work = page.getByRole("region", { name: "Work", exact: true });
-  const plannedRow = work.getByRole("link", { name: `Check index compatibility · Planned · waits for ${reason}`, exact: true });
-  const dependentRow = work.getByRole("link", { name: `Measure migrated index · Planned · waits for ${dependency}`, exact: true });
+  const plannedRow = work.getByRole("link", { name: `Check index compatibility · Planned · Waiting for ${reason}.`, exact: true });
+  const dependentRow = work.getByRole("link", { name: `Measure migrated index · Planned · Waiting for “Migrate the index” to finish.`, exact: true });
   await walk.open(workPath);
   await walk.state("01-planned-beside-running", { visible: [plannedRow, dependentRow, work.getByRole("link", { name: /^Migrate the index · L2 working/ })], hidden: [] });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -36,7 +36,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await plannedRow.click();
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
-  const notice = conversation.getByText(`Waits for ${reason}`, { exact: true });
+  const notice = page.locator(".task-explanation").getByText(`Waiting for ${reason}.`, { exact: true });
   await walk.state("02-planned-empty-conversation", { visible: [field, notice, conversation.getByText("No messages yet.", { exact: true })], hidden: [conversation.getByRole("button", { name: /^Stop/ })] });
   const update = "Keep pagination tokens compatible after the index migration.";
   await field.fill(update);
@@ -53,7 +53,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
 
   await control(request, "release");
   await walk.open(workPath);
-  const queuedRow = work.getByRole("link", { name: /^Check index compatibility · Queued · waits for a slot/ });
+  const queuedRow = work.getByRole("link", { name: /^Check index compatibility · Queued · waits for a free task slot/ });
   await walk.state("04-released-queued-at-capacity", { visible: [queuedRow, dependentRow], hidden: [plannedRow] });
   await expect(queuedRow).toContainText("WIP limit: 1 running on this machine");
   const released = await readTask(request);
@@ -64,7 +64,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await control(request, "complete-dependency");
   await walk.open(workPath);
   const runningRow = work.getByRole("link", { name: /^Check index compatibility · L2 replying to you/ });
-  const dependentQueued = work.getByRole("link", { name: /^Measure migrated index · Queued · waits for a slot/ });
+  const dependentQueued = work.getByRole("link", { name: /^Measure migrated index · Queued · waits for a free task slot/ });
   await walk.state("05-running-and-dependency-auto-released", { visible: [runningRow, dependentQueued], hidden: [queuedRow, dependentRow] });
   expect((await readTask(request, dependency)).state).toBe("done");
   expect((await readTask(request)).state).toBe("running");

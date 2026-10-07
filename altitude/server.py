@@ -2971,12 +2971,27 @@ def issue_write(project: str, operation: str, body: str, *, actor: str, title: s
     return url
 
 
+def task_wait_view(project: str, task: dict) -> dict:
+    """Resolve a planned prerequisite's title without changing the saved wait."""
+    wait = task.get("planned_wait")
+    if not wait:
+        return task
+    title = None
+    if wait.get("after"):
+        try:
+            title = S.load_task(project, wait["after"]).get("title")
+        except S.TaskNotFound:
+            pass
+    return {**task, "planned_wait": {**wait, "after_title": title}}
+
+
 def project_view(name: str) -> dict:
     proj = config.project(name)
     week = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat()  # S.now()'s form
     live = {s["slug"]: s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("project") == name}
     tasks = []
     for t in S.list_tasks(name):
+        t = task_wait_view(name, t)
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
         tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
@@ -3012,7 +3027,7 @@ TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 def task_view(project: str, slug: str) -> dict:
     questions = T.question_views(project, slug)
     with S.project_lock(project):
-        t = S.load_task(project, slug)
+        t = task_wait_view(project, S.load_task(project, slug))
         d = S.task_dir(project, slug)
         report = S.read_json(d / "report.json")
         files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}

@@ -272,9 +272,9 @@ describe("Project page", () => {
     const active = within(panel).getByRole("region", { name: "Current" });
     const row = (name: RegExp) => within(active).getByRole("link", { name });
     expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · L2 working · Opus on Alpha · started 2 min ago");
-    expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waits for L3");
+    expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waiting for the coordinator: which suite?");
     expect(row(/^Ask L3/).querySelector(".dot")).toHaveAttribute("data-state", "running");
-    expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a slot · WIP limit: 1 running on this machine");
+    expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a free task slot");
     expect(within(panel).queryByRole("region", { name: "Needs you" })).toBeNull();
 
     const fold = within(panel).getByText("Done this week (1)");
@@ -307,7 +307,7 @@ describe("Project page", () => {
     setViewport(width);
     const { queryClient } = renderApp({ route: "/projects/altitude?tab=work" });
     const panel = await screen.findByRole("region", { name: "Work" });
-    const row = within(panel).getByRole("link", { name: "Index follow-up · Planned · waits for index-migration" });
+    const row = within(panel).getByRole("link", { name: "Index follow-up · Planned · Waiting for prerequisite task “index-migration” to finish." });
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "idle");
     expect(row).toHaveAttribute("href", "/projects/altitude/tasks/later");
     expect(within(panel).getByRole("link", { name: /^Fix the timer · L2 working/ })).toBeInTheDocument();
@@ -372,11 +372,11 @@ describe("Project page", () => {
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     const panel = await screen.findByRole("region", { name: "Work" });
     const row = within(panel).getByRole("link", { name: /^Add the badge/ });
-    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Stopped by you");
+    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · You requested a stop; confirmation is in the task.");
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "danger");
     fixtures.project = { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", fault: "host", blocked_reason: "Cannot write the checkout.", resume_after: ago(-1) }] };
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
-    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Paused · Cannot write the checkout."));
+    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · A system problem paused work. Waiting for the coordinator to check the blocker."));
     expect(row).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
   });
 
