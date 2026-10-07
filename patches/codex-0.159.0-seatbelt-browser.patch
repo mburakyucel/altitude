@@ -1,0 +1,486 @@
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -157,7 +157,7 @@
+ resolver = "2"
+ 
+ [workspace.package]
+-version = "0.159.0"
++version = "0.0.0"
+ # Track the edition for all workspace crates in one place. Individual
+ # crates can still override this value, but keeping it here means new
+ # crates created with `cargo new -w ...` automatically inherit the 2024
+--- a/codex-rs/sandboxing/src/seatbelt.rs
++++ b/codex-rs/sandboxing/src/seatbelt.rs
+@@ -3,6 +3,8 @@
+ use codex_network_proxy::PROXY_URL_ENV_KEYS;
+ use codex_network_proxy::has_proxy_url_env_vars;
+ use codex_network_proxy::proxy_url_env_value;
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemSandboxEntry;
+ use codex_protocol::permissions::FileSystemSandboxPolicy;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
+ use codex_protocol::permissions::PROTECTED_METADATA_PATH_NAMES;
+@@ -1050,6 +1052,48 @@
+         file_write_policy,
+         network_policy,
+     ];
++    // I-20260929-203338: confined Chromium headless-shell startup needs its
++    // rendezvous service. A lossy legacy projection must not grant IPC to a
++    // narrower custom filesystem profile. Match only the current protected
++    // workspace class; keep its manager denies in the original emitted policy.
++    // Names are shared, not task identities. Real UID matches Altitude's seam.
++    if profile == MacosSeatbeltProfile::Process
++        && network_sandbox_policy.is_enabled()
++        && let Ok(legacy_policy @ SandboxPolicy::WorkspaceWrite { .. }) = file_system_sandbox_policy
++            .to_legacy_sandbox_policy(network_sandbox_policy, sandbox_policy_cwd)
++        && {
++            let mut protected_workspace =
++                FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
++                    &legacy_policy,
++                    sandbox_policy_cwd,
++                );
++            // Match :workspace's named-profile compiler (permissions.rs): it
++            // omits legacy skip-missing defaults. Normalize only this reference;
++            // never discard restrictions from the supplied/emitted policy.
++            protected_workspace.remove_skip_missing_path_entries();
++            let uid = unsafe { libc::getuid() };
++            for suffix in ["bus", "systemd"] {
++                protected_workspace
++                    .entries
++                    .push(FileSystemSandboxEntry::new(
++                        AbsolutePathBuf::from_absolute_path(format!("/run/user/{uid}/{suffix}"))
++                            .map_err(|error| {
++                                SeatbeltPreparationError::FileSystem(error.to_string())
++                            })?
++                            .into(),
++                        FileSystemAccessMode::Deny,
++                    ));
++            }
++            file_system_sandbox_policy
++                .is_semantically_equivalent_to(&protected_workspace, sandbox_policy_cwd)
++        }
++    {
++        policy_sections.push(
++            r#"(allow mach-register mach-lookup
++  (global-name-regex #"^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][1-9][0-9]*$"))"#
++                .to_string(),
++        );
++    }
+     if file_system_sandbox_policy.has_full_disk_read_access() {
+         policy_sections.push(MACOS_SEATBELT_PREFERENCES_POLICY.to_string());
+     }
+--- a/codex-rs/sandboxing/src/seatbelt_tests.rs
++++ b/codex-rs/sandboxing/src/seatbelt_tests.rs
+@@ -114,6 +114,412 @@
+ }
+ 
+ struct TestConfigReloader;
++
++#[test]
++fn chromium_rendezvous_only_for_protected_networked_workspace_processes() {
++    let workspace = TempDir::new().expect("temporary workspace");
++    let mut canonical = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
++        &SandboxPolicy::WorkspaceWrite {
++            writable_roots: Vec::new(),
++            network_access: true,
++            exclude_tmpdir_env_var: true,
++            exclude_slash_tmp: true,
++        },
++        workspace.path(),
++    );
++    // Named :workspace inheritance omits these defaults during TOML conversion.
++    canonical.remove_skip_missing_path_entries();
++    let uid = unsafe { libc::getuid() };
++    let manager_denies = ["bus", "systemd"].map(|suffix| {
++        FileSystemSandboxEntry::new(
++            absolute_path(&format!("/run/user/{uid}/{suffix}")).into(),
++            FileSystemAccessMode::Deny,
++        )
++    });
++    let mut protected = canonical.clone();
++    protected.entries.extend(manager_denies.clone());
++    let mut reordered = protected.clone();
++    reordered.entries.reverse();
++    let mut duplicated = protected.clone();
++    duplicated.entries.extend(manager_denies.clone());
++    let mut denied_glob = protected.clone();
++    denied_glob.entries.push(FileSystemSandboxEntry {
++        path: FileSystemPath::GlobPattern {
++            pattern: format!("{}/**/*.env", workspace.path().display()),
++        },
++        access: FileSystemAccessMode::Deny,
++        missing_path_behavior: None,
++    });
++    let git_common = workspace.path().join("repository/.git");
++    let git_worktree = git_common.join("worktrees/task");
++    let task_state = workspace.path().join("task-state");
++    for path in [&git_common, &git_worktree, &task_state] {
++        fs::create_dir_all(path).expect("create writable role root");
++    }
++    // Compiler-derived altitude-task shape, independently of the legacy
++    // constructor used by the guard. Named :workspace expands project roots
++    // into concrete paths and omits skip-missing metadata entries.
++    let mut worker = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::SlashTmp,
++            },
++            FileSystemAccessMode::Write,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Tmpdir,
++            },
++            FileSystemAccessMode::Write,
++        ),
++    ]);
++    worker.entries.extend(
++        [
++            workspace.path().to_path_buf(),
++            git_common,
++            git_worktree,
++            task_state,
++        ]
++        .into_iter()
++        .map(|path| {
++            FileSystemSandboxEntry::new(
++                AbsolutePathBuf::from_absolute_path(path)
++                    .expect("absolute root")
++                    .into(),
++                FileSystemAccessMode::Write,
++            )
++        }),
++    );
++    worker.entries.extend(manager_denies.clone());
++    let mut denied_read = protected.clone();
++    denied_read.entries.push(FileSystemSandboxEntry::new(
++        AbsolutePathBuf::from_absolute_path(workspace.path().join("private"))
++            .expect("absolute private path")
++            .into(),
++        FileSystemAccessMode::Deny,
++    ));
++    let mut read_only_child = protected.clone();
++    read_only_child.entries.push(FileSystemSandboxEntry::new(
++        AbsolutePathBuf::from_absolute_path(workspace.path().join("docs"))
++            .expect("absolute docs path")
++            .into(),
++        FileSystemAccessMode::Read,
++    ));
++    let minimal = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Minimal,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("absolute workspace")
++                .into(),
++            FileSystemAccessMode::Write,
++        ),
++    ]);
++    let mut coordinator = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("runtime path")
++                .into(),
++            FileSystemAccessMode::Write,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path().join("project"))
++                .expect("project path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++    ]);
++    coordinator.entries.extend(manager_denies.clone());
++    let captured_review = FileSystemSandboxPolicy::restricted(vec![
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Root,
++            },
++            FileSystemAccessMode::Deny,
++        ),
++        FileSystemSandboxEntry::new(
++            FileSystemPath::Special {
++                value: FileSystemSpecialPath::Minimal,
++            },
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path())
++                .expect("review runtime path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++        FileSystemSandboxEntry::new(
++            AbsolutePathBuf::from_absolute_path(workspace.path().join("snapshot"))
++                .expect("snapshot path")
++                .into(),
++            FileSystemAccessMode::Read,
++        ),
++    ]);
++    let mut cases = vec![
++        (
++            "protected workspace",
++            protected.clone(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "equivalent reordered custom",
++            reordered,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "equivalent duplicated denies",
++            duplicated,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "worker Git and task roots",
++            worker,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            true,
++        ),
++        (
++            "plain workspace",
++            canonical.clone(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "network-disabled workspace",
++            protected.clone(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "filesystem helper",
++            protected.clone(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::FileSystemHelper,
++            false,
++        ),
++        (
++            "coordinator role",
++            coordinator.clone(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "coordinator filesystem with network",
++            coordinator,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "captured reviewer role",
++            captured_review.clone(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "captured reviewer with network",
++            captured_review,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "read-only with network",
++            FileSystemSandboxPolicy::read_only(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "read-only without network",
++            FileSystemSandboxPolicy::read_only(),
++            NetworkSandboxPolicy::Restricted,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "unrestricted",
++            FileSystemSandboxPolicy::unrestricted(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "external sandbox",
++            FileSystemSandboxPolicy::external_sandbox(),
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom denied read",
++            denied_read,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom denied glob",
++            denied_glob,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "custom read-only child",
++            read_only_child,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++        (
++            "restricted minimal reviewer",
++            minimal,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ),
++    ];
++    for suffix in ["bus", "systemd"] {
++        let mut missing = canonical.clone();
++        missing.entries.push(FileSystemSandboxEntry::new(
++            absolute_path(&format!("/run/user/{uid}/{suffix}")).into(),
++            FileSystemAccessMode::Deny,
++        ));
++        cases.push((
++            "missing one manager deny",
++            missing,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ));
++    }
++    for path in [
++        format!("/run/user/{}", uid),
++        format!("/run/user/{uid}/bus/child"),
++        format!("/run/user/{uid}/systemd/child"),
++        format!("/run/user/{}/bus", u64::from(uid) + 1),
++        format!("/run/user/{}/systemd", u64::from(uid) + 1),
++    ] {
++        let mut substitution = protected.clone();
++        // Replace the deny of the corresponding service, rather than add a redundant child.
++        let index = if path.ends_with("systemd") || path.contains("systemd/") {
++            1
++        } else {
++            0
++        };
++        substitution
++            .entries
++            .retain(|entry| entry != &manager_denies[index]);
++        substitution.entries.push(FileSystemSandboxEntry::new(
++            absolute_path(&path).into(),
++            FileSystemAccessMode::Deny,
++        ));
++        cases.push((
++            "wrong UID or parent/child deny",
++            substitution,
++            NetworkSandboxPolicy::Enabled,
++            MacosSeatbeltProfile::Process,
++            false,
++        ));
++    }
++    for (name, filesystem, network, profile, permitted) in cases {
++        let original = filesystem.clone();
++        let args = create_seatbelt_command_args_with_profile(
++            CreateSeatbeltCommandArgsParams {
++                command: vec!["/usr/bin/true".to_string()],
++                file_system_sandbox_policy: &filesystem,
++                network_sandbox_policy: network,
++                sandbox_policy_cwd: workspace.path(),
++                enforce_managed_network: false,
++                managed_network: None,
++                environment_id: None,
++                network: None,
++                extra_allow_unix_sockets: &[],
++            },
++            profile,
++            /*allowed_symlinked_codex_home*/ None,
++        )
++        .expect("policy assembly");
++        assert_eq!(
++            filesystem, original,
++            "assembly must preserve original policy: {name}"
++        );
++        let text = seatbelt_policy_arg(&args);
++        assert_eq!(
++            text.contains("(allow mach-register mach-lookup"),
++            permitted,
++            "{name}"
++        );
++        if permitted {
++            for suffix in ["bus", "systemd"] {
++                let path = format!("/run/user/{uid}/{suffix}");
++                assert!(
++                    args.iter().any(|arg| arg.ends_with(&format!("={path}"))),
++                    "manager deny must remain in emitted params: {name} {path}"
++                );
++            }
++            assert!(text.contains("file-read"));
++            assert!(text.contains("require-not"));
++            let expression = text
++                .split("(global-name-regex #\"")
++                .nth(1)
++                .expect("rendezvous filter")
++                .split('"')
++                .next()
++                .expect("expression");
++            let matcher = regex_lite::Regex::new(expression).expect("name matcher");
++            for service in [
++                "org.chromium.Chromium.MachPortRendezvousServer.1",
++                "org.chromium.Chromium.MachPortRendezvousServer.1234",
++            ] {
++                assert!(matcher.is_match(service));
++            }
++            for service in [
++                "com.apple.WindowServer",
++                "org.chromium.Chromium.MachPortRendezvousServer.",
++                "org.chromium.Chromium.MachPortRendezvousServer.0",
++                "org.chromium.Chromium.MachPortRendezvousServer.01",
++                "org.chromium.Chromium.MachPortRendezvousServer.-1",
++                "org.chromium.Chromium.MachPortRendezvousServer.1234.extra",
++                "prefix.org.chromium.Chromium.MachPortRendezvousServer.1234",
++                "orgXchromiumXChromiumXMachPortRendezvousServerX1234",
++            ] {
++                assert!(
++                    !matcher.is_match(service),
++                    "unexpected service match: {service}"
++                );
++            }
++        }
++    }
++}
+ 
+ impl ConfigReloader for TestConfigReloader {
+     fn source_label(&self) -> String {

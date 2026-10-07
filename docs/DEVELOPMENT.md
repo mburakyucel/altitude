@@ -28,9 +28,10 @@ then `alt serve` with the same environment. It still needs the systemd user mana
 logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
 
-`make check` runs the full Python suite alongside the ordered web unit, TypeScript/build and
-isolated browser phases. The standard-library `scripts/time_command.py` reports wall/user/system
-timing without GNU-specific `time` options. Each summary is written as one block so parallel
+`make check` runs the full Python suite alongside the ordered web unit, TypeScript/build,
+full Chromium browser suite and headless-shell recovery lane. Each phase retains
+wall/user/system timing through the standard-library `scripts/time_command.py`,
+without GNU-specific `time` options. Each summary is written as one block so parallel
 branches do not interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
 dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
 fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
@@ -174,9 +175,18 @@ and execution. Only this fictional local UI harness disables Chromium's own sand
 filesystem sandbox; profiles/configuration remain temporary or under
 ignored `web/ui-artifacts/`. Missing browsers fail with installation guidance.
 Incident I-20260907-041446 records an installed Chrome AppArmor network restriction in that worker
-context. The harness uses locked bundled Chromium in Altitude home's shared `browsers/` directory;
+context. The full harness uses locked bundled Chromium in Altitude home's shared `browsers/` directory;
 a missing bundle is a failed prerequisite. This historical observation does not diagnose other hosts
 or establish that bundled Chromium supports its own sandbox inside a worker.
+
+`make ui-shell` repeats the project-isolation/draft and file-reference/clipboard walkthroughs in
+Playwright's locked headless shell at both viewports. The required check runs this lane after the
+unchanged full browser suite. `pnpm ui:shell` selects it explicitly; output and HTML reports live in
+`web/ui-artifacts/shell-results/` and `report/shell/` beside the full suite's retained report.
+Both distributions use the same fictional services, permissions and temporary storage. The shell
+lacks notification APIs needed by the alert
+walkthroughs; it is a recovery path for these named journeys, not full browser parity. The primary
+suite retains its full Chromium channel and all existing tests, workers, retries and gates.
 
 `web/e2e/fixtures.ts` starts the disposable services. `acceptance-service.py` supplies fictional
 tasks/history for route and component walkthroughs. Project-isolation and project-lifecycle
@@ -249,6 +259,56 @@ off the HTTP cache, and records each request's encoded size, encoding and cache 
 Chrome DevTools Protocol, with `Network.emulateNetworkConditions` for slow links. Wait for a landmark
 and the script's finished load, never network idle: the change stream stays open. Report cold, warm
 and slow opens separately, and keep simulated links distinct from the operator's real connection.
+
+## Native Mac browser runtime candidate
+
+The [pinned runtime patch](../patches/codex-0.159.0-seatbelt-browser.patch) is a preparation
+artifact for incident I-20260929-203338 ([issue 625](https://github.com/mburakyucel/altitude/issues/625)).
+It applies to upstream commit `687a119f0fcaace47e1f1abcc77cec6c813fd6da`. The release archive's
+workspace version is reset to `0.0.0` to match its unchanged Cargo lockfile; external dependency
+versions, checksums and Git revisions stay pinned. Rust uses the upstream `1.95.0` toolchain.
+Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
+`just test -p codex-sandboxing --lib --locked --target aarch64-apple-darwin --cargo-profile dev-small`.
+The patch admits only a network-enabled process policy semantically equal to canonical
+workspace-write plus both `/run/user/<real UID>/bus` and `/run/user/<real UID>/systemd` denies.
+The comparison uses the named-profile compiler's canonical form, which omits legacy skip-missing
+defaults. Only the comparison operand is normalized; supplied restrictions and the emitted
+filesystem policy are unchanged. Plain workspace-write is excluded, as are
+other narrower policies. Identical effective permissions share eligibility regardless of profile name.
+The added policy tests cover effective worker roots, current role combinations, missing or wrong-UID
+denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
+tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
+
+Build the CLI and its code-mode host together using upstream's package builder's verified V8
+artifact pair:
+
+```sh
+cargo build --locked --target aarch64-apple-darwin --profile dev-small --bin codex --bin codex-code-mode-host
+```
+
+Assemble the canonical package from those two binaries
+with upstream `just assemble-codex-package`; give it a distinct custom package version and compiled
+commit stamp. Keep upstream archive, patch, toolchain, lockfile, build command and target, package
+inputs and executable SHA-256 digests in the task's private build record. A prepared build is not
+an installed runtime or recovery evidence.
+The CLI's `--version` reports the source-build version `0.0.0`; identify this candidate by its
+custom package metadata, compiled stamp and executable digests, rather than an official-release label.
+
+Installation and selection require separate approval of protected-artifact adoption under the
+current authority rules. An operator grant cannot loosen confinement or engine permission settings.
+The existing executable setting covers several roles; exclusion is proved in their
+effective policies. No automatic installation, update, general CLI replacement or service action
+is part of preparation. Maintainers review and rebase the patch for each upstream update.
+Adoption requires a new intended confined candidate worker, finite blank/local fictional preflight
+with disposable storage and cleanup, worker/role negative checks and synthetic namespace/peer tests.
+Matching-name collisions, spoofing or cross-task port exchange/disruption stop adoption; the name
+filter supplies no task identity and Chromium's separate peer enforcement is disabled by default.
+Native metadata checks include child metadata under overlapping common-Git and worktree-Git roots:
+the named compiler omits legacy nested carveouts, and component equality does not prove that a
+broader parent write clause preserves the child's protections. This candidate does not repair or
+establish that pre-existing native boundary.
+Required browser protections and the security merge hold still apply. The validation container
+does not establish native Mac acceptance; the sandbox-required runner is unavailable on macOS.
 
 ## Validation runner
 

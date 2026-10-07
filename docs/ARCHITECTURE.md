@@ -486,6 +486,26 @@ setup is supported today. A new engine may
 have different session, authentication, capability and usage-reporting models. Adapt the boundary
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 
+The [native browser runtime candidate](DEVELOPMENT.md#native-mac-browser-runtime-candidate) keeps
+the existing execution contract. Its pinned Seatbelt patch adds only registration and lookup of
+whole Chromium rendezvous service names with a positive decimal PID, for effective network-enabled
+workspace-write process policies with both current-account user-manager path denies. All eligible
+commands share that allowance; it is neither browser identity nor task isolation.
+The guard excludes read-only, network-disabled, filesystem
+helper and other narrower custom policies by comparing filesystem semantics to canonical
+workspace-write plus the exact bus and systemd denies derived from the real account UID.
+Its comparison operand follows the named compiler's omission of legacy skip-missing defaults;
+supplied restrictions and emitted filesystem rules are unchanged.
+Plain workspace-write without those denies has no added allowance.
+A named custom profile with identical effective permissions has the same allowance. Existing file
+roots, metadata protections, process/signal restrictions and service denies remain in force.
+This is an unadopted preparation artifact, with separate installation, isolation acceptance and
+operator merge gates; it grants no LaunchServices, WindowServer or host clipboard access.
+The fictional recovery lane selects the locked headless shell only for project-isolation/draft and
+file-reference/clipboard walkthroughs; the full Chromium suite remains the default and both lanes
+run in required CI. Missing shell notification APIs do not narrow the primary suite or establish
+native Mac parity.
+
 Auto uses the highest-priority configured tier with an eligible option. The default ties Codex and
 Claude on their role defaults, so a Claude L2 launches on Opus and L3 on Fable, with Opus below as
 L3's fallback when Fable is rejected; a lower tier never repeats an option a higher tier already
