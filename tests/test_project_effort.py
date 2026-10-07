@@ -70,8 +70,8 @@ class TestProjectEffort(AltitudeCase):
                 set_default(self.project, setting, value)
             self.assertEqual(config.project(self.project), original)
         set_default(self.project, "l3_codex_effort", "ultra")
-        config.set_l3_engine(self.project, "claude")
-        config.set_l3_engine(self.project, None)
+        set_default(self.project, "l3_engine", "claude")
+        set_default(self.project, "l3_engine", None)
         self.assertEqual(config.project(self.project)["l3_codex_effort"], "ultra")
         self.assertNotIn("l3_engine", config.project(self.project))
 
@@ -104,10 +104,21 @@ class TestProjectEffort(AltitudeCase):
         self.assertNotIn("l3_codex_effort", saved)
         self.assertEqual((saved["l3_effort"], saved["l2_codex_effort"], saved["l3_engine"]), ("max", "ultra", "codex"))
 
+    def test_cli_sets_only_engines_and_the_l3_choice(self):
+        for flags, setting, value in ((("--l3-choice", "fable@high"), "l3_choice", {"engine": "claude", "model": "fable", "effort": "high"}),
+                                      (("--l2-engine", config.ENGINES[1]), "l2_engine", config.ENGINES[1]),
+                                      (("--unset-l3-choice",), "l3_choice", None)):
+            result = self.alt("project", "set", self.project, *flags, "--reason", "Set from the CLI")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            dispatch.run_settings(self.project)
+            self.assertEqual(config.project(self.project).get(setting), value)
+        refused = self.alt("project", "set", self.project, "--l3-choice", "claude@ultra", "--reason", "Claude has no Ultra")
+        self.assertNotEqual(refused.returncode, 0)
+
     def test_l3_changes_next_turn_with_same_session_and_distinct_observation(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
-                config.set_l3_engine(self.project, engine)
+                set_default(self.project, "l3_engine", engine)
                 setting = config.role_setting("l3", engine, "effort")
                 set_default(self.project, setting, "high")
                 calls = []
@@ -201,22 +212,47 @@ class TestProjectEffortHTTP(AltitudeCase):
 
     def test_l2_preference_api_saves_reloads_refuses_and_names_custom_routing(self):
         status, view = self.call("GET", f"/api/defaults/{self.project}")
-        self.assertEqual(view["l2_preference"], {"setting": "l2_preference", "value": None, "pin": None, "routing": None,
-                                                 "choices": [{"value": e, "label": config.ENGINE_LABELS[e], "routed": True}
-                                                             for e in config.ENGINES]})
+        self.assertEqual((view["l2_preference"], view["l2_engine"], view["routing"]), (None, None, None))
+        self.assertEqual(view["engines"], [{"value": e, "label": config.ENGINE_LABELS[e], "routed": True,
+                                            "efforts": list(config.ENGINE_EFFORTS[e])} for e in config.ENGINES])
         engine = config.ENGINES[0]
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": engine})
-        self.assertEqual((status, view["l2_preference"]["value"]), (200, engine))
-        self.assertEqual(self.call("GET", f"/api/defaults/{self.project}")[1]["l2_preference"]["value"], engine)
+        self.assertEqual((status, view["l2_preference"]), (200, engine))
+        self.assertEqual(self.call("GET", f"/api/defaults/{self.project}")[1]["l2_preference"], engine)
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": "other"})
         self.assertEqual(status, 400); self.assertIn("provider preference", view["error"])
         self.assertEqual(config.project(self.project)["l2_preference"], engine)
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_preference", "value": None})
-        self.assertEqual((status, view["l2_preference"]["value"]), (200, None))
+        self.assertEqual((status, view["l2_preference"]), (200, None))
         self.register(self.project, routing=config.parse_routing(f"{engine}:chosen"), l2_engine=engine)
-        preference = self.call("GET", f"/api/defaults/{self.project}")[1]["l2_preference"]
-        self.assertEqual((preference["routing"], preference["pin"]), (f"{engine}:chosen", engine))
-        self.assertEqual([c["routed"] for c in preference["choices"]], [e == engine for e in config.ENGINES])
+        view = self.call("GET", f"/api/defaults/{self.project}")[1]
+        self.assertEqual((view["routing"], view["l2_engine"]), (f"{engine}:chosen", engine))
+        self.assertEqual([e["routed"] for e in view["engines"]], [e == engine for e in config.ENGINES])
+
+    def test_only_pins_and_l3_choice_save_through_the_settings_api_and_refuse_a_stale_page(self):
+        engine, other = config.ENGINES
+        for setting in ("l2_engine", "l3_engine"):
+            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": engine})
+            self.assertEqual((status, view[setting]), (200, engine))
+            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": "gemini"})
+            self.assertEqual(status, 400); self.assertIn("Only engine", view["error"])
+            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": None})
+            self.assertEqual((status, view[setting]), (200, None))
+        choice = {"engine": other, "model": "chosen", "effort": "high"}
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice", "value": choice,
+                                                           "expected": None})
+        self.assertEqual((status, view["l3_choice"]), (200, choice))
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice", "value": None,
+                                                           "expected": {"engine": engine}})
+        self.assertEqual((status, view["changed"]), (409, True))
+        self.assertEqual(config.project(self.project)["l3_choice"], choice)
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice",
+                                                           "value": {"model": "chosen", "effort": "high"}})
+        self.assertEqual(status, 400); self.assertIn("named engine", view["error"])
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice", "value": None,
+                                                           "expected": choice})
+        self.assertEqual((status, view["l3_choice"]), (200, None))
+        self.assertNotIn("l3_choice", config.project(self.project))
 
     def test_pending_cli_setting_is_not_overwritten_by_a_different_ui_choice(self):
         dispatch.request_setting(self.project, "l3_effort", "high", "CLI setting", actor="burak")

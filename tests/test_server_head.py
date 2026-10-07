@@ -9,7 +9,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, set_project_setting
 from altitude import config, dispatch, server
 
 
@@ -207,7 +207,7 @@ class TestProjectRegistry(AltitudeCase):
         other = self.project + "-other"
         self.register(other, approval="manual")
         def failed_setup(_project):
-            config.set_l3_engine(other, config.ENGINES[0])
+            set_project_setting(other, "l3_engine", config.ENGINES[0])
             raise RuntimeError("test broker unavailable")
         with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=failed_setup):
             result = self.post("add", name=self.project, path=str(self.repo), approval="manual", wip=4)

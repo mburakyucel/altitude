@@ -128,7 +128,9 @@ def model_family(name: str | None) -> str | None:
 #: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
 DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
-PROJECT_SETTINGS = ("routing", "l2_preference", *DEFAULT_SETTINGS)
+#: A model choice tried ahead of a role's routing: New tasks for every project's L2, and each project's L3 choice.
+CHOICE_SETTINGS = {"l2": "new_tasks", "l3": "l3_choice"}
+PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_engine", "l3_choice", *DEFAULT_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's operator grant
@@ -173,7 +175,8 @@ def effort_label(value: str | None) -> str:
 
 
 def defaults_view(name: str) -> dict:
-    """Requested project defaults for the settings UI: one model/effort pair per role and engine."""
+    """A project's settings page: Only pins, the L3 choice, routing, and one model/effort pair per role and engine."""
+    from . import route
     entry = project(name)
     def field(role, engine, kind):
         key = role_setting(role, engine, kind)
@@ -182,13 +185,13 @@ def defaults_view(name: str) -> dict:
                     "choices": list(MODEL_ALIASES) if engine == "claude" else []}
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
-    return {"l3_engine": entry.get("l3_engine"),
-            "l2_preference": {"setting": "l2_preference", "value": entry.get("l2_preference"),
-                              "pin": entry.get("l2_engine"),
-                              "routing": format_routing(entry["routing"]) if "routing" in entry else None,
-                              "choices": [{"value": e, "label": ENGINE_LABELS[e],
-                                           "routed": any(o["engine"] == e for tier in entry.get("routing", AUTO_ROUTING) for o in tier)}
-                                          for e in ENGINES]},
+    return {"l3_engine": entry.get("l3_engine"), "l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
+            "l2_preference": entry.get("l2_preference"),
+            "l3_unavailable": route.choice_unavailable("l3", entry.get("l3_choice"), entry), **choice_options(),
+            "routing": format_routing(entry["routing"]) if "routing" in entry else None,
+            "engines": [{"value": e, "label": ENGINE_LABELS[e], "efforts": list(ENGINE_EFFORTS[e]),
+                         "routed": any(o["engine"] == e for tier in entry.get("routing", AUTO_ROUTING) for o in tier)}
+                        for e in ENGINES],
             "roles": [{"role": role, "engines": [{"engine": engine, "label": ENGINE_LABELS[engine],
                                                    "model": field(role, engine, "model"),
                                                    "effort": field(role, engine, "effort")} for engine in ENGINES]}
@@ -338,6 +341,52 @@ def parse_routing(value: str) -> list[list[dict]]:
 def validate_preference(value) -> None:
     if value is not None and value not in ENGINES:
         raise ValueError(f"a provider preference is one of {', '.join(ENGINES)}, or unset for Auto")
+
+
+def validate_engine_pin(value) -> None:
+    if value is not None and value not in ENGINES:
+        raise ValueError(f"an Only engine is one of {', '.join(ENGINES)}, or unset for Auto")
+
+
+def parse_choice(value: str) -> dict:
+    """The CLI spelling of a model choice: ``[engine][:model][@effort]``, or a Claude alias such as ``fable@high``."""
+    head, _, effort = value.partition("@")
+    engine, _, model = head.partition(":")
+    if engine and engine not in ENGINES and not model:
+        engine, model = ("claude", engine) if engine in MODEL_ALIASES else ("", engine)
+    choice = {key: item for key, item in (("engine", engine), ("model", model), ("effort", effort)) if item}
+    validate_choice(choice)
+    return choice
+
+
+def validate_choice(value) -> None:
+    """A choice names an engine (optionally its model), an effort, or both; None is Auto."""
+    if value is None:
+        return
+    if not isinstance(value, dict) or value.keys() - {"engine", "model", "effort"}:
+        raise ValueError("a model choice has only an engine, a model and an effort")
+    engine, model, effort = value.get("engine"), value.get("model"), value.get("effort")
+    if not engine and not effort:
+        raise ValueError("a model choice names an engine or an effort; unset it for Auto")
+    if engine is not None and engine not in ENGINES:
+        raise ValueError(f"engine must be one of {', '.join(ENGINES)}")
+    if model is not None and (not engine or not valid_model(model)):
+        raise ValueError("a chosen model is one alias or model id without spaces, on a named engine")
+    if effort is not None and effort not in ENGINE_EFFORTS.get(engine, TASK_EFFORTS):
+        raise ValueError(f"{ENGINE_LABELS.get(engine, 'Altitude')} does not support reasoning effort {effort}")
+
+
+def choice_options() -> dict:
+    """What a model choice offers: each Claude alias, every other engine's own default model, and each engine's efforts."""
+    return {"models": [{"engine": "claude", "model": alias, "label": alias.title()} for alias in MODEL_ALIASES]
+            + [{"engine": e, "model": None, "label": f"{ENGINE_LABELS[e]} default"} for e in ENGINES if e != "claude"],
+            "efforts": {e: [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[e] if v != "native"]
+                        for e in ENGINES}}
+
+
+def role_choice(role: str, project: dict) -> dict | None:
+    """The choice tried ahead of this role's routing: New tasks is one installation setting, L3's is per project."""
+    return machine_settings().get(CHOICE_SETTINGS[role]) if role == "l2" else project.get(CHOICE_SETTINGS[role])
 
 
 def format_routing(tiers: list[list[dict]]) -> str:
@@ -583,21 +632,6 @@ def project(name: str) -> dict:
     if not p:
         raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
     return p
-
-
-def set_l3_engine(name: str, engine: str | None) -> dict:
-    """Pin the project's L3 to one engine, or clear the pin with None; the next L3 turn follows it."""
-    if engine and engine not in ENGINES:
-        raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
-    from . import state as S
-    with S.project_lock(name), edit_projects() as projects:
-        if name not in projects:
-            raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
-        if engine:
-            projects[name]["l3_engine"] = engine
-        else:
-            projects[name].pop("l3_engine", None)
-        return projects[name]
 
 
 def project_path(name: str) -> Path:

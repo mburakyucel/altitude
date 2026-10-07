@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, set_project_setting
 from altitude import config, engines, l3
 
 
@@ -191,10 +191,10 @@ class TestL3Sessions(AltitudeCase):
              mock.patch.object(l3.route, "pick_engine", side_effect=pick):
             self.assertEqual(l3._select(self.project)["engine"], "codex")
             self.assertEqual(seen, {"forced": None, "current": "codex"})
-            config.set_l3_engine(self.project, "claude")
+            set_project_setting(self.project, "l3_engine", "claude")
             self.assertEqual(l3._select(self.project)["engine"], "claude")
             self.assertEqual(seen["forced"], "claude")
-            config.set_l3_engine(self.project, None)
+            set_project_setting(self.project, "l3_engine", None)
             l3._select(self.project)
             self.assertIsNone(seen["forced"]); self.assertNotIn("l3_engine", config.project(self.project))
 

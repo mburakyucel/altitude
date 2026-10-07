@@ -304,6 +304,13 @@ else:
 '''
 
 
+def set_project_setting(project: str, setting: str, value) -> None:
+    """Save one project setting the way Settings and `alt project set` do: a reasoned request altd applies."""
+    from altitude import dispatch
+    dispatch.request_setting(project, setting, value, "Test setting", actor="burak")
+    dispatch._run_setting(project, setting)
+
+
 def fyi_rows(project: str) -> list[dict]:
     """The project's FYIs: the system rows in its chat (SPEC.md §5.2 note 3)."""
     from altitude import l3

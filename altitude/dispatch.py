@@ -520,7 +520,8 @@ def _run_send_now(project: str, slug: str, *, admission_held: str | None = None)
         return _resume(project, slug)
 
 
-MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check")
+MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
+                    "new_tasks")
 
 
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
@@ -552,6 +553,11 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_project_default(setting, value)
         elif setting == "l2_preference":
             config.validate_preference(value)
+        elif setting in ("l2_engine", "l3_engine"):
+            config.validate_engine_pin(value)
+        elif setting in config.CHOICE_SETTINGS.values():
+            value = config.parse_choice(value) if isinstance(value, str) else value
+            config.validate_choice(value)
     except ValueError as exc:
         raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
