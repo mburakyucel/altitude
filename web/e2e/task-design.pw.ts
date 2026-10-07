@@ -50,7 +50,7 @@ test("proposal v5 identifies its saved title across review entries at question r
   }
   await walk.open(first.design_url);
   await walk.state("v5-older-immutable-preview", {
-    visible: [page.getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("Earlier preview.", { exact: false })],
+    visible: [page.getByRole("main").getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("Earlier preview.", { exact: false })],
     hidden: [page.getByRole("heading", { name: title, exact: true })],
   });
 });
@@ -162,7 +162,7 @@ test("a replacement labels the earlier saved proposal and returns to its exact q
   await expect(card(page, q).getByRole("button", { name: "Use this design" })).toHaveCount(0);
   await walk.open(current.design_url);
   await walk.state("replacement-version", {
-    visible: [page.getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("The revised proposal", { exact: false })],
+    visible: [page.getByRole("main").getByRole("heading", { name: "Conversation layout", exact: true }), page.getByText("The revised proposal", { exact: false })],
     hidden: [page.getByText("Earlier preview.", { exact: false })],
   });
   expect((await task(request)).question.status).toBe("open");
