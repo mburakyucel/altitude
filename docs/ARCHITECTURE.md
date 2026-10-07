@@ -2420,7 +2420,11 @@ partial answers. It uses that question's exact URL, never an earlier proposal's 
 question through its task row. Preview headings use the captured title to distinguish a proposal
 from an implementation review. Opening a separate tab preserves the originating route and draft.
 `/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
-screenshots, full-size image links, explanation and **Back to question**. The page reads
+screenshots, full-size image links, explanation and **Back to question**, which returns to
+the exact captured question revision. Both **Back to question** and **Open current question**
+replace the preview's history entry, so the task's Back control opens the owning project conversation.
+Browser Back/Forward follows the remaining history; the originating tab and its draft stay intact.
+The preview reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
 `/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
 require a registered project, resolve the owning task and exact question revision, and verify the
