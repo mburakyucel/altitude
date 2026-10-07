@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import plistlib
 import shlex
 import shutil
 import socket
@@ -203,6 +204,46 @@ def detached_job():
     return "the command ran outside the caller and its job ended"
 
 
+LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
+              "lsregister")
+
+
+def fixture_app(app: Path, marker: Path) -> None:
+    """A background app that LaunchServices would start outside any sandbox; it creates `marker` when it runs."""
+    (app / "Contents/MacOS").mkdir(parents=True)
+    (app / "Contents/Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleExecutable": "fixture", "CFBundleIdentifier": f"dev.altitude.probe-{NONCE}", "LSBackgroundOnly": True}))
+    (app / "Contents/MacOS/fixture").write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    (app / "Contents/MacOS/fixture").chmod(0o755)
+
+
+def app_ran(app: Path, marker: Path) -> bool:
+    """Whether the fixture app ran, then forget it: its marker removed, LaunchServices' record of it dropped."""
+    ran = until(marker.exists, 5)
+    marker.unlink(missing_ok=True)
+    subprocess.run([LSREGISTER, "-u", str(app)], capture_output=True, timeout=30)
+    return ran
+
+
+def controls(app: Path, marker: Path) -> tuple[bool, str]:
+    """Outside any profile, the fixture app must run and the Simulator service must answer, so a refusal inside is the
+    profile's. Returns whether the Simulator attempts cover anything here, and Xcode's version or why not."""
+    subprocess.run(["/usr/bin/open", "-g", "-j", str(app)], capture_output=True, timeout=60)
+    check(app_ran(app, marker), "the fixture app did not run outside the profile, so its attempt shows nothing")
+    listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=60)
+    if listed.returncode:
+        return False, "Simulator attempts uncovered: the Simulator service does not answer outside the profile either"
+    return True, subprocess.run(["xcodebuild", "-version"], capture_output=True, text=True).stdout.split("\n")[0]
+
+
+def refusal(simulator: bool, error: Path) -> str:
+    """The Simulator attempt's own error under the profile, as evidence of what refused it."""
+    if not simulator:
+        return ""
+    lines = error.read_text().strip().splitlines() if error.exists() else []
+    return f"; Simulator refused with {lines[0][:200] if lines else 'no error output'!r}"
+
+
 @row
 def confinement():
     if not DARWIN:
@@ -211,19 +252,27 @@ def confinement():
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder).resolve()
         outside = Path.home() / f".altitude-probe-{NONCE}"
+        marker = Path.home() / f".altitude-probe-{NONCE}-app"
+        fixture_app(root / "fixture.app", marker)
+        simulator, xcode = controls(root / "fixture.app", marker)
         label = platform._label(job)
         script = (f"echo x > '{root}/inside' && echo write-inside; echo x > '{outside}' 2>/dev/null && echo write-home; "
                   "kill -TERM $PPID 2>/dev/null && echo signal-supervisor; "
                   f"/bin/launchctl kill KILL gui/{os.getuid()}/{label} 2>/dev/null && echo launchctl-kill; "
                   f"/bin/launchctl bootout gui/{os.getuid()}/{label} 2>/dev/null && echo launchctl-bootout; "
-                  "sleep 5 & kill $! && echo signal-own-child")
-        result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=30),
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
-        written = outside.exists()
+                  "sleep 5 & kill $! && echo signal-own-child; "
+                  f"git init -q '{root}/repo' && echo git; "
+                  f"/usr/bin/open -g -j '{root}/fixture.app' 2>/dev/null && echo open-app; "
+                  f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
+        result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
+        written, ran = outside.exists(), app_ran(root / "fixture.app", marker)
         outside.unlink(missing_ok=True)
-        check(result.stdout.split() == ["write-inside", "signal-own-child"] and not written,
-              f"confinement: {result.stdout.split()} home written: {written}")
-    return "writes under the roots only; the supervisor and launchd are out of reach; own children stay signalable"
+        check(result.stdout.split() == ["write-inside", "signal-own-child", "git"] and not written and not ran,
+              f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
+        evidence = refusal(simulator, root / "simctl.err")
+    return ("writes under the roots only; the supervisor, launchd, LaunchServices and the Simulator service are out of "
+            f"reach; own children stay signalable and git works ({xcode}{evidence})")
 
 
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
@@ -284,6 +333,13 @@ attempt("unix-system", lambda: unix("/private/var/run/mDNSResponder"))
 attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
+attempt("open-app", lambda: run("/usr/bin/open", "-g", "-j", os.path.join(area, "fixture.app")))
+def simulator():
+    listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=30)
+    with open(os.path.join(area, "simctl.err"), "w") as stream:
+        stream.write(listed.stderr)
+    listed.check_returncode()
+attempt("simulator", simulator)
 attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
 with open(os.path.join(area, "seen.json"), "w") as stream:
     json.dump(seen, stream)
@@ -304,6 +360,8 @@ def validation_confinement():
         area.mkdir(parents=True)
         temp.mkdir()
         (outside / "secret").write_text("fictional credential\n")
+        fixture_app(area / "fixture.app", outside / "launched")
+        simulator, xcode = controls(area / "fixture.app", outside / "launched")
         (outside / "linked").symlink_to(outside)  # a root a worker replaced with a link into the home
         (outside / "s.sock").unlink(missing_ok=True)
         home_socket = socket.socket(socket.AF_UNIX)
@@ -333,6 +391,8 @@ def validation_confinement():
         check(seen and all(seen[key] == (key in allowed) for key in seen),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
+        check(not app_ran(area / "fixture.app", outside / "launched"), "the fixture app ran")
+        evidence = refusal(simulator, area / "simctl.err")
     finally:
         subprocess.run([platform.LAUNCHCTL, "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=60)
         for listener in listeners:
@@ -341,8 +401,8 @@ def validation_confinement():
         shutil.rmtree(temp, ignore_errors=True)
         Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
     return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
-            "sockets, keychain, launchd and the supervisor are out of reach; system files, name resolution, other "
-            "loopback ports, own sockets in every root and git work")
+            "sockets, keychain, launchd, LaunchServices, the Simulator service and the supervisor are out of reach; "
+            f"system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
 
 
 @row

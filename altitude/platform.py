@@ -1534,6 +1534,11 @@ def find_library(name: str) -> str | None:
 LAUNCHCTL = shutil.which("launchctl") or "/bin/launchctl"
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 XCODE_SELECT = "/usr/bin/xcode-select"
+#: Seatbelt rules shared by every Altitude profile. Two per-user services start programs as the operator's account,
+#: outside the caller's sandbox: Apple's Simulator service, whose devices run what any client asks (its helpers and
+#: each booted device share the prefix), and LaunchServices, which opens any app.
+SERVICE_ESCAPES = ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
+                   ' (xpc-service-name-prefix "com.apple.CoreSimulator."))(deny lsopen)')
 CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
@@ -1714,7 +1719,7 @@ def seatbelt_profile(writable: list[str]) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
     write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
     cache directories, /private/tmp and devices. Seatbelt matches resolved paths. launchd refuses service control to
-    every sandboxed process."""
+    every sandboxed process, and the profile refuses the services that would start a program outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
@@ -1724,7 +1729,7 @@ def seatbelt_profile(writable: list[str]) -> str:
         else:
             rules.append('(subpath "' + os.path.realpath(root).replace("\\", "\\\\").replace('"', '\\"') + '")')
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
-            f"(deny file-write*)(allow file-write* {' '.join(rules)})")
+            f"(deny file-write*)(allow file-write* {' '.join(rules)}){SERVICE_ESCAPES}")
 
 
 def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
@@ -2356,9 +2361,10 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     through the descriptor it inherits (Seatbelt checks that descriptor's writes and status by path too); read nothing else in the operator's home or
     the shared temporary folders, where Altitude's records, credentials, checkouts, caches and other processes' files
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
-    Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
-    service control to every sandboxed process, so the run cannot start, stop or change a service. It reads, never
-    writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim takes over a second."""
+    Altitude's `port`, on any address; ask nothing of the keychain, the Simulator service or LaunchServices; and signal
+    only its own processes. launchd refuses service control to every sandboxed process, so the run cannot start, stop
+    or change a service. It reads, never writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim
+    takes over a second."""
     def filters(kind: str, values) -> list[str]:
         return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
 
@@ -2386,7 +2392,8 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
         "(deny network-outbound (remote unix-socket))(allow network-outbound " + " ".join(
             f"(remote unix-socket {path})" for path in [*filters("subpath", own), *filters(
                 "path-literal", ("/private/var/run/mDNSResponder", "/private/var/run/syslog"))]) + ")",
-        '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))'])
+        '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))',
+        SERVICE_ESCAPES])
 
 
 def validation_command(roots: tuple[Path, ...], output: Path, port: int, argv: list[str],
