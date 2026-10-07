@@ -128,7 +128,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>
         <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
       </div> : null}
-      {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · {question.design_title}</a> : null}
+      {question.design_url ? <a className="text-meta question-preview" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · {question.design_title}</a> : null}
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
       {chat && question.detail && question.detail !== question.question ? <details className="question-context">
         <summary>More context</summary>

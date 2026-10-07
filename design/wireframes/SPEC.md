@@ -750,13 +750,13 @@ every write names its exact question revision. Archived tasks retain history wit
 
 #### 3.9.1 Pending design preview
 
-A question with saved design content has a **View preview · vN** link in Needs you and its owning
+A question with saved design content has a **View preview · saved title** link in Needs you and its owning
 question. When the open question is offscreen, use its floating question jump, then View preview.
 Question navigation follows an open group member with an attachment before another open member,
 including after partial answers. Work's task row opens the exact owning question.
 Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
 in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
-The page shows the captured title (identifying proposal or implementation review) and version,
+The page shows the captured title (identifying proposal or implementation review),
 named screenshots with **Full size** links, captured text and **Back to question**. Earlier proposal
 attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
 native zoom. There is no added conversation, approval control or permanent task banner.
@@ -764,7 +764,8 @@ native zoom. There is no added conversation, approval control or permanent task 
 Each version contains explicitly selected PNG/JPEG screenshots and text. HTML simulations are shown
 as captured states; active HTML is never embedded. Changing the working files does not change the
 saved version. A replacement advances the existing question revision, and the prior preview is
-labelled **Earlier version** with **Open current question**. **Back to question** still targets the
+labelled **Earlier preview** with **Open current question**. Question revisions fence identity and
+answers, not displayed proposal numbering. **Back to question** still targets the
 exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
 question unanswered. The existing decision controls record approval; merge holds remain unchanged.
 

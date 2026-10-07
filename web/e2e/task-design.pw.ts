@@ -55,6 +55,24 @@ test("proposal v5 identifies its saved title across review entries at question r
   });
 });
 
+test("maximum-length unbroken titles wrap in review cards and the viewer", async ({ page, request }, info) => {
+  expect((await request.post("/fixture/long-title")).ok()).toBe(true);
+  const q = (await task(request)).question;
+  const title = "Settings".repeat(20);
+  const walk = walkthrough(page, info);
+  for (const [state, path] of [["needs-you", "/"], ["task", atQuestion(q)], ["viewer", q.design_url]]) {
+    await walk.open(path);
+    const label = state === "viewer" ? page.getByRole("heading", { name: title, exact: true })
+      : page.getByRole("link", { name: `View preview · ${title}`, exact: true });
+    await label.scrollIntoViewIfNeeded();
+    await walk.state(`long-title-${state}`, { visible: [label], hidden: [] });
+    const box = (await label.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(await label.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  }
+});
+
 test("a saved proposal opens from chat, full size and back; a follow-up hands the turn back, is not approval, and approval retains the hold", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const initial = await task(request);
