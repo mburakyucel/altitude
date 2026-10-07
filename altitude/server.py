@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, releases, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -47,7 +47,7 @@ L3_GH_READS = {
     ("run", "list"), ("run", "view"), ("run", "watch"),
 }
 L3_TASK_TARGETS = {
-    "handoff", "release",
+    "handoff", "release", "publish",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
@@ -2056,6 +2056,23 @@ class Handler(BaseHTTPRequestHandler):
                 except PermissionError as exc:
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "task", "publish"]:
+                try:
+                    if o.keys() - {"project", "slug", "attempt", "check"} or not isinstance(o.get("check", False), bool):
+                        raise ValueError("alt task publish: unsupported fields")
+                    if not isinstance(o.get("project"), str) or not isinstance(o.get("slug"), str):
+                        raise ValueError("alt task publish: project and slug must be names")
+                    peer, local = self.client_address, self.connection.getsockname()
+                    with config.restart_lock() as ready:
+                        if not ready or config.restart_in_progress():
+                            raise ValueError("Altitude is restarting; retry publication after activation")
+                        result = releases.run(o["project"], o["slug"], o.get("attempt"), check=o.get("check", False),
+                            owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local))
+                    return self._json(result)
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
                 try:

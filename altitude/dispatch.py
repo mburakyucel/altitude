@@ -978,6 +978,7 @@ def build_brief(project: str, slug: str) -> str:
 def session_settings(project: str, slug: str, session_key: str) -> Path:
     """Per-attempt settings: edit telemetry and the inbox hook that hands the operator's queued messages to the
     worker after a tool call or when it is about to stop."""
+    from . import releases
     hooks = config.HOOKS
     inbox = [{"type": "command", "command": shlex.join([sys.executable, "-B", str(hooks / "inbox.py")]), "timeout": 10}]
     settings = {"hooks": {
@@ -987,6 +988,10 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
+    task = S.load_task(project, slug)
+    if (session_key == S.session_key(project, slug, task.get("attempt", 0))
+            and releases.active_grant(task)):
+        settings.update(engines.release_permissions(l2_engine(task), slug))
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p

@@ -1686,6 +1686,73 @@ Failed reconciliation follows L3's recovery path.
 Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
 operator-only; approval mode cannot combine with it or `--why`.
 
+### Release publication
+
+```text
+alt task publish <slug> --grant --approval <message-id> --version <version> --sha <commit> --files <directory> --reason <why> [--source task|project] [--question <id> --revision <n>] [--expires <ISO-time>]
+alt task publish <slug> --revoke --reason <why>
+alt task publish <slug> --check
+alt task publish <slug>
+```
+
+The fixed publish operation creates only the approved repository/version/commit release. It accepts
+no arbitrary command, remote or release settings. The task's registered repository supplies the
+destination. The running owner records its own task-chat approval; L3 or the operator records an
+original project-chat approval with `--source project`. The recorder reads the original answer,
+conditions and later corrections and supplies its scope judgment in `--reason`. A relay cannot grant
+permission. Direct approval names the version and SHA; an answer without that scope needs
+`--question` and `--revision` selecting the exact historical question that supplied it. The SHA may
+be an unambiguous prefix, resolved once to its full value. Removed approval, wrong task, missing
+scope or mismatching version/commit refuses the grant.
+
+`--files` selects a subdirectory inside the task folder or its worktree containing exactly the five
+files produced by `scripts/build_release.py --source <approved SHA>`:
+`altitude-<version>.tar.gz`, its `.sha256`, `install.py`, `install.sh` and `SHA256SUMS`.
+Only regular files without symlink traversal qualify. The grant records validated paths and hashes, checks
+archive identity, manifest, installer and checksums, and takes notes from the approved commit's
+dated changelog section. Publication captures unchanged bytes for upload; the grant stores no asset
+bytes. Keep notes and build evidence outside that directory. Hashes establish
+integrity, not independent build attestation; publication retains the manual path's trust in the
+approved owner. Publication appends the fixed manual-build disclosure documented in the
+[release guide](RELEASING.md#approved-task-owner) to the dated notes. Keep that limit in the readiness record.
+
+`alt task status <slug>` exposes `release_grant`; `alt task events <slug> --json` shows `release-*`
+grant, refusal, attempt and external-phase records. The grant binds task, attempt, repository,
+version, full SHA, assets and original approval. An optional `--expires` supplies the operator's
+deadline. Normal resume retains the grant; a new attempt, task completion or completed publication
+ends it. Revocation is available to owner, L3 and operator. A revoked or consumed approval cannot
+mint another grant. A new attempt may replace an expired attempt's grant under still-valid original
+approval, with the same target/files, and recover only this task's recorded draft. Replacement
+preserves the approval's historical identity and cannot remove or extend its original deadline.
+
+An active grant generates exact native allow rules for the publish command and its `--check` form
+on normal launch/resume. Use the literal task slug in the exact commands shown by the grant result;
+shell-variable or quoted forms are not promised to match. After a mid-turn grant, checkpoint and park
+for L3 to resume the same attempt. User settings, inherited denies and managed policy remain in force. The resumed owner
+runs `--check` first: it checks transport, scope and prerequisites without GitHub writes. Admission
+of that read-only command does not establish admission of the separate publish invocation; report
+any native refusal without bypassing it.
+
+Publishing requires the running owner's connection to originate in its current worker job, together
+with matching project/task/attempt/state. L3 cannot publish, and a task slug or shared machine key
+alone supplies no publication authority. The release commit must be on main with a successful
+push-event `check` job for that exact SHA and its dated changelog notes. A prerelease is never latest.
+The operation creates a draft targeting the approved SHA, uploads and verifies captured assets,
+then publishes and reads back the tag and assets. It never pushes a tag first, moves/deletes tags,
+replaces assets, adopts a foreign draft or changes immutable-release settings.
+
+Every external write rechecks the current grant and deadline. Revocation cannot recall an in-flight
+request. A global repository/version ledger under Altitude's `releases` directory serializes
+publication across daemon restarts. Only a definite create refusal with no remote side effect clears
+ownership; uncertain outcomes remain task-owned and require read-back reconciliation before retry.
+After uncertain draft creation, successful reads must establish that neither the tag nor release
+exists before a recorded reconciliation permits a fresh create; no manual ledger edit is needed.
+An existing tag must match the approved commit, with no unfinished `release.yml` push run for that
+exact commit. This check repeats before publication, allowing completion of a matching operator tag
+after its hosted job finishes or is refused. Conflicting tags/releases refuse. No remote cleanup is automatic.
+The [release guide](RELEASING.md#publish-a-release) covers build provenance, manual publication,
+native first-use evidence and platform limits. Merge approval remains separate.
+
 ### Machine access
 
 A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace

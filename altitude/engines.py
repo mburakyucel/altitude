@@ -644,6 +644,19 @@ def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished:
         time.sleep(0.25)
 
 
+def release_permissions(engine: str, slug: str) -> dict:
+    """Native allowance for the daemon's fixed publish operation, never raw GitHub commands.
+
+    Claude loads these exact rules on launch/resume; inherited denies and managed policy remain
+    authoritative. Codex already admits the command in its ordinary task sandbox. The daemon
+    checks the recorded grant again on every invocation, including after its deadline or revocation.
+    """
+    if engine != "claude":
+        return {}
+    command = f"alt task publish {S.require_task_slug(slug)}"
+    return {"permissions": {"allow": [f"Bash({command})", f"Bash({command} --check)"]}}
+
+
 @config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",

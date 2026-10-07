@@ -69,8 +69,8 @@ acceptance evidence; its pending or failed runs on main do not gate PR delivery 
 6. Present the readiness record and proposed notes to the operator for the publication decision.
    Approval names the version and SHA. Then deliver the dated changelog section
    (`## v0.1.0 — 2026-10-01`) through a PR. If that PR changes the release SHA, repeat the
-   deterministic gate on the final SHA before publishing it. The operator publishes by pushing
-   the approved tag to that SHA ([publish a release](#publish-a-release)). Use the same source for
+   deterministic gate on the final SHA before publishing it. The operator publishes directly or
+   authorizes the task owner through a recorded [release grant](#publish-a-release). Use the same source for
    notes and tag; an early preview remains labeled as such.
 
 The readiness record can be a small file attached to the task report; it needs no new daemon
@@ -120,6 +120,73 @@ decision; the audit itself changes nothing.
 
 ## Publish a release
 
+The operator approves a repository, version and commit. A task owner records that approval with
+[`alt task publish`](CLI.md#release-publication); the fixed command publishes only that release.
+Direct approval names the version and SHA; a contextual answer cites the exact question revision
+that names them. An unambiguous short SHA resolves once to the full commit. The owner records its
+task-chat answer; L3 records an answer from project chat. Both read the original answer and later
+corrections, including conditions or revocation, before applying it.
+
+### Approved task owner
+
+Build from the approved commit, retaining the build evidence. Use a new asset subdirectory inside
+the task folder or its worktree, containing exactly the five output files. Keep notes and build
+evidence outside that directory. Replace `<task>` with the task's literal slug:
+
+```sh
+python3.12 scripts/build_release.py --version v0.1.0-rc.2 --source <approved SHA> --output <task-folder>/release-files
+alt task publish <task> --grant --approval <message-id> --version v0.1.0-rc.2 --sha <approved SHA> --files <task-folder>/release-files --reason 'Publish the approved candidate'
+```
+
+Altitude binds the grant to the task, attempt, repository, full SHA, version, committed changelog
+notes, validated asset paths and hashes. It verifies archive identity, manifest, installer and
+checksums; publication captures unchanged bytes for upload instead of storing them with the grant.
+These hashes establish integrity; the manual path trusts the owner to build the approved source
+and supplies no independent build attestation. Publication appends this disclosure to the dated
+changelog notes: “Manual publication from an operator-approved owner build. Checksums verify
+integrity; this release has no hosted build attestation.” Retain that limit in the readiness record.
+
+When a grant is recorded during a turn, the owner checkpoints and parks for L3 to resume the same
+attempt so the engine loads its narrow command permission. The resumed owner uses the exact
+commands shown by the grant result, replacing `<task>` with its literal slug:
+
+```sh
+alt task publish <task> --check
+alt task publish <task>
+```
+
+Shell-variable or quoted variants are not promised to match the exact native permission rule.
+`--check` verifies scope and prerequisites without writing to GitHub. Publish requires the actual
+current owner process, the approved commit on main, its successful push-event `check` job and the
+version's dated changelog section. It creates a draft targeting that commit, uploads and verifies
+the captured assets, then publishes. The command never pushes a tag first. A prior operator-created
+tag may be used if it matches the approved commit and no unfinished `release.yml` push run remains
+for that commit, checked again before publication. This permits completion after the hosted job
+finishes or is refused. Read-back verifies the tag and every asset. The title is `Altitude <version>`;
+`-rc.N` is a prerelease and never latest.
+
+Every attempt and external phase is recorded on the task. Interrupted publication reconciles
+the task's recorded draft before retrying; it does not adopt foreign drafts or blindly repeat
+uncertain writes. A repository/version ledger retains task ownership across daemon restarts;
+only a definite create refusal with no remote side effect releases it. An uncertain draft creation
+retries only after successful tag and release reads establish that neither exists; the retry records
+that reconciliation before a fresh create. No manual ledger edit is needed. Existing conflicting
+tags/releases and a tag with an unfinished hosted publisher refuse.
+The grant cannot move/delete tags, replace assets, edit unrelated releases or change immutable
+release settings. Owner, L3 or operator can revoke it; deadlines, a new task attempt or task
+completion end it, and successful publication consumes it. Revocation cannot recall a request
+already sent. A replacement grant preserves the original approval's historical identity and
+deadline. See the [CLI contract](CLI.md#release-publication) for recovery and inspection.
+
+The native permission rule is generated at launch/resume without editing user settings or
+weakening inherited policy. A successful check does not prove the separate publish invocation
+will be admitted. Actual Claude auto-mode publish acceptance and GitHub event ordering remain
+unverified until the pending rc.2 owner's first use; a refusal stops publication and is reported.
+Native macOS confirmation is also pending under [the native-runtime work](ROADMAP.md#native-macos-runtime)
+(#225). Deterministic fixtures establish neither native engine acceptance nor a live publication.
+
+### Operator by hand or hosted workflow
+
 Pushing a `v0.*` tag runs `.github/workflows/release.yml` on a GitHub-hosted runner with GitHub's
 own token and no other secrets; it never creates a tag. The job refuses to publish unless the
 tag's commit is on `main`, that exact commit has a successful push `check` run of the self-hosted
@@ -133,11 +200,23 @@ git tag v0.1.0 <approved SHA>
 git push origin v0.1.0
 ```
 
-Two repository settings make the tag the operator's approval: a tag ruleset that lets only the
-operator create, move or delete `v*` tags, and immutable releases, so a published release's tag and
-files cannot change. GitHub offers artifact attestations to private repositories only on Enterprise
+Workers and manual commands use the operator's signed-in GitHub account. A tag ruleset restricts
+that account, not the human or worker behind it; the tag alone does not establish who approved
+publication. The release grant retains the operator's approval provenance for Altitude's supported
+path and does not control arbitrary GitHub calls made with that account. Immutable releases keep
+a published release's tag and files unchanged. The private repository's plan does not expose its
+tag-ruleset configuration through the inspected API, so effective ruleset admission remains
+first-use evidence. GitHub offers artifact attestations to private repositories only on Enterprise
 plans, so the job attests once the repository is public and skips that step while it is private.
 Release files cannot be downloaded without signing in while the repository is private.
+
+A by-hand publication uses the same five built files and committed notes: create a draft with
+`gh release create --draft --target <approved SHA>`, upload and verify every asset, then publish
+with `gh release edit --draft=false`. Keep its tag, title and prerelease/latest treatment consistent
+with the approved version. This path needs no hosted build or Actions billing and provides no hosted
+build attestation; disclose that limit in its notes. Existing tag-triggered workflow behavior and
+costs remain as configured. A manual publication introduces the tag only when the uploaded release
+is ready; a resulting workflow encounters that already-published release.
 
 A failed job publishes nothing; fix the cause and re-run the job. A release that published wrong
 content is followed by a new version, never by moving its tag or replacing its files.

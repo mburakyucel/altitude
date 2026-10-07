@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +16,7 @@ import tempfile
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 from altitude.installation import VERSION, metadata
+from altitude.releases import notes
 
 
 def build(version: str, output: Path, source: str = "HEAD") -> Path:
@@ -81,14 +81,6 @@ def install_script(template: str, version: str, repository: str, archive_sha256:
                         ("ARCHIVE_SHA256", archive_sha256), ("INSTALLER_SHA256", installer_sha256)):
         template = template.replace(f"@{name}@", value)
     return template
-
-
-def notes(version: str, changelog: str) -> str:
-    """The release notes: CHANGELOG's dated section for exactly this version."""
-    match = re.search(rf"^## {re.escape(version)} \u2014 \d{{4}}-\d{{2}}-\d{{2}}\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
-    if not match or not match.group(1).strip():
-        raise ValueError(f"CHANGELOG.md has no dated section '## {version} \u2014 YYYY-MM-DD' with notes")
-    return match.group(1).strip() + "\n"
 
 
 if __name__ == "__main__":

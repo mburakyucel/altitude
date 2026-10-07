@@ -5,6 +5,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- A task owner can publish the exact repository, version and commit the operator approves through
+  a recorded release grant. Publication checks its five captured assets, creates and verifies a
+  draft before publishing, and records attempts and recovery phases. Grants are revocable and
+  expire with their task attempt; they cannot move tags or change another release. The manual
+  build path supplies integrity checks, not independent build attestation. Native publish acceptance
+  awaits first use, and macOS confirmation remains pending.
 - Chat accepts images tagged with `cICP` for Display P3 or BT.2020 colors, grayscale
   profiles and PNG gamma/primaries; it converts them to sRGB. Images whose color information has no
   conversion, such as HDR, upload with their colors as decoded instead of being refused.
