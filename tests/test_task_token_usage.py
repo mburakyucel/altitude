@@ -160,6 +160,25 @@ class TaskTokenUsage(AltitudeCase):
         row = next(row for row in server.monitor.sessions() if row.get("slug") == self.slug)
         self.assertIsNone(row["context_percent"])
 
+    def test_context_is_only_the_current_owner_sessions_newest_request(self):
+        context = {"tokens": 188_000, "window": 1_000_000, "observed_at": "2026-09-07T10:00:00+00:00", "percent": 18.8}
+        self.observations[("claude", "first")] = [{**reading("first"), "requests": 3, "context": context},
+                                               {**reading("helper", 50, parent="first", role="delegated"), "requests": 2,
+                                                "context": {**context, "tokens": 900_000, "percent": 90.0}}]
+        self.launch(engine="claude")
+        snapshot = usage.refresh(self.project, self.slug)["token_usage"]
+        self.assertEqual(snapshot["context"], {**context, "engine": "claude", "session_id": "first"})
+        self.assertEqual(snapshot["requests"], 5)
+        row = next(row for row in server.monitor.sessions() if row.get("slug") == self.slug)
+        self.assertEqual(row["context_percent"], 18.8)
+        # A resumed owner without its own request yet has unavailable context, never its predecessor's.
+        T.block(self.project, self.slug, "pause")
+        T.resume(self.project, self.slug, agent_id="replacement", session_id="second")
+        task = S.load_task(self.project, self.slug)
+        usage.capture(self.project, task)
+        self.assertIsNone(task["token_usage"]["context"])
+        self.assertEqual(task["token_usage"]["total_tokens"], 290)
+
     def test_native_helper_audit_survives_attempts_passive_reads_failures_and_archive(self):
         home = self.tmp / "provider"
         self.patch(engines, "_TOKEN_ROLLOUT_INDEX", {})

@@ -7,7 +7,7 @@ from . import engines, state as S
 
 
 COUNTERS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
-            "reasoning_tokens", "total_tokens")
+            "reasoning_tokens", "requests")
 
 
 def remember(task: dict) -> None:
@@ -82,7 +82,7 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
             statuses.append("partial")
         if not rows:
             notes.append("No local token counters have been observed.")
-        counters = {key: _sum(rows, key) for key in COUNTERS if key != "total_tokens"}
+        counters = {key: _sum(rows, key) for key in COUNTERS}
         known = [counters[key] for key in ("input_tokens", "output_tokens") if counters[key] is not None]
         total = sum(known) if known else None
         status = ("unknown" if total is None else "partial" if "partial" in statuses
@@ -97,8 +97,12 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
                           "descendant_count": descendants if helper_known and (descendants or not unclassified) else None,
                           "unclassified_count": unclassified if helper_known else None,
                           "total_tokens": _sum(helpers, "total_tokens"), "sessions": helpers}
+        # Only the current owner session's own newest request is current context; earlier owners are history.
+        owner = next((row for row in rows if row["engine"] == task.get("l2_engine")
+                      and row["session_id"] == task.get("session_id")), {})
+        context = {**owner["context"], "engine": owner["engine"], "session_id": owner["session_id"]} if owner.get("context") else None
         at = S.now()
-        snapshot = {"status": status, **counters, "total_tokens": total,
+        snapshot = {"status": status, **counters, "total_tokens": total, "context": context,
                     "checked_at": at, "observed_at": max((row["observed_at"] for row in [*rows, *helpers]
                                                            if row.get("observed_at")), default=None),
                     "finalized_at": at if final else None, "sessions": rows, "helpers": helper_summary,

@@ -1405,8 +1405,8 @@ a terminal are refused as described in [terminal access](ARCHITECTURE.md#operato
 
 ## Task token accounting
 
-Task details and the report retain cumulative **observed tokens** across recorded owner sessions,
-resumes and engine handoffs. `token_usage` on the task holds the public accounting; the task folder's
+Task details and the report retain cumulative **tokens processed** and the number of distinct model
+requests behind them across recorded owner sessions, resumes and engine handoffs. `token_usage` on the task holds the public accounting; the task folder's
 `token-usage.json` holds engine cursors and numeric deduplication evidence. Both travel into archive,
 so final accounting survives provider-log or worktree cleanup. Earlier attempts whose identities or
 counters are unavailable remain partial. Queued/older tasks without readings say unknown, never zero.
@@ -1417,7 +1417,9 @@ Input is inclusive of cache reads and writes exactly once. Output includes reaso
 provider reports it as a subset. The combined count is observed inclusive input plus output, across
 sessions whose local records support attribution; it is neither context occupancy nor quota usage
 nor a billing estimate. Each model request counts its supplied input again, including cached input;
-this measures consumed tokens, not unique words in the conversation. Engines use their own tokenizers: adding observed counts is an activity
+this measures consumed tokens, not unique words in the conversation, and is mostly cached input.
+A task that made 229 requests averaging 144k tokens of context processes about 33 million input
+tokens while generating only its output. Engines use their own tokenizers: adding observed counts is an activity
 measure, not a comparable price or workload measure. Optional cache/reasoning counters remain
 unknown when absent. If some contributors lack a counter, the known contributions are retained as
 a partial lower bound; the total adds the available input and output contributions. It is unknown
@@ -1463,8 +1465,10 @@ refreshes at report/finalization boundaries. An unfinished trailing record is re
 replaced, inaccessible or lost evidence produces a coverage gap rather than an invented count.
 The UI distinguishes **checked** (collector time), **observed** (provider counter time), and
 **finalized** (the retained completion observation). A live check older than a minute is stale;
-finalized observations retain their timestamp rather than becoming live-stale. The detail disclosure
-shows engine, owner/delegated/provider coverage, input/output and available cache/reasoning subsets.
+finalized observations retain their timestamp rather than becoming live-stale. The folded row shows
+tokens processed and model requests. The detail disclosure explains that each request re-sends the
+conversation, then shows processed input with its cache subsets, generated output with its reasoning
+subset, requests, engine and owner/delegated/provider coverage.
 
 ## Context and prompt-cache evidence
 
@@ -1472,10 +1476,17 @@ Claude L2 settings explicitly supply `autoCompactWindow` from `config.AUTOCOMPAC
 the engine boundary. Native compaction remains the engine's responsibility; Altitude keeps the
 owner's small progress checkpoint for recovery and handoffs.
 
-For Claude, context is the newest genuine assistant usage record: input plus cache-read plus
-cache-creation tokens. Synthetic all-zero limit records are ignored. Codex task context is unknown:
-`turn.completed.usage.input_tokens` measures cumulative consumption, not context occupancy. Its
-cache counters are part of the separate task token observation.
+A task's context is the inclusive input of the current owner session's newest own request, read by
+the same passive collection as task tokens and stored as `token_usage.context` with its tokens,
+window, percentage and observation time. For Claude that is input plus cache-read plus
+cache-creation tokens against the probed 1,000,000-token window; synthetic all-zero limit records are
+ignored. For Codex it is the newest response record's input against the `model_context_window` its
+rollout reports, the same per-request counter Codex reports as `last_token_usage`. Context is
+unavailable, never estimated, when the current session has no complete request of its own: after a
+resume before its first request, with only replayed history, with incomplete counters, or with only
+provider aggregates such as `turn.completed`, which measure cumulative consumption. Without a
+reported window the tokens show without a percentage. Task details shows **Current context** while
+the task runs and **Context at last request** otherwise; Monitor's L2 rows use the same reading.
 
 The daemon refreshes both account quotas every five minutes, independently of interactive sessions
 and which engine Auto currently selects. Claude's native headless `/usage` emits structured

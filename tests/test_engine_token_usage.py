@@ -149,6 +149,55 @@ class TestEngineTokenUsage(AltitudeCase):
         self.assertEqual((row["input_tokens"], row["output_tokens"], row["total_tokens"]), (106, 40, 146))
         self.assertEqual((row["cache_read_tokens"], row["cache_write_tokens"], row["reasoning_tokens"]), (80, 20, 14))
 
+    def test_codex_requests_and_context_are_the_newest_own_response_against_the_reported_window(self):
+        # Repeated records are one request; the provider's window, not a configured one, sizes context.
+        first, newest = self.response("owner", "r1", inp=900), self.response("owner", "r2", inp=1500, timestamp="2026-09-07T10:02:00Z")
+        window = {"type": "event_msg", "payload": {"type": "token_count", "info": {"model_context_window": 3000}}}
+        self.rollout("owner", [first, newest, first, window])
+        self.rollout("child", [self.response("owner", "r2"), self.response("child", "c1", inp=50_000, timestamp="2026-09-07T11:00:00Z")],
+                     parent="owner", fork=True)
+        owner, child = self.observe("codex")["sessions"]
+        self.assertEqual((owner["requests"], owner["total_tokens"]), (2, 2440))
+        self.assertEqual(owner["context"], {"tokens": 1500, "window": 3000, "observed_at": "2026-09-07T10:02:00Z", "percent": 50.0})
+        self.assertEqual((child["requests"], child["context"]["tokens"], child["context"]["window"]), (1, 50_000, None))
+        self.assertIsNone(child["context"]["percent"])
+
+    def test_claude_context_ignores_synthetic_streamed_and_replayed_records(self):
+        newest = self.message("owner", "msg-2", inp=5)
+        newest["timestamp"] = "2026-09-07T10:05:00Z"
+        synthetic = {**self.message("owner", "limit"), "timestamp": "2026-09-07T10:09:00Z"}
+        synthetic["message"]["model"] = "<synthetic>"
+        self.write(self.home / "projects/project/owner.jsonl", [self.message("owner", "msg-1"), newest, newest, synthetic])
+        result = self.observe("claude")
+        owner = result["sessions"][0]
+        self.assertEqual(owner["requests"], 2)
+        self.assertEqual(owner["context"], {"tokens": 55, "window": 1_000_000, "observed_at": "2026-09-07T10:05:00Z", "percent": 0.0})
+        # A replacement session's copied history is not its context; its own first request is.
+        replayed = {**newest, "sessionId": "replacement"}
+        path = self.write(self.home / "projects/project/replacement.jsonl", [replayed])
+        replacement = self.observe("claude", "replacement", result["cursor"])
+        row = next(row for row in replacement["sessions"] if row["session_id"] == "replacement")
+        self.assertIsNone(row["context"])
+        self.assertIsNone(row["requests"])
+        own = {**self.message("replacement", "msg-3", inp=1000), "timestamp": "2026-09-07T10:07:00Z"}
+        self.write(path, [own], append=True)
+        replacement = self.observe("claude", "replacement", replacement["cursor"])
+        row = next(row for row in replacement["sessions"] if row["session_id"] == "replacement")
+        self.assertEqual((row["requests"], row["context"]["tokens"]), (1, 1050))
+
+    def test_aggregates_and_incomplete_records_never_claim_context(self):
+        partial = self.message("owner", "partial")
+        del partial["message"]["usage"]["cache_read_input_tokens"]
+        self.write(self.home / "projects/project/owner.jsonl", [partial])
+        row = self.observe("claude")["sessions"][0]
+        self.assertEqual(row["requests"], 1)
+        self.assertIsNone(row["context"])
+        job = self.tmp / "jobs"
+        self.write(job / "worker.stdout.jsonl", [{"type": "turn.completed", "usage": {"input_tokens": 9_000_000, "output_tokens": 5}}])
+        (job / "worker.json").write_text(json.dumps({"session_id": "stdout-only"}))
+        row = self.observe("codex", "stdout-only", job_root=job)["sessions"][0]
+        self.assertEqual((row["role"], row["total_tokens"], row["requests"], row["context"]), ("provider", 9_000_005, None, None))
+
     def test_claude_native_children_require_directory_parent_and_agent_identity(self):
         path = self.home / "projects/project/owner.jsonl"
         self.write(path, [self.message("owner", "owner-message"), {"type": "result", "usage": {"input_tokens": 999999}}])
