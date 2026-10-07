@@ -2317,8 +2317,11 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     Altitude's `port`, on any address; ask nothing of the keychain; and signal only its own processes. launchd refuses
     service control to every sandboxed process, so the run cannot start, stop or change a service. It reads, never
     writes, xcrun's lookup cache: without it every /usr/bin/git call takes over a second."""
+    def filters(kind: str, values) -> list[str]:
+        return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
+
     def paths(kind: str, values) -> str:
-        return " ".join(f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values)
+        return " ".join(filters(kind, values))
     home = os.path.realpath(Path.home())
     # A root's own name is never resolved: a worker may replace a folder in /private/tmp with a link, and Seatbelt
     # matches the link's target, which no root then admits.
@@ -2337,8 +2340,10 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
         f"(allow file-read* {paths('literal', [os.path.join(temp, 'xcrun_db')])})",
         f"(allow file-write-data file-read-metadata {paths('literal', [os.path.realpath(output)])})",
         f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
-        f"(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket "
-        f"{paths('subpath', own)} {paths('path-literal', ('/private/var/run/mDNSResponder', '/private/var/run/syslog'))}))",
+        # Seatbelt honors only the first path filter of a (remote unix-socket ...), so each path has its own (#695).
+        "(deny network-outbound (remote unix-socket))(allow network-outbound " + " ".join(
+            f"(remote unix-socket {path})" for path in [*filters("subpath", own), *filters(
+                "path-literal", ("/private/var/run/mDNSResponder", "/private/var/run/syslog"))]) + ")",
         '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))'])
 
 

@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -641,6 +642,17 @@ class TestMacValidationRunner(RunnerCase):
 
 
 class TestValidationProfile(TestCase):
+    def test_a_socket_nested_in_the_temporary_folder_accepts_connections(self):
+        """In a macOS validation run the suite's folder is in the run's TMPDIR, a later root of its profile, where
+        the coordinator's verb broker binds (#695)."""
+        with tempfile.TemporaryDirectory() as folder, socket.socket(socket.AF_UNIX) as server_socket, \
+                socket.socket(socket.AF_UNIX) as client:
+            path = Path(folder) / "at-x" / "case-y" / "altitude" / "l3-verbs" / "a.sock"
+            path.parent.mkdir(parents=True)
+            server_socket.bind(str(path))
+            server_socket.listen()
+            client.connect(str(path))
+
     def test_a_root_replaced_by_a_link_admits_the_link_never_its_target(self):
         with tempfile.TemporaryDirectory() as folder, \
                 mock.patch.object(platform.sys, "platform", "darwin"):
@@ -665,9 +677,12 @@ class TestValidationProfile(TestCase):
                        f'(deny file-read* (subpath "{home}") {shared})(allow file-read* {roots})',
                        f'(allow file-write-data file-read-metadata (literal "{own}/unit.log"))', f'(literal "{own}")', f'(literal "{home}")', '(literal "/private/tmp")',
                        '(deny network-bind (local ip "*:8890"))', '(deny network-outbound (remote ip "*:8890"))',
-                       f'(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {roots} '
-                       '(path-literal "/private/var/run/mDNSResponder")',
+                       '(deny network-outbound (remote unix-socket))(allow network-outbound '
+                       f'(remote unix-socket (subpath "{own}/work")) (remote unix-socket (subpath "{own}/results")) '
+                       '(remote unix-socket (path-literal "/private/var/run/mDNSResponder"))',
                        '(allow file-read* (literal "/private/var/folders/ab/cd/T/xcrun_db"))',
                        '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))"):
             self.assertIn(clause, profile)
         self.assertNotIn(f'(subpath "{own}")', profile, "the runner's files beside the candidate's folders stay out")
+        self.assertNotRegex(profile, r'\(remote unix-socket \([^()]*\) \(',
+                            "Seatbelt honors only a unix-socket's first path, so none has a second (#695)")

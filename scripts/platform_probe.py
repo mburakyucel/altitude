@@ -229,7 +229,7 @@ def confinement():
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
 ATTEMPTS = r"""
 import json, os, plistlib, socket, subprocess, sys
-area, outside, home, port, other, label, user_temp = sys.argv[1:8]
+area, outside, home, port, other, label, user_temp, temp = sys.argv[1:9]
 port, other, seen = int(port), int(other), {}
 def attempt(name, action):
     try:
@@ -248,11 +248,12 @@ def connect(number):
 def unix(path):
     with socket.socket(socket.AF_UNIX) as probe:
         probe.connect(path)
-def own_unix():
+def own_unix(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with socket.socket(socket.AF_UNIX) as server:
-        server.bind(os.path.join(area, "own.sock"))
+        server.bind(path)
         server.listen()
-        unix(os.path.join(area, "own.sock"))
+        unix(path)
 def run(*argv):
     subprocess.run(argv, check=True, capture_output=True, timeout=30)
 def bootstrap():
@@ -277,7 +278,9 @@ attempt("bind-other", lambda: bind(0))
 attempt("connect-reserved", lambda: connect(port))
 attempt("connect-other", lambda: connect(other))
 attempt("unix-home", lambda: unix(os.path.join(outside, "s.sock")))
-attempt("unix-area", own_unix)
+attempt("unix-area", lambda: own_unix(os.path.join(area, "own.sock")))
+attempt("unix-temp", lambda: own_unix(os.path.join(temp, "at-x", "case-y", "altitude", "l3-verbs", "a.sock")))
+attempt("unix-system", lambda: unix("/private/var/run/mDNSResponder"))
 attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
@@ -295,9 +298,11 @@ def validation_confinement():
         return None  # Linux validation runs are containers; scripts/container_vm.py covers them
     outside = Path.home() / f".altitude-probe-{NONCE}"
     area, label = outside / "run", f"dev.altitude.probe-validation-{NONCE}"
+    temp = platform.validation_temp(NONCE)  # a later root, as a run's own temporary folder is
     listeners = [socket.socket() for _ in range(2)]
     try:
         area.mkdir(parents=True)
+        temp.mkdir()
         (outside / "secret").write_text("fictional credential\n")
         (outside / "linked").symlink_to(outside)  # a root a worker replaced with a link into the home
         (outside / "s.sock").unlink(missing_ok=True)
@@ -310,9 +315,9 @@ def validation_confinement():
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
         log, status = outside / "run.log", outside / "run.exit"
-        command = platform.validation_command((area, outside / "linked"), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+        command = platform.validation_command((area, outside / "linked", temp), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
                                                               str(outside), str(Path.home()), str(port), str(other),
-                                                              label, platform._user_temp()],
+                                                              label, platform._user_temp(), str(temp)],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
         # As a validation run: a logged job whose output and status are the runner's, beside the candidate's folders.
         subprocess.run(platform.logged_job_command(name("validation"), f"cd {shlex.quote(str(area))} && exec "
@@ -323,7 +328,8 @@ def validation_confinement():
         seen = json.loads(lines[-1]) if lines else {}
         saved = json.loads((area / "seen.json").read_text()) if (area / "seen.json").exists() else None
         check(saved == seen, f"output reached the runner's log: {bool(lines)}; attempts saved in the area {saved}")
-        allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "git"}
+        allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "unix-temp",
+                   "unix-system", "git"}
         check(seen and all(seen[key] == (key in allowed) for key in seen),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
@@ -332,10 +338,11 @@ def validation_confinement():
         for listener in listeners:
             listener.close()
         shutil.rmtree(outside, ignore_errors=True)
+        shutil.rmtree(temp, ignore_errors=True)
         Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
     return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
             "sockets, keychain, launchd and the supervisor are out of reach; system files, name resolution, other "
-            "loopback ports, own sockets and git work")
+            "loopback ports, own sockets in every root and git work")
 
 
 @row

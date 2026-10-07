@@ -481,8 +481,9 @@ than a worker's:
   readable, so `/usr/bin/git` stays fast. Toolchains outside the home (`/opt/homebrew`, `/usr`) stay
   readable; `PATH` keeps altd's entries outside the home.
 - **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
-  sockets are reachable only in its own folders and for the system's name resolution and log, so
-  other processes' sockets, such as an SSH agent, stay out. The run shares the host's loopback, so a
+  sockets are reachable at any depth in each of its own folders, such as the coordinator verb broker
+  a suite binds under `TMPDIR`, and for the system's name resolution and log; other processes'
+  sockets, such as an SSH agent, stay out. The run shares the host's loopback, so a
   server it starts binds a free port.
 - **Keychain** lookups are refused, and launchd refuses service control to every sandboxed process,
   so a run cannot start, stop or change a service. It signals only its own processes.
@@ -494,7 +495,8 @@ are shared with Linux; there is no memory, process or CPU limit. `--kvm` and `--
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
 temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
-supervisor, while system files, name resolution, other loopback ports, its own sockets and Git work.
+supervisor, while system files, name resolution and its socket, other loopback ports, Git and its
+own sockets work, including one nested in a later folder, as a run's temporary folder is.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
