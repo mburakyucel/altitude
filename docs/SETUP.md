@@ -250,7 +250,9 @@ you will use:
   which is for client identities. Browser versions and distribution packaging can change labels;
   [Chrome's certificate manager](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md)
   and [Chromium's Linux guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md)
-  describe the available managers.
+  describe the available managers; the [current manager's navigation](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/resources/certificate_manager/local_certs_section.html.ts)
+  and [control labels](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/app/certificate_manager.grdp)
+  identify the import route.
 - **Firefox:** open **Settings → Privacy & Security → Certificates → View Certificates →
   Authorities → Import**, select `ca.crt`, and enable **Trust this CA to identify websites**.
   Confirm with **OK**. Firefox on Linux can need this separate import even when another browser

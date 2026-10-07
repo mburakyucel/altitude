@@ -197,7 +197,9 @@ sys.stdout.write(tls._guide({"name": "Altitude local CA", "sha256": ${JSON.strin
   await walk.state("16-verify-before-pairing", {
     action: () => page.getByRole("link", { name: "verify HTTPS before pairing" }).first().click(),
     visible: [page.getByRole("heading", { name: "Verify HTTPS before pairing" }),
-      page.getByText(/Do not bypass a warning/), page.getByText(/localhost refers to that device itself/)], hidden: [],
+      page.getByText(/Compare this address with/), page.getByText(/Do not bypass a warning/),
+      page.getByText("Settings › Devices › Pair another device", { exact: true }),
+      page.getByText(/localhost refers to that device itself/)], hidden: [],
   });
   for (const link of await page.getByRole("link", { name: "https://192.168.1.20:8890", exact: true }).all()) {
     await expect(link).toHaveAttribute("href", "https://192.168.1.20:8890");

@@ -542,8 +542,10 @@ Firefox for Android also needs its third-party CA certificate setting.</li>
 </ol>
 <h2 id="verify">Verify HTTPS before pairing</h2>
 <p>Open the exact Altitude address <a href="{address}">{address}</a> in a new private window or tab.
+Compare this address with <strong>alt doctor</strong> on the hosting computer or the address in your trusted Altitude tab.
 It must load with no certificate warning. Do not bypass a warning: check the address, certificate identity
-and trust setting first. Only then run <strong>alt pair</strong> on the computer hosting Altitude and pair this browser.</p>
+and trust setting first. Only then pair this browser: run <strong>alt pair</strong> on the computer hosting Altitude,
+or make a code with <strong>Settings › Devices › Pair another device</strong> in an already trusted, paired browser.</p>
 <p>For everyday use, verify the regular window is warning-free too and pair there; private-window pairing ends when you close it.</p>
 <p>A second computer or phone needs the configured private-network address; localhost refers to that device itself.
 Keep the original Settings page or terminal open until the download finishes.</p>
