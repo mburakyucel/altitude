@@ -1926,9 +1926,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(transcript.view(
                         parts[2], parts[3],
                         engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
-                        cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"), compress=True)
+                        attempt=int(q.get("attempt", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1",
+                        mode=q.get("mode", ["initial"])[0], cursor=q.get("cursor", [""])[0],
+                        before=q.get("before", [""])[0], lower=q.get("lower", [""])[0],
+                        after=q.get("after", [""])[0], record=q.get("record", [""])[0],
+                        offset=int(q.get("offset", ["0"])[0])), compress=True)
                 except (KeyError, transcript.TranscriptAccessError):
                     return self._json({"error": "transcript unavailable for this task generation"}, 404)
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "monitor":
                 return self._json({"seats": route.seats(), "routing": monitor.routing(),
                                    "sessions": monitor.sessions()})

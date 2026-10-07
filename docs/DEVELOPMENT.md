@@ -260,6 +260,18 @@ Chrome DevTools Protocol, with `Network.emulateNetworkConditions` for slow links
 and the script's finished load, never network idle: the change stream stays open. Report cold, warm
 and slow opens separately, and keep simulated links distinct from the operator's real connection.
 
+`web/e2e/live-loading.pw.ts` measures cold/warm live entry, unchanged and changed updates, raw entry,
+and navigation with 100, 5,000 and 20,000 varied fictional records on simulated slow 4G. It snapshots
+the finite set of requests associated with each observation, records finished and canceled transfers
+separately, and checks the recent landmark in the viewport. `live-history.pw.ts` walks upward loading,
+failure/retry, complete traversal, late activity and old command results, raw disclosure, reconnect
+anchoring and cancellation at both viewports. These use real task storage and HTTP handlers with
+fictional projections at the engine seam. Loading/error overlays model transport conditions only.
+Run committed candidates through `alt task validate` with `playwright.validation.config.ts` so
+Chromium retains its own sandbox; retain the HTML report and measurement attachments from `/results`.
+The emulated iPhone lane remains separate from physical iOS momentum/rubber-band and native macOS
+acceptance. Loaded history has proportional DOM/memory cost; recent-first loading is not virtualization.
+
 ## Native Mac browser runtime candidate
 
 The [pinned runtime patch](../patches/codex-0.159.0-seatbelt-browser.patch) is a preparation

@@ -1000,7 +1000,25 @@ carry no diff counts. **Raw events** toggles the transcript to the raw list; its
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
 resumes", or "Session ended"; scrolling up pauses following, and Follow returns to the newest output.
-Pause also stops following while the worker runs. Paused position and expanded tool output survive
+The panel starts with recent activity. Scrolling upward near the top loads older rows into the same
+transcript, preserving the first visible row and its pixel offset. There is no paging toolbar.
+An upward wheel, touch or keyboard gesture also loads history when the recent content is shorter
+than the panel. A completed page needs fresh upward intent; opening the panel does not cascade
+through history. A muted **Loading earlier activity…** line appears above existing rows. Failure
+keeps the transcript and shows **Could not load earlier activity.** with a 44px Retry control there.
+The exhausted top says **Beginning of session**. Neither history status nor updates move focus.
+
+Pause also stops following while the worker runs; new activity continues arriving below. Live read
+failures retain the text and replace the footer with **Could not update the session.** and Retry.
+**Reconnecting to the session…** and **Catching up…** likewise take precedence over Following/Paused.
+A following reader returns to the recent tail after a long absence or a lost server index; a paused
+reader keeps their position while the loaded history reconciles. Earlier rows remain accessible by
+scrolling upward. Background browser tabs suspend reads and refresh when shown again.
+Raw events opens its own recent tail with the same scrolling. Each source record has a bounded
+preview and **Full record** disclosure: **Loading record…**, Cancel, a local error and Retry, then
+**Show more** for another chunk or **Hide full record**. Closing or leaving cancels its request.
+Changing task, session, attempt or representation discards the previous viewer's rows and reading
+state. Paused position and expanded tool output survive
 phone view switches. While
 running, the same activity line sits under the footer without the words, and the header
 dot pulses only while that cue shows recent output; quiet, unavailable, waiting and ended sessions
