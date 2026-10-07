@@ -1,9 +1,9 @@
 """Usage-window resume holds and daemon handoffs."""
-import contextlib
 import io
 import json
 import runpy
 import unittest
+from functools import partial
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
@@ -75,7 +75,7 @@ class TestResumeHold(AltitudeCase):
 
         def invoke():
             output = io.StringIO()
-            with contextlib.redirect_stdout(output):
+            with mock.patch.dict(main.__globals__, {"print": partial(print, file=output)}):
                 main(["--project", self.project, "task", "resume", blocked["slug"],
                       "--reason", "The dependency is available"])
             return json.loads(output.getvalue())

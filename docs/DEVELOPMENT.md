@@ -200,6 +200,8 @@ guards this.
 
 Loading walkthroughs scope assertions to their owning region; the Send now case holds independent
 Conversation and Work reads together so both loading states are present on desktop.
+In-process CLI fixtures capture the CLI's print sink so concurrent daemon diagnostics stay outside
+the command's JSON output.
 
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
 no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
