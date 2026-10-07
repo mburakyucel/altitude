@@ -751,7 +751,8 @@ class TestValidationProfile(TestCase):
                        f'(remote unix-socket (subpath "{own}/work")) (remote unix-socket (subpath "{own}/results")) '
                        '(remote unix-socket (path-literal "/private/var/run/mDNSResponder"))',
                        '(allow file-read* (literal "/private/var/folders/ab/cd/T/xcrun_db"))',
-                       '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))"):
+                       '(global-name "com.apple.SecurityServer")', "(allow signal (target same-sandbox))",
+                       '(global-name-prefix "com.apple.CoreSimulator.")', "(deny lsopen)"):
             self.assertIn(clause, profile)
         self.assertNotIn(f'(subpath "{own}")', profile, "the runner's files beside the candidate's folders stay out")
         self.assertNotRegex(profile, r'\(remote unix-socket \([^()]*\) \(',

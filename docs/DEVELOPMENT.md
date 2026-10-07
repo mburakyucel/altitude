@@ -89,8 +89,9 @@ the Linux image.
 `python3 scripts/platform_probe.py` checks the same mechanisms natively on either host with
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
 `setsid`, double fork, a cleared environment or continued forking, cleanup when the main process
-exits, the time limit, also after its owner exits, macOS confinement and supervisor tampering,
-process and socket facts, and the memory limit. `--service` adds a throwaway user service's start,
+exits, the time limit, also after its owner exits, macOS confinement (including the Simulator
+service and a fixture app opened through LaunchServices, which must be refused) and supervisor
+tampering, process and socket facts, and the memory limit. `--service` adds a throwaway user service's start,
 restart and stop. It prints one JSON row per check and exits non-zero when one fails.
 
 Individual commands remain useful for focused development:
@@ -523,6 +524,9 @@ than a worker's:
   server it starts binds a free port.
 - **Keychain** lookups are refused, and launchd refuses service control to every sandboxed process,
   so a run cannot start, stop or change a service. It signals only its own processes.
+- **Simulator and apps** stay out of reach: Apple's Simulator service and LaunchServices start
+  programs as the operator's account outside any sandbox, so the profile refuses both, as a worker's
+  does. A run cannot create, boot or run programs in a Simulator device, or open an app.
 - **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
   `VALIDATION_RESULTS`; nothing of altd's environment crosses.
 
@@ -534,8 +538,9 @@ stop cleanup. Links are removed, never followed. `--kvm` and `--publish` are ref
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
 temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
-supervisor, while system files, name resolution and its socket, other loopback ports, Git and its
-own sockets work, including one nested in a later folder, as a run's temporary folder is.
+supervisor, a fixture app opened through LaunchServices and the Simulator service, while system
+files, name resolution and its socket, other loopback ports, Git and its own sockets work, including
+one nested in a later folder, as a run's temporary folder is.
 
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),

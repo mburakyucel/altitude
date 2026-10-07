@@ -414,8 +414,8 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
-| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control, Simulator service or app launches; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which admits neither the Simulator service nor app launches; the two profiles cannot nest | Isolation and landing |
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
@@ -1108,8 +1108,8 @@ job, run one command against a throwaway clone of its committed `HEAD`. On Linux
 disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
 limits. On macOS it runs as a job under the platform's validation Seatbelt profile, stricter than a
 worker's: it writes and reads only its own folders in the run area, reads nothing else in the operator's
-home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets nor
-the keychain, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets,
+the keychain, the Simulator service nor LaunchServices, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
 Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
 uses the supported runner without host package installation. Image corrections take effect after
 normal source activation and require a successful browser check through that effective runner;
@@ -1128,7 +1128,9 @@ Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
-temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
+temporary directories; launchd refuses service control to any sandboxed process. The profile also refuses
+the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
+whose devices run what any client asks, and LaunchServices, which opens apps. A Claude L3 turn that
 runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free

@@ -1,5 +1,6 @@
 """The macOS side of the platform seam against fixtures: a fake launchctl, fixture process tables, coalitions and
 sockets. It runs on any host; scripts/platform_probe.py exercises the same mechanisms natively on a Mac."""
+import ctypes
 import ctypes.util
 import json
 import os
@@ -578,6 +579,29 @@ class Confinement(DarwinCase):
         for root in ('(subpath "/private/tmp/work tree")', '(subpath "/private/tmp/q\\"uote")',
                      '(subpath "/private/var/folders/ab/cd")', '(subpath "/dev")'):
             self.assertIn(root, text)
+
+    def test_profile_refuses_the_services_that_start_programs_outside_it(self):
+        self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
+        text = platform.seatbelt_profile(["/private/tmp/work"])
+        for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
+                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)"):
+            self.assertIn(rule, text)
+        self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
+
+    def test_seatbelt_compiles_both_profiles_on_a_mac(self):
+        """Seatbelt rejects a whole profile over one unknown rule, which would stop every confined job."""
+        try:
+            library = ctypes.CDLL("/usr/lib/libsandbox.1.dylib")
+        except OSError:
+            self.skipTest("Seatbelt is macOS's")
+        library.sandbox_compile_string.restype = ctypes.c_void_p
+        library.sandbox_compile_string.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
+        for text in (platform.seatbelt_profile([str(self.tmp)]),
+                     platform.validation_profile((self.tmp / "work",), self.tmp / "unit.log", 8890)):
+            error = ctypes.c_char_p()
+            compiled = library.sandbox_compile_string(text.encode(), None, ctypes.byref(error))
+            self.assertTrue(compiled, error.value)
+            library.sandbox_free_profile(ctypes.c_void_p(compiled))
 
     def test_limits_replace_the_address_space_cap_with_a_footprint_watcher(self):
         argv = platform.limited_command(["ffmpeg", "-i", "x"], memory=1 << 30, cpu=10, output=5)
