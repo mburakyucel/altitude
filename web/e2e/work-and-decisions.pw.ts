@@ -241,7 +241,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(waiting.locator(".dot")).toHaveAttribute("data-state", "waiting");
   await expect(pausedRow).toHaveAttribute("href", `/projects/${project.name}/tasks/${parked.slug}`);
   await walk.state("01a-paused-stopped-fault-and-operator-answer", {
-    visible: [pausedRow, stoppedRow, faultRow, waiting.getByText("Waiting for you", { exact: true })],
+    visible: [pausedRow, stoppedRow, faultRow, waiting.getByText("Waiting for your answer to the task’s question.", { exact: true })],
     hidden: [pausedRow.getByText(/Your turn|Stopped/)],
   });
   await walk.state("01-current-waiting-queued-and-l3", {
