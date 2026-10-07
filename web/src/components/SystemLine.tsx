@@ -181,7 +181,7 @@ function SystemCard({
           <p>{lineText(turn, null)}</p>
           <p className="text-muted">Information only · Exchange {turn.projectMessage.exchange_id}</p>
           <ProseProject value={undefined}><ProseRepository value={null}>
-            <Prose text={turn.prompt} document />
+            <Prose text={turn.prompt} document showLinkTargets />
           </ProseRepository></ProseProject>
         </div>
       ) : turn.fyi ? (

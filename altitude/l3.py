@@ -719,6 +719,11 @@ def queue_path(project: str) -> Path:
     return config.project_dir(project) / "l3-queue.jsonl"
 
 
+def has_queued_turn(project):
+    with S.project_lock(project):
+        return any(row.get("trigger") != "project-message" for row in _queue_rows(queue_path(project)))
+
+
 def _queue_rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -1028,7 +1033,7 @@ def deliver_queued(project: str) -> dict | None:
     same turn so the operator's consecutive messages are read together, each on its own line and in arrival
     order. Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
-    if not config.is_managed(project):
+    if not config.is_managed(project) or not has_queued_turn(project):
         return None
     for row in queued(project):
         if row.get("trigger") == "ci-recheck":
@@ -1259,11 +1264,11 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 chat_log(project, "system", "Coordinator message receipt could not be saved; "
                          "delivery may repeat on the next ordinary turn.", trigger="project-message-error",
                          turn_id=uuid.uuid4().hex)
-            except OSError:
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 print("Coordinator message receipt could not be saved", file=sys.stderr)
         try:
             information = _pending_project_messages(project) if choice.get("engine") else []
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             information = []
             receipt_error(exc)
         prompt = _project_message_prompt(information) + prompt
@@ -1277,7 +1282,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 supplied, information = information, []
                 try:
                     _record_project_messages(project, supplied, turn_id)
-                except (OSError, ValueError) as exc:
+                except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                     # Preserve provider success. A retained chat receipt reconciles queue removal;
                     # failure before that proof remains visible and may repeat on the next turn.
                     receipt_error(exc)

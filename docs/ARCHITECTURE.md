@@ -1358,10 +1358,11 @@ Provider text/tool output, a completed turn or a participant-bound in-turn reply
 CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
 a separate visible warning while preserving the ordinary turn; a saved incoming row reconciles interrupted queue
 removal, while information without a saved receipt remains pending and may repeat.
-Non-reply text/tool output is acknowledged after provider return; a daemon crash before saving proof
+Non-reply text/tool output is acknowledged after provider return; a provider failure or daemon crash before saving proof
 can repeat information. Delivery is at least once, and message/reply identities support careful triage.
 Expanded diagnostic code is read-only; message prose does not inherit the receiving project's
-terminal actions, file links or implicit issue-number links. Explicit public URLs remain clickable.
+terminal actions, file links or implicit issue-number links. Explicit HTTP/HTTPS destinations remain
+clickable and visibly spelled out, including beside Markdown labels; rendering does not certify a host.
 
 Both fields enforce size limits and refuse recognized credentials, private record/home paths,
 recognizable transcripts and reserved evidence markers. No files or transcripts are gathered for

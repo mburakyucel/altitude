@@ -403,7 +403,8 @@ Coordinator information messages use separate system lines outside routine group
 recipient · summary · Sent/Incoming**, plus **Show**. Sent acknowledges inbox acceptance; pending
 information says **Queued · next ordinary turn**. Show replaces the line with a Coordinator message
 card containing direction, summary, the exchange reference and full diagnostic text; Hide restores
-the line. Diagnostic code stays read-only; explicit public links remain clickable, without inferred
+the line. Diagnostic code stays read-only; link destinations appear literally, including beside
+Markdown labels, without inferred
 task, file, issue or terminal actions. Reply rows reverse direction on the same exchange. No send,
 reply, approval or removal control is added to this information surface.
 

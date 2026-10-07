@@ -1167,7 +1167,7 @@ inspect the actual response. Interrupted receipt/queue removal is reconciled fro
 chat row on the next ordinary turn, without another visible inbox row or forwarding it twice.
 A receipt write/read/reconciliation failure preserves the ordinary turn and reports a separate visible information warning. If no incoming
 receipt was saved, the information remains pending and may repeat; this is not a failed AI turn.
-Text and non-reply tool output prove supply when the provider returns. A daemon crash before saving
+Text and non-reply tool output prove supply when the provider returns. A provider failure or daemon crash before saving
 that proof can repeat information on the next ordinary turn. This is at-least-once delivery; coordinators
 use the message identity and stable reply request identity to avoid repeating actions.
 Information rows stay outside operator decision sources and historical human handoffs.

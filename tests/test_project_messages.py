@@ -314,8 +314,12 @@ class TestProjectMessages(AltitudeCase):
 
     def test_information_does_not_change_runnable_queue_position(self):
         self.send()
+        self.assertFalse(l3.has_queued_turn(self.peer))
+        with mock.patch.object(l3, "_select", side_effect=AssertionError("information alone must not request provider admission")):
+            self.assertIsNone(l3.deliver_queued(self.peer))
         self.assertEqual(l3.queue_message(self.peer, "Ordinary request", trigger="chat")["position"], 1)
         self.assertEqual(l3.queue_message(self.peer, "Next request", trigger="chat")["position"], 2)
+        self.assertTrue(l3.has_queued_turn(self.peer))
 
     def test_reply_before_interruption_records_incoming_before_sent_and_never_replays(self):
         for engine in config.ENGINES:
@@ -448,3 +452,17 @@ class TestProjectMessages(AltitudeCase):
                                 for row in l3.chat_history(self.peer, None)))
             self.assertTrue(any(row["project_message"]["reply_to"] == message["exchange_id"] for row in self.rows(self.peer)))
             self.supply(self.peer)
+
+    def test_wrong_shape_receipt_records_do_not_fail_the_ordinary_answer(self):
+        self.send()
+        S.project_log(self.peer, "project-message-received", message={"bad": "fictional missing identity"})
+        result = {"text": "Ordinary answer survives a wrong-shape receipt", "session_id": "fixture-session",
+                  "reported_session_id": "fixture-session"}
+        with mock.patch.object(l3, "_select", return_value={"engine": config.ENGINES[0], "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", return_value=result.copy()), \
+             mock.patch.object(engines, "codex_exec", return_value=result.copy()):
+            response = l3.turn(self.peer, "Ordinary request")
+        self.assertTrue(response["completed"])
+        self.assertIn("id", response["project_message_error"])
+        self.assertEqual(len(l3.queued(self.peer)), 1)
+        self.assertTrue(any(row["text"] == result["text"] for row in l3.chat_history(self.peer, None)))

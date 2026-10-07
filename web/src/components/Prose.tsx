@@ -66,7 +66,7 @@ export function InlineProse({ text }: { text: string }) {
 }
 
 /** Inline code, bold, existing links, and GitHub references in plain text. */
-export function inline(text: string, repository?: string | null, project?: string): ReactNode[] {
+export function inline(text: string, repository?: string | null, project?: string, showLinkTargets = false): ReactNode[] {
   const nodes: ReactNode[] = [];
   let end = 0;
   for (const match of text.matchAll(INLINE)) {
@@ -79,7 +79,7 @@ export function inline(text: string, repository?: string | null, project?: strin
       continue;
     }
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
-      nodes.push(<strong key={index}>{inline(part.slice(2, -2), repository, project)}</strong>);
+      nodes.push(<strong key={index}>{inline(part.slice(2, -2), repository, project, showLinkTargets)}</strong>);
       continue;
     }
     const fileLink = /^\[([^\]]+)\]\(<?((?:file:\/\/|\/)[\s\S]*?)>?\)$/.exec(part);
@@ -99,7 +99,7 @@ export function inline(text: string, repository?: string | null, project?: strin
     if (link) {
       nodes.push(
         <a className="prose-link" key={index} href={link[2]} target="_blank" rel="noopener noreferrer">
-          {link[1]}
+          {link[1]}{showLinkTargets ? ` (${link[2]})` : ""}
         </a>
       );
       continue;
@@ -128,7 +128,7 @@ const HEADING = /^\s*#{1,6}\s+(.*)$/;
  * as commands), inline code, bold, and links. A heading line reads as a plain paragraph: replies carry
  * no headings and no tables, so neither gets a shape here.
  */
-export function Prose({ text, document = false }: { text: string; document?: boolean }) {
+export function Prose({ text, document = false, showLinkTargets = false }: { text: string; document?: boolean; showLinkTargets?: boolean }) {
   const repository = useContext(ProseRepository);
   const project = useContext(ProseProject);
   const blocks: ReactNode[] = [];
@@ -139,7 +139,7 @@ export function Prose({ text, document = false }: { text: string; document?: boo
     if (para.length > 0) {
       blocks.push(
         <p key={blocks.length}>
-          {inline(para.join("\n"), repository, project)}
+          {inline(para.join("\n"), repository, project, showLinkTargets)}
         </p>,
       );
     }
@@ -151,7 +151,7 @@ export function Prose({ text, document = false }: { text: string; document?: boo
       blocks.push(
         <Tag key={blocks.length}>
           {list.items.map((item, index) => (
-            <li key={index}>{inline(item, repository, project)}</li>
+            <li key={index}>{inline(item, repository, project, showLinkTargets)}</li>
           ))}
         </Tag>,
       );
@@ -196,7 +196,7 @@ export function Prose({ text, document = false }: { text: string; document?: boo
       if (document && heading) {
         flushPara();
         const Tag = `h${Math.min(6, /^#+/.exec(line.trimStart())![0].length + 1)}` as "h2" | "h3" | "h4" | "h5" | "h6";
-        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, repository, project)}</Tag>);
+        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, repository, project, showLinkTargets)}</Tag>);
         continue;
       }
       para.push(heading?.[1] ?? line);

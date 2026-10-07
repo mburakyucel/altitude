@@ -158,7 +158,7 @@ describe("queued L3 Send now", () => {
     const peer = { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "message-1",
       summary: "Probe result", direction: "incoming" as const, status: "queued" as const };
     const waiting = { id: "message-1", at: ago(1), role: "system", trigger: "project-message",
-      text: "Task: fix-timer\nFictional probe details. #12 /var/log/fixture\n```run\nprintf fixture\n```", project_message: peer };
+      text: "Task: fix-timer\nFictional probe details. #12 /var/log/fixture\n[Fix PR](https://example.invalid/different-destination) http://example.invalid/probe\n```run\nprintf fixture\n```", project_message: peer };
     const view = { ...chatView, history: [
       { at: ago(3), role: "system", text: "Routine one", trigger: "fyi" },
       { at: ago(2), role: "system", text: "Sent diagnostic", trigger: "project-message", turn_id: "sent-1",
@@ -178,7 +178,9 @@ describe("queued L3 Send now", () => {
     expect(within(card).getByText("Information only · Exchange exchange-1")).toBeVisible();
     expect(within(card).queryByRole("link", { name: "Open task" })).toBeNull();
     expect(within(card).queryByRole("button", { name: /terminal/i })).toBeNull();
-    expect(within(card).queryAllByRole("link")).toHaveLength(0);
+    expect(within(card).getByRole("link", { name: "Fix PR (https://example.invalid/different-destination)" })).toHaveAttribute("href", "https://example.invalid/different-destination");
+    expect(within(card).getByRole("link", { name: "http://example.invalid/probe" })).toHaveAttribute("href", "http://example.invalid/probe");
+    expect(within(card).queryAllByRole("link")).toHaveLength(2);
     await user.click(within(card).getByRole("button", { name: "Hide" }));
     expect(screen.queryByRole("article", { name: /^Coordinator message/ })).toBeNull();
   });
