@@ -442,8 +442,8 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   that folder from Altitude's home without following links. Links and oversized files are skipped and
   listed. The run's container or processes, clone and area are removed afterwards, including after a
   timeout or a stop. Cleanup of the processes and of every folder the candidate could write comes
-  before the record: a run whose cleanup does not finish ends as `cleanup failed`, keeps its area and
-  closes the runner until the next start. The runner's own files in the area (the run's identity,
+  before the record: a run whose cleanup does not finish ends as `cleanup failed`, with the first entry
+  that stayed and why, and keeps its area. The runner's own files in the area (the run's identity,
   delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
   Activation waits through execution, evidence recording and cleanup; validation admission shares
   the restart fence and refuses runs once restart is requested.
@@ -455,8 +455,10 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   recorded as interrupted at the next start. Its log and results are copied before scratch files are
   removed. A completed evidence copy is reused if ledger recording was interrupted. If evidence cannot
   be copied, the record names its original paths and the run area is retained for recovery. The runner
-  admits no run until earlier areas are removed, and stays closed, with the reason in altd's log, if
-  evidence recording or cleanup cannot finish.
+  admits no run until earlier areas are removed. Each start and each later request while an area
+  remains retry its removal once the area's processes have stopped, so a leftover that becomes
+  removable reopens the runner without a restart. Until then the request is refused with the area,
+  entry or processes that stayed and why, also in altd's log.
 - **Switch.** Settings → **Validation runs** is on after install. Turning it off stops a running
   run, including one admitted but not yet started, and refuses new ones. The switch is kept in the
   runner's storage, where a worker cannot turn it back on.
@@ -491,7 +493,10 @@ than a worker's:
   `VALIDATION_RESULTS`; nothing of altd's environment crosses.
 
 The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
-are shared with Linux; there is no memory, process or CPU limit. `--kvm` and `--publish` are refused.
+are shared with Linux; there is no memory, process or CPU limit. altd removes the run's folders as the
+operator's account, first giving every folder in them its owner's permissions back, so a folder a
+suite left without write permission (as the native browser trial's protected package is) does not
+stop cleanup. Links are removed, never followed. `--kvm` and `--publish` are refused.
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
 temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its

@@ -83,6 +83,7 @@ class RunnerCase(AltitudeCase):
         self.patch(validation, "home", return_value=self.runner)
         validation._ready.set()
         self.stops = self.patch(platform, "job_stop")
+        self.active = self.patch(platform, "job_active", return_value=False)
         self.slug = T.new(self.project, "Check the installation", "Run the VM lifecycle.")["slug"]
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
                    worktree=str(self.repo), branch="work")
@@ -369,8 +370,6 @@ class TestValidationRunner(RunnerCase):
             (areas[name] / "results" / "check").write_text("partial evidence\n")
             engines.machine_files(areas[name], f"altitude-validation-{name}.service")[0].write_text("before restart\n")
         T.finish_machine_run(self.project, self.slug, {**row, "exit": 0, "finished": S.now(), "ended": "exit"})
-        validation._ready.clear()
-        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
         cleanup = validation.cleanup
         held = []
         with mock.patch.object(validation, "cleanup", side_effect=lambda runs: (held.append(validation._lock.locked()),
@@ -384,7 +383,7 @@ class TestValidationRunner(RunnerCase):
                  .splitlines()]
         self.assertEqual([(r["ended"], r["exit"]) for r in saved], [("interrupted", None), ("exit", 0)],
                          "a row finished before its area was removed stays as it ended")
-        self.assertIn("altd stopped during the run", saved[0]["error"])
+        self.assertIn("altd did not record the run's end", saved[0]["error"])
         self.assertGreater((datetime.now(timezone.utc) - datetime.fromisoformat(saved[0]["started"]))
                            .total_seconds(), validation.TIMEOUT)
         self.assertIn("retained", saved[0]["error"])
@@ -426,23 +425,21 @@ class TestValidationRunner(RunnerCase):
         self.assertIn("exit 3", result.stdout)
         self.assertIn(f"results {S.task_dir(self.project, self.slug) / 'validation' / '1'}", result.stdout)
 
-    def test_a_failed_cleanup_keeps_the_runner_closed_and_an_unrecorded_outcome_keeps_its_record(self):
+    def test_a_failed_cleanup_keeps_the_area_until_a_request_removes_it_and_an_unrecorded_outcome_keeps_its_record(self):
         with mock.patch.object(T, "finish_machine_run", side_effect=OSError("disk full")):
             self.assertIn("disk full", self.validate(["true"], status=400)["error"])
         [area] = list((validation.home() / "runs").iterdir())
-        self.assertTrue((area / "run.json").exists(), "the next start still knows which row to finish")
-        validation._ready.clear()
-        with mock.patch.object(validation, "cleanup", return_value={"exit": 0}):
+        self.assertTrue((area / "run.json").exists(), "the runner still knows which row to finish")
+        failure = "the cleanup unit ended without success: 3"
+        with mock.patch.object(validation, "cleanup", return_value=failure):
             validation.reconcile()
-        self.assertFalse(validation._ready.is_set())
-        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
-        validation.reconcile()
+            self.assertFalse(validation._ready.is_set())
+            self.assertIn(f"has not finished removing what earlier runs left: {failure}",
+                          self.validate(["true"], status=400)["error"])
+        self.assertEqual(self.validate(["true"])["exit"], 0, "the next request removes the area, without a restart")
         self.assertTrue(validation._ready.is_set())
         self.assertFalse(area.exists())
-        [row] = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
-                 .splitlines()]
-        self.assertEqual(row["ended"], "interrupted")
-        self.assertEqual(self.validate(["true"])["exit"], 0)
+        self.assertEqual([row["ended"] for row in self.rows()], ["interrupted", "exit"])
 
     def test_startup_leaves_validation_rows_to_the_runner(self):
         T.start_machine_run(self.project, self.slug, lambda n: {
@@ -510,10 +507,10 @@ class TestValidationRunner(RunnerCase):
         self.assertIn("cleanup unit ended without success", result["cleanup"])
         [row] = self.rows()
         self.assertEqual((row["ended"], row["cleanup"]), ("cleanup failed", result["cleanup"]))
-        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
-        validation.reconcile()
+        self.assertFalse(validation._ready.is_set())
+        self.assertEqual(self.validate(["true"])["ended"], "exit", "the next request removes the area first")
         self.assertEqual(list((validation.home() / "runs").iterdir()), [])
-        self.assertEqual(self.rows()[0]["ended"], "cleanup failed", "the next start keeps the recorded failure")
+        self.assertEqual(self.rows()[0]["ended"], "cleanup failed", "removing the area keeps the recorded failure")
         self.serving(self.httpd.server_address[1])
         owner = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
                  "ALTITUDE_ATTEMPT": "1"}
@@ -548,7 +545,6 @@ class TestMacValidationRunner(RunnerCase):
         self.patch(platform, "SANDBOX_EXEC", str(sandbox))
         self.patch(platform, "logged_job_command", side_effect=lambda name, command, *, log, status, **kwargs:
                    ["/bin/bash", "-c", LOGGED, "job", command, str(status), str(log)])
-        self.active = self.patch(platform, "job_active", return_value=False)
         self.patch(platform, "validation_temp", side_effect=lambda run: self.tmp / f"av-{run}")
         hidden = Path.home() / "bin"
         self.setenv("PATH", f"{hidden}:{os.environ['PATH']}")
@@ -595,7 +591,9 @@ class TestMacValidationRunner(RunnerCase):
         self.assertIn("still running", result["cleanup"])
         [area] = list((validation.home() / "runs").iterdir())
         self.assertTrue((area / "work").exists(), "the clone stays while the run's processes may still use it")
-        self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
+        refusal = self.validate(["true"], status=400)["error"]
+        self.assertIn(f"processes of {result['unit']} are still running", refusal)
+        self.assertTrue((area / "work").exists(), "a request does not remove what running processes may use")
         self.active.return_value = False
         validation.reconcile()
         self.assertEqual(self.stops.call_args_list[-1].args[0], "altitude-validation-*.service")
@@ -621,24 +619,54 @@ class TestMacValidationRunner(RunnerCase):
         self.assertEqual((target / "keep").read_text(), "operator\n", "the link's target is untouched")
         self.assertFalse(list((validation.home() / "runs").iterdir()))
 
-    def test_a_temporary_folder_that_cannot_be_removed_keeps_the_run_area_and_the_runner_closed(self):
-        real = shutil.rmtree
+    def protected(self, folder):
+        """What the native browser trial leaves (#700): a file in a folder without write permission."""
+        return (f'mkdir -p "{folder}/package/bin" && touch "{folder}/package/bin/runtime" && '
+                f'chmod 0555 "{folder}/package/bin" "{folder}/package"')
 
-        def stuck(path, *args, **kwargs):
-            if Path(path).name.startswith("av-"):
-                return None
-            return real(path, *args, **kwargs)
-        with mock.patch.object(validation.shutil, "rmtree", side_effect=stuck):
-            result = self.validate(["true"])
-            self.assertEqual(result["ended"], "cleanup failed")
-            self.assertIn("could not remove", result["cleanup"])
+    def test_folders_left_without_write_permission_are_removed_and_the_runner_stays_open(self):
+        result = self.validate(["sh", "-c", f'{self.protected("$TMPDIR")} && {self.protected("$HOME")} && '
+                                            f'mkdir "$HOME/sealed" && chmod 0 "$HOME/sealed"'])
+        self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (0, "exit", None))
+        self.assertEqual(self.rows()[0]["cleanup"], None)
+        self.assertTrue(validation._ready.is_set())
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+        self.assertEqual(list(self.tmp.glob("av-*")), [])
+        self.assertEqual(self.validate(["true"])["ended"], "exit")
+
+    def test_a_retained_area_with_a_folder_without_write_permission_is_removed_at_start(self):
+        ident = "8baeb2fb7460"
+        area, unit = validation.home() / "runs" / ident, f"altitude-validation-{ident}.service"
+        area.mkdir(parents=True)
+        S.write_json(area / "run.json", {"project": self.project, "slug": self.slug, "unit": unit})
+        row = T.start_machine_run(self.project, self.slug, lambda n: {"purpose": "validation", "command": "true",
+                                                                       "unit": unit})
+        T.finish_machine_run(self.project, self.slug, {
+            **row, "exit": 0, "finished": S.now(), "ended": "cleanup failed", "cleanup": "could not remove",
+            "results": str(S.task_dir(self.project, self.slug) / "validation" / "1")})
+        temp = self.tmp / f"av-{ident}"
+        temp.mkdir()
+        subprocess.run(["sh", "-c", self.protected(temp)], check=True)
+        validation._ready.clear()
+        validation.reconcile()
+        self.assertTrue(validation._ready.is_set())
+        self.assertFalse(area.exists() or temp.exists())
+        self.assertEqual(self.rows()[0]["ended"], "cleanup failed", "the recorded outcome stays")
+
+    def test_what_cannot_be_removed_is_named_and_a_later_request_removes_it_without_a_restart(self):
+        with mock.patch.object(validation.os, "chmod"):  # permissions cannot be restored
+            result = self.validate(["sh", "-c", self.protected("$TMPDIR")])
             [area] = list((validation.home() / "runs").iterdir())
+            stuck = f"{self.tmp / f'av-{area.name}'}/package/bin/runtime: Permission denied"
+            self.assertEqual((result["exit"], result["ended"]), (0, "cleanup failed"))
+            self.assertEqual(result["cleanup"], f"could not remove {stuck}")
+            self.assertEqual(self.rows()[0]["cleanup"], result["cleanup"])
+            self.assertFalse(validation._ready.is_set())
+            self.assertIn(stuck, self.validate(["true"], status=400)["error"])
             validation.reconcile()
             self.assertTrue(area.exists(), "the area stays as the marker while its temporary folder remains")
-            self.assertIn("has not finished removing", self.validate(["true"], status=400)["error"])
-        validation.reconcile()
-        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
         self.assertEqual(self.validate(["true"])["ended"], "exit")
+        self.assertFalse(area.exists() or (self.tmp / f"av-{area.name}").exists())
 
 
 class TestValidationProfile(TestCase):

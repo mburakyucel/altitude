@@ -49,9 +49,9 @@ OFF = "alt task validate: the operator has turned validation runs off in Setting
 UNIT_PREFIX = "altitude-validation-"   # every unit the runner starts; its rows are recorded by reconcile()
 
 LOG = logging.getLogger(__name__)
-_lock = threading.Lock()         # one run on the machine at a time, and startup cleanup before any
+_lock = threading.Lock()         # one run on the machine at a time, and removal of earlier runs' areas before any
 _state = threading.Lock()        # orders admission against turning the runner off
-_ready = threading.Event()       # startup cleanup has finished; no run is admitted before it
+_ready = threading.Event()       # no earlier run's area remains; until then each request retries their removal
 _active: dict = {}               # the admitted run's area and unit, and whether turning the runner off stopped it
 
 
@@ -304,10 +304,36 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
     return target, skipped
 
 
+def _remove(path: Path) -> str | None:
+    """Remove `path` as the operator's account. A link in its place is removed, never followed. Its folders first get
+    their owner's permissions back, since a run can leave one without write permission, as the native browser trial's
+    protected package does (#700). Returns the first entry that could not be removed and why, or None."""
+    if path.is_symlink():
+        path.unlink()
+        return None
+
+    def own(folder: str) -> None:
+        if not os.path.islink(folder):
+            try:
+                os.chmod(folder, stat.S_IMODE(os.lstat(folder).st_mode) | stat.S_IRWXU)
+            except OSError:
+                pass  # removal below names what stays
+
+    if path.is_dir():
+        own(str(path))
+        for root, folders, _ in os.walk(path):
+            for name in folders:
+                own(os.path.join(root, name))
+    failures = []
+    shutil.rmtree(path, onexc=lambda _call, entry, exc: failures.append(
+        f"{entry}: {getattr(exc, 'strerror', None) or exc}"))
+    return failures[0] if failures and os.path.lexists(path) else None
+
+
 def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
     """Remove what runs left: Podman's containers on Linux, `unit`'s processes on macOS, and `paths`, in order: on
-    macOS the first path that cannot be removed stops cleanup, so a run area listed last stays as the marker the next
-    start finds. A link in a path's place is removed, never followed. Returns why cleanup did not finish, or None."""
+    macOS the first path that cannot be removed stops cleanup, so a run area listed last stays as the marker the runner
+    retries. Returns why cleanup did not finish, naming what stayed, or None."""
     try:
         if platform.validation_in_container():
             name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
@@ -325,9 +351,9 @@ def cleanup(paths: list[Path], unit: str | None = None) -> str | None:
                 if platform.job_active(unit, env):
                     return f"processes of {unit} are still running"
             for path in paths:
-                if path.is_symlink():
-                    path.unlink()
-                shutil.rmtree(path, ignore_errors=True)
+                failure = _remove(path)
+                if failure:
+                    return f"could not remove {failure}"
                 if os.path.lexists(path):
                     break
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -349,7 +375,7 @@ def _interrupted(area: Path) -> bool:
             if row.get("results") == str(area / "results"):
                 return False  # Evidence could not be delivered; keep its original files for recovery.
             if row.get("finished") is None:
-                error = "altd stopped during the run; its next start stopped the run and retained its evidence"
+                error = "altd did not record the run's end; the runner stopped the run and retained its evidence"
                 try:
                     target, skipped = _deliver(record["project"], record["slug"], row["n"], area, record["unit"])
                     log = S.task_dir(record["project"], record["slug"]) / "validation" / f"{row['n']}.log"
@@ -370,25 +396,47 @@ def _interrupted(area: Path) -> bool:
 
 
 def reconcile() -> None:
-    """At daemon start, before any run is admitted: stop what a run left when altd stopped, retain evidence, then
-    remove its containers and run area. Runs are admitted only once every area is gone; a failed cleanup keeps the
-    runner closed until the next start."""
+    """At daemon start, before any run is admitted: recover what runs left when altd stopped."""
     with _lock:
         _ready.clear()
-        runs = sorted(p for p in (home() / "runs").glob("*") if p.is_dir()) if (home() / "runs").is_dir() else []
-        if runs and not platform.validation_unavailable():
-            platform.job_stop(f"{UNIT_PREFIX}*.service", platform.manager_env(engines.clean_env()))
-            done = [area for area in runs if _interrupted(area)]
-            cleanup([path for path in (*(d for area in done for d in candidate_dirs(area)), *done)
-                     if os.path.lexists(path)])
-        left = [area for area in runs if area.exists()]
-        if left:
-            LOG.error(f"validation: {len(left)} run area(s) retained because evidence or cleanup could not finish; "
-                      "validation runs stay refused until recovery and the next altd start")
-            return
-        if runs:
-            LOG.warning(f"validation: removed {len(runs)} run area(s) left by an earlier altd")
-        _ready.set()
+        _recover()
+
+
+def _recover() -> str | None:
+    """With `_lock` held and no run admitted: stop what earlier runs left, retain their evidence, then remove their
+    containers and run areas. Runs are admitted only once every area is gone. Called at daemon start and again by
+    each request while an area remains, so a leftover that becomes removable reopens the runner without a restart.
+    Returns why an area stays, or None."""
+    runs = sorted(p for p in (home() / "runs").glob("*") if p.is_dir()) if (home() / "runs").is_dir() else []
+    reasons = []
+    if runs and not platform.validation_unavailable():
+        env = platform.manager_env(engines.clean_env())
+        platform.job_stop(f"{UNIT_PREFIX}*.service", env)
+        done = []
+        for area in runs:
+            unit = f"{UNIT_PREFIX}{area.name}.service"
+            try:
+                running = platform.job_active(unit, env) and f"processes of {unit} are still running"
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                running = f"cannot confirm that {unit} stopped: {exc}"
+            if running:
+                reasons.append(running)
+            elif _interrupted(area):
+                done.append(area)
+            else:
+                reasons.append(f"{area} holds evidence or a record that could not be finished; see altd's log")
+        failure = cleanup([path for path in (*(d for area in done for d in candidate_dirs(area)), *done)
+                           if os.path.lexists(path)])
+        reasons += [failure] if failure else []
+    left = [area for area in runs if area.exists()]
+    if left:
+        reason = "; ".join(reasons) or f"{left[0]} remains"
+        LOG.error(f"validation: {len(left)} run area(s) retained; validation runs stay refused: {reason}")
+        return reason
+    if runs:
+        LOG.warning(f"validation: removed {len(runs)} run area(s) left by earlier runs")
+    _ready.set()
+    return None
 
 
 def stop_all() -> None:
@@ -441,11 +489,18 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     home().mkdir(mode=0o700, parents=True, exist_ok=True)
     if shutil.disk_usage(home()).free < FREE_DISK:
         raise ValueError(f"alt task validate: less than {FREE_DISK >> 30} GiB free for the validation runner")
-    if not _ready.is_set():
-        raise ValueError("alt task validate: the runner has not finished removing what an earlier altd left; "
-                         "see altd's log")
     if not _lock.acquire(blocking=False):
-        raise ValueError("alt task validate: another validation run is using this machine; try again when it ends")
+        raise ValueError("alt task validate: another validation run is using this machine; try again when it ends"
+                         if _ready.is_set() else "alt task validate: the runner is removing what earlier runs left; "
+                         "try again shortly")
+    try:
+        left = None if _ready.is_set() else _recover()
+    except BaseException:
+        _lock.release()
+        raise
+    if left:
+        _lock.release()
+        raise ValueError(f"alt task validate: the runner has not finished removing what earlier runs left: {left}")
     ident = uuid.uuid4().hex[:12]
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
     row, result, failure, stopped, target, skipped = None, None, None, False, None, []
@@ -517,7 +572,8 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             finally:
                 if area.exists():
                     _ready.clear()
-                    LOG.warning(f"validation: retained {area}; evidence or cleanup needs recovery before another run")
+                    why = cleanup_error or "its record or evidence was not finished"
+                    LOG.warning(f"validation: retained {area}: {why}; the next request retries its removal")
                 _lock.release()
     return {**result, "n": row["n"], "commit": commit, "tree": tree, "host": row["host"], "isolation": row["isolation"],
             "ended": row["ended"], "cleanup": cleanup_error, "results": str(target), "results_skipped": skipped,

@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import json
 import os
 import plistlib
+import shutil
 import stat
 import subprocess
 import time
@@ -59,6 +60,16 @@ class TestNativeBrowserTrial(AltitudeCase):
         self.patch(engines, "browser_trial_package", return_value=self.package)
         self.patch(engines, "browser_trial_stock_root", return_value=self.candidate)
         self.patch(restart_altitude, "require_deployed_checkout")
+        self.addCleanup(self.remove_area)
+
+    def remove_area(self):
+        """The trial protects its package folders without write permission; give them back so removal succeeds
+        and no suite leaves them in its temporary folder (#700)."""
+        if self.area.exists():
+            for directory in (self.area, *self.area.rglob("*")):
+                if directory.is_dir() and not directory.is_symlink():
+                    directory.chmod(0o700)
+            shutil.rmtree(self.area)
 
     def row(self):
         return json.loads((self.area / "receipt.json").read_text())
@@ -100,11 +111,7 @@ class TestNativeBrowserTrial(AltitudeCase):
     def test_internal_deadline_or_handled_interruption_restores_selection(self):
         for error in (TimeoutError("native timeout"), self.native.TrialError("interrupted by signal 15")):
             with self.subTest(error=error):
-                if self.area.exists():
-                    for directory in self.area.rglob("*"):
-                        if directory.is_dir(): directory.chmod(0o700)
-                    import shutil
-                    shutil.rmtree(self.area)
+                self.remove_area()
                 with mock.patch.object(self.native, "activate"), mock.patch.object(self.native, "native_interval", side_effect=error):
                     with self.assertRaises(type(error)):
                         self.native.trial(self.candidate, 1)
@@ -214,11 +221,7 @@ class TestNativeBrowserTrial(AltitudeCase):
                         self.native.trial(self.candidate, 1)
                 self.assertEqual(self.service.read_bytes(), self.original)
                 self.assertEqual(self.row()["phase"], "restored")
-                import shutil
-                for directory in self.area.rglob("*"):
-                    if directory.is_dir():
-                        directory.chmod(0o700)
-                shutil.rmtree(self.area)
+                self.remove_area()
 
     def test_actual_trial_deadline_enters_independently_bounded_stock_recovery(self):
         phases = []

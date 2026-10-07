@@ -395,7 +395,9 @@ after its log and results are retained. Each run appears on its task as a machin
 `validation`. Activation waits for admitted validation to finish recording evidence. After an
 unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
 and records them as interrupted. If copying evidence fails, the ledger names the original paths
-in the runner area; that area stays intact and new runs stay refused pending recovery.
+in the runner area; that area stays intact and new runs stay refused pending recovery. A run area
+that cleanup cannot remove also keeps new runs refused; each later request retries its removal and
+its refusal names what stayed and why.
 
 Explicitly authorized native browser acceptance uses the actual fresh intended confined candidate
 worker and the [native acceptance gates](DEVELOPMENT.md#native-mac-browser-runtime-candidate).
