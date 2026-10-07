@@ -31,7 +31,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Models dialog states', desktop: 'ModelsStates.html', desktopSize: { w: 1200, h: 2340, name: 'Sheet' } },
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
-  { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1300, name: 'Sheet' } },
+  { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },
 ];
 
 /* Native sizes, matching shots.sh (which reads each board's own width and height). A row's

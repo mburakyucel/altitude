@@ -17,7 +17,8 @@ const options = {
 
 /** A fictional server: settings keyed like the registry, validated and echoed as the defaults view. */
 function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null as null | { setting: string; until: Promise<void> },
-  routing = null as string | null, initial = {} as Record<string, unknown>, remove = (): Response | Promise<Response> => json({ ok: true }) } = {}) {
+  routing = null as string | null, initial = {} as Record<string, unknown>, remove = (): Response | Promise<Response> => json({ ok: true }),
+  overviewDown = { on: false } } = {}) {
   const saved: Record<string, unknown> = { ...initial };
   const posts: Record<string, unknown>[] = [];
   let managed = true;
@@ -32,6 +33,7 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
   })) })) });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url === "/api/overview" && overviewDown.on) throw new TypeError("Failed to fetch");
     if (url === "/api/overview") return json({ ...overview, projects: overview.projects.filter((row) => managed || row.name !== "example") });
     if (url === "/api/project/example") return json({ name: "example", tasks: [], l3 });
     if (url === "/api/defaults/example") return json(view());
@@ -255,6 +257,23 @@ describe("Remove project", () => {
     lost.gone = true;
     await user.click(within(dialog).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
+
+  it("never removes again while presence is unknown: Check again rereads, and only a present project offers Retry", async () => {
+    const overviewDown = { on: false };
+    const { posts } = fixture({ overviewDown, remove: () => { overviewDown.on = true; throw new TypeError("Failed to fetch"); } });
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const dialog = await open(user);
+    await user.click(within(dialog).getByRole("button", { name: "Remove example" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Couldn't confirm removal, and the project list could not be read.");
+    expect(within(dialog).queryByRole("button", { name: /Remove example|Retry/ })).toBeNull();
+    await user.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Couldn't confirm removal, and the project list could not be read.");
+    overviewDown.on = false;
+    await user.click(within(dialog).getByRole("button", { name: "Check again" }));
+    expect(await within(dialog).findByText("Couldn't confirm removal; example is still in Altitude.")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(posts.filter((p) => "name" in p)).toHaveLength(1);
   });
 });
 

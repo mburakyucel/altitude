@@ -54,6 +54,16 @@ class TestNewTasks(AltitudeCase):
         self.assertEqual((status, out["value"]), (200, None))
         self.assertNotIn("new_tasks", config.machine_settings())
 
+    def test_a_stale_expected_value_is_refused_when_applied_not_only_when_requested(self):
+        """Two windows both read Auto; the second save, requested after the first applied, must not overwrite it."""
+        first, second = {"effort": "high"}, {"effort": "low"}
+        dispatch.request_setting(None, "new_tasks", first, "Settings", actor=config.OPERATOR_ACTOR, expected=None)
+        self.assertEqual(dispatch._run_setting(None, "new_tasks")["status"], "done")
+        dispatch.request_setting(None, "new_tasks", second, "Settings", actor=config.OPERATOR_ACTOR, expected=None)
+        result = dispatch._run_setting(None, "new_tasks")
+        self.assertEqual((result["status"], result.get("changed")), ("refused", True))
+        self.assertEqual(config.machine_settings()["new_tasks"], first)
+
     def test_only_engine_projects_are_listed_and_l3_cannot_change_every_project(self):
         set_project_setting(self.project, "l2_engine", config.ENGINES[1])
         self.assertEqual(server.new_tasks_view()["only"], [{"project": self.project, "engine": config.ENGINES[1]}])

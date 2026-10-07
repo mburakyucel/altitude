@@ -958,10 +958,11 @@ state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
     ("Removing", "both buttons disabled", '<p class="muted">Removing… Closing doesn\'t cancel removal.</p><span class="btn" aria-disabled="true">Cancel</span> <span class="btn" aria-disabled="true">Removing…</span>'),
     ("Refused", "the server's reason; the project stays", '<p class="danger">Finish or reject the 1 unfinished task(s) first: existing-work.</p><span class="btn">Cancel</span> <span class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">Remove example</span>'),
     ("Response lost", "the project list is read again before saying anything", '<p class="muted">Checking whether it was removed…</p><p class="danger">Couldn\'t confirm removal; example is still in Altitude.</p><span class="btn">Cancel</span> <span class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">Retry</span>'),
+    ("List unreadable too", "Check again rereads; removal returns only once the project is known to be present", '<p class="danger">Couldn\'t confirm removal, and the project list could not be read.</p><span class="btn">Cancel</span> <span class="btn">Check again</span>'),
     ("Removed", "managed row and old views leave", '<h3>Needs you</h3><p class="muted">A remaining project is selected. With none managed, First run offers the retained folder.</p><h3>Project not managed</h3><p class="muted">Select a project or add its folder again.</p>'),
     ("Attach L3 again", "existing folder-add flow restores history", '<p>example <span class="btn primary">Add project</span></p><p class="muted">Setup shows current configuration and progress.</p><p class="danger">Registration unavailable. Try again.</p><span class="btn">Retry</span>'),
     ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
-], 1300)
+], 1400)
 
 def models_dialog(tab="l3", chosen="Auto", effort="Default", note="", other=False, saving=False):
     tabs = '<div class="tabs"><span' + (' class="on"' if tab == "l3" else '') + '>L3 · altitude only</span><span' + (' class="on"' if tab == "tasks" else '') + '>Tasks · All projects</span></div>'

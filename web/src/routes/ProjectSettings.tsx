@@ -175,13 +175,15 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
   </section>;
 }
 
-type Removal = { status: "idle" | "removing" | "checking" } | { status: "refused" | "unconfirmed"; message: string };
+type Removal = { status: "idle" | "removing" | "checking" | "unknown" | "unconfirmed" } | { status: "refused"; message: string };
 
 /**
  * Remove project (SPEC.md §3.15): Cancel first and focused, a red named action, and what stays. A response
  * lost on the way rereads the project list before saying anything, so a removal that happened is not retried.
  */
-function RemoveDialog({ name, removal, onRemove, onClose }: { name: string; removal: Removal; onRemove: () => void; onClose: () => void }) {
+function RemoveDialog({ name, removal, onRemove, onCheck, onClose }: {
+  name: string; removal: Removal; onRemove: () => void; onCheck: () => void; onClose: () => void;
+}) {
   const busy = removal.status === "removing" || removal.status === "checking";
   return <Overlay label={`Remove ${name} from Altitude?`} side="center" onClose={onClose}>
     <div className="remove-dialog">
@@ -194,13 +196,16 @@ function RemoveDialog({ name, removal, onRemove, onClose }: { name: string; remo
         <li>Unfinished tasks and a running L3 reply must finish first.</li>
       </ul>
       {removal.status === "refused" ? <p role="alert" className="text-danger">{removal.message}</p> : null}
-      {removal.status === "unconfirmed" ? <p role="alert" className="text-danger">Couldn't confirm removal; {name} is still in Altitude. {removal.message}</p> : null}
+      {removal.status === "unconfirmed" ? <p role="alert" className="text-danger">Couldn't confirm removal; {name} is still in Altitude.</p> : null}
+      {removal.status === "unknown" ? <p role="alert" className="text-danger">Couldn't confirm removal, and the project list could not be read.</p> : null}
       {busy ? <p role="status" className="text-meta text-muted">{removal.status === "checking" ? "Checking whether it was removed…" : "Removing…"} Closing doesn't cancel removal.</p> : null}
       <div className="remove-actions">
         <button type="button" className="btn" data-autofocus disabled={busy} onClick={onClose}>Cancel</button>
-        <button type="button" className="btn btn-danger" disabled={busy} onClick={onRemove}>
-          {busy ? "Removing…" : removal.status === "unconfirmed" ? "Retry" : `Remove ${name}`}
-        </button>
+        {/* Removing again is offered only once the project is known to be present. */}
+        {removal.status === "unknown" ? <button type="button" className="btn" onClick={onCheck}>Check again</button>
+          : <button type="button" className="btn btn-danger" disabled={busy} onClick={onRemove}>
+            {busy ? "Removing…" : removal.status === "unconfirmed" ? "Retry" : `Remove ${name}`}
+          </button>}
       </div>
     </div>
   </Overlay>;
@@ -224,14 +229,16 @@ function ProjectSection({ name }: { name: string }) {
       leave();
     } catch (failure) {
       if (failure instanceof ApiError && failure.status < 500) return setRemoval({ status: "refused", message: failure.message });
-      setRemoval({ status: "checking" });
-      const overview = await client.fetchQuery({ ...overviewQuery, staleTime: 0 }).catch(() => null);
-      if (overview && !managedProjects(overview).some((row) => row.name === name)) {
-        await forgetProject(client, name);
-        return leave();
-      }
-      setRemoval({ status: "unconfirmed", message: overview ? "" : "The project list could not be read either." });
+      await check();
     }
+  };
+  const check = async () => {
+    setRemoval({ status: "checking" });
+    const overview = await client.fetchQuery({ ...overviewQuery, staleTime: 0 }).catch(() => null);
+    if (!overview) return setRemoval({ status: "unknown" });
+    if (managedProjects(overview).some((row) => row.name === name)) return setRemoval({ status: "unconfirmed" });
+    await forgetProject(client, name);
+    leave();
   };
   return <section className="settings-section" aria-labelledby="settings-project">
     <h2 id="settings-project">Project</h2>
@@ -244,7 +251,7 @@ function ProjectSection({ name }: { name: string }) {
         <button type="button" className="btn btn-outline-danger" aria-haspopup="dialog" onClick={() => { setRemoval({ status: "idle" }); setOpen(true); }}>Remove…</button>
       </div>
     </div>
-    {open ? <RemoveDialog name={name} removal={removal} onRemove={() => void run()} onClose={() => setOpen(false)} /> : null}
+    {open ? <RemoveDialog name={name} removal={removal} onRemove={() => void run()} onCheck={() => void check()} onClose={() => setOpen(false)} /> : null}
   </section>;
 }
 

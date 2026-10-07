@@ -601,7 +601,7 @@ tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 
 | Read failed | "Could not load models" with Retry. |
 | Saving | **Use** reads Saving…; choices and the other tab are locked. |
 | Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
-| Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. |
+| Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. A save compares against the value the draft started from, so a refresh while editing does not hide another window's change. |
 | Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
 
 Escape, × and, on phone, the scrim close the dialog and return focus to the control that opened it.
@@ -1513,6 +1513,7 @@ and has focus; Escape, × and the scrim cancel. The red **Remove <name>** sends 
 | Removed | §3.2's success navigation. |
 | Refused | The server's reason in red, such as unfinished tasks; the project stays and Cancel works. |
 | Response lost | "Checking whether it was removed…" while the project list is read again: a project that is gone counts as removed; otherwise "Couldn't confirm removal; <name> is still in Altitude." with **Retry**. |
+| List unreadable too | "Couldn't confirm removal, and the project list could not be read." with **Check again**, which reads the list again; removal is offered again only once the project is known to be present. |
 
 | Project page state | What appears and what actions do |
 | --- | --- |

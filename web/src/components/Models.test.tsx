@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -70,6 +70,20 @@ describe("Models dialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([{ path: "/api/new-tasks", body: { value: { engine: "alpha", model: "swift", effort: "low" }, expected: null } }]);
     expect(screen.getByRole("button", { name: /^New tasks · Swift · Low/ })).toHaveFocus();
+  });
+
+  it("saves against the value the draft started from, so a refresh while editing still meets Changed in another window", async () => {
+    const { posts, state } = server();
+    const { queryClient, user } = renderApp({ route: "/projects/example" });
+    await user.click(await screen.findByRole("button", { name: /^New tasks · Auto/ }));
+    await user.click(within(dialog()).getByRole("radio", { name: /^Swift/ }));
+    state.newTasks = { engine: "beta" };
+    await act(() => queryClient.refetchQueries({ queryKey: ["overview"] }));
+    expect(within(dialog()).getByRole("radio", { name: /^Swift/ })).toBeChecked();
+    await user.click(within(dialog()).getByRole("button", { name: "Use for all new tasks" }));
+    expect(await within(dialog()).findByRole("alert")).toHaveTextContent("Changed in another window.");
+    expect(posts.map((p) => p.body.expected)).toEqual([null]);
+    expect(state.newTasks).toEqual({ engine: "beta" });
   });
 
   it("keeps one draft owned by the open tab: switching tabs or closing drops it", async () => {

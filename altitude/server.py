@@ -2121,10 +2121,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     if o.get("setting") not in set(config.PROJECT_SETTINGS) - {"routing"}:
                         raise ValueError("unknown project default")
-                    if "expected" in o and config.project(o["project"]).get(o["setting"]) != o["expected"]:
-                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
-                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
                     result = dispatch._run_setting(o["project"], o["setting"])
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
@@ -2132,10 +2133,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "new-tasks"]:
                 try:
-                    if "expected" in o and config.machine_settings().get("new_tasks") != o["expected"]:
-                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
-                    dispatch.request_setting(None, "new_tasks", o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    dispatch.request_setting(None, "new_tasks", o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
                     result = dispatch._run_setting(None, "new_tasks")
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(new_tasks_view())

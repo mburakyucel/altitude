@@ -224,7 +224,7 @@ setting key, default and engine-owned choices; `POST /api/defaults` saves one se
 the existing settings request/apply mechanism under project/registry locks. The machine-wide New
 tasks choice reads in `GET /api/overview` and saves through `POST /api/new-tasks`, operator only.
 Both writes accept the value the client showed as `expected` and refuse with 409 when the stored
-value differs, so a second window cannot silently overwrite a change it never saw.
+value differs at the moment the setting is applied, under the same lock, so a second window cannot silently overwrite a change it never saw.
 `route.pick_engine` tries a role's choice ahead of its routing tiers (CLI
 [model choices](CLI.md#model-choices) gives the precedence). The project Settings page
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,

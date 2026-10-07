@@ -80,6 +80,8 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
   const { phone } = useViewport();
   const [tab, setTab] = useState<ModelsTab>(project ? initial : "tasks");
   const [draft, setDraft] = useState<Draft | null>(null);
+  // The saved value the draft started from: a refresh during editing must not become the save's `expected`.
+  const [base, setBase] = useState<Choice>(null);
   const overview = useOverview();
   const defaults = useProjectDefaults(project ?? "");
   const projectView = useProject(project ?? "", Boolean(project));
@@ -117,8 +119,9 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
 
   const commit = (value: Choice) => {
     const done = { onSuccess: onClose };
-    if (tab === "l3") saveL3.mutate({ setting: "l3_choice", value, expected: state.saved }, done);
-    else saveTasks.mutate({ value, expected: state.saved }, done);
+    const expected = draft ? base : state.saved;
+    if (tab === "l3") saveL3.mutate({ setting: "l3_choice", value, expected }, done);
+    else saveTasks.mutate({ value, expected }, done);
   };
   const reload = () => { save.reset(); setDraft(null); state.reload(); };
 
@@ -140,7 +143,7 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
         {state.failed ? <p role="alert" className="text-danger">Could not load models. <button type="button" className="link" onClick={state.reload}>Retry</button></p>
           : state.loading || !state.options ? <p role="status" className="text-muted">Loading models…</p>
             : <Choices key={tab} tab={tab} project={project} state={state as TabState & { options: ChoiceOptions }} draft={draft}
-              setDraft={(next) => { save.reset(); setDraft(next); }} saving={saving}
+              setDraft={(next) => { save.reset(); if (next && !draft) setBase(state.saved); setDraft(next); }} saving={saving}
               l3Only={defaults.data?.l3_engine ?? null} only={tasks?.only ?? []}
               lastReply={projectView.data?.l3 ?? undefined}
               error={save.error} onUse={commit} onReload={reload} onRetry={() => save.variables && commit(save.variables.value as Choice)} />}
